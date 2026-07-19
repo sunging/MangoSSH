@@ -70,20 +70,20 @@ options. When a device is available, test SSH host key confirmation, OTP, Mosh
 bootstrap, reconnect, resize, process cleanup, and app background/foreground
 behavior.
 
-On the system user's Ubuntu WSL environment, the native sequence is:
+In Ubuntu WSL, run the native sequence from the repository root:
 
 ```text
-bash /mnt/d/code/android/mangossh/tools/fetch-android-ndk-wsl.sh
-bash /mnt/d/code/android/mangossh/tools/build-pty-bridge-wsl.sh
-bash /mnt/d/code/android/mangossh/tools/build-mosh-android-wsl.sh
-bash /mnt/d/code/android/mangossh/tools/install-mosh-assets.sh
+bash tools/fetch-android-ndk-wsl.sh
+bash tools/build-pty-bridge-wsl.sh
+bash tools/build-mosh-android-wsl.sh
+bash tools/install-mosh-assets.sh
 ```
 
 After producing the debug APK, run:
 
 ```text
-bash /mnt/d/code/android/mangossh/tools/check-16kb-elf-wsl.sh \
-  /mnt/d/code/android/mangossh/app/build/outputs/apk/debug/app-debug.apk
+bash tools/check-16kb-elf-wsl.sh \
+  app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## Git workflow

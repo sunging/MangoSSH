@@ -17,13 +17,13 @@ git submodule update --init --recursive
 
 ## Native Mosh build
 
-On the system user's Ubuntu WSL environment, run:
+In Ubuntu WSL, run the following from the repository root:
 
 ```text
-bash /mnt/d/code/android/mangossh/tools/fetch-android-ndk-wsl.sh
-bash /mnt/d/code/android/mangossh/tools/build-pty-bridge-wsl.sh
-bash /mnt/d/code/android/mangossh/tools/build-mosh-android-wsl.sh
-bash /mnt/d/code/android/mangossh/tools/install-mosh-assets.sh
+bash tools/fetch-android-ndk-wsl.sh
+bash tools/build-pty-bridge-wsl.sh
+bash tools/build-mosh-android-wsl.sh
+bash tools/install-mosh-assets.sh
 ```
 
 The final command validates and copies the four ABI archives into the Android
@@ -36,8 +36,8 @@ After building the debug APK, validate both the ELF load segments and the APK
 alignment. This is required for Android devices that use 16 KiB memory pages:
 
 ```text
-bash /mnt/d/code/android/mangossh/tools/check-16kb-elf-wsl.sh \
-  /mnt/d/code/android/mangossh/app/build/outputs/apk/debug/app-debug.apk
+bash tools/check-16kb-elf-wsl.sh \
+  app/build/outputs/apk/debug/app-debug.apk
 zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
 ```
 
