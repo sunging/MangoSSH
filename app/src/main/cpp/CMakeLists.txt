@@ -8,4 +8,10 @@ find_library(android_log_lib log)
 
 target_compile_features(mangossh_pty PRIVATE cxx_std_20)
 target_compile_options(mangossh_pty PRIVATE -Wall -Wextra -Werror -fstack-protector-strong)
+# NDK r27 does not opt into flexible 16 KiB page sizes automatically. Both
+# values ensure every PT_LOAD segment can map on 4 KiB and 16 KiB devices.
+target_link_options(mangossh_pty PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384"
+)
 target_link_libraries(mangossh_pty PRIVATE ${android_log_lib})

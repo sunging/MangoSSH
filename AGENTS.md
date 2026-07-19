@@ -62,9 +62,13 @@ gradlew.bat :app:lint :app:assembleDebug
 ```
 
 For native code, also validate the ABI assets, ELF interpreter/dependencies,
-and a debug APK package inspection. When a device is available, test SSH host
-key confirmation, OTP, Mosh bootstrap, reconnect, resize, process cleanup,
-and app background/foreground behavior.
+and a debug APK package inspection. Every packaged `PT_LOAD` segment must have
+at least 16 KiB alignment: run `tools/check-16kb-elf-wsl.sh` against the debug
+APK and `zipalign -c -P 16 -v 4` against that APK. NDK r27 builds must keep
+both `-Wl,-z,max-page-size=16384` and `-Wl,-z,common-page-size=16384` linker
+options. When a device is available, test SSH host key confirmation, OTP, Mosh
+bootstrap, reconnect, resize, process cleanup, and app background/foreground
+behavior.
 
 On the system user's Ubuntu WSL environment, the native sequence is:
 
@@ -73,6 +77,13 @@ bash /mnt/d/code/android/mangossh/tools/fetch-android-ndk-wsl.sh
 bash /mnt/d/code/android/mangossh/tools/build-pty-bridge-wsl.sh
 bash /mnt/d/code/android/mangossh/tools/build-mosh-android-wsl.sh
 bash /mnt/d/code/android/mangossh/tools/install-mosh-assets.sh
+```
+
+After producing the debug APK, run:
+
+```text
+bash /mnt/d/code/android/mangossh/tools/check-16kb-elf-wsl.sh \
+  /mnt/d/code/android/mangossh/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## Git workflow

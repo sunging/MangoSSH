@@ -19,9 +19,36 @@ ASSETS_DIR="$PROJECT_DIR/app/src/main/assets"
 READELF="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 STRIP="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 ABIS="${ABIS:-arm64-v8a armeabi-v7a x86 x86_64}"
+REQUIRED_ALIGNMENT=$((16 * 1024))
 
 [[ -x "$READELF" && -x "$STRIP" ]] || { echo "Android NDK r27d is required." >&2; exit 1; }
 [[ -f "$MOSH_SOURCE/COPYING" ]] || { echo "Mosh source submodule is unavailable." >&2; exit 1; }
+
+## Fails the asset installation if an ELF cannot map on a 16 KiB-page device.
+#
+# The final APK check is still required because packaging can add other native
+# libraries. This build-time guard keeps invalid Mosh or PTY binaries out of
+# source control before they reach Gradle.
+require_16k_load_alignment() {
+    local binary="$1"
+    local label="$2"
+    local alignment
+    local saw_load_segment=0
+
+    while IFS= read -r alignment; do
+        saw_load_segment=1
+        if (( alignment < REQUIRED_ALIGNMENT )); then
+            printf '%s is not 16 KiB compatible: PT_LOAD alignment %s.\n' \
+                "$label" "$alignment" >&2
+            exit 1
+        fi
+    done < <("$READELF" -lW "$binary" | awk '$1 == "LOAD" { print $NF }')
+
+    (( saw_load_segment == 1 )) || {
+        echo "$label has no PT_LOAD segments." >&2
+        exit 1
+    }
+}
 
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
@@ -46,6 +73,8 @@ for abi in $ABIS; do
         echo "PTY bridge for $abi is not a shared ELF library." >&2
         exit 1
     }
+    require_16k_load_alignment "$temp_dir/mosh-client-$abi" "Mosh client for $abi"
+    require_16k_load_alignment "$bridge" "PTY bridge for $abi"
     if "$READELF" -d "$temp_dir/mosh-client-$abi" | grep -q 'libc++_shared\.so'; then
         echo "Mosh client for $abi unexpectedly needs libc++_shared.so." >&2
         exit 1
@@ -58,6 +87,8 @@ for abi in $ABIS; do
     # their ELF type, interpreter, or required dynamic symbols.
     "$STRIP" --strip-unneeded "$JNI_LIBS_DIR/$abi/libmosh_client.so"
     "$STRIP" --strip-unneeded "$bridge"
+    require_16k_load_alignment "$JNI_LIBS_DIR/$abi/libmosh_client.so" "Packaged Mosh client for $abi"
+    require_16k_load_alignment "$bridge" "Packaged PTY bridge for $abi"
 done
 
 mkdir -p "$ASSETS_DIR/mosh" "$ASSETS_DIR/licenses"
