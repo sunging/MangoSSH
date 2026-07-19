@@ -109,7 +109,10 @@ fun TerminalSessionScreen(
                 emulator.writeInput(bytes)
             }
     }
-    val localizedSessionDetail = session.detail?.let(::localizedUiLiteral)
+    val localizedSessionDetail = when (val detail = session.detail) {
+        null -> null
+        else -> localizedUiLiteral(detail)
+    }
     LaunchedEffect(session.id, localizedSessionDetail) {
         localizedSessionDetail?.let { detail ->
             emulator.writeInput("\r\n[MangoSSH] $detail\r\n".encodeToByteArray())
