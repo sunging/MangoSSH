@@ -2,7 +2,9 @@ package website.sung.mangossh.session
 
 import androidx.compose.runtime.Immutable
 import website.sung.mangossh.data.vault.PortForwardRule
+import website.sung.mangossh.domain.ConnectionProtocol
 
+/** Lifecycle visible to Compose for either an SSH shell or a native Mosh PTY. */
 enum class TerminalSessionPhase {
     CONNECTING,
     VERIFYING_HOST_KEY,
@@ -12,16 +14,19 @@ enum class TerminalSessionPhase {
     CLOSED,
 }
 
+/** Immutable terminal summary; it intentionally excludes credentials and command contents. */
 @Immutable
 data class TerminalSessionState(
     val id: String,
     val profileId: String,
     val title: String,
     val endpoint: String,
+    val protocol: ConnectionProtocol,
     val phase: TerminalSessionPhase,
     val detail: String? = null,
 )
 
+/** Origin metadata used to render terminal output without exposing it to diagnostic logs. */
 enum class TerminalOutputSource {
     STDOUT,
     STDERR,

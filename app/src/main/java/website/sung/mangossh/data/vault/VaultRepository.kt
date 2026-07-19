@@ -8,7 +8,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.domain.ConnectionProfile
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 
+/** Coordinates encrypted vault reads and serialized mutations on the I/O dispatcher. */
 class VaultRepository(context: Context) {
     private val storage = AndroidKeystoreVault(context)
     private val mutationMutex = Mutex()
@@ -19,14 +22,18 @@ class VaultRepository(context: Context) {
     private val _status = MutableStateFlow<VaultStatus>(VaultStatus.Loading)
     val status = _status.asStateFlow()
 
+    /** Opens the Android Keystore-protected vault without exposing plaintext outside this repository. */
     suspend fun open() = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
             _status.value = VaultStatus.Loading
+            MangoLog.info(MangoLogEvent.VAULT_OPEN_STARTED)
             try {
                 _snapshot.value = storage.read() ?: VaultSnapshot()
                 _status.value = VaultStatus.Ready
-            } catch (_: Exception) {
+                MangoLog.info(MangoLogEvent.VAULT_OPEN_SUCCEEDED)
+            } catch (error: Exception) {
                 _status.value = VaultStatus.Failed("无法打开本地加密保险库。请检查设备安全设置。")
+                MangoLog.warn(MangoLogEvent.VAULT_OPEN_FAILED, error)
             }
         }
     }
@@ -109,6 +116,7 @@ class VaultRepository(context: Context) {
         }
     }
 
+    /** Applies one mutation atomically, retaining the previous in-memory data if persistence fails. */
     private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot) = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
             if (_status.value !is VaultStatus.Ready) return@withLock
@@ -116,8 +124,10 @@ class VaultRepository(context: Context) {
             try {
                 storage.write(updated)
                 _snapshot.value = updated
-            } catch (_: Exception) {
+                MangoLog.info(MangoLogEvent.VAULT_WRITE_SUCCEEDED)
+            } catch (error: Exception) {
                 _status.value = VaultStatus.Failed("无法保存加密保险库。数据未被覆盖。")
+                MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error)
             }
         }
     }

@@ -8,9 +8,12 @@ import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.data.vault.WebDavConfig
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 
 /** Minimal HTTPS WebDAV PUT/GET client for encrypted portable vault blobs. */
 class WebDavClient {
+    /** Uploads an already-encrypted portable vault; endpoint and credentials are never logged. */
     suspend fun upload(config: WebDavConfig, encryptedBlob: ByteArray): WebDavResult =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -23,11 +26,18 @@ class WebDavClient {
                     require(code in 200..299) { "WebDAV upload failed (HTTP $code)" }
                 }
             }.fold(
-                onSuccess = { WebDavResult.Success },
-                onFailure = { WebDavResult.Failure(it.message ?: "Unable to upload encrypted backup") },
+                onSuccess = {
+                    MangoLog.info(MangoLogEvent.WEBDAV_UPLOAD_SUCCEEDED)
+                    WebDavResult.Success
+                },
+                onFailure = { error ->
+                    MangoLog.warn(MangoLogEvent.WEBDAV_UPLOAD_FAILED, error)
+                    WebDavResult.Failure(error.message ?: "Unable to upload encrypted backup")
+                },
             )
         }
 
+    /** Downloads a bounded encrypted vault blob; its contents stay opaque to this HTTP layer. */
     suspend fun download(config: WebDavConfig): WebDavDownloadResult = withContext(Dispatchers.IO) {
         runCatching {
             withConnection(config, "GET") { connection ->
@@ -40,8 +50,14 @@ class WebDavClient {
                 connection.inputStream.use(::readLimited)
             }
         }.fold(
-            onSuccess = { WebDavDownloadResult.Success(it) },
-            onFailure = { WebDavDownloadResult.Failure(it.message ?: "Unable to download encrypted backup") },
+            onSuccess = {
+                MangoLog.info(MangoLogEvent.WEBDAV_DOWNLOAD_SUCCEEDED)
+                WebDavDownloadResult.Success(it)
+            },
+            onFailure = { error ->
+                MangoLog.warn(MangoLogEvent.WEBDAV_DOWNLOAD_FAILED, error)
+                WebDavDownloadResult.Failure(error.message ?: "Unable to download encrypted backup")
+            },
         )
     }
 

@@ -1,7 +1,16 @@
 <resources>
     <string name="app_name">MangoSSH</string>
-    <string name="active_sessions_channel">活动 SSH 会话</string>
-    <string name="active_sessions_channel_description">MangoSSH 正在维持用户发起的 SSH 会话和端口转发。</string>
-    <string name="active_sessions_notification_title">MangoSSH 正在运行</string>
-    <string name="active_sessions_notification_text">会话和端口转发将在此处显示。</string>
+    <string name="active_sessions_channel">Active SSH sessions</string>
+    <string name="active_sessions_channel_description">MangoSSH is maintaining user-initiated SSH sessions and port forwards.</string>
+    <string name="active_sessions_notification_title">MangoSSH is running</string>
+    <string name="active_sessions_notification_text">Active sessions and port forwards appear here.</string>
+    <string name="mosh_client_missing">The bundled native Mosh client is unavailable. Reinstall a complete MangoSSH build.</string>
+    <string name="mosh_runtime_missing">The bundled Mosh terminal database is unavailable. Reinstall a complete MangoSSH build.</string>
+    <string name="mosh_not_supported_for_ssh_feature">This action is available only for SSH sessions. Mosh uses its own UDP terminal transport.</string>
+    <string name="mosh_connecting">Starting Mosh over an authenticated SSH bootstrap…</string>
+    <string name="mosh_open">Mosh connected</string>
+    <string name="mosh_bootstrap_failed">Mosh bootstrap failed. Ensure mosh-server is installed and UDP is reachable on the remote host.</string>
+    <string name="biometric_unavailable">Biometric unlock is currently unavailable on this device. Use your PIN instead.</string>
+    <string name="biometric_prompt_subtitle">Verify your identity to unlock MangoSSH</string>
+    <string name="biometric_prompt_use_pin">Use PIN</string>
 </resources>

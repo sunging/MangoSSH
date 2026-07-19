@@ -1,0 +1,4 @@
+[submodule "third_party/mosh4android"]
+	path = third_party/mosh4android
+	url = https://github.com/connectbot/mosh4android.git
+	branch = android

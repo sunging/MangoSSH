@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">MangoSSH</string>
+    <string name="active_sessions_channel">活动 SSH 会话</string>
+    <string name="active_sessions_channel_description">MangoSSH 正在维持用户发起的 SSH 会话和端口转发。</string>
+    <string name="active_sessions_notification_title">MangoSSH 正在运行</string>
+    <string name="active_sessions_notification_text">会话和端口转发将在此处显示。</string>
+    <string name="mosh_client_missing">内置原生 Mosh 客户端不可用。请重新安装完整的 MangoSSH 构建。</string>
+    <string name="mosh_runtime_missing">内置 Mosh 终端数据库不可用。请重新安装完整的 MangoSSH 构建。</string>
+    <string name="mosh_not_supported_for_ssh_feature">此操作仅适用于 SSH 会话。Mosh 使用独立的 UDP 终端传输。</string>
+    <string name="mosh_connecting">正在通过已验证的 SSH 引导启动 Mosh…</string>
+    <string name="mosh_open">Mosh 已连接</string>
+    <string name="mosh_bootstrap_failed">Mosh 引导失败。请确认远端已安装 mosh-server，且 UDP 通信可达。</string>
+    <string name="biometric_unavailable">此设备当前无法使用生物识别，请使用 PIN 解锁。</string>
+    <string name="biometric_prompt_subtitle">验证身份以解锁 MangoSSH</string>
+    <string name="biometric_prompt_use_pin">使用 PIN</string>
+</resources>

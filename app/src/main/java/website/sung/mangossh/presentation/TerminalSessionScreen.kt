@@ -54,6 +54,7 @@ import website.sung.mangossh.session.TerminalOutput
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
 import website.sung.mangossh.session.ServerResourceSnapshot
+import website.sung.mangossh.domain.ConnectionProtocol
 
 @Composable
 fun TerminalSessionScreen(
@@ -71,6 +72,7 @@ fun TerminalSessionScreen(
     val resizeCurrent by rememberUpdatedState(onResize)
     val clipboardCurrent by rememberUpdatedState(clipboard)
     val isOpen = session.phase == TerminalSessionPhase.OPEN
+    val supportsSshChannels = session.protocol == ConnectionProtocol.SSH
     var showResourceReport by remember(session.id) { mutableStateOf(false) }
     val pasteFromClipboard: () -> Unit = {
         val text = clipboard.getText()?.text?.takeIf(String::isNotEmpty)
@@ -123,19 +125,22 @@ fun TerminalSessionScreen(
                     )
                 }
                 IconButton(onClick = onMinimize) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回主机列表")
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = localizedUiLiteral("返回主机列表"),
+                    )
                 }
                 IconButton(
                     onClick = {
                         showResourceReport = true
                         onRequestResources()
                     },
-                    enabled = isOpen,
+                    enabled = isOpen && supportsSshChannels,
                 ) {
-                    Icon(Icons.Outlined.Storage, contentDescription = "服务器资源")
+                    Icon(Icons.Outlined.Storage, contentDescription = localizedUiLiteral("服务器资源"))
                 }
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Outlined.Close, contentDescription = "关闭会话")
+                    Icon(Icons.Outlined.Close, contentDescription = localizedUiLiteral("关闭会话"))
                 }
             }
 
@@ -172,21 +177,21 @@ fun TerminalSessionScreen(
     if (showResourceReport) {
         AlertDialog(
             onDismissRequest = { showResourceReport = false },
-            title = { Text("服务器资源") },
+            title = { Text(localizedUiLiteral("服务器资源")) },
             text = {
                 SelectionContainer {
                     Text(
-                        resourceSnapshot?.report ?: "正在从服务器读取资源信息…",
+                        resourceSnapshot?.report ?: localizedUiLiteral("正在从服务器读取资源信息…"),
                         modifier = Modifier.verticalScroll(rememberScrollState()),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onRequestResources() }) { Text("刷新") }
+                TextButton(onClick = { onRequestResources() }) { Text(localizedUiLiteral("刷新")) }
             },
             dismissButton = {
-                TextButton(onClick = { showResourceReport = false }) { Text("关闭") }
+                TextButton(onClick = { showResourceReport = false }) { Text(localizedUiLiteral("关闭")) }
             },
         )
     }
@@ -225,7 +230,7 @@ private fun TerminalKeyBar(
         AssistChip(
             onClick = onPaste,
             enabled = enabled,
-            label = { Text("粘贴") },
+            label = { Text(localizedUiLiteral("粘贴")) },
             leadingIcon = { Icon(Icons.Outlined.ContentPaste, contentDescription = null) },
         )
         keys.forEach { (label, value) ->
@@ -239,11 +244,14 @@ private fun TerminalKeyBar(
     }
 }
 
-private fun TerminalSessionPhase.label(): String = when (this) {
-    TerminalSessionPhase.CONNECTING -> "连接中"
-    TerminalSessionPhase.VERIFYING_HOST_KEY -> "验证指纹"
-    TerminalSessionPhase.AUTHENTICATING -> "认证中"
-    TerminalSessionPhase.OPEN -> "已连接"
-    TerminalSessionPhase.FAILED -> "失败"
-    TerminalSessionPhase.CLOSED -> "已关闭"
-}
+@Composable
+private fun TerminalSessionPhase.label(): String = localizedUiLiteral(
+    when (this) {
+        TerminalSessionPhase.CONNECTING -> "连接中"
+        TerminalSessionPhase.VERIFYING_HOST_KEY -> "验证指纹"
+        TerminalSessionPhase.AUTHENTICATING -> "认证中"
+        TerminalSessionPhase.OPEN -> "已连接"
+        TerminalSessionPhase.FAILED -> "失败"
+        TerminalSessionPhase.CLOSED -> "已关闭"
+    },
+)

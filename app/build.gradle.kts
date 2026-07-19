@@ -19,6 +19,7 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
     }
 
     buildTypes {
@@ -35,6 +36,15 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // Mosh is executed from nativeLibraryDir, so native assets must be copied
+    // out of the APK rather than memory-mapped in place.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
 }
 
 dependencies {

@@ -12,6 +12,7 @@ import website.sung.mangossh.presentation.MangoSshApp
 import website.sung.mangossh.presentation.MangoSshViewModel
 import website.sung.mangossh.ui.theme.MangoSshTheme
 
+/** Hosts the Compose UI and delegates biometric verification without retaining biometric data. */
 class MainActivity : FragmentActivity() {
     private val mangoViewModel: MangoSshViewModel by viewModels()
 
@@ -33,11 +34,12 @@ class MainActivity : FragmentActivity() {
         super.onStop()
     }
 
+    /** Requests a strong biometric only after the user explicitly chooses biometric app unlock. */
     private fun requestBiometricUnlock() {
         val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
         val availability = BiometricManager.from(this).canAuthenticate(authenticators)
         if (availability != BiometricManager.BIOMETRIC_SUCCESS) {
-            mangoViewModel.reportUserMessage("此设备当前无法使用生物识别，请使用 PIN 解锁。")
+            mangoViewModel.reportUserMessage(getString(R.string.biometric_unavailable))
             return
         }
         val prompt = BiometricPrompt(
@@ -53,8 +55,8 @@ class MainActivity : FragmentActivity() {
         prompt.authenticate(
             BiometricPrompt.PromptInfo.Builder()
                 .setTitle(getString(R.string.app_name))
-                .setSubtitle("验证身份以解锁 MangoSSH")
-                .setNegativeButtonText("使用 PIN")
+                .setSubtitle(getString(R.string.biometric_prompt_subtitle))
+                .setNegativeButtonText(getString(R.string.biometric_prompt_use_pin))
                 .setAllowedAuthenticators(authenticators)
                 .build(),
         )

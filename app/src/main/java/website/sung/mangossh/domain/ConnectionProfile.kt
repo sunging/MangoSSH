@@ -3,16 +3,19 @@ package website.sung.mangossh.domain
 import androidx.compose.runtime.Immutable
 import java.util.UUID
 
+/** Transport selected for a profile; Mosh begins with an SSH bootstrap then uses UDP. */
 enum class ConnectionProtocol(val label: String) {
     SSH("SSH"),
     MOSH("Mosh"),
 }
 
+/** Network path used before protocol authentication. */
 enum class ConnectionRoute(val label: String) {
     DIRECT("直接连接"),
     TAILNET("Tailnet"),
 }
 
+/** Credential exchange offered to the SSH server during connection setup. */
 enum class AuthenticationMethod(val label: String) {
     PRIVATE_KEY("私钥"),
     PASSWORD("密码"),
@@ -20,6 +23,7 @@ enum class AuthenticationMethod(val label: String) {
     TAILSCALE_SSH("Tailscale SSH"),
 }
 
+/** Persisted non-secret connection settings; referenced keys live separately in the encrypted vault. */
 @Immutable
 data class ConnectionProfile(
     val id: String = UUID.randomUUID().toString(),
@@ -39,6 +43,7 @@ data class ConnectionProfile(
         get() = if (port == 22) hostname else "$hostname:$port"
 }
 
+/** Editable profile form state, converted to a validated [ConnectionProfile] only when saved. */
 @Immutable
 data class ConnectionProfileDraft(
     val id: String? = null,
@@ -54,8 +59,14 @@ data class ConnectionProfileDraft(
     val agentForwarding: Boolean = false,
     val favorite: Boolean = false,
 ) {
+    /** Verifies only local form constraints; network reachability is checked at connection time. */
     fun isValid(): Boolean = hostname.isNotBlank() && username.isNotBlank() && port in 1..65535
 
+    /**
+     * Creates a persisted profile while preserving Mosh's normal SSH bootstrap
+     * authentication. Tailscale SSH is an SSH-server feature, not an auth mode
+     * for Mosh's separate UDP transport.
+     */
     fun toProfile(): ConnectionProfile = ConnectionProfile(
         id = id ?: UUID.randomUUID().toString(),
         label = label.ifBlank { hostname.trim() },
@@ -64,7 +75,7 @@ data class ConnectionProfileDraft(
         username = username.trim(),
         protocol = protocol,
         route = route,
-        authentication = if (route == ConnectionRoute.TAILNET) {
+        authentication = if (route == ConnectionRoute.TAILNET && protocol == ConnectionProtocol.SSH) {
             AuthenticationMethod.TAILSCALE_SSH
         } else {
             authentication

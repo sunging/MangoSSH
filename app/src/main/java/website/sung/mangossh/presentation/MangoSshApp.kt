@@ -44,6 +44,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -51,7 +52,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -65,14 +65,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
@@ -97,6 +105,53 @@ import website.sung.mangossh.session.ScpTransferPhase
 import website.sung.mangossh.session.ScpTransferState
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.security.AppLockConfiguration
+
+/**
+ * Localizes the existing Compose screen chrome while preserving dynamic values
+ * such as host labels, fingerprints, and terminal output unchanged. The app
+ * advertises English and Simplified Chinese in `locales_config.xml`; all other
+ * device languages fall back to English.
+ */
+@Composable
+private fun Text(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    fontStyle: FontStyle? = null,
+    fontWeight: FontWeight? = null,
+    fontFamily: FontFamily? = null,
+    letterSpacing: TextUnit = TextUnit.Unspecified,
+    textDecoration: TextDecoration? = null,
+    textAlign: TextAlign? = null,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+    overflow: TextOverflow = TextOverflow.Clip,
+    softWrap: Boolean = true,
+    maxLines: Int = Int.MAX_VALUE,
+    minLines: Int = 1,
+    onTextLayout: (TextLayoutResult) -> Unit = {},
+    style: TextStyle = LocalTextStyle.current,
+) {
+    androidx.compose.material3.Text(
+        text = localizedUiLiteral(text),
+        modifier = modifier,
+        color = color,
+        fontSize = fontSize,
+        fontStyle = fontStyle,
+        fontWeight = fontWeight,
+        fontFamily = fontFamily,
+        letterSpacing = letterSpacing,
+        textDecoration = textDecoration,
+        textAlign = textAlign,
+        lineHeight = lineHeight,
+        overflow = overflow,
+        softWrap = softWrap,
+        maxLines = maxLines,
+        minLines = minLines,
+        onTextLayout = onTextLayout,
+        style = style,
+    )
+}
 
 @Composable
 fun MangoSshApp(
@@ -769,7 +824,11 @@ private fun TransfersScreen(
     var showScpDialog by rememberSaveable { mutableStateOf(false) }
     var pendingUpload by remember { mutableStateOf<ScpUploadRequest?>(null) }
     var pendingDownload by remember { mutableStateOf<ScpDownloadRequest?>(null) }
-    val openSessions = sessions.filter { it.phase == TerminalSessionPhase.OPEN }
+    // Mosh uses a UDP terminal after its bootstrap and has no SSH channels for
+    // SCP or forwarding, so these actions list SSH sessions only.
+    val openSshSessions = sessions.filter {
+        it.phase == TerminalSessionPhase.OPEN && it.protocol == ConnectionProtocol.SSH
+    }
     val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val request = pendingUpload
         pendingUpload = null
@@ -814,7 +873,7 @@ private fun TransfersScreen(
         item {
             OutlinedButton(
                 onClick = { showScpDialog = true },
-                enabled = openSessions.isNotEmpty(),
+                enabled = openSshSessions.isNotEmpty(),
             ) { Text("SCP 上传 / 下载") }
         }
         if (scpTransfers.isNotEmpty()) {
@@ -876,7 +935,7 @@ private fun TransfersScreen(
                 it.rule.id == rule.id &&
                     (it.phase == PortForwardRuntimePhase.ACTIVE || it.phase == PortForwardRuntimePhase.STARTING)
             }
-            val eligibleSession = openSessions.firstOrNull { it.profileId == rule.profileId }
+            val eligibleSession = openSshSessions.firstOrNull { it.profileId == rule.profileId }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(rule.type.label + " · " + (profile?.label ?: "已删除的主机"), fontWeight = FontWeight.SemiBold)
@@ -943,7 +1002,7 @@ private fun TransfersScreen(
     }
     if (showScpDialog) {
         ScpTransferDialog(
-            sessions = openSessions,
+            sessions = openSshSessions,
             onDismiss = { showScpDialog = false },
             onUpload = { request ->
                 pendingUpload = request
@@ -1647,7 +1706,8 @@ private fun HostEditorSheet(
     var startupSnippetId by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.startupSnippetId) }
     var agentForwarding by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.agentForwarding ?: false) }
     val port = portText.toIntOrNull()
-    val authenticationIsConfigured = route == ConnectionRoute.TAILNET ||
+    val usesTailscaleSsh = route == ConnectionRoute.TAILNET && protocol == ConnectionProtocol.SSH
+    val authenticationIsConfigured = usesTailscaleSsh ||
         authentication != AuthenticationMethod.PRIVATE_KEY ||
         keys.any { it.id == keyId }
     val canSave = hostname.isNotBlank() &&
@@ -1711,7 +1771,12 @@ private fun HostEditorSheet(
                 ConnectionProtocol.entries.forEach { option ->
                     FilterChip(
                         selected = protocol == option,
-                        onClick = { protocol = option },
+                        onClick = {
+                            protocol = option
+                            if (option == ConnectionProtocol.MOSH && authentication == AuthenticationMethod.TAILSCALE_SSH) {
+                                authentication = AuthenticationMethod.PRIVATE_KEY
+                            }
+                        },
                         label = { Text(option.label) },
                     )
                 }
@@ -1733,7 +1798,7 @@ private fun HostEditorSheet(
                     )
                 }
             }
-            if (route == ConnectionRoute.TAILNET) {
+            if (usesTailscaleSsh) {
                 Spacer(Modifier.height(12.dp))
                 Text(
                     text = "Tailnet 路由通过设备已启用的 Tailscale VPN 访问目标；认证方式会设为 Tailscale SSH。",
@@ -1778,6 +1843,14 @@ private fun HostEditorSheet(
                     }
                 }
             }
+            if (protocol == ConnectionProtocol.MOSH) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "Mosh 使用 GPL-3.0-or-later 原生客户端；源代码和许可证见项目随附材料。它需要远端 mosh-server 和可达的 UDP 端口（默认 60000–61000），且不支持 SSH 的 SCP、端口转发、代理转发或资源查询。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(20.dp))
             Text("连接后自动执行", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
@@ -1796,9 +1869,11 @@ private fun HostEditorSheet(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = agentForwarding, onCheckedChange = { agentForwarding = it })
-                Text("启用 SSH 代理转发", style = MaterialTheme.typography.bodyMedium)
+            if (protocol == ConnectionProtocol.SSH) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = agentForwarding, onCheckedChange = { agentForwarding = it })
+                    Text("启用 SSH 代理转发", style = MaterialTheme.typography.bodyMedium)
+                }
             }
             Spacer(Modifier.height(28.dp))
             Button(
@@ -1815,7 +1890,7 @@ private fun HostEditorSheet(
                             authentication = authentication,
                             keyId = keyId,
                             startupSnippetId = startupSnippetId,
-                            agentForwarding = agentForwarding,
+                            agentForwarding = protocol == ConnectionProtocol.SSH && agentForwarding,
                         ),
                     )
                 },

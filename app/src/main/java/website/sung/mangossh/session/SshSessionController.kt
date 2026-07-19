@@ -2,6 +2,7 @@ package website.sung.mangossh.session
 
 import android.content.Context
 import android.net.Uri
+import website.sung.mangossh.R
 import com.trilead.ssh2.AuthAgentCallback
 import com.trilead.ssh2.Connection
 import com.trilead.ssh2.DynamicPortForwarder
@@ -46,6 +47,8 @@ import website.sung.mangossh.data.vault.PortForwardType
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 
 /**
  * Owns live SSH sockets and keeps all blocking protocol work away from Compose.
@@ -81,28 +84,24 @@ class SshSessionController(
 
     fun connect(profile: ConnectionProfile): String {
         val sessionId = UUID.randomUUID().toString()
+        MangoLog.info(MangoLogEvent.SSH_CONNECT_STARTED)
         updateSession(
             TerminalSessionState(
                 id = sessionId,
                 profileId = profile.id,
                 title = profile.label,
                 endpoint = profile.endpoint,
+                protocol = profile.protocol,
                 phase = TerminalSessionPhase.CONNECTING,
                 detail = "正在建立安全连接…",
             ),
         )
 
-        if (profile.protocol == ConnectionProtocol.MOSH) {
-            updateSession(
-                sessionId = sessionId,
-                phase = TerminalSessionPhase.FAILED,
-                detail = "此构建未捆绑原生 Mosh 运行时，无法将其伪装成 SSH 连接。请改用 SSH。",
-            )
-            return sessionId
-        }
-
         scope.launch {
-            runSshSession(sessionId, profile)
+            when (profile.protocol) {
+                ConnectionProtocol.SSH -> runSshSession(sessionId, profile)
+                ConnectionProtocol.MOSH -> runMoshSession(sessionId, profile)
+            }
         }
         return sessionId
     }
@@ -114,10 +113,11 @@ class SshSessionController(
 
     fun send(sessionId: String, bytes: ByteArray) {
         scope.launch {
-            val session = sessionsById[sessionId]?.session ?: return@launch
+            val managed = sessionsById[sessionId] ?: return@launch
+            val output = managed.session?.stdin ?: managed.moshProcess?.output ?: return@launch
             runCatching {
-                session.stdin.write(bytes)
-                session.stdin.flush()
+                output.write(bytes)
+                output.flush()
             }.onFailure { error ->
                 publishNotice(sessionId, "\r\n[MangoSSH] 写入失败：${error.toSafeMessage()}\r\n")
             }
@@ -128,7 +128,11 @@ class SshSessionController(
         if (columns <= 0 || rows <= 0) return
         scope.launch {
             runCatching {
-                sessionsById[sessionId]?.session?.resizePTY(columns, rows, 0, 0)
+                val managed = sessionsById[sessionId] ?: return@runCatching
+                when (managed.protocol) {
+                    ConnectionProtocol.SSH -> managed.session?.resizePTY(columns, rows, 0, 0)
+                    ConnectionProtocol.MOSH -> managed.moshProcess?.resize(columns, rows)
+                }
             }
         }
     }
@@ -152,6 +156,14 @@ class SshSessionController(
             val managed = sessionsById[sessionId]
             if (managed == null) {
                 updatePortForward(runtimeId, PortForwardRuntimePhase.FAILED, "The SSH session is not open")
+                return@launch
+            }
+            if (managed.protocol != ConnectionProtocol.SSH) {
+                updatePortForward(
+                    runtimeId,
+                    PortForwardRuntimePhase.FAILED,
+                    context.getString(R.string.mosh_not_supported_for_ssh_feature),
+                )
                 return@launch
             }
             try {
@@ -188,7 +200,7 @@ class SshSessionController(
         scope.launch {
             var stagingFile: File? = null
             try {
-                val connection = requireNotNull(sessionsById[sessionId]?.connection) { "The SSH session is not open" }
+                val connection = requireSshConnection(sessionId)
                 updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Preparing file")
                 stagingFile = File.createTempFile("mangossh-scp-", ".upload", context.cacheDir)
                 requireNotNull(context.contentResolver.openInputStream(sourceUri)) { "Cannot open selected file" }.use { input ->
@@ -226,7 +238,7 @@ class SshSessionController(
         )
         scope.launch {
             try {
-                val connection = requireNotNull(sessionsById[sessionId]?.connection) { "The SSH session is not open" }
+                val connection = requireSshConnection(sessionId)
                 updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Downloading")
                 requireNotNull(context.contentResolver.openOutputStream(destinationUri, "w")) {
                     "Cannot create destination file"
@@ -243,7 +255,7 @@ class SshSessionController(
     fun requestServerResources(sessionId: String) {
         scope.launch {
             try {
-                val connection = requireNotNull(sessionsById[sessionId]?.connection) { "The SSH session is not open" }
+                val connection = requireSshConnection(sessionId)
                 val report = collectServerResourceReport(connection)
                 _resourceSnapshots.update { snapshots ->
                     snapshots + (sessionId to ServerResourceSnapshot(sessionId = sessionId, report = report))
@@ -259,8 +271,10 @@ class SshSessionController(
         managed.readerJobs.forEach(Job::cancel)
         closePortForwards(sessionId, managed)
         runCatching { managed.session?.close() }
+        runCatching { managed.moshProcess?.close() }
         runCatching { managed.connection.close() }
         updateSession(sessionId, TerminalSessionPhase.CLOSED, "连接已关闭")
+        MangoLog.info(MangoLogEvent.SSH_SESSION_CLOSED)
         if (sessionsById.isEmpty()) {
             SessionForegroundService.stop(context)
         }
@@ -274,7 +288,7 @@ class SshSessionController(
     private suspend fun runSshSession(sessionId: String, profile: ConnectionProfile) {
         val snapshot = vault.snapshot.value
         val connection = Connection(profile.hostname, profile.port)
-        val managed = ManagedSession(connection)
+        val managed = ManagedSession(connection, ConnectionProtocol.SSH)
         sessionsById[sessionId] = managed
         try {
             connection.addUserAuthBanner(
@@ -291,8 +305,10 @@ class SshSessionController(
 
             updateSession(sessionId, TerminalSessionPhase.AUTHENTICATING, "正在验证身份…")
             if (!authenticate(connection, sessionId, profile, snapshot)) {
+                MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
                 throw SshAuthenticationException("服务器拒绝了此身份验证方式。")
             }
+            MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
             val session = connection.openSession()
             managed.session = session
@@ -305,8 +321,9 @@ class SshSessionController(
 
             updateSession(sessionId, TerminalSessionPhase.OPEN, "已连接")
             SessionForegroundService.start(context)
-            startReaders(sessionId, managed)
-            runStartupSnippet(sessionId, session, profile, snapshot)
+            MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
+            startSshReaders(sessionId, managed)
+            runStartupSnippet(sessionId, profile, snapshot)
             snapshot.portForwards
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
@@ -317,6 +334,94 @@ class SshSessionController(
             runCatching { managed.session?.close() }
             runCatching { connection.close() }
             updateSession(sessionId, TerminalSessionPhase.FAILED, error.toSafeMessage())
+            MangoLog.warn(MangoLogEvent.SSH_SESSION_FAILED, error)
+            if (sessionsById.isEmpty()) SessionForegroundService.stop(context)
+        }
+    }
+
+    /**
+     * Runs the SSH-only Mosh bootstrap, then replaces that transport with the
+     * bundled native UDP client. The SSH connection is intentionally closed
+     * after `MOSH CONNECT`: Mosh's design does not keep an SSH channel open.
+     */
+    private suspend fun runMoshSession(sessionId: String, profile: ConnectionProfile) {
+        val snapshot = vault.snapshot.value
+        val connection = Connection(profile.hostname, profile.port)
+        val managed = ManagedSession(connection, ConnectionProtocol.MOSH)
+        sessionsById[sessionId] = managed
+        try {
+            connection.addUserAuthBanner(
+                UserAuthBannerCallback { banner, _ ->
+                    publishNotice(sessionId, "\r\n[MangoSSH] ${banner.sanitizeRemoteBanner()}\r\n")
+                },
+            )
+            updateSession(sessionId, TerminalSessionPhase.VERIFYING_HOST_KEY, "正在验证服务器指纹…")
+            connection.connect(
+                HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
+                CONNECT_TIMEOUT_MILLIS,
+                KEY_EXCHANGE_TIMEOUT_MILLIS,
+            )
+            updateSession(sessionId, TerminalSessionPhase.AUTHENTICATING, "正在验证身份…")
+            if (!authenticate(connection, sessionId, profile, snapshot)) {
+                MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
+                throw SshAuthenticationException("服务器拒绝了此身份验证方式。")
+            }
+            MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
+
+            updateSession(
+                sessionId,
+                TerminalSessionPhase.CONNECTING,
+                context.getString(R.string.mosh_connecting),
+            )
+            MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_STARTED)
+            val bootstrap = runCatching { bootstrapMosh(connection) }.getOrElse { error ->
+                MangoLog.warn(MangoLogEvent.MOSH_BOOTSTRAP_FAILED, error)
+                throw MoshBootstrapException(error)
+            }
+            MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_SUCCEEDED)
+            runCatching { connection.close() }
+
+            val moshProcess = try {
+                runCatching {
+                    MoshPtyProcess.start(
+                        context = context,
+                        host = profile.hostname,
+                        port = bootstrap.port,
+                        key = bootstrap.key,
+                        terminalColumns = INITIAL_COLUMNS,
+                        terminalRows = INITIAL_ROWS,
+                    )
+                }.getOrElse { error ->
+                    MangoLog.warn(MangoLogEvent.MOSH_RUNTIME_INSTALL_FAILED, error)
+                    throw MoshRuntimeException(error)
+                }
+            } finally {
+                // The native launcher consumes this one-shot UDP session key.
+                // Clear the Java copy even when an asset or JNI check fails.
+                bootstrap.key.fill('\u0000')
+            }
+            managed.moshProcess = moshProcess
+            MangoLog.info(MangoLogEvent.MOSH_PROCESS_STARTED)
+
+            updateSession(sessionId, TerminalSessionPhase.OPEN, context.getString(R.string.mosh_open))
+            SessionForegroundService.start(context)
+            startMoshReader(sessionId, managed, moshProcess)
+            runStartupSnippet(sessionId, profile, snapshot)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            sessionsById.remove(sessionId)
+            runCatching { managed.moshProcess?.close() }
+            runCatching { managed.connection.close() }
+            val detail = if (error is MoshBootstrapException) {
+                context.getString(R.string.mosh_bootstrap_failed)
+            } else if (error is MoshRuntimeException) {
+                context.getString(R.string.mosh_runtime_missing)
+            } else {
+                error.toSafeMessage()
+            }
+            updateSession(sessionId, TerminalSessionPhase.FAILED, detail)
+            MangoLog.warn(MangoLogEvent.SSH_SESSION_FAILED, error)
             if (sessionsById.isEmpty()) SessionForegroundService.stop(context)
         }
     }
@@ -385,10 +490,39 @@ class SshSessionController(
         }
     }
 
-    private fun startReaders(sessionId: String, managed: ManagedSession) {
+    /** Starts independent stdout and stderr readers for an interactive SSH shell. */
+    private fun startSshReaders(sessionId: String, managed: ManagedSession) {
         val session = managed.session ?: return
         managed.readerJobs += scope.launch { readStream(sessionId, session.stdout, TerminalOutputSource.STDOUT) }
         managed.readerJobs += scope.launch { readStream(sessionId, session.stderr, TerminalOutputSource.STDERR) }
+    }
+
+    /**
+     * Reads the single PTY stream used by Mosh and reaps the native child after
+     * EOF. A process that exits on its own is represented as a closed terminal
+     * rather than leaving a stale foreground notification behind.
+     */
+    private fun startMoshReader(
+        sessionId: String,
+        managed: ManagedSession,
+        process: MoshPtyProcess,
+    ) {
+        managed.readerJobs += scope.launch {
+            try {
+                readStream(sessionId, process.input, TerminalOutputSource.STDOUT)
+            } finally {
+                runCatching { process.awaitExit() }
+                // EOF can occur without a UI-initiated close. Release the
+                // duplicated ParcelFileDescriptors in that normal path too.
+                runCatching { process.close() }
+                if (sessionsById.remove(sessionId, managed)) {
+                    closePortForwards(sessionId, managed)
+                    updateSession(sessionId, TerminalSessionPhase.CLOSED, "Mosh session ended")
+                    MangoLog.info(MangoLogEvent.MOSH_PROCESS_STOPPED)
+                    if (sessionsById.isEmpty()) SessionForegroundService.stop(context)
+                }
+            }
+        }
     }
 
     private suspend fun readStream(sessionId: String, input: InputStream, source: TerminalOutputSource) {
@@ -404,12 +538,8 @@ class SshSessionController(
         }
     }
 
-    private fun runStartupSnippet(
-        sessionId: String,
-        session: Session,
-        profile: ConnectionProfile,
-        snapshot: VaultSnapshot,
-    ) {
+    /** Sends an explicitly selected startup snippet after either transport becomes interactive. */
+    private fun runStartupSnippet(sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot) {
         val snippet = profile.startupSnippetId?.let { id -> snapshot.snippets.firstOrNull { it.id == id } } ?: return
         val text = if (snippet.appendNewline && !snippet.script.endsWith('\n')) {
             snippet.script + "\n"
@@ -496,6 +626,36 @@ class SshSessionController(
             "SCP file name contains control characters"
         }
         return normalized
+    }
+
+    /**
+     * Starts the remote Mosh server through a fixed command and extracts the
+     * generated UDP port/key pair. The command contains no user-provided text;
+     * raw server lines are never surfaced because a valid line contains the
+     * sensitive Mosh key.
+     */
+    private fun bootstrapMosh(connection: Connection): MoshBootstrap {
+        val bootstrapSession = connection.openSession()
+        return try {
+            bootstrapSession.execCommand(MOSH_SERVER_COMMAND)
+            val reader = bootstrapSession.stdout.bufferedReader()
+            for (lineIndex in 0 until MAX_MOSH_BOOTSTRAP_LINES) {
+                val line = reader.readLine() ?: break
+                MoshBootstrapParser.parse(line)?.let { bootstrap -> return bootstrap }
+            }
+            throw MoshBootstrapException()
+        } finally {
+            runCatching { bootstrapSession.close() }
+        }
+    }
+
+    /** Rejects SSH-channel-only actions once the SSH Mosh bootstrap has closed. */
+    private fun requireSshConnection(sessionId: String): Connection {
+        val managed = requireNotNull(sessionsById[sessionId]) { "The SSH session is not open" }
+        check(managed.protocol == ConnectionProtocol.SSH) {
+            context.getString(R.string.mosh_not_supported_for_ssh_feature)
+        }
+        return managed.connection
     }
 
     private fun collectServerResourceReport(connection: Connection): String {
@@ -594,6 +754,7 @@ class SshSessionController(
             if (known.any { it.algorithm == algorithm && it.keyBlobBase64 == encoded }) return true
 
             val previous = known.firstOrNull { it.algorithm == algorithm }
+            MangoLog.info(MangoLogEvent.SSH_HOST_KEY_PROMPTED)
             val accepted = requestPrompt(
                 SessionPrompt.HostKeyVerification(
                     requestId = UUID.randomUUID().toString(),
@@ -623,9 +784,17 @@ class SshSessionController(
         }
     }
 
-    private class ManagedSession(val connection: Connection) {
+    /** Holds one terminal transport and resources that must close together. */
+    private class ManagedSession(
+        val connection: Connection,
+        val protocol: ConnectionProtocol,
+    ) {
         @Volatile
         var session: Session? = null
+
+        @Volatile
+        var moshProcess: MoshPtyProcess? = null
+
         val readerJobs = mutableListOf<Job>()
         val forwards = ConcurrentHashMap<String, ManagedPortForward>()
     }
@@ -707,7 +876,14 @@ class SshSessionController(
             }
         }.trim().take(MAX_REMOTE_BANNER_CHARS).ifBlank { "Authentication banner received" }
 
+    /** Authentication rejection intentionally carries a user-safe message only. */
     private class SshAuthenticationException(message: String) : Exception(message)
+
+    /** Signals that the remote command did not return a valid Mosh bootstrap record. */
+    private class MoshBootstrapException(cause: Throwable? = null) : Exception(cause)
+
+    /** Hides native/asset exception details from terminal UI while preserving them for safe logging. */
+    private class MoshRuntimeException(cause: Throwable) : Exception(cause)
 
     private companion object {
         const val CONNECT_TIMEOUT_MILLIS = 10_000
@@ -722,6 +898,8 @@ class SshSessionController(
         const val MAX_SCP_FILENAME_CHARS = 255
         const val SAFE_SCP_PATH_CHARACTERS = "._/@%+=:,~-"
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
+        const val MAX_MOSH_BOOTSTRAP_LINES = 32
+        const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256"
         const val RESOURCE_COMMAND = "printf 'Host: '; hostname; printf '\\nUptime: '; uptime; printf '\\nLoad: '; cat /proc/loadavg 2>/dev/null || true; printf '\\nMemory:\\n'; free -h 2>/dev/null || true; printf '\\nDisk:\\n'; df -h / 2>/dev/null || true; printf '\\nCPU: '; nproc 2>/dev/null || true"
 
         fun portForwardRuntimeId(sessionId: String, ruleId: String): String = "$sessionId:$ruleId"

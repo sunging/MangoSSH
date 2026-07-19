@@ -27,6 +27,7 @@ import website.sung.mangossh.security.AppLockStore
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SshSessionController
 
+/** Top-level areas exposed by the Compose navigation bar. */
 enum class AppSection(val label: String) {
     HOSTS("主机"),
     KEYS("密钥"),
@@ -34,6 +35,12 @@ enum class AppSection(val label: String) {
     SETTINGS("设置"),
 }
 
+/**
+ * Bridges encrypted vault state and live session state to Compose.
+ *
+ * Secret-bearing input is passed directly to the vault/session layer and is
+ * never copied into UI state beyond the lifetime required for the operation.
+ */
 class MangoSshViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = VaultRepository(application)
     private val keyManager = SshKeyManager()
@@ -109,6 +116,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { vault.open() }
     }
 
+    /** Starts the selected SSH or Mosh profile and returns its ephemeral session identifier. */
     fun connect(profile: ConnectionProfile): String = sessionController.connect(profile)
 
     fun disconnect(sessionId: String) {
@@ -170,6 +178,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.stopPortForward(sessionId, ruleId)
     }
 
+    /** Validates local UI form input before delegating an SCP upload to an SSH session. */
     fun uploadScp(sessionId: String, sourceUri: Uri, displayName: String, remoteDirectory: String) {
         if (remoteDirectory.isBlank()) {
             _userMessage.value = "请输入远端目录"
@@ -179,6 +188,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             .onFailure { _userMessage.value = "远端目录包含不支持的字符" }
     }
 
+    /** Validates local UI form input before delegating an SCP download to an SSH session. */
     fun downloadScp(sessionId: String, remotePath: String, destinationUri: Uri) {
         if (remotePath.isBlank()) {
             _userMessage.value = "请输入远端文件路径"
@@ -327,6 +337,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** Converts the PIN briefly to a mutable array so it can be cleared after the verifier is stored. */
     fun configureAppPin(pin: String) {
         val chars = pin.toCharArray()
         try {
