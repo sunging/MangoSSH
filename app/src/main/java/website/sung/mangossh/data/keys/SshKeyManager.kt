@@ -47,7 +47,9 @@ class SshKeyManager {
         val keyPair = decodeKeyPair(normalized, passphrase)
         return recordFrom(
             id = UUID.randomUUID().toString(),
-            label = label.ifBlank { "导入的 ${keyPair.public.algorithm} 密钥" },
+            // Algorithm names are locale-neutral and make an imported key
+            // identifiable without persisting a language-specific default.
+            label = label.ifBlank { keyPair.public.algorithm },
             keyPair = keyPair,
             privateKeyPem = normalized,
             requiresPassphrase = encrypted,

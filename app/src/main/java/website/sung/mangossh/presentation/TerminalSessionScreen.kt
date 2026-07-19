@@ -44,6 +44,7 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.SharedFlow
@@ -51,6 +52,7 @@ import kotlinx.coroutines.flow.filter
 import org.connectbot.terminal.TerminalEmulatorFactory
 import org.connectbot.terminal.Terminal
 import website.sung.mangossh.session.TerminalOutput
+import website.sung.mangossh.session.TerminalOutputSource
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
 import website.sung.mangossh.session.ServerResourceSnapshot
@@ -92,13 +94,24 @@ fun TerminalSessionScreen(
         )
     }
 
-    LaunchedEffect(emulator, session.id) {
+    val language = LocalConfiguration.current.locales[0]?.language
+    LaunchedEffect(emulator, session.id, language) {
         output
             .filter { it.sessionId == session.id }
-            .collect { item -> emulator.writeInput(item.bytes) }
+            .collect { item ->
+                val bytes = if (item.source == TerminalOutputSource.LOCALIZABLE_NOTICE) {
+                    MangoUiLiteralLocalization
+                        .resolve(item.bytes.decodeToString(), language)
+                        .encodeToByteArray()
+                } else {
+                    item.bytes
+                }
+                emulator.writeInput(bytes)
+            }
     }
-    LaunchedEffect(session.id, session.detail) {
-        session.detail?.let { detail ->
+    val localizedSessionDetail = session.detail?.let(::localizedUiLiteral)
+    LaunchedEffect(session.id, localizedSessionDetail) {
+        localizedSessionDetail?.let { detail ->
             emulator.writeInput("\r\n[MangoSSH] $detail\r\n".encodeToByteArray())
         }
     }
@@ -244,8 +257,9 @@ private fun TerminalKeyBar(
     }
 }
 
+/** Returns the localized, application-owned label for a live session phase. */
 @Composable
-private fun TerminalSessionPhase.label(): String = localizedUiLiteral(
+internal fun TerminalSessionPhase.label(): String = localizedUiLiteral(
     when (this) {
         TerminalSessionPhase.CONNECTING -> "连接中"
         TerminalSessionPhase.VERIFYING_HOST_KEY -> "验证指纹"

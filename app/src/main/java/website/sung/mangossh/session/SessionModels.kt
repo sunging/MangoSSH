@@ -31,6 +31,8 @@ enum class TerminalOutputSource {
     STDOUT,
     STDERR,
     LOCAL_NOTICE,
+    /** An application-owned notice whose fixed wording may be localized by the terminal UI. */
+    LOCALIZABLE_NOTICE,
 }
 
 @Immutable

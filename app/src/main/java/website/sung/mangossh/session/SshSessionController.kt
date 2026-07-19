@@ -119,7 +119,7 @@ class SshSessionController(
                 output.write(bytes)
                 output.flush()
             }.onFailure { error ->
-                publishNotice(sessionId, "\r\n[MangoSSH] 写入失败：${error.toSafeMessage()}\r\n")
+                publishLocalizableNotice(sessionId, "\r\n[MangoSSH] 写入失败：${error.toSafeMessage()}\r\n")
             }
         }
     }
@@ -261,7 +261,7 @@ class SshSessionController(
                     snapshots + (sessionId to ServerResourceSnapshot(sessionId = sessionId, report = report))
                 }
             } catch (error: Exception) {
-                publishNotice(sessionId, "\r\n[MangoSSH] Resource query failed: ${error.toSafeMessage()}\r\n")
+                publishLocalizableNotice(sessionId, "\r\n[MangoSSH] 资源查询失败：${error.toSafeMessage()}\r\n")
             }
         }
     }
@@ -315,7 +315,9 @@ class SshSessionController(
             session.requestPTY("xterm-256color", INITIAL_COLUMNS, INITIAL_ROWS, 0, 0, ByteArray(0))
             if (profile.agentForwarding) {
                 val enabled = session.requestAuthAgentForwarding(VaultSshAgent(snapshot.keys, keyManager))
-                if (!enabled) publishNotice(sessionId, "\r\n[MangoSSH] 服务器未接受 SSH 代理转发。\r\n")
+                if (!enabled) {
+                    publishLocalizableNotice(sessionId, "\r\n[MangoSSH] 服务器未接受 SSH 代理转发。\r\n")
+                }
             }
             session.startShell()
 
@@ -699,6 +701,18 @@ class SshSessionController(
 
     private fun publishNotice(sessionId: String, message: String) {
         _output.tryEmit(TerminalOutput(sessionId, message.encodeToByteArray(), TerminalOutputSource.LOCAL_NOTICE))
+    }
+
+    /**
+     * Emits an application-owned terminal notice separately from server output.
+     *
+     * Keeping the source distinct lets the UI localize only fixed MangoSSH
+     * wording and preserve all remote banners and terminal bytes verbatim.
+     */
+    private fun publishLocalizableNotice(sessionId: String, message: String) {
+        _output.tryEmit(
+            TerminalOutput(sessionId, message.encodeToByteArray(), TerminalOutputSource.LOCALIZABLE_NOTICE),
+        )
     }
 
     private fun updateSession(state: TerminalSessionState) {

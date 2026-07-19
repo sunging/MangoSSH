@@ -107,10 +107,11 @@ import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.security.AppLockConfiguration
 
 /**
- * Localizes the existing Compose screen chrome while preserving dynamic values
- * such as host labels, fingerprints, and terminal output unchanged. The app
- * advertises English and Simplified Chinese in `locales_config.xml`; all other
- * device languages fall back to English.
+ * Localizes established Compose screen chrome. Callers pass [localize] as
+ * `false` for user-created labels, host data, fingerprints, and server-owned
+ * text so those values are never translated or altered. The app advertises
+ * English and Simplified Chinese in `locales_config.xml`; all other device
+ * languages fall back to English.
  */
 @Composable
 private fun Text(
@@ -131,9 +132,10 @@ private fun Text(
     minLines: Int = 1,
     onTextLayout: (TextLayoutResult) -> Unit = {},
     style: TextStyle = LocalTextStyle.current,
+    localize: Boolean = true,
 ) {
     androidx.compose.material3.Text(
-        text = localizedUiLiteral(text),
+        text = if (localize) localizedUiLiteral(text) else text,
         modifier = modifier,
         color = color,
         fontSize = fontSize,
@@ -237,7 +239,10 @@ fun MangoSshApp(
                             onClick = { openHostEditor() },
                             enabled = vaultStatus !is VaultStatus.Failed,
                         ) {
-                            Icon(Icons.Outlined.Add, contentDescription = "新建主机配置")
+                            Icon(
+                                Icons.Outlined.Add,
+                                contentDescription = localizedUiLiteral("新建主机配置"),
+                            )
                         }
                     }
                 },
@@ -252,7 +257,7 @@ fun MangoSshApp(
                         icon = {
                             Icon(
                                 imageVector = section.icon(),
-                                contentDescription = section.label,
+                                contentDescription = localizedUiLiteral(section.label),
                             )
                         },
                         label = { Text(section.label) },
@@ -452,11 +457,12 @@ private fun HostsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(session.title, fontWeight = FontWeight.SemiBold)
+                            Text(session.title, fontWeight = FontWeight.SemiBold, localize = false)
                             Text(
-                                session.endpoint + " · " + session.phase.name,
+                                session.endpoint + " · " + session.phase.label(),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                localize = false,
                             )
                         }
                         OutlinedButton(onClick = { onOpenSession(session.id) }) { Text("打开") }
@@ -554,17 +560,27 @@ private fun HostCard(
                 )
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(host.label, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        host.label,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        localize = false,
+                    )
                     Text(
                         text = "${host.username}@${host.endpoint}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        localize = false,
                     )
                 }
                 IconButton(onClick = onEdit) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "编辑 ${host.label}")
+                    Icon(
+                        Icons.Outlined.MoreVert,
+                        contentDescription = localizedUiLiteral("编辑") + " " + host.label,
+                    )
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -669,11 +685,12 @@ private fun KeysScreen(
         items(keys, key = { it.id }) { key ->
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(key.label, fontWeight = FontWeight.SemiBold)
+                    Text(key.label, fontWeight = FontWeight.SemiBold, localize = false)
                     Text(
                         "${key.algorithm} · ${key.fingerprint}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        localize = false,
                     )
                     if (key.requiresPassphrase) {
                         Text(
@@ -757,7 +774,8 @@ private fun ImportKeyDialog(
     onDismiss: () -> Unit,
     onConfirm: (label: String, passphrase: String) -> Unit,
 ) {
-    var label by rememberSaveable { mutableStateOf("导入的私钥") }
+    val defaultLabel = localizedUiLiteral("导入的私钥")
+    var label by rememberSaveable { mutableStateOf(defaultLabel) }
     var passphrase by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -882,13 +900,18 @@ private fun TransfersScreen(
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
                         val direction = if (transfer.direction == ScpTransferDirection.UPLOAD) "上传" else "下载"
-                        Text("$direction · ${transfer.displayName}", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${localizedUiLiteral(direction)} · ${transfer.displayName}",
+                            fontWeight = FontWeight.SemiBold,
+                            localize = false,
+                        )
                         Text(
                             transfer.remotePath,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            localize = false,
                         )
                         Spacer(Modifier.height(4.dp))
                         val phase = when (transfer.phase) {
@@ -898,13 +921,14 @@ private fun TransfersScreen(
                             ScpTransferPhase.FAILED -> "失败"
                         }
                         Text(
-                            listOfNotNull(phase, transfer.detail).joinToString(" · "),
+                            listOfNotNull(localizedUiLiteral(phase), transfer.detail).joinToString(" · "),
                             style = MaterialTheme.typography.labelSmall,
                             color = if (transfer.phase == ScpTransferPhase.FAILED) {
                                 MaterialTheme.colorScheme.error
                             } else {
                                 MaterialTheme.colorScheme.primary
                             },
+                            localize = false,
                         )
                     }
                 }
@@ -938,12 +962,17 @@ private fun TransfersScreen(
             val eligibleSession = openSshSessions.firstOrNull { it.profileId == rule.profileId }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(rule.type.label + " · " + (profile?.label ?: "已删除的主机"), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${localizedUiLiteral(rule.type.label)} · ${profile?.label ?: localizedUiLiteral("已删除的主机")}",
+                        fontWeight = FontWeight.SemiBold,
+                        localize = false,
+                    )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         rule.displayDescription(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        localize = false,
                     )
                     val status = active?.let { runtime ->
                         when (runtime.phase) {
@@ -1051,7 +1080,7 @@ private fun PortForwardRuleDialog(
                     FilterChip(
                         selected = profileId == host.id,
                         onClick = { profileId = host.id },
-                        label = { Text(host.label) },
+                        label = { Text(host.label, localize = false) },
                     )
                 }
                 Text("类型", style = MaterialTheme.typography.titleSmall)
@@ -1165,7 +1194,7 @@ private fun ScpTransferDialog(
                     FilterChip(
                         selected = sessionId == session.id,
                         onClick = { sessionId = session.id },
-                        label = { Text(session.title + " · " + session.endpoint) },
+                        label = { Text(session.title + " · " + session.endpoint, localize = false) },
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1310,9 +1339,10 @@ private fun SettingsScreen(
                     Text("自定义 WebDAV", fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        webDavConfig?.let { "${it.endpoint}/${it.remoteFileName}" } ?: "尚未配置",
+                        webDavConfig?.let { "${it.endpoint}/${it.remoteFileName}" } ?: localizedUiLiteral("尚未配置"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        localize = false,
                     )
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1393,12 +1423,13 @@ private fun SettingsScreen(
             items(snippets, key = { it.id }) { snippet ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
-                        Text(snippet.label, fontWeight = FontWeight.SemiBold)
+                        Text(snippet.label, fontWeight = FontWeight.SemiBold, localize = false)
                         Text(
                             snippet.script,
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
+                            localize = false,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(8.dp))
@@ -1836,7 +1867,7 @@ private fun HostEditorSheet(
                                 FilterChip(
                                     selected = keyId == key.id,
                                     onClick = { keyId = key.id },
-                                    label = { Text(key.label) },
+                                    label = { Text(key.label, localize = false) },
                                 )
                             }
                         }
@@ -1864,7 +1895,7 @@ private fun HostEditorSheet(
                     FilterChip(
                         selected = startupSnippetId == snippet.id,
                         onClick = { startupSnippetId = snippet.id },
-                        label = { Text(snippet.label) },
+                        label = { Text(snippet.label, localize = false) },
                     )
                 }
             }
@@ -1928,12 +1959,16 @@ private fun SessionPromptDialog(
                                 "这是首次连接到此服务器。请与管理员提供的指纹核对后再信任。"
                             },
                         )
-                        Text("${prompt.hostname}:${prompt.port} · ${prompt.algorithm}")
+                        Text("${prompt.hostname}:${prompt.port} · ${prompt.algorithm}", localize = false)
                         SelectionContainer {
-                            Text(prompt.fingerprint, style = MaterialTheme.typography.bodySmall)
+                            Text(prompt.fingerprint, style = MaterialTheme.typography.bodySmall, localize = false)
                         }
                         prompt.previousFingerprint?.let { previous ->
-                            Text("原指纹：$previous", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                localizedUiLiteral("原指纹：") + previous,
+                                style = MaterialTheme.typography.bodySmall,
+                                localize = false,
+                            )
                         }
                     }
                 },
@@ -1958,13 +1993,18 @@ private fun SessionPromptDialog(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         prompt.instruction?.let { instruction ->
-                            SelectionContainer { Text(instruction) }
+                            SelectionContainer { Text(instruction, localize = false) }
                         }
                         prompt.fields.forEachIndexed { index, field ->
                             OutlinedTextField(
                                 value = answers[index],
                                 onValueChange = { answers[index] = it },
-                                label = { Text(field.label.ifBlank { "输入" }) },
+                                label = {
+                                    Text(
+                                        field.label.ifBlank { localizedUiLiteral("输入") },
+                                        localize = false,
+                                    )
+                                },
                                 singleLine = true,
                                 visualTransformation = if (field.echo) {
                                     VisualTransformation.None
