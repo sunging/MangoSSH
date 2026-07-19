@@ -48,8 +48,8 @@ jobs:
       - name: Test, lint, and package debug APK
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lint :app:assembleDebug
 
-      # This is continuous delivery of an installable debug artifact. A signed
-      # production release must be added separately with repository secrets.
+      # This is continuous delivery of an installable debug artifact. Tagged
+      # production releases are signed by the dedicated release workflow.
       - name: Upload verified debug APK
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v6

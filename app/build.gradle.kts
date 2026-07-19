@@ -3,6 +3,20 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Release credentials are intentionally injected only by CI. Local release
+// builds remain unsigned unless every required environment variable is supplied,
+// which prevents a developer workstation from accidentally depending on secrets.
+val releaseStorePath = providers.environmentVariable("MANGOSSH_RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("MANGOSSH_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("MANGOSSH_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("MANGOSSH_RELEASE_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseStorePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "website.sung.mangossh"
     compileSdk {
@@ -22,8 +36,26 @@ android {
 
     }
 
+    signingConfigs {
+        create("release") {
+            // Do not attach a partially populated signing configuration: Gradle
+            // would otherwise read a path or password that is not safe to expose.
+            if (hasReleaseSigning) {
+                storeFile = file(requireNotNull(releaseStorePath))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // GitHub Actions supplies the complete signing material only for the
+            // signed release workflow. This preserves unsigned local builds.
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                 enable = false
             }
