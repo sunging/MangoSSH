@@ -210,8 +210,11 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             runCatching { keyManager.generateEd25519(label) }
                 .onSuccess {
-                    vault.upsertKey(it)
-                    _userMessage.value = "已生成 ${it.label}。"
+                    _userMessage.value = if (vault.upsertKey(it)) {
+                        "已生成 ${it.label}。"
+                    } else {
+                        "无法保存加密保险库。数据未被覆盖。"
+                    }
                 }
                 .onFailure {
                     _userMessage.value = "无法生成密钥。"
@@ -223,8 +226,11 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             runCatching { keyManager.importPrivateKey(label, contents, passphrase) }
                 .onSuccess {
-                    vault.upsertKey(it)
-                    _userMessage.value = "已导入 ${it.label}。"
+                    _userMessage.value = if (vault.upsertKey(it)) {
+                        "已导入 ${it.label}。"
+                    } else {
+                        "无法保存加密保险库。数据未被覆盖。"
+                    }
                 }
                 .onFailure { error ->
                     _userMessage.value = when (error) {

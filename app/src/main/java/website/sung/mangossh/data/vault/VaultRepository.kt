@@ -116,18 +116,25 @@ class VaultRepository(context: Context) {
         }
     }
 
-    /** Applies one mutation atomically, retaining the previous in-memory data if persistence fails. */
-    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot) = withContext(Dispatchers.IO) {
+    /**
+     * Applies one mutation atomically and reports whether the encrypted write
+     * committed. The caller must not claim success when persistence failed:
+     * generated private keys are intentionally retained only after this method
+     * returns `true`.
+     */
+    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot): Boolean = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
-            if (_status.value !is VaultStatus.Ready) return@withLock
+            if (_status.value !is VaultStatus.Ready) return@withLock false
             val updated = transform(_snapshot.value)
             try {
                 storage.write(updated)
                 _snapshot.value = updated
                 MangoLog.info(MangoLogEvent.VAULT_WRITE_SUCCEEDED)
+                true
             } catch (error: Exception) {
                 _status.value = VaultStatus.Failed("无法保存加密保险库。数据未被覆盖。")
                 MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error)
+                false
             }
         }
     }

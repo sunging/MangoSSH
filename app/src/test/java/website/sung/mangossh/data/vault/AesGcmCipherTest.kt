@@ -3,6 +3,7 @@ package website.sung.mangossh.data.vault
 import java.security.GeneralSecurityException
 import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.fail
 import org.junit.Test
 
@@ -17,6 +18,7 @@ class AesGcmCipherTest {
 
         val decrypted = AesGcmCipher.decrypt(key, encrypted, associatedData)
 
+        assertEquals(12, encrypted.nonce.size)
         assertArrayEquals(plaintext, decrypted)
     }
 
