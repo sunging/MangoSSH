@@ -3,6 +3,7 @@
 package website.sung.mangossh.presentation
 
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +61,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,6 +70,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -84,9 +87,11 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.data.vault.VaultStatus
+import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.PortForwardType
@@ -159,10 +164,38 @@ private fun Text(
 fun MangoSshApp(
     viewModel: MangoSshViewModel,
     onRequestBiometricUnlock: (() -> Unit)? = null,
+    onRequestNotificationPermission: (() -> Unit)? = null,
 ) {
     val appLocked by viewModel.appLocked.collectAsStateWithLifecycle()
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
+    val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val requestedSessionId by viewModel.requestedSessionId.collectAsStateWithLifecycle()
+    var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    val currentActiveSessionId by rememberUpdatedState(activeSessionId)
+    val notificationTargetUnavailableMessage = stringResource(R.string.session_notification_target_unavailable)
+
+    LaunchedEffect(viewModel) {
+        viewModel.sessionEndedEvents.collect { event ->
+            if (event.sessionId == currentActiveSessionId) {
+                activeSessionId = null
+                leaveSessionId = null
+                viewModel.sessionEndMessage(event)?.let(viewModel::reportUserMessage)
+            }
+        }
+    }
+    LaunchedEffect(requestedSessionId, appLocked, sessions) {
+        val sessionId = requestedSessionId ?: return@LaunchedEffect
+        if (!appLocked) {
+            if (sessions.any { it.id == sessionId }) {
+                activeSessionId = sessionId
+            } else {
+                viewModel.reportUserMessage(notificationTargetUnavailableMessage)
+            }
+            viewModel.consumeRequestedSession(sessionId)
+        }
+    }
     if (appLocked) {
         AppLockScreen(
             configuration = appLockConfiguration,
@@ -179,7 +212,6 @@ fun MangoSshApp(
     val snippets by viewModel.snippets.collectAsStateWithLifecycle()
     val selectedSection by viewModel.selectedSection.collectAsStateWithLifecycle()
     val vaultStatus by viewModel.vaultStatus.collectAsStateWithLifecycle()
-    val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val sessionPrompts by viewModel.sessionPrompts.collectAsStateWithLifecycle()
     val portForwardRules by viewModel.portForwardRules.collectAsStateWithLifecycle()
     val activePortForwards by viewModel.activePortForwards.collectAsStateWithLifecycle()
@@ -189,7 +221,6 @@ fun MangoSshApp(
     val portableExport by viewModel.portableExport.collectAsStateWithLifecycle()
     var editingHost by remember { mutableStateOf<ConnectionProfile?>(null) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
-    var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun openHostEditor(host: ConnectionProfile? = null) {
         editingHost = host
@@ -198,23 +229,66 @@ fun MangoSshApp(
 
     val activeSession = activeSessionId?.let { id -> sessions.firstOrNull { it.id == id } }
     if (activeSession != null) {
+        val activePrompt = sessionPrompts.firstOrNull { it.sessionId == activeSession.id }
+        val terminalEmulator = viewModel.terminalEmulator(activeSession.id)
+        if (terminalEmulator == null) {
+            LaunchedEffect(activeSession.id) { activeSessionId = null }
+            return
+        }
+        BackHandler(enabled = activePrompt == null) {
+            leaveSessionId = activeSession.id
+        }
         TerminalSessionScreen(
             session = activeSession,
-            output = viewModel.terminalOutput,
+            terminalEmulator = terminalEmulator,
+            clipboardCopies = viewModel.terminalClipboardCopies,
             onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
-            onResize = { columns, rows -> viewModel.resizeTerminal(activeSession.id, columns, rows) },
             resourceSnapshot = resourceSnapshots[activeSession.id],
             onRequestResources = { viewModel.requestServerResources(activeSession.id) },
-            onMinimize = { activeSessionId = null },
+            onRequestLeave = { leaveSessionId = activeSession.id },
             onClose = {
                 viewModel.disconnect(activeSession.id)
                 activeSessionId = null
+                leaveSessionId = null
             },
         )
-        sessionPrompts.firstOrNull { it.sessionId == activeSession.id }?.let { prompt ->
+        activePrompt?.let { prompt ->
             SessionPromptDialog(
                 prompt = prompt,
                 onRespond = { values -> viewModel.respondToSessionPrompt(prompt, values) },
+            )
+        }
+        if (leaveSessionId == activeSession.id) {
+            AlertDialog(
+                onDismissRequest = { leaveSessionId = null },
+                title = { Text(stringResource(R.string.session_leave_title)) },
+                text = { Text(stringResource(R.string.session_leave_message)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.disconnect(activeSession.id)
+                            activeSessionId = null
+                            leaveSessionId = null
+                        },
+                    ) {
+                        Text(stringResource(R.string.session_leave_disconnect))
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(
+                            onClick = {
+                                activeSessionId = null
+                                leaveSessionId = null
+                            },
+                        ) {
+                            Text(stringResource(R.string.session_leave_background))
+                        }
+                        TextButton(onClick = { leaveSessionId = null }) {
+                            Text(stringResource(R.string.session_leave_cancel))
+                        }
+                    }
+                },
             )
         }
         return
@@ -279,7 +353,10 @@ fun MangoSshApp(
                     onAddHost = { openHostEditor() },
                     onEditHost = { openHostEditor(it) },
                     onRemoveHost = viewModel::removeHost,
-                    onConnectHost = { host -> activeSessionId = viewModel.connect(host) },
+                    onConnectHost = { host ->
+                        onRequestNotificationPermission?.invoke()
+                        activeSessionId = viewModel.connect(host)
+                    },
                     onOpenSession = { sessionId -> activeSessionId = sessionId },
                     onDisconnectSession = viewModel::disconnect,
                 )

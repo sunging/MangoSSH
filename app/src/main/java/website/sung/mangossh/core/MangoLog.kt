@@ -46,6 +46,8 @@ enum class MangoLogEvent(val code: String) {
     SSH_SESSION_OPENED("ssh.session.opened"),
     SSH_SESSION_CLOSED("ssh.session.closed"),
     SSH_SESSION_FAILED("ssh.session.failed"),
+    FOREGROUND_SERVICE_STARTED("foreground_service.started"),
+    FOREGROUND_SERVICE_STOPPED("foreground_service.stopped"),
     MOSH_BOOTSTRAP_STARTED("mosh.bootstrap.started"),
     MOSH_BOOTSTRAP_SUCCEEDED("mosh.bootstrap.succeeded"),
     MOSH_BOOTSTRAP_FAILED("mosh.bootstrap.failed"),

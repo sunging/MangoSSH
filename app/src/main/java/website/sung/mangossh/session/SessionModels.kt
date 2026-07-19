@@ -26,20 +26,33 @@ data class TerminalSessionState(
     val detail: String? = null,
 )
 
-/** Origin metadata used to render terminal output without exposing it to diagnostic logs. */
-enum class TerminalOutputSource {
-    STDOUT,
-    STDERR,
-    LOCAL_NOTICE,
-    /** An application-owned notice whose fixed wording may be localized by the terminal UI. */
-    LOCALIZABLE_NOTICE,
+/** A transient terminal-originated clipboard request handled only by visible UI. */
+@Immutable
+data class TerminalClipboardCopy(
+    val sessionId: String,
+    val text: String,
+)
+
+/** Sanitized reason why a live transport was removed from the session runtime. */
+enum class SessionEndReason {
+    USER_REQUEST,
+    REMOTE_EXIT,
+    CONNECTION_LOST,
+    CONNECTION_FAILED,
 }
 
+/**
+ * One-shot lifecycle event for returning a visible terminal to the host list.
+ *
+ * [userMessage] is optional fixed, application-owned wording for failures
+ * that need a more specific explanation than [reason]. It must never contain
+ * host, credential, command, or protocol-library error data.
+ */
 @Immutable
-data class TerminalOutput(
+data class SessionEndedEvent(
     val sessionId: String,
-    val bytes: ByteArray,
-    val source: TerminalOutputSource,
+    val reason: SessionEndReason,
+    val userMessage: String? = null,
 )
 
 enum class PortForwardRuntimePhase {

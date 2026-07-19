@@ -1,8 +1,13 @@
 package website.sung.mangossh
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Build
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -15,18 +20,33 @@ import website.sung.mangossh.ui.theme.MangoSshTheme
 /** Hosts the Compose UI and delegates biometric verification without retaining biometric data. */
 class MainActivity : FragmentActivity() {
     private val mangoViewModel: MangoSshViewModel by viewModels()
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            mangoViewModel.reportUserMessage(getString(R.string.notification_permission_denied))
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleSessionIntent(intent)
         enableEdgeToEdge()
         setContent {
             MangoSshTheme {
                 MangoSshApp(
                     viewModel = mangoViewModel,
                     onRequestBiometricUnlock = ::requestBiometricUnlock,
+                    onRequestNotificationPermission = ::requestNotificationPermission,
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSessionIntent(intent)
     }
 
     override fun onStop() {
@@ -60,5 +80,38 @@ class MainActivity : FragmentActivity() {
                 .setAllowedAuthenticators(authenticators)
                 .build(),
         )
+    }
+
+    /** Requests the Android 13+ notification grant only as a result of a connect action. */
+    private fun requestNotificationPermission() {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    /** Routes a session-specific foreground notification without exposing its identifier in logs. */
+    private fun handleSessionIntent(intent: Intent?) {
+        if (intent?.action != ACTION_OPEN_SESSION) return
+        intent.getStringExtra(EXTRA_SESSION_ID)
+            ?.takeIf(String::isNotBlank)
+            ?.let(mangoViewModel::requestOpenSession)
+    }
+
+    companion object {
+        const val ACTION_OPEN_SESSION = "website.sung.mangossh.action.OPEN_SESSION"
+        const val ACTION_OPEN_SESSIONS = "website.sung.mangossh.action.OPEN_SESSIONS"
+        const val EXTRA_SESSION_ID = "website.sung.mangossh.extra.SESSION_ID"
+
+        /** Creates an explicit, reusable intent for one live session notification. */
+        fun sessionIntent(context: android.content.Context, sessionId: String): Intent =
+            Intent(context, MainActivity::class.java).apply {
+                action = ACTION_OPEN_SESSION
+                putExtra(EXTRA_SESSION_ID, sessionId)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
     }
 }

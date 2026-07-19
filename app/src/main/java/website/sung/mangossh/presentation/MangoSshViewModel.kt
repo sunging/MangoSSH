@@ -11,12 +11,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.connectbot.terminal.TerminalEmulator
+import website.sung.mangossh.MangoSshApplication
+import website.sung.mangossh.R
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
-import website.sung.mangossh.data.keys.SshKeyManager
 import website.sung.mangossh.data.sync.WebDavClient
 import website.sung.mangossh.data.sync.WebDavDownloadResult
 import website.sung.mangossh.data.sync.WebDavResult
-import website.sung.mangossh.data.vault.VaultRepository
 import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
@@ -24,8 +25,9 @@ import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
+import website.sung.mangossh.session.SessionEndedEvent
 import website.sung.mangossh.session.SessionPrompt
-import website.sung.mangossh.session.SshSessionController
+import website.sung.mangossh.session.SessionEndReason
 
 /** Top-level areas exposed by the Compose navigation bar. */
 enum class AppSection(val label: String) {
@@ -42,9 +44,10 @@ enum class AppSection(val label: String) {
  * never copied into UI state beyond the lifetime required for the operation.
  */
 class MangoSshViewModel(application: Application) : AndroidViewModel(application) {
-    private val vault = VaultRepository(application)
-    private val keyManager = SshKeyManager()
-    private val sessionController = SshSessionController(application, vault, keyManager)
+    private val runtime = (application as MangoSshApplication).sessionRuntime
+    private val vault = runtime.vault
+    private val keyManager = runtime.keyManager
+    private val sessionController = runtime.sessionController
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
 
@@ -79,7 +82,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val scpTransfers = sessionController.scpTransfers
     val resourceSnapshots = sessionController.resourceSnapshots
     val sessionPrompts = sessionController.prompts
-    val terminalOutput = sessionController.output
+    val sessionEndedEvents = sessionController.sessionEndedEvents
+    val terminalClipboardCopies = sessionController.clipboardCopies
 
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage = _userMessage.asStateFlow()
@@ -94,6 +98,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     private val _selectedSection = kotlinx.coroutines.flow.MutableStateFlow(AppSection.HOSTS)
     val selectedSection = _selectedSection.asStateFlow()
+
+    private val _requestedSessionId = MutableStateFlow<String?>(null)
+    /** Session selected by a foreground notification until the lock screen is cleared. */
+    val requestedSessionId = _requestedSessionId.asStateFlow()
 
     init {
         viewModelScope.launch { vault.open() }
@@ -129,6 +137,27 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun resizeTerminal(sessionId: String, columns: Int, rows: Int) {
         sessionController.resize(sessionId, columns, rows)
+    }
+
+    /** Returns the retained terminal state for a live session screen. */
+    fun terminalEmulator(sessionId: String): TerminalEmulator? = sessionController.terminalEmulator(sessionId)
+
+    /** Records a notification destination without bypassing the app lock. */
+    fun requestOpenSession(sessionId: String) {
+        _requestedSessionId.value = sessionId
+    }
+
+    /** Marks a notification destination as handled after it opens or is found stale. */
+    fun consumeRequestedSession(sessionId: String) {
+        if (_requestedSessionId.value == sessionId) _requestedSessionId.value = null
+    }
+
+    /** Maps a lifecycle event to its fixed current-locale message, when one is appropriate. */
+    fun sessionEndMessage(event: SessionEndedEvent): String? = event.userMessage ?: when (event.reason) {
+        SessionEndReason.USER_REQUEST -> null
+        SessionEndReason.REMOTE_EXIT -> getApplication<Application>().getString(R.string.session_ended_remote_exit)
+        SessionEndReason.CONNECTION_LOST -> getApplication<Application>().getString(R.string.session_ended_connection_lost)
+        SessionEndReason.CONNECTION_FAILED -> getApplication<Application>().getString(R.string.session_ended_connection_failed)
     }
 
     fun savePortForward(rule: PortForwardRule) {
@@ -392,8 +421,4 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         if (_appLockConfiguration.value.biometricEnabled) _appLocked.value = false
     }
 
-    override fun onCleared() {
-        sessionController.clear()
-        super.onCleared()
-    }
 }

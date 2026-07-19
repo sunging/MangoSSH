@@ -29,10 +29,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,35 +43,37 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.filter
-import org.connectbot.terminal.TerminalEmulatorFactory
 import org.connectbot.terminal.Terminal
-import website.sung.mangossh.session.TerminalOutput
-import website.sung.mangossh.session.TerminalOutputSource
+import org.connectbot.terminal.TerminalEmulator
+import website.sung.mangossh.session.TerminalClipboardCopy
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
 import website.sung.mangossh.session.ServerResourceSnapshot
 import website.sung.mangossh.domain.ConnectionProtocol
 
+/**
+ * Renders an already-running terminal emulator.
+ *
+ * The emulator belongs to the application session runtime rather than this
+ * composable, so leaving this screen keeps the remote session and scrollback
+ * intact while foreground-service ownership continues in the background.
+ */
 @Composable
 fun TerminalSessionScreen(
     session: TerminalSessionState,
-    output: SharedFlow<TerminalOutput>,
+    terminalEmulator: TerminalEmulator,
+    clipboardCopies: SharedFlow<TerminalClipboardCopy>,
     onSend: (ByteArray) -> Unit,
-    onResize: (columns: Int, rows: Int) -> Unit,
     resourceSnapshot: ServerResourceSnapshot?,
     onRequestResources: () -> Unit,
-    onMinimize: () -> Unit,
+    onRequestLeave: () -> Unit,
     onClose: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
-    val sendCurrent by rememberUpdatedState(onSend)
-    val resizeCurrent by rememberUpdatedState(onResize)
-    val clipboardCurrent by rememberUpdatedState(clipboard)
     val isOpen = session.phase == TerminalSessionPhase.OPEN
     val supportsSshChannels = session.protocol == ConnectionProtocol.SSH
     var showResourceReport by remember(session.id) { mutableStateOf(false) }
@@ -81,42 +82,10 @@ fun TerminalSessionScreen(
         if (text != null) onSend(text.encodeToByteArray())
     }
 
-    val emulator = remember(session.id) {
-        TerminalEmulatorFactory.create(
-            initialRows = 24,
-            initialCols = 80,
-            defaultForeground = Color(0xFFF4F4F4),
-            defaultBackground = Color(0xFF101416),
-            onKeyboardInput = { bytes -> sendCurrent(bytes) },
-            onResize = { dimensions -> resizeCurrent(dimensions.columns, dimensions.rows) },
-            onClipboardCopy = { selected -> clipboardCurrent.setText(AnnotatedString(selected)) },
-            autoDetectUrls = true,
-        )
-    }
-
-    val language = LocalConfiguration.current.locales[0]?.language
-    LaunchedEffect(emulator, session.id, language) {
-        output
+    LaunchedEffect(clipboardCopies, session.id) {
+        clipboardCopies
             .filter { it.sessionId == session.id }
-            .collect { item ->
-                val bytes = if (item.source == TerminalOutputSource.LOCALIZABLE_NOTICE) {
-                    MangoUiLiteralLocalization
-                        .resolve(item.bytes.decodeToString(), language)
-                        .encodeToByteArray()
-                } else {
-                    item.bytes
-                }
-                emulator.writeInput(bytes)
-            }
-    }
-    val localizedSessionDetail = when (val detail = session.detail) {
-        null -> null
-        else -> localizedUiLiteral(detail)
-    }
-    LaunchedEffect(session.id, localizedSessionDetail) {
-        localizedSessionDetail?.let { detail ->
-            emulator.writeInput("\r\n[MangoSSH] $detail\r\n".encodeToByteArray())
-        }
+            .collect { copy -> clipboard.setText(AnnotatedString(copy.text)) }
     }
 
     Surface(
@@ -140,7 +109,7 @@ fun TerminalSessionScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                IconButton(onClick = onMinimize) {
+                IconButton(onClick = onRequestLeave) {
                     Icon(
                         Icons.AutoMirrored.Outlined.ArrowBack,
                         contentDescription = localizedUiLiteral("返回主机列表"),
@@ -162,7 +131,7 @@ fun TerminalSessionScreen(
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 Terminal(
-                    terminalEmulator = emulator,
+                    terminalEmulator = terminalEmulator,
                     modifier = Modifier.fillMaxSize(),
                     keyboardEnabled = isOpen,
                     showSoftKeyboard = isOpen,
