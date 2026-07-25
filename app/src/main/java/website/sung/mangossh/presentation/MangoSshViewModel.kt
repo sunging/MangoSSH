@@ -37,6 +37,13 @@ enum class AppSection(val label: String) {
     SETTINGS("设置"),
 }
 
+/** One pending foreground-notification destination, retained across app unlock. */
+sealed interface SessionNavigationRequest {
+    data object OpenSessions : SessionNavigationRequest
+
+    data class OpenSession(val sessionId: String) : SessionNavigationRequest
+}
+
 /**
  * Bridges encrypted vault state and live session state to Compose.
  *
@@ -99,9 +106,9 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val _selectedSection = kotlinx.coroutines.flow.MutableStateFlow(AppSection.HOSTS)
     val selectedSection = _selectedSection.asStateFlow()
 
-    private val _requestedSessionId = MutableStateFlow<String?>(null)
-    /** Session selected by a foreground notification until the lock screen is cleared. */
-    val requestedSessionId = _requestedSessionId.asStateFlow()
+    private val _sessionNavigationRequest = MutableStateFlow<SessionNavigationRequest?>(null)
+    /** Foreground-notification destination retained until the app lock is cleared. */
+    val sessionNavigationRequest = _sessionNavigationRequest.asStateFlow()
 
     init {
         viewModelScope.launch { vault.open() }
@@ -144,12 +151,17 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     /** Records a notification destination without bypassing the app lock. */
     fun requestOpenSession(sessionId: String) {
-        _requestedSessionId.value = sessionId
+        _sessionNavigationRequest.value = SessionNavigationRequest.OpenSession(sessionId)
     }
 
-    /** Marks a notification destination as handled after it opens or is found stale. */
-    fun consumeRequestedSession(sessionId: String) {
-        if (_requestedSessionId.value == sessionId) _requestedSessionId.value = null
+    /** Records a request to show the host screen containing all live sessions. */
+    fun requestOpenSessions() {
+        _sessionNavigationRequest.value = SessionNavigationRequest.OpenSessions
+    }
+
+    /** Marks a notification destination as handled after navigation completes. */
+    fun consumeSessionNavigationRequest(request: SessionNavigationRequest) {
+        if (_sessionNavigationRequest.value == request) _sessionNavigationRequest.value = null
     }
 
     /** Maps a lifecycle event to its fixed current-locale message, when one is appropriate. */

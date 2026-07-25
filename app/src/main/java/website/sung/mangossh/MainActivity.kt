@@ -93,12 +93,15 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    /** Routes a session-specific foreground notification without exposing its identifier in logs. */
+    /** Routes foreground notification destinations without exposing session identifiers in logs. */
     private fun handleSessionIntent(intent: Intent?) {
-        if (intent?.action != ACTION_OPEN_SESSION) return
-        intent.getStringExtra(EXTRA_SESSION_ID)
-            ?.takeIf(String::isNotBlank)
-            ?.let(mangoViewModel::requestOpenSession)
+        when (intent?.action) {
+            ACTION_OPEN_SESSION -> intent.getStringExtra(EXTRA_SESSION_ID)
+                ?.takeIf(String::isNotBlank)
+                ?.let(mangoViewModel::requestOpenSession)
+
+            ACTION_OPEN_SESSIONS -> mangoViewModel.requestOpenSessions()
+        }
     }
 
     companion object {

@@ -170,7 +170,7 @@ fun MangoSshApp(
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
-    val requestedSessionId by viewModel.requestedSessionId.collectAsStateWithLifecycle()
+    val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     val currentActiveSessionId by rememberUpdatedState(activeSessionId)
@@ -185,16 +185,27 @@ fun MangoSshApp(
             }
         }
     }
-    LaunchedEffect(requestedSessionId, appLocked, sessions) {
-        val sessionId = requestedSessionId ?: return@LaunchedEffect
-        if (!appLocked) {
-            if (sessions.any { it.id == sessionId }) {
-                activeSessionId = sessionId
-            } else {
-                viewModel.reportUserMessage(notificationTargetUnavailableMessage)
+    LaunchedEffect(sessionNavigationRequest, appLocked, sessions) {
+        val request = sessionNavigationRequest ?: return@LaunchedEffect
+        if (appLocked) return@LaunchedEffect
+
+        when (request) {
+            SessionNavigationRequest.OpenSessions -> {
+                viewModel.selectSection(AppSection.HOSTS)
+                activeSessionId = null
+                leaveSessionId = null
             }
-            viewModel.consumeRequestedSession(sessionId)
+
+            is SessionNavigationRequest.OpenSession -> {
+                if (sessions.any { it.id == request.sessionId }) {
+                    activeSessionId = request.sessionId
+                    leaveSessionId = null
+                } else {
+                    viewModel.reportUserMessage(notificationTargetUnavailableMessage)
+                }
+            }
         }
+        viewModel.consumeSessionNavigationRequest(request)
     }
     if (appLocked) {
         AppLockScreen(
