@@ -1990,7 +1990,7 @@ private fun HostEditorSheet(
     var startupSnippetId by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.startupSnippetId) }
     var agentForwarding by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.agentForwarding ?: false) }
     val port = portText.toIntOrNull()
-    val usesTailscaleSsh = route == ConnectionRoute.TAILNET && protocol == ConnectionProtocol.SSH
+    val usesTailscaleSsh = route == ConnectionRoute.TAILNET
     val authenticationIsConfigured = usesTailscaleSsh ||
         authentication != AuthenticationMethod.PRIVATE_KEY ||
         keys.any { it.id == keyId }
@@ -2066,12 +2066,7 @@ private fun HostEditorSheet(
                 ConnectionProtocol.entries.forEach { option ->
                     FilterChip(
                         selected = protocol == option,
-                        onClick = {
-                            protocol = option
-                            if (option == ConnectionProtocol.MOSH && authentication == AuthenticationMethod.TAILSCALE_SSH) {
-                                authentication = AuthenticationMethod.PRIVATE_KEY
-                            }
-                        },
+                        onClick = { protocol = option },
                         label = { Text(option.label) },
                     )
                 }

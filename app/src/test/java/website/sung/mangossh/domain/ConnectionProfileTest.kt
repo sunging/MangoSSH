@@ -22,6 +22,20 @@ class ConnectionProfileTest {
     }
 
     @Test
+    fun tailnetMoshDraftUsesTailscaleAuthenticationForBootstrap() {
+        val profile = ConnectionProfileDraft(
+            label = "mosh",
+            hostname = "host.tailnet.ts.net",
+            port = 22,
+            username = "alice",
+            protocol = ConnectionProtocol.MOSH,
+            route = ConnectionRoute.TAILNET,
+        ).toProfile()
+
+        assertEquals(AuthenticationMethod.TAILSCALE_SSH, profile.authentication)
+    }
+
+    @Test
     fun invalidPortsAreRejectedBeforePersistence() {
         val draft = ConnectionProfileDraft(
             label = "invalid",

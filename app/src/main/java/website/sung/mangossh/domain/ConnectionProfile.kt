@@ -63,9 +63,9 @@ data class ConnectionProfileDraft(
     fun isValid(): Boolean = hostname.isNotBlank() && username.isNotBlank() && port in 1..65535
 
     /**
-     * Creates a persisted profile while preserving Mosh's normal SSH bootstrap
-     * authentication. Tailscale SSH is an SSH-server feature, not an auth mode
-     * for Mosh's separate UDP transport.
+     * Creates a persisted profile and applies Tailscale SSH to every Tailnet
+     * route. Mosh still authenticates its short-lived SSH bootstrap before the
+     * native client switches to the separate UDP transport.
      */
     fun toProfile(): ConnectionProfile = ConnectionProfile(
         id = id ?: UUID.randomUUID().toString(),
@@ -75,7 +75,7 @@ data class ConnectionProfileDraft(
         username = username.trim(),
         protocol = protocol,
         route = route,
-        authentication = if (route == ConnectionRoute.TAILNET && protocol == ConnectionProtocol.SSH) {
+        authentication = if (route == ConnectionRoute.TAILNET) {
             AuthenticationMethod.TAILSCALE_SSH
         } else {
             authentication
