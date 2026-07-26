@@ -332,11 +332,14 @@ class SshSessionController(
         closePortForwards(sessionId, managed)
         runCatching { managed.session?.close() }
         managed.moshProcess?.let { process ->
-            runCatching { process.close() }
-            // A UI initiated close cancels the reader, so reap the direct
-            // native child separately instead of relying on that reader's
-            // normal EOF path.
-            scope.launch { runCatching { process.awaitExit() } }
+            if (reason == SessionEndReason.USER_REQUEST) {
+                runCatching { process.closeGracefully() }
+            } else {
+                runCatching { process.close() }
+                // A non-user termination cancels the reader, so reap the
+                // direct native child separately from its normal EOF path.
+                scope.launch { runCatching { process.awaitExit() } }
+            }
         }
         runCatching { managed.connection.close() }
 

@@ -44,12 +44,44 @@ internal class MoshPtyProcess private constructor(
     }
 
     /**
-     * Requests graceful child termination and closes every copy of the master
-     * descriptor. Waiting is intentionally performed by the reader coroutine,
-     * so disconnecting from the Compose UI never blocks the main thread.
+     * Sends Mosh's authenticated quit sequence before force-stopping the local
+     * child after a short grace period. The one-shot background thread also
+     * reaps the child, so the UI caller never blocks and the remote server can
+     * process the shutdown handshake instead of becoming orphaned.
+     */
+    fun closeGracefully() {
+        if (!closed.compareAndSet(false, true)) return
+        val quitSent = runCatching {
+            output.write(MOSH_QUIT_SEQUENCE)
+            output.flush()
+        }.isSuccess
+        val cleanupThread = Thread(
+            {
+                if (quitSent) {
+                    runCatching { Thread.sleep(GRACEFUL_SHUTDOWN_MILLIS) }
+                }
+                forceStopAndClose()
+                runCatching { awaitExit() }
+            },
+            "MangoSSH-MoshShutdown",
+        ).apply {
+            isDaemon = true
+        }
+        runCatching { cleanupThread.start() }.onFailure {
+            forceStopAndClose()
+        }
+    }
+
+    /**
+     * Force-stops the child and closes every copy of the master descriptor.
+     * Waiting is intentionally performed by the reader or cleanup caller.
      */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        forceStopAndClose()
+    }
+
+    private fun forceStopAndClose() {
         MoshPtyNative.requestStop(pid)
         runCatching { output.close() }
         runCatching { input.close() }
@@ -59,6 +91,8 @@ internal class MoshPtyProcess private constructor(
     internal companion object {
         private const val CLIENT_FILE_NAME = "libmosh_client.so"
         private const val DEFAULT_TERM = "xterm-256color"
+        private const val GRACEFUL_SHUTDOWN_MILLIS = 1_500L
+        private val MOSH_QUIT_SEQUENCE = byteArrayOf(0x1e, '.'.code.toByte())
 
         /**
          * Starts the packaged Mosh client and returns a PTY-backed process.
