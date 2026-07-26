@@ -373,7 +373,10 @@ class SshSessionController(
             SessionEndReason.CONNECTION_LOST,
             SessionEndReason.CONNECTION_FAILED -> MangoLog.warn(MangoLogEvent.SSH_SESSION_FAILED, failure)
         }
-        if (sessionsById.isEmpty()) SessionForegroundService.stop(context)
+        // SessionForegroundService observes the now-empty StateFlow and owns
+        // its shutdown. Calling stopService here could cancel a pending
+        // startForegroundService request before onCreate acknowledges it,
+        // leaving Android's foreground-service watchdog armed.
     }
 
     /** Completes any host-key or authentication waiters so background jobs cannot hang. */

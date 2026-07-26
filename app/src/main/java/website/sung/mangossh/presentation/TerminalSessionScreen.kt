@@ -1,5 +1,6 @@
 package website.sung.mangossh.presentation
 
+import android.content.ClipData
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -42,11 +44,13 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
 import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.session.TerminalClipboardCopy
@@ -73,19 +77,32 @@ fun TerminalSessionScreen(
     onRequestLeave: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val isOpen = session.phase == TerminalSessionPhase.OPEN
     val supportsSshChannels = session.protocol == ConnectionProtocol.SSH
     var showResourceReport by remember(session.id) { mutableStateOf(false) }
     val pasteFromClipboard: () -> Unit = {
-        val text = clipboard.getText()?.text?.takeIf(String::isNotEmpty)
-        if (text != null) onSend(text.encodeToByteArray())
+        scope.launch {
+            val text = clipboard.getClipEntry()
+                ?.clipData
+                ?.getItemAt(0)
+                ?.coerceToText(context)
+                ?.toString()
+                ?.takeIf(String::isNotEmpty)
+            if (text != null) onSend(text.encodeToByteArray())
+        }
     }
 
     LaunchedEffect(clipboardCopies, session.id) {
         clipboardCopies
             .filter { it.sessionId == session.id }
-            .collect { copy -> clipboard.setText(AnnotatedString(copy.text)) }
+            .collect { copy ->
+                clipboard.setClipEntry(
+                    ClipEntry(ClipData.newPlainText("Terminal copy", copy.text)),
+                )
+            }
     }
 
     Surface(

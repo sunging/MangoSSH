@@ -2,15 +2,18 @@
 
 package website.sung.mangossh.presentation
 
+import android.content.ClipData
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -49,6 +53,8 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -66,12 +72,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -160,11 +170,22 @@ private fun Text(
     )
 }
 
+private val WIDE_LAYOUT_MIN_WIDTH = 600.dp
+
+private sealed interface PendingRemovalRequest {
+    val id: String
+
+    data class Host(override val id: String) : PendingRemovalRequest
+    data class Key(override val id: String) : PendingRemovalRequest
+    data class PortForward(override val id: String) : PendingRemovalRequest
+    data class Snippet(override val id: String) : PendingRemovalRequest
+}
+
 @Composable
 fun MangoSshApp(
     viewModel: MangoSshViewModel,
     onRequestBiometricUnlock: (() -> Unit)? = null,
-    onRequestNotificationPermission: (() -> Unit)? = null,
+    onRequestNotificationPermission: ((() -> Unit) -> Unit)? = null,
 ) {
     val appLocked by viewModel.appLocked.collectAsStateWithLifecycle()
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
@@ -232,6 +253,7 @@ fun MangoSshApp(
     val portableExport by viewModel.portableExport.collectAsStateWithLifecycle()
     var editingHost by remember { mutableStateOf<ConnectionProfile?>(null) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
+    var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
 
     fun openHostEditor(host: ConnectionProfile? = null) {
         editingHost = host
@@ -305,113 +327,125 @@ fun MangoSshApp(
         return
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("MangoSSH", fontWeight = FontWeight.SemiBold)
-                        Text(
-                            text = sectionSubtitle(selectedSection),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-                actions = {
-                    if (selectedSection == AppSection.HOSTS) {
-                        IconButton(
-                            onClick = { openHostEditor() },
-                            enabled = vaultStatus !is VaultStatus.Failed,
-                        ) {
-                            Icon(
-                                Icons.Outlined.Add,
-                                contentDescription = localizedUiLiteral("新建主机配置"),
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .focusProperties {
+                canFocus = !showHostEditor && pendingRemoval == null && userMessage == null
+            },
+    ) {
+        val useNavigationRail = maxWidth >= WIDE_LAYOUT_MIN_WIDTH
+        Scaffold(
+            topBar = {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("MangoSSH", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = sectionSubtitle(selectedSection),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                    }
-                },
-            )
-        },
-        bottomBar = {
-            NavigationBar {
-                AppSection.entries.forEach { section ->
-                    NavigationBarItem(
-                        selected = section == selectedSection,
-                        onClick = { viewModel.selectSection(section) },
-                        icon = {
-                            Icon(
-                                imageVector = section.icon(),
-                                contentDescription = localizedUiLiteral(section.label),
-                            )
-                        },
-                        label = { Text(section.label) },
+                    },
+                    actions = {
+                        if (selectedSection == AppSection.HOSTS) {
+                            IconButton(
+                                onClick = { openHostEditor() },
+                                enabled = vaultStatus !is VaultStatus.Failed,
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Add,
+                                    contentDescription = localizedUiLiteral("新建主机配置"),
+                                )
+                            }
+                        }
+                    },
+                )
+            },
+            bottomBar = {
+                if (!useNavigationRail) {
+                    MangoNavigationBar(
+                        selectedSection = selectedSection,
+                        onSelectSection = viewModel::selectSection,
                     )
                 }
-            }
-        },
-    ) { contentPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(contentPadding),
-        ) {
-            when (selectedSection) {
-                AppSection.HOSTS -> HostsScreen(
-                    hosts = hosts,
-                    sessions = sessions,
-                    vaultStatus = vaultStatus,
-                    onAddHost = { openHostEditor() },
-                    onEditHost = { openHostEditor(it) },
-                    onRemoveHost = viewModel::removeHost,
-                    onConnectHost = { host ->
-                        onRequestNotificationPermission?.invoke()
-                        activeSessionId = viewModel.connect(host)
-                    },
-                    onOpenSession = { sessionId -> activeSessionId = sessionId },
-                    onDisconnectSession = viewModel::disconnect,
-                )
+            },
+        ) { contentPadding ->
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(contentPadding),
+            ) {
+                if (useNavigationRail) {
+                    MangoNavigationRail(
+                        selectedSection = selectedSection,
+                        onSelectSection = viewModel::selectSection,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                ) {
+                    when (selectedSection) {
+                        AppSection.HOSTS -> HostsScreen(
+                            hosts = hosts,
+                            sessions = sessions,
+                            vaultStatus = vaultStatus,
+                            onAddHost = { openHostEditor() },
+                            onEditHost = { openHostEditor(it) },
+                            onRemoveHost = { pendingRemoval = PendingRemovalRequest.Host(it) },
+                            onConnectHost = { host ->
+                                val connect = { activeSessionId = viewModel.connect(host) }
+                                onRequestNotificationPermission?.invoke(connect) ?: connect()
+                            },
+                            onOpenSession = { sessionId -> activeSessionId = sessionId },
+                            onDisconnectSession = viewModel::disconnect,
+                        )
 
-                AppSection.KEYS -> KeysScreen(
-                    vaultStatus = vaultStatus,
-                    keys = keys,
-                    onGenerate = viewModel::generateEd25519Key,
-                    onImport = viewModel::importPrivateKey,
-                    onRemove = viewModel::removeKey,
-                )
-                AppSection.TRANSFERS -> TransfersScreen(
-                    hosts = hosts,
-                    rules = portForwardRules,
-                    activeForwards = activePortForwards,
-                    scpTransfers = scpTransfers,
-                    sessions = sessions,
-                    onSaveRule = viewModel::savePortForward,
-                    onRemoveRule = viewModel::removePortForward,
-                    onStartRule = viewModel::startPortForward,
-                    onStopRule = viewModel::stopPortForward,
-                    onUploadScp = viewModel::uploadScp,
-                    onDownloadScp = viewModel::downloadScp,
-                )
-                AppSection.SETTINGS -> SettingsScreen(
-                    vaultStatus = vaultStatus,
-                    webDavConfig = webDavConfig,
-                    snippets = snippets,
-                    portableExport = portableExport,
-                    onSaveWebDav = viewModel::saveWebDavConfig,
-                    onClearWebDav = viewModel::clearWebDavConfig,
-                    onPrepareExport = viewModel::preparePortableExport,
-                    onConsumeExport = viewModel::consumePortableExport,
-                    onImport = viewModel::importPortable,
-                    onUpload = viewModel::uploadWebDav,
-                    onDownloadAndImport = viewModel::downloadWebDavAndImport,
-                    appLockConfiguration = appLockConfiguration,
-                    onConfigureAppPin = viewModel::configureAppPin,
-                    onClearAppLock = viewModel::clearAppLock,
-                    onSetBiometricEnabled = viewModel::setBiometricUnlockEnabled,
-                    onLockNow = viewModel::lockForBackground,
-                    onSaveSnippet = viewModel::saveSnippet,
-                    onRemoveSnippet = viewModel::removeSnippet,
-                )
+                        AppSection.KEYS -> KeysScreen(
+                            vaultStatus = vaultStatus,
+                            keys = keys,
+                            onGenerate = viewModel::generateEd25519Key,
+                            onImport = viewModel::importPrivateKey,
+                            onRemove = { pendingRemoval = PendingRemovalRequest.Key(it) },
+                        )
+                        AppSection.TRANSFERS -> TransfersScreen(
+                            hosts = hosts,
+                            rules = portForwardRules,
+                            activeForwards = activePortForwards,
+                            scpTransfers = scpTransfers,
+                            sessions = sessions,
+                            onSaveRule = viewModel::savePortForward,
+                            onRemoveRule = { pendingRemoval = PendingRemovalRequest.PortForward(it) },
+                            onStartRule = viewModel::startPortForward,
+                            onStopRule = viewModel::stopPortForward,
+                            onUploadScp = viewModel::uploadScp,
+                            onDownloadScp = viewModel::downloadScp,
+                        )
+                        AppSection.SETTINGS -> SettingsScreen(
+                            vaultStatus = vaultStatus,
+                            webDavConfig = webDavConfig,
+                            snippets = snippets,
+                            portableExport = portableExport,
+                            onSaveWebDav = viewModel::saveWebDavConfig,
+                            onClearWebDav = viewModel::clearWebDavConfig,
+                            onPrepareExport = viewModel::preparePortableExport,
+                            onConsumeExport = viewModel::consumePortableExport,
+                            onImport = viewModel::importPortable,
+                            onUpload = viewModel::uploadWebDav,
+                            onDownloadAndImport = viewModel::downloadWebDavAndImport,
+                            appLockConfiguration = appLockConfiguration,
+                            onConfigureAppPin = viewModel::configureAppPin,
+                            onClearAppLock = viewModel::clearAppLock,
+                            onSetBiometricEnabled = viewModel::setBiometricUnlockEnabled,
+                            onLockNow = viewModel::lockForBackground,
+                            onSaveSnippet = viewModel::saveSnippet,
+                            onRemoveSnippet = { pendingRemoval = PendingRemovalRequest.Snippet(it) },
+                        )
+                    }
+                }
             }
         }
     }
@@ -433,6 +467,22 @@ fun MangoSshApp(
         )
     }
 
+    pendingRemoval?.let { request ->
+        RemovalConfirmationDialog(
+            request = request,
+            onDismiss = { pendingRemoval = null },
+            onConfirm = {
+                when (request) {
+                    is PendingRemovalRequest.Host -> viewModel.removeHost(request.id)
+                    is PendingRemovalRequest.Key -> viewModel.removeKey(request.id)
+                    is PendingRemovalRequest.PortForward -> viewModel.removePortForward(request.id)
+                    is PendingRemovalRequest.Snippet -> viewModel.removeSnippet(request.id)
+                }
+                pendingRemoval = null
+            },
+        )
+    }
+
     userMessage?.let { message ->
         AlertDialog(
             onDismissRequest = viewModel::dismissUserMessage,
@@ -443,6 +493,113 @@ fun MangoSshApp(
             },
         )
     }
+}
+
+@Composable
+private fun MangoNavigationBar(
+    selectedSection: AppSection,
+    onSelectSection: (AppSection) -> Unit,
+) {
+    NavigationBar {
+        AppSection.entries.forEach { section ->
+            NavigationBarItem(
+                selected = section == selectedSection,
+                onClick = { onSelectSection(section) },
+                icon = {
+                    Icon(
+                        imageVector = section.icon(),
+                        contentDescription = localizedUiLiteral(section.label),
+                    )
+                },
+                label = { Text(section.label) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun MangoNavigationRail(
+    selectedSection: AppSection,
+    onSelectSection: (AppSection) -> Unit,
+) {
+    NavigationRail(modifier = Modifier.fillMaxHeight()) {
+        Spacer(Modifier.weight(1f))
+        AppSection.entries.forEach { section ->
+            NavigationRailItem(
+                selected = section == selectedSection,
+                onClick = { onSelectSection(section) },
+                icon = {
+                    Icon(
+                        imageVector = section.icon(),
+                        contentDescription = localizedUiLiteral(section.label),
+                    )
+                },
+                label = { Text(section.label) },
+            )
+        }
+        Spacer(Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun RemovalConfirmationDialog(
+    request: PendingRemovalRequest,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val (title, message) = when (request) {
+        is PendingRemovalRequest.Host -> "移除主机？" to
+            "主机及其关联的端口转发规则将被永久移除。此操作无法撤销。"
+
+        is PendingRemovalRequest.Key -> "移除私钥？" to
+            "私钥将被永久移除，使用它的主机配置会解除密钥绑定。此操作无法撤销。"
+
+        is PendingRemovalRequest.PortForward -> "移除端口转发？" to
+            "此端口转发规则将被永久移除。此操作无法撤销。"
+
+        is PendingRemovalRequest.Snippet -> "移除代码片段？" to
+            "此代码片段将被永久移除，引用它的主机配置会停止自动执行。此操作无法撤销。"
+    }
+    DestructiveConfirmationDialog(
+        title = title,
+        message = message,
+        onDismiss = onDismiss,
+        onConfirm = onConfirm,
+    )
+}
+
+/**
+ * Shared confirmation boundary for irreversible vault mutations.
+ *
+ * Keeping the final callback behind an explicit confirmation prevents an
+ * accidental tap from deleting encrypted profiles, keys, or dependent data.
+ */
+@Composable
+internal fun DestructiveConfirmationDialog(
+    title: String,
+    message: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        modifier = Modifier.testTag("removal-confirmation-dialog"),
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(
+                modifier = Modifier.testTag("confirm-removal"),
+                onClick = onConfirm,
+            ) {
+                Text("永久移除")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("保留")
+            }
+        },
+    )
 }
 
 @Composable
@@ -707,7 +864,7 @@ private fun KeysScreen(
     onRemove: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var showGenerator by rememberSaveable { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<String?>(null) }
@@ -789,7 +946,15 @@ private fun KeysScreen(
                     }
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { clipboard.setText(AnnotatedString(key.publicKey)) }) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    clipboard.setClipEntry(
+                                        ClipEntry(ClipData.newPlainText("SSH public key", key.publicKey)),
+                                    )
+                                }
+                            },
+                        ) {
                             Text("复制公钥")
                         }
                         TextButton(
@@ -1834,11 +1999,20 @@ private fun HostEditorSheet(
         port != null &&
         port in 1..65535 &&
         authenticationIsConfigured
+    val firstFieldFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(initialHost?.id) {
+        firstFieldFocusRequester.requestFocus()
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .focusProperties {
+                    onExit = { cancelFocusChange() }
+                }
+                .focusGroup()
                 .verticalScroll(rememberScrollState())
                 .padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
         ) {
@@ -1851,7 +2025,9 @@ private fun HostEditorSheet(
                 value = label,
                 onValueChange = { label = it },
                 label = { Text("名称（可选）") },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(firstFieldFocusRequester),
                 singleLine = true,
             )
             Spacer(Modifier.height(12.dp))

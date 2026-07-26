@@ -20,12 +20,16 @@ import website.sung.mangossh.ui.theme.MangoSshTheme
 /** Hosts the Compose UI and delegates biometric verification without retaining biometric data. */
 class MainActivity : FragmentActivity() {
     private val mangoViewModel: MangoSshViewModel by viewModels()
+    private var pendingNotificationPermissionAction: (() -> Unit)? = null
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (!granted) {
             mangoViewModel.reportUserMessage(getString(R.string.notification_permission_denied))
         }
+        pendingNotificationPermissionAction
+            ?.also { pendingNotificationPermissionAction = null }
+            ?.invoke()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,14 +86,25 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    /** Requests the Android 13+ notification grant only as a result of a connect action. */
-    private fun requestNotificationPermission() {
+    /**
+     * Requests notification access before starting a foreground session.
+     *
+     * Launching the service while Android is still presenting the runtime
+     * permission window can delay service creation beyond the platform's
+     * foreground deadline. The user-requested connection is therefore resumed
+     * only after the permission result is delivered, including when access is
+     * denied.
+     */
+    private fun requestNotificationPermission(onReady: () -> Unit) {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
+            pendingNotificationPermissionAction = onReady
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            onReady()
         }
     }
 

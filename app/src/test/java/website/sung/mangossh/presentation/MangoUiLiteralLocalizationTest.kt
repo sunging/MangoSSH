@@ -18,6 +18,13 @@ class MangoUiLiteralLocalizationTest {
             "Select a private-key file rather than a public-key file.",
             MangoUiLiteralLocalization.resolve("请选择私钥文件，而不是公钥文件。", "en"),
         )
+        assertEquals(
+            "The private key will be permanently removed and unlinked from its host profiles. This cannot be undone.",
+            MangoUiLiteralLocalization.resolve(
+                "私钥将被永久移除，使用它的主机配置会解除密钥绑定。此操作无法撤销。",
+                "en",
+            ),
+        )
     }
 
     @Test

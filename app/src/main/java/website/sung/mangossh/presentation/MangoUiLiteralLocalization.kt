@@ -61,6 +61,20 @@ internal object MangoUiLiteralLocalization {
         "关闭" to "Close",
         "编辑" to "Edit",
         "移除" to "Remove",
+        "永久移除" to "Remove permanently",
+        "保留" to "Keep",
+        "移除主机？" to "Remove host?",
+        "移除私钥？" to "Remove private key?",
+        "移除端口转发？" to "Remove port forward?",
+        "移除代码片段？" to "Remove snippet?",
+        "主机及其关联的端口转发规则将被永久移除。此操作无法撤销。" to
+            "The host and its port-forwarding rules will be permanently removed. This cannot be undone.",
+        "私钥将被永久移除，使用它的主机配置会解除密钥绑定。此操作无法撤销。" to
+            "The private key will be permanently removed and unlinked from its host profiles. This cannot be undone.",
+        "此端口转发规则将被永久移除。此操作无法撤销。" to
+            "This port-forwarding rule will be permanently removed. This cannot be undone.",
+        "此代码片段将被永久移除，引用它的主机配置会停止自动执行。此操作无法撤销。" to
+            "This snippet will be permanently removed and linked host profiles will stop running it automatically. This cannot be undone.",
         "连接" to "Connect",
         "上传" to "Upload",
         "下载" to "Download",

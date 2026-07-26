@@ -11,15 +11,15 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Exercises a real Android Keystore AES-GCM key rather than a JVM
+ * Exercises a real Android Keystore AES-GCM vault key rather than a JVM
  * [javax.crypto.spec.SecretKeySpec]. Android Keystore rejects caller-provided
  * IVs when randomized encryption is required, so this test prevents the local
- * vault from regressing to the write failure seen when adding a generated key.
+ * vault from regressing to the write failure seen when persisting encrypted data.
  */
 @RunWith(AndroidJUnit4::class)
 class AndroidKeystoreVaultInstrumentedTest {
     @Test
-    fun writesAndReadsAKeyUsingKeystoreGeneratedNonce() {
+    fun writesAndReadsVaultDataUsingKeystoreGeneratedNonce() {
         val baseContext = InstrumentationRegistry.getInstrumentation().targetContext
         val directory = File(baseContext.cacheDir, "vault-test-${UUID.randomUUID()}").apply { mkdirs() }
         val context = object : ContextWrapper(baseContext) {
@@ -28,14 +28,11 @@ class AndroidKeystoreVaultInstrumentedTest {
             override fun getFilesDir(): File = directory
         }
         val expected = VaultSnapshot(
-            keys = listOf(
-                StoredSshKey(
-                    id = "test-key",
-                    label = "Test key",
-                    algorithm = "ssh-ed25519",
-                    publicKey = "ssh-ed25519 AAAATEST test-key",
-                    fingerprint = "SHA256:test",
-                    privateKeyPem = "-----BEGIN OPENSSH PRIVATE KEY-----\\ntest\\n-----END OPENSSH PRIVATE KEY-----\\n",
+            snippets = listOf(
+                CommandSnippet(
+                    id = "round-trip-marker",
+                    label = "Round-trip marker",
+                    script = "",
                 ),
             ),
         )

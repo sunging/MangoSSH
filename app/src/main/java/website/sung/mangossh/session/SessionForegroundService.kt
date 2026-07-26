@@ -37,6 +37,7 @@ class SessionForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val sessionNotificationIds = mutableMapOf<String, Int>()
     private val nextNotificationId = AtomicInteger(FIRST_SESSION_NOTIFICATION_ID)
+    private var foregroundStarted = false
 
     private val sessionController
         get() = (application as MangoSshApplication).sessionRuntime.sessionController
@@ -44,6 +45,12 @@ class SessionForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
+        // StateFlow emits its current value as soon as collection begins. A
+        // failed connection can therefore leave the controller empty before
+        // this service reaches onStartCommand. Enter the foreground first so
+        // every startForegroundService call satisfies Android's contract even
+        // when the service immediately discovers that there is nothing to own.
+        ensureForeground()
         MangoLog.info(MangoLogEvent.FOREGROUND_SERVICE_STARTED)
         serviceScope.launch {
             sessionController.sessions.collect(::renderSessions)
@@ -51,8 +58,7 @@ class SessionForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Render synchronously so Android receives a foreground notification
-        // within the startForegroundService time limit.
+        ensureForeground()
         renderSessions(sessionController.sessions.value)
         return START_NOT_STICKY
     }
@@ -60,7 +66,10 @@ class SessionForegroundService : Service() {
     override fun onDestroy() {
         serviceScope.cancel()
         clearSessionNotifications()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        if (foregroundStarted) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foregroundStarted = false
+        }
         MangoLog.info(MangoLogEvent.FOREGROUND_SERVICE_STOPPED)
         super.onDestroy()
     }
@@ -70,17 +79,15 @@ class SessionForegroundService : Service() {
     private fun renderSessions(sessions: List<TerminalSessionState>) {
         if (sessions.isEmpty()) {
             clearSessionNotifications()
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            if (foregroundStarted) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                foregroundStarted = false
+            }
             stopSelf()
             return
         }
 
-        ServiceCompat.startForeground(
-            this,
-            SUMMARY_NOTIFICATION_ID,
-            buildSummaryNotification(),
-            foregroundServiceType(),
-        )
+        ensureForeground()
 
         val manager = getSystemService(NotificationManager::class.java)
         val liveIds = sessions.mapTo(mutableSetOf()) { it.id }
@@ -94,6 +101,23 @@ class SessionForegroundService : Service() {
                 manager.cancel(notificationId)
                 sessionNotificationIds.remove(sessionId)
             }
+    }
+
+    /**
+     * Synchronously acknowledges a foreground-service launch before observing
+     * mutable session state. Fast DNS or socket failures may remove the final
+     * session before Android dispatches [onStartCommand], but they must never
+     * leave a startForegroundService request unacknowledged.
+     */
+    private fun ensureForeground() {
+        if (foregroundStarted) return
+        ServiceCompat.startForeground(
+            this,
+            SUMMARY_NOTIFICATION_ID,
+            buildSummaryNotification(),
+            foregroundServiceType(),
+        )
+        foregroundStarted = true
     }
 
     private fun buildSummaryNotification(): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -210,9 +234,5 @@ class SessionForegroundService : Service() {
             )
         }
 
-        /** Removes the foreground owner after the final live session ends. */
-        fun stop(context: Context) {
-            context.stopService(Intent(context, SessionForegroundService::class.java))
-        }
     }
 }
