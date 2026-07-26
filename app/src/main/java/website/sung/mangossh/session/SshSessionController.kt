@@ -804,9 +804,11 @@ class SshSessionController(
 
     /**
      * Starts the remote Mosh server through a fixed command and extracts the
-     * generated UDP port/key pair. The command contains no user-provided text;
-     * raw server lines are never surfaced because a valid line contains the
-     * sensitive Mosh key.
+     * generated UDP port/key pair. The command supplies an explicit UTF-8
+     * locale because non-interactive SSH sessions can otherwise inherit the
+     * ASCII `C` locale, which mosh-server rejects. It contains no user-provided
+     * text; raw server lines are never surfaced because a valid line contains
+     * the sensitive Mosh key.
      */
     private fun bootstrapMosh(connection: Connection): MoshBootstrap {
         val bootstrapSession = connection.openSession()
@@ -1082,7 +1084,8 @@ class SshSessionController(
 
     private companion object {
         const val CONNECT_TIMEOUT_MILLIS = 10_000
-        const val KEY_EXCHANGE_TIMEOUT_MILLIS = 30_000
+        // Host-key verification runs inside key exchange, so this must outlive the full user prompt.
+        const val KEY_EXCHANGE_TIMEOUT_MILLIS = 5 * 60 * 1_000 + 30_000
         const val PROMPT_TIMEOUT_MILLIS = 5 * 60 * 1_000L
         const val INITIAL_COLUMNS = 80
         const val INITIAL_ROWS = 24
@@ -1095,7 +1098,7 @@ class SshSessionController(
         const val SAFE_SCP_PATH_CHARACTERS = "._/@%+=:,~-"
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
-        const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256"
+        const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256 -l LANG=C.UTF-8"
         const val RESOURCE_COMMAND = "printf 'Host: '; hostname; printf '\\nUptime: '; uptime; printf '\\nLoad: '; cat /proc/loadavg 2>/dev/null || true; printf '\\nMemory:\\n'; free -h 2>/dev/null || true; printf '\\nDisk:\\n'; df -h / 2>/dev/null || true; printf '\\nCPU: '; nproc 2>/dev/null || true"
 
         fun portForwardRuntimeId(sessionId: String, ruleId: String): String = "$sessionId:$ruleId"
