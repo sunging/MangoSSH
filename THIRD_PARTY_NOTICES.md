@@ -23,6 +23,25 @@ license information remain available through the reproducible build directory
 and upstream repositories. Do not replace the packaged binary with an
 unverifiable build or remove the source submodule, license text, or this notice.
 
+## Tailscale tsnet
+
+MangoSSH builds an outbound-only gomobile bridge against
+[`tailscale.com` v1.98.8](https://github.com/tailscale/tailscale/tree/v1.98.8).
+Tailscale is distributed under the BSD 3-Clause license. The source archive is
+fetched through the Go module checksum database and is not vendored into this
+repository.
+
+- The exact module checksum is recorded in `native/tsnetbridge/go.sum`.
+- `tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch` disables creation
+  and upload of tsnet's raw logtail buffer; the build fails if the patch no
+  longer applies exactly.
+- `tools/generate-tsnet-notices.py` derives notices from the Go packages
+  actually linked into the bridge.
+- Every generated AAR and APK contains the Tailscale BSD license at
+  `assets/licenses/tailscale-BSD-3-Clause.txt` and consolidated dependency
+  notices at `assets/licenses/tsnet-third-party-notices.txt`.
+- The generated AAR is build output and is deliberately not committed.
+
 ## Distribution commitment
 
 The Mosh-enabled MangoSSH distribution is offered under GPL-3.0-or-later.

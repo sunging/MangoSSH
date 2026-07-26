@@ -2,7 +2,8 @@
 
 MangoSSH is a Jetpack Compose Android SSH and Mosh client with encrypted local
 profiles, reusable keys, encrypted WebDAV backups, port forwarding, SCP,
-keyboard shortcuts, app lock, and Tailnet-aware SSH routing.
+keyboard shortcuts, app lock, system-Tailscale routing, and an outbound-only
+embedded tsnet node for explicitly selected SSH/Mosh profiles.
 
 ## License
 
@@ -44,3 +45,18 @@ zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
 The JNI PTY bridge explicitly uses the NDK r27 16 KiB linker options. The
 native build and Mosh asset installation scripts reject a binary whose
 `PT_LOAD` segments do not meet that requirement.
+
+## Embedded tsnet
+
+`TAILNET` continues to use the device's system Tailscale VPN. The independent
+`TSNET` route uses a process-scoped userspace node and does not request Android
+VPN access or depend on the Tailscale app. It supports official Tailscale
+browser enrollment and one-time Auth Key enrollment; Headscale, custom control
+servers, exit nodes, and device-wide VPN routing are intentionally out of
+scope.
+
+Gradle builds the pinned four-ABI gomobile AAR on demand through
+`tools/build-tsnet-android-wsl.sh`; the generated AAR and downloaded toolchains
+are ignored and must not be committed. See
+[docs/embedded-tsnet.md](docs/embedded-tsnet.md) for the exact tool versions,
+security boundaries, build commands, and emulator/lab verification checklist.
