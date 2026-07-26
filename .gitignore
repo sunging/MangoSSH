@@ -18,3 +18,4 @@ local.properties
 /app/release
 /third_party/tailscale/.cache
 /.tools/
+/native/tsnetbridge/.build/

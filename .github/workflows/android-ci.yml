@@ -24,7 +24,7 @@ jobs:
   verify-and-deliver:
     name: Verify and deliver debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       # The GPL-licensed Mosh source remains reproducible through the submodule.
@@ -47,6 +47,12 @@ jobs:
 
       - name: Test, lint, and package debug APK
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lint :app:assembleDebug
+
+      - name: Verify 16 KiB native alignment
+        run: |
+          build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$build_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
+          bash tools/check-16kb-elf-wsl.sh app/build/outputs/apk/debug/app-debug.apk
 
       # This is continuous delivery of an installable debug artifact. Tagged
       # production releases are signed by the dedicated release workflow.

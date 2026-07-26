@@ -3,6 +3,38 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val embeddedTsnetAar = layout.buildDirectory.file("generated/tsnet/mangossh-tsnet.aar")
+val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Builds the pinned four-ABI embedded tsnet gomobile bridge."
+    val bridgeSources = rootProject.fileTree("native/tsnetbridge") {
+        exclude(".build/**")
+    }
+    inputs.files(bridgeSources)
+    inputs.files(
+        rootProject.file("tools/build-tsnet-android-wsl.sh"),
+        rootProject.file("tools/fetch-android-ndk-wsl.sh"),
+        rootProject.file("tools/fetch-go-wsl.sh"),
+        rootProject.file("tools/fetch-jdk17-wsl.sh"),
+        rootProject.file("tools/generate-tsnet-notices.py"),
+        rootProject.file("tools/normalize-tsnet-aar.py"),
+        rootProject.file("tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch"),
+    )
+    outputs.file(embeddedTsnetAar)
+    workingDir(rootProject.projectDir)
+    if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+        val windowsRoot = rootProject.projectDir.absolutePath.replace("'", "'\"'\"'")
+        commandLine(
+            "wsl.exe",
+            "bash",
+            "-lc",
+            "cd \"\$(wslpath -u '$windowsRoot')\" && bash tools/build-tsnet-android-wsl.sh",
+        )
+    } else {
+        commandLine("bash", "tools/build-tsnet-android-wsl.sh")
+    }
+}
+
 // Release credentials are intentionally injected only by CI. Local release
 // builds remain unsigned unless every required environment variable is supplied,
 // which prevents a developer workstation from accidentally depending on secrets.
@@ -75,7 +107,12 @@ android {
 
 }
 
+tasks.named("preBuild").configure {
+    dependsOn(buildEmbeddedTsnetAar)
+}
+
 dependencies {
+    implementation(files(embeddedTsnetAar))
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
     implementation(libs.androidx.activity.compose)
