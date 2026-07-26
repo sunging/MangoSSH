@@ -28,6 +28,7 @@ import website.sung.mangossh.security.AppLockStore
 import website.sung.mangossh.session.SessionEndedEvent
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionEndReason
+import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
 
 /** Top-level areas exposed by the Compose navigation bar. */
 enum class AppSection(val label: String) {
@@ -55,6 +56,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val vault = runtime.vault
     private val keyManager = runtime.keyManager
     private val sessionController = runtime.sessionController
+    private val embeddedTsnetManager = runtime.embeddedTsnetManager
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
 
@@ -91,6 +93,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val sessionPrompts = sessionController.prompts
     val sessionEndedEvents = sessionController.sessionEndedEvents
     val terminalClipboardCopies = sessionController.clipboardCopies
+    internal val embeddedTsnetStatus = embeddedTsnetManager.status
+    val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
 
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage = _userMessage.asStateFlow()
@@ -288,6 +292,50 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun dismissUserMessage() {
         _userMessage.value = null
+    }
+
+    fun beginEmbeddedTsnetBrowserEnrollment() {
+        viewModelScope.launch {
+            runCatching { embeddedTsnetManager.beginBrowserEnrollment() }
+                .onFailure {
+                    _userMessage.value = getApplication<Application>()
+                        .getString(R.string.embedded_tsnet_browser_start_failed)
+                }
+        }
+    }
+
+    /** Hands a one-shot mutable key directly to the runtime and clears it on every path. */
+    fun beginEmbeddedTsnetAuthKeyEnrollment(authKey: CharArray) {
+        viewModelScope.launch {
+            try {
+                runCatching { embeddedTsnetManager.beginAuthKeyEnrollment(authKey) }
+                    .onFailure {
+                        _userMessage.value = getApplication<Application>()
+                            .getString(R.string.embedded_tsnet_auth_key_failed)
+                    }
+            } finally {
+                authKey.fill('\u0000')
+            }
+        }
+    }
+
+    fun logoutEmbeddedTsnet() {
+        viewModelScope.launch {
+            runCatching { embeddedTsnetManager.logout() }
+                .onSuccess {
+                    _userMessage.value = getApplication<Application>()
+                        .getString(R.string.embedded_tsnet_logout_complete)
+                }
+                .onFailure { error ->
+                    _userMessage.value = getApplication<Application>().getString(
+                        if (error is TsnetSessionsActiveException) {
+                            R.string.embedded_tsnet_logout_sessions_active
+                        } else {
+                            R.string.embedded_tsnet_logout_failed
+                        },
+                    )
+                }
+        }
     }
 
     fun reportUserMessage(message: String) {

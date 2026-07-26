@@ -5,6 +5,36 @@
     <string name="active_sessions_notification_title">MangoSSH is running</string>
     <string name="active_sessions_notification_text">Active sessions and port forwards appear here.</string>
     <string name="embedded_tsnet_notification_text">Completing embedded Tailscale sign-in.</string>
+    <string name="foreground_service_special_use" translatable="false">Maintains user-initiated SSH/Mosh sessions and embedded Tailscale enrollment.</string>
+    <string name="embedded_tsnet_title">Embedded Tailscale</string>
+    <string name="embedded_tsnet_description">A separate userspace Tailnet node for profiles that explicitly select Embedded Tailscale. It does not request Android VPN access or depend on the Tailscale app.</string>
+    <string name="embedded_tsnet_status_unenrolled">Not signed in</string>
+    <string name="embedded_tsnet_status_starting">Connecting</string>
+    <string name="embedded_tsnet_status_waiting_login">Waiting for browser authorization</string>
+    <string name="embedded_tsnet_status_waiting_approval">Waiting for Tailnet administrator approval</string>
+    <string name="embedded_tsnet_status_ready_idle">Signed in · idle</string>
+    <plurals name="embedded_tsnet_status_active">
+        <item quantity="one">Active · %1$d session</item>
+        <item quantity="other">Active · %1$d sessions</item>
+    </plurals>
+    <string name="embedded_tsnet_status_failed">Unable to start embedded Tailscale</string>
+    <string name="embedded_tsnet_browser_login">Sign in with browser</string>
+    <string name="embedded_tsnet_auth_key_login">Use Auth Key</string>
+    <string name="embedded_tsnet_logout">Sign out</string>
+    <string name="embedded_tsnet_auth_key_title">Use a one-time Auth Key</string>
+    <string name="embedded_tsnet_auth_key_explanation">The key is passed directly to the embedded node. It is not saved in app state, the vault, backups, or logs. A failed attempt requires entering it again.</string>
+    <string name="embedded_tsnet_auth_key_label">Auth Key</string>
+    <string name="embedded_tsnet_auth_key_confirm">Register</string>
+    <string name="embedded_tsnet_cancel">Cancel</string>
+    <string name="embedded_tsnet_logout_title">Sign out embedded Tailscale?</string>
+    <string name="embedded_tsnet_logout_message">This removes the app node identity from this device. Active embedded Tailscale sessions must be disconnected first.</string>
+    <string name="embedded_tsnet_logout_confirm">Sign out</string>
+    <string name="embedded_tsnet_browser_start_failed">Unable to start browser sign-in. Try again.</string>
+    <string name="embedded_tsnet_auth_key_failed">Registration failed. Enter the Auth Key again or use browser sign-in.</string>
+    <string name="embedded_tsnet_logout_complete">Embedded Tailscale signed out and local node identity was removed.</string>
+    <string name="embedded_tsnet_logout_sessions_active">Disconnect all embedded Tailscale sessions before signing out.</string>
+    <string name="embedded_tsnet_logout_failed">Unable to sign out embedded Tailscale. Try again.</string>
+    <string name="embedded_tsnet_invalid_authorization_url">Embedded Tailscale returned an invalid authorization request.</string>
     <string name="active_sessions_notification_public_title">MangoSSH is running</string>
     <string name="active_sessions_notification_public_text">An active terminal session is protected.</string>
     <string name="active_session_notification_title">%1$s</string>

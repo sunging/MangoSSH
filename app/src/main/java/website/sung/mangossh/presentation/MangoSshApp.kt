@@ -3,6 +3,7 @@
 package website.sung.mangossh.presentation
 
 import android.content.ClipData
+import android.content.Intent
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -81,7 +82,9 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.core.net.toUri
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -119,6 +122,8 @@ import website.sung.mangossh.session.ScpTransferDirection
 import website.sung.mangossh.session.ScpTransferPhase
 import website.sung.mangossh.session.ScpTransferState
 import website.sung.mangossh.session.TerminalSessionPhase
+import website.sung.mangossh.session.tsnet.EmbeddedTsnetPhase
+import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
 import website.sung.mangossh.security.AppLockConfiguration
 
 /**
@@ -192,10 +197,29 @@ fun MangoSshApp(
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
+    val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     val currentActiveSessionId by rememberUpdatedState(activeSessionId)
     val notificationTargetUnavailableMessage = stringResource(R.string.session_notification_target_unavailable)
+    val invalidAuthorizationUrlMessage = stringResource(R.string.embedded_tsnet_invalid_authorization_url)
+    val browserStartFailedMessage = stringResource(R.string.embedded_tsnet_browser_start_failed)
+
+    LaunchedEffect(viewModel) {
+        viewModel.embeddedTsnetAuthorizationUrls.collect { value ->
+            val uri = runCatching { value.toUri() }.getOrNull()
+            if (uri?.scheme != "https" || uri.host != "login.tailscale.com") {
+                viewModel.reportUserMessage(invalidAuthorizationUrlMessage)
+                return@collect
+            }
+            runCatching {
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            }.onFailure {
+                viewModel.reportUserMessage(browserStartFailedMessage)
+            }
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.sessionEndedEvents.collect { event ->
@@ -443,6 +467,10 @@ fun MangoSshApp(
                             onLockNow = viewModel::lockForBackground,
                             onSaveSnippet = viewModel::saveSnippet,
                             onRemoveSnippet = { pendingRemoval = PendingRemovalRequest.Snippet(it) },
+                            embeddedTsnetStatus = embeddedTsnetStatus,
+                            onBeginTsnetBrowserEnrollment = viewModel::beginEmbeddedTsnetBrowserEnrollment,
+                            onBeginTsnetAuthKeyEnrollment = viewModel::beginEmbeddedTsnetAuthKeyEnrollment,
+                            onLogoutTsnet = viewModel::logoutEmbeddedTsnet,
                         )
                     }
                 }
@@ -1501,6 +1529,175 @@ private fun PortForwardRule.displayDescription(): String = when (type) {
 }
 
 @Composable
+internal fun EmbeddedTsnetCard(
+    status: EmbeddedTsnetStatus,
+    onBeginBrowserEnrollment: () -> Unit,
+    onBeginAuthKeyEnrollment: (CharArray) -> Unit,
+    onLogout: () -> Unit,
+) {
+    var showAuthKeyDialog by remember { mutableStateOf(false) }
+    var showLogoutDialog by remember { mutableStateOf(false) }
+    val statusText = when (status.phase) {
+        EmbeddedTsnetPhase.UNENROLLED -> stringResource(R.string.embedded_tsnet_status_unenrolled)
+        EmbeddedTsnetPhase.STARTING -> stringResource(R.string.embedded_tsnet_status_starting)
+        EmbeddedTsnetPhase.WAITING_FOR_LOGIN ->
+            stringResource(R.string.embedded_tsnet_status_waiting_login)
+        EmbeddedTsnetPhase.WAITING_FOR_APPROVAL ->
+            stringResource(R.string.embedded_tsnet_status_waiting_approval)
+        EmbeddedTsnetPhase.READY_IDLE -> stringResource(R.string.embedded_tsnet_status_ready_idle)
+        EmbeddedTsnetPhase.ACTIVE ->
+            pluralStringResource(
+                R.plurals.embedded_tsnet_status_active,
+                status.activeSessions,
+                status.activeSessions,
+            )
+        EmbeddedTsnetPhase.FAILED -> stringResource(R.string.embedded_tsnet_status_failed)
+    }
+    val canStartEnrollment = status.phase == EmbeddedTsnetPhase.UNENROLLED ||
+        status.phase == EmbeddedTsnetPhase.FAILED ||
+        status.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN
+    val canLogout = status.phase == EmbeddedTsnetPhase.READY_IDLE ||
+        status.phase == EmbeddedTsnetPhase.ACTIVE
+
+    Card(modifier = Modifier.fillMaxWidth().testTag("embedded_tsnet_card")) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(stringResource(R.string.embedded_tsnet_title), fontWeight = FontWeight.SemiBold)
+            Text(
+                stringResource(R.string.embedded_tsnet_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                statusText,
+                modifier = Modifier.testTag("embedded_tsnet_status"),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            if (canStartEnrollment) {
+                Button(
+                    onClick = onBeginBrowserEnrollment,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("embedded_tsnet_browser_login"),
+                ) {
+                    Text(stringResource(R.string.embedded_tsnet_browser_login))
+                }
+                if (status.authKeyAllowed) {
+                    OutlinedButton(
+                        onClick = { showAuthKeyDialog = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("embedded_tsnet_auth_key_login"),
+                    ) {
+                        Text(stringResource(R.string.embedded_tsnet_auth_key_login))
+                    }
+                }
+            }
+            if (canLogout) {
+                OutlinedButton(
+                    onClick = { showLogoutDialog = true },
+                    enabled = status.activeSessions == 0,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("embedded_tsnet_logout"),
+                ) {
+                    Text(stringResource(R.string.embedded_tsnet_logout))
+                }
+            }
+        }
+    }
+
+    if (showAuthKeyDialog) {
+        EmbeddedTsnetAuthKeyDialog(
+            onDismiss = { showAuthKeyDialog = false },
+            onConfirm = { key ->
+                showAuthKeyDialog = false
+                onBeginAuthKeyEnrollment(key)
+            },
+        )
+    }
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text(stringResource(R.string.embedded_tsnet_logout_title)) },
+            text = { Text(stringResource(R.string.embedded_tsnet_logout_message)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showLogoutDialog = false
+                        onLogout()
+                    },
+                ) {
+                    Text(stringResource(R.string.embedded_tsnet_logout_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) {
+                    Text(stringResource(R.string.embedded_tsnet_cancel))
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun EmbeddedTsnetAuthKeyDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (CharArray) -> Unit,
+) {
+    // Deliberately not rememberSaveable: activity recreation must discard the
+    // one-shot credential rather than place it in SavedState.
+    var authKey by remember { mutableStateOf("") }
+
+    fun clearAndDismiss() {
+        authKey = ""
+        onDismiss()
+    }
+
+    AlertDialog(
+        onDismissRequest = ::clearAndDismiss,
+        title = { Text(stringResource(R.string.embedded_tsnet_auth_key_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    stringResource(R.string.embedded_tsnet_auth_key_explanation),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(
+                    value = authKey,
+                    onValueChange = { authKey = it },
+                    modifier = Modifier.testTag("embedded_tsnet_auth_key_input"),
+                    label = { Text(stringResource(R.string.embedded_tsnet_auth_key_label)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = authKey.isNotBlank(),
+                modifier = Modifier.testTag("embedded_tsnet_auth_key_confirm"),
+                onClick = {
+                    val transient = authKey.toCharArray()
+                    authKey = ""
+                    onConfirm(transient)
+                },
+            ) {
+                Text(stringResource(R.string.embedded_tsnet_auth_key_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = ::clearAndDismiss) {
+                Text(stringResource(R.string.embedded_tsnet_cancel))
+            }
+        },
+    )
+}
+
+@Composable
 private fun SettingsScreen(
     vaultStatus: VaultStatus,
     webDavConfig: WebDavConfig?,
@@ -1520,6 +1717,10 @@ private fun SettingsScreen(
     onLockNow: () -> Unit,
     onSaveSnippet: (String?, String, String, Boolean) -> Unit,
     onRemoveSnippet: (String) -> Unit,
+    embeddedTsnetStatus: EmbeddedTsnetStatus,
+    onBeginTsnetBrowserEnrollment: () -> Unit,
+    onBeginTsnetAuthKeyEnrollment: (CharArray) -> Unit,
+    onLogoutTsnet: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1560,6 +1761,14 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { SecurityBanner(vaultStatus) }
+        item {
+            EmbeddedTsnetCard(
+                status = embeddedTsnetStatus,
+                onBeginBrowserEnrollment = onBeginTsnetBrowserEnrollment,
+                onBeginAuthKeyEnrollment = onBeginTsnetAuthKeyEnrollment,
+                onLogout = onLogoutTsnet,
+            )
+        }
         item {
             Text("安全与同步", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))

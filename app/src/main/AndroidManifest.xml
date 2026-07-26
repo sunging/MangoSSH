@@ -42,7 +42,7 @@
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Maintains user initiated SSH sessions and port forwards." />
+                android:value="@string/foreground_service_special_use" />
         </service>
     </application>
 
