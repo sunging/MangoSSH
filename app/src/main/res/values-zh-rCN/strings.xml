@@ -4,6 +4,7 @@
     <string name="active_sessions_channel_description">MangoSSH 正在维持用户发起的 SSH 会话和端口转发。</string>
     <string name="active_sessions_notification_title">MangoSSH 正在运行</string>
     <string name="active_sessions_notification_text">会话和端口转发将在此处显示。</string>
+    <string name="embedded_tsnet_notification_text">正在完成内嵌 Tailscale 登录。</string>
     <string name="active_sessions_notification_public_title">MangoSSH 正在运行</string>
     <string name="active_sessions_notification_public_text">正在保护一个活动终端会话。</string>
     <string name="active_session_notification_title">%1$s</string>

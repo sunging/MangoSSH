@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import website.sung.mangossh.MainActivity
 import website.sung.mangossh.MangoSshApplication
@@ -41,6 +42,8 @@ class SessionForegroundService : Service() {
 
     private val sessionController
         get() = (application as MangoSshApplication).sessionRuntime.sessionController
+    private val embeddedTsnetManager
+        get() = (application as MangoSshApplication).sessionRuntime.embeddedTsnetManager
 
     override fun onCreate() {
         super.onCreate()
@@ -53,13 +56,20 @@ class SessionForegroundService : Service() {
         ensureForeground()
         MangoLog.info(MangoLogEvent.FOREGROUND_SERVICE_STARTED)
         serviceScope.launch {
-            sessionController.sessions.collect(::renderSessions)
+            combine(
+                sessionController.sessions,
+                embeddedTsnetManager.foregroundRequired,
+            ) { sessions, tsnetRequired -> sessions to tsnetRequired }
+                .collect { (sessions, tsnetRequired) -> renderWork(sessions, tsnetRequired) }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         ensureForeground()
-        renderSessions(sessionController.sessions.value)
+        renderWork(
+            sessions = sessionController.sessions.value,
+            tsnetRequired = embeddedTsnetManager.foregroundRequired.value,
+        )
         return START_NOT_STICKY
     }
 
@@ -76,8 +86,8 @@ class SessionForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun renderSessions(sessions: List<TerminalSessionState>) {
-        if (sessions.isEmpty()) {
+    private fun renderWork(sessions: List<TerminalSessionState>, tsnetRequired: Boolean) {
+        if (sessions.isEmpty() && !tsnetRequired) {
             clearSessionNotifications()
             if (foregroundStarted) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -90,6 +100,10 @@ class SessionForegroundService : Service() {
         ensureForeground()
 
         val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(
+            SUMMARY_NOTIFICATION_ID,
+            buildSummaryNotification(tsnetOnly = sessions.isEmpty() && tsnetRequired),
+        )
         val liveIds = sessions.mapTo(mutableSetOf()) { it.id }
         sessions.forEach { session ->
             manager.notify(notificationIdFor(session.id), buildSessionNotification(session))
@@ -114,16 +128,24 @@ class SessionForegroundService : Service() {
         ServiceCompat.startForeground(
             this,
             SUMMARY_NOTIFICATION_ID,
-            buildSummaryNotification(),
+            buildSummaryNotification(tsnetOnly = false),
             foregroundServiceType(),
         )
         foregroundStarted = true
     }
 
-    private fun buildSummaryNotification(): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun buildSummaryNotification(tsnetOnly: Boolean): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.mipmap.ic_launcher)
         .setContentTitle(getString(R.string.active_sessions_notification_title))
-        .setContentText(getString(R.string.active_sessions_notification_text))
+        .setContentText(
+            getString(
+                if (tsnetOnly) {
+                    R.string.embedded_tsnet_notification_text
+                } else {
+                    R.string.active_sessions_notification_text
+                },
+            ),
+        )
         .setContentIntent(summaryPendingIntent())
         .setOngoing(true)
         .setOnlyAlertOnce(true)

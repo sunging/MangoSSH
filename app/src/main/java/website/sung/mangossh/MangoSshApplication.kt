@@ -5,6 +5,7 @@ import android.content.Context
 import website.sung.mangossh.data.keys.SshKeyManager
 import website.sung.mangossh.data.vault.VaultRepository
 import website.sung.mangossh.session.SshSessionController
+import website.sung.mangossh.session.tsnet.EmbeddedTsnetManager
 
 /**
  * Application owner for resources that must outlive a single activity.
@@ -35,6 +36,9 @@ class MangoSessionRuntime(context: Context) {
 
     /** Key codec shared by vault operations and live authentication. */
     val keyManager = SshKeyManager()
+
+    /** Process-wide outbound-only Tailnet node, started only for explicit TSNET work. */
+    internal val embeddedTsnetManager = EmbeddedTsnetManager(context.applicationContext)
 
     /** The sole live transport owner for this app process. */
     val sessionController = SshSessionController(context.applicationContext, vault, keyManager)

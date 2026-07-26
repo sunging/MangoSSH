@@ -4,6 +4,7 @@
     <string name="active_sessions_channel_description">MangoSSH is maintaining user-initiated SSH sessions and port forwards.</string>
     <string name="active_sessions_notification_title">MangoSSH is running</string>
     <string name="active_sessions_notification_text">Active sessions and port forwards appear here.</string>
+    <string name="embedded_tsnet_notification_text">Completing embedded Tailscale sign-in.</string>
     <string name="active_sessions_notification_public_title">MangoSSH is running</string>
     <string name="active_sessions_notification_public_text">An active terminal session is protected.</string>
     <string name="active_session_notification_title">%1$s</string>
