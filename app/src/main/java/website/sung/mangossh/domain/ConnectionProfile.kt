@@ -12,7 +12,8 @@ enum class ConnectionProtocol(val label: String) {
 /** Network path used before protocol authentication. */
 enum class ConnectionRoute(val label: String) {
     DIRECT("直接连接"),
-    TAILNET("Tailnet"),
+    TAILNET("系统 Tailscale"),
+    TSNET("内嵌 Tailscale"),
 }
 
 /** Credential exchange offered to the SSH server during connection setup. */
@@ -63,9 +64,9 @@ data class ConnectionProfileDraft(
     fun isValid(): Boolean = hostname.isNotBlank() && username.isNotBlank() && port in 1..65535
 
     /**
-     * Creates a persisted profile and applies Tailscale SSH to every Tailnet
-     * route. Mosh still authenticates its short-lived SSH bootstrap before the
-     * native client switches to the separate UDP transport.
+     * Creates a persisted profile and keeps the legacy system Tailnet route
+     * pinned to Tailscale SSH. Embedded TSNET profiles retain the explicitly
+     * selected SSH authentication method.
      */
     fun toProfile(): ConnectionProfile = ConnectionProfile(
         id = id ?: UUID.randomUUID().toString(),

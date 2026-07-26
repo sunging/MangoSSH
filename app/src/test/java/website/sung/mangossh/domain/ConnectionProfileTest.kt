@@ -36,6 +36,22 @@ class ConnectionProfileTest {
     }
 
     @Test
+    fun embeddedTsnetRetainsRegularSshAuthentication() {
+        val profile = ConnectionProfileDraft(
+            label = "embedded",
+            hostname = "lab",
+            port = 22,
+            username = "alice",
+            protocol = ConnectionProtocol.MOSH,
+            route = ConnectionRoute.TSNET,
+            authentication = AuthenticationMethod.PASSWORD,
+        ).toProfile()
+
+        assertEquals(ConnectionRoute.TSNET, profile.route)
+        assertEquals(AuthenticationMethod.PASSWORD, profile.authentication)
+    }
+
+    @Test
     fun invalidPortsAreRejectedBeforePersistence() {
         val draft = ConnectionProfileDraft(
             label = "invalid",

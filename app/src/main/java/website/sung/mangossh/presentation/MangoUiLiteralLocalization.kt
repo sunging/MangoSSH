@@ -97,6 +97,8 @@ internal object MangoUiLiteralLocalization {
         "SSH" to "SSH",
         "Mosh" to "Mosh",
         "直接连接" to "Direct",
+        "系统 Tailscale" to "System Tailscale",
+        "内嵌 Tailscale" to "Embedded Tailscale",
         "私钥" to "Private key",
         "密码" to "Password",
         "交互式 / OTP" to "Interactive / OTP",
@@ -226,6 +228,8 @@ internal object MangoUiLiteralLocalization {
             "The PIN is stored only on this device as a salted verifier and cannot be recovered.",
         "Tailnet 路由通过设备已启用的 Tailscale VPN 访问目标；认证方式会设为 Tailscale SSH。" to
             "Tailnet routing reaches the target through the device's enabled Tailscale VPN; authentication uses Tailscale SSH.",
+        "内嵌 Tailscale 仅代理此配置的 SSH 和 Mosh 流量；默认使用 Tailscale SSH，也可以改用常规 SSH 认证。" to
+            "Embedded Tailscale proxies only this profile's SSH and Mosh traffic. Tailscale SSH is the default, and regular SSH authentication remains available.",
         "Mosh 使用 GPL-3.0-or-later 原生客户端；源代码和许可证见项目随附材料。它需要远端 mosh-server 和可达的 UDP 端口（默认 60000–61000），且不支持 SSH 的 SCP、端口转发、代理转发或资源查询。" to
             "Mosh uses a GPL-3.0-or-later native client; its source and license are included with the project. It requires mosh-server on the remote host and reachable UDP (default ports 60000–61000), and does not support SSH SCP, port forwarding, agent forwarding, or resource queries.",
         "请先在“密钥”页生成或导入一把私钥。" to "Generate or import a private key on the Keys page first.",

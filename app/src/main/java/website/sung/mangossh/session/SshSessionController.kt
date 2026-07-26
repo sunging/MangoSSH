@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -49,17 +50,23 @@ import website.sung.mangossh.data.vault.PortForwardType
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
+import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
+import website.sung.mangossh.session.tsnet.EmbeddedTsnetLease
+import website.sung.mangossh.session.tsnet.EmbeddedTsnetManager
+import website.sung.mangossh.session.tsnet.EmbeddedTsnetUdpRelay
+import website.sung.mangossh.session.tsnet.TsnetEnrollmentRequiredException
 
 /**
  * Owns live SSH sockets and keeps all blocking protocol work away from Compose.
  * The controller never trusts a new or changed host key without a user response.
  */
-class SshSessionController(
+class SshSessionController internal constructor(
     appContext: Context,
     private val vault: VaultRepository,
     private val keyManager: SshKeyManager = SshKeyManager(),
+    private val embeddedTsnetManager: EmbeddedTsnetManager,
 ) {
     private val context = appContext.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -304,8 +311,21 @@ class SshSessionController(
         finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
     }
 
+    /**
+     * Tears down every session and immediately releases embedded tsnet leases.
+     *
+     * The controller scope is cancelled at the end, so the normal delayed
+     * Mosh release must not be scheduled here or its cleanup would be lost.
+     */
     fun clear() {
-        sessionsById.keys.toList().forEach(::close)
+        sessionsById.toMap().forEach { (sessionId, managed) ->
+            finishSession(
+                sessionId = sessionId,
+                managed = managed,
+                reason = SessionEndReason.USER_REQUEST,
+                deferTsnetMoshRelease = false,
+            )
+        }
         scope.cancel()
     }
 
@@ -323,6 +343,7 @@ class SshSessionController(
         reason: SessionEndReason,
         failure: Throwable? = null,
         userMessage: String? = null,
+        deferTsnetMoshRelease: Boolean = true,
     ) {
         if (!sessionsById.remove(sessionId, managed)) return
 
@@ -341,7 +362,26 @@ class SshSessionController(
                 scope.launch { runCatching { process.awaitExit() } }
             }
         }
+        val closeEmbeddedTsnet = {
+            runCatching { managed.tsnetUdpRelay?.close() }
+            runCatching { managed.tsnetLease?.close() }
+        }
         runCatching { managed.connection.close() }
+        if (
+            managed.protocol == ConnectionProtocol.MOSH &&
+            reason == SessionEndReason.USER_REQUEST &&
+            managed.moshProcess != null &&
+            deferTsnetMoshRelease
+        ) {
+            // Keep the loopback UDP relay alive through Mosh's short graceful
+            // quit window, then release the final process-wide tsnet reference.
+            scope.launch {
+                delay(TSNET_MOSH_GRACEFUL_RELEASE_MILLIS)
+                closeEmbeddedTsnet()
+            }
+        } else {
+            closeEmbeddedTsnet()
+        }
 
         _resourceSnapshots.update { snapshots -> snapshots - sessionId }
         _scpTransfers.update { transfers ->
@@ -370,8 +410,8 @@ class SshSessionController(
         )
 
         when (reason) {
-            SessionEndReason.USER_REQUEST,
-            SessionEndReason.REMOTE_EXIT -> MangoLog.info(MangoLogEvent.SSH_SESSION_CLOSED)
+            SessionEndReason.USER_REQUEST -> MangoLog.info(MangoLogEvent.SSH_SESSION_CLOSED)
+            SessionEndReason.REMOTE_EXIT -> MangoLog.info(MangoLogEvent.SSH_SESSION_REMOTE_EXIT)
 
             SessionEndReason.CONNECTION_LOST,
             SessionEndReason.CONNECTION_FAILED -> MangoLog.warn(MangoLogEvent.SSH_SESSION_FAILED, failure)
@@ -398,6 +438,7 @@ class SshSessionController(
         val snapshot = vault.snapshot.value
         val connection = managed.connection
         try {
+            prepareConnectionRoute(profile, managed)
             connection.addUserAuthBanner(
                 UserAuthBannerCallback { banner, _ ->
                     publishNotice(sessionId, "\r\n[MangoSSH] ${banner.sanitizeRemoteBanner()}\r\n")
@@ -473,6 +514,7 @@ class SshSessionController(
         val snapshot = vault.snapshot.value
         val connection = managed.connection
         try {
+            prepareConnectionRoute(profile, managed)
             connection.addUserAuthBanner(
                 UserAuthBannerCallback { banner, _ ->
                     publishNotice(sessionId, "\r\n[MangoSSH] ${banner.sanitizeRemoteBanner()}\r\n")
@@ -512,12 +554,19 @@ class SshSessionController(
             MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_SUCCEEDED)
             runCatching { connection.close() }
 
+            val relay = if (profile.route == ConnectionRoute.TSNET) {
+                requireNotNull(managed.tsnetLease)
+                    .startUdpRelay(profile.hostname, bootstrap.port)
+                    .also { managed.tsnetUdpRelay = it }
+            } else {
+                null
+            }
             val moshProcess = try {
                 runCatching {
                     MoshPtyProcess.start(
                         context = context,
-                        host = profile.hostname,
-                        port = bootstrap.port,
+                        host = if (relay == null) profile.hostname else TSNET_LOOPBACK_HOST,
+                        port = relay?.localPort ?: bootstrap.port,
                         key = bootstrap.key,
                         terminalColumns = INITIAL_COLUMNS,
                         terminalRows = INITIAL_ROWS,
@@ -555,7 +604,24 @@ class SshSessionController(
         is SshAuthenticationException -> context.getString(R.string.session_ended_authentication_failed)
         is MoshBootstrapException -> context.getString(R.string.mosh_bootstrap_failed)
         is MoshRuntimeException -> context.getString(R.string.mosh_runtime_missing)
+        is TsnetEnrollmentRequiredException ->
+            context.getString(R.string.embedded_tsnet_enrollment_required)
         else -> null
+    }
+
+    /** Attaches tsnet's authenticated loopback SOCKS5 transport before SSH connects. */
+    private suspend fun prepareConnectionRoute(
+        profile: ConnectionProfile,
+        managed: ManagedSession,
+    ) {
+        if (profile.route != ConnectionRoute.TSNET) return
+        val lease = embeddedTsnetManager.acquire()
+        if (sessionsById.values.none { it === managed }) {
+            lease.close()
+            throw CancellationException()
+        }
+        managed.tsnetLease = lease
+        managed.connection.setProxyData(lease.proxyData)
     }
 
     private fun authenticate(
@@ -987,6 +1053,12 @@ class SshSessionController(
         @Volatile
         var moshProcess: MoshPtyProcess? = null
 
+        @Volatile
+        var tsnetLease: EmbeddedTsnetLease? = null
+
+        @Volatile
+        var tsnetUdpRelay: EmbeddedTsnetUdpRelay? = null
+
         val readerJobs = ConcurrentHashMap.newKeySet<Job>()
         val completedReaderCount = AtomicInteger(0)
         val forwards = ConcurrentHashMap<String, ManagedPortForward>()
@@ -1101,6 +1173,8 @@ class SshSessionController(
         const val SAFE_SCP_PATH_CHARACTERS = "._/@%+=:,~-"
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
+        const val TSNET_LOOPBACK_HOST = "127.0.0.1"
+        const val TSNET_MOSH_GRACEFUL_RELEASE_MILLIS = 2_000L
         const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256 -l LANG=C.UTF-8"
         const val RESOURCE_COMMAND = "printf 'Host: '; hostname; printf '\\nUptime: '; uptime; printf '\\nLoad: '; cat /proc/loadavg 2>/dev/null || true; printf '\\nMemory:\\n'; free -h 2>/dev/null || true; printf '\\nDisk:\\n'; df -h / 2>/dev/null || true; printf '\\nCPU: '; nproc 2>/dev/null || true"
 

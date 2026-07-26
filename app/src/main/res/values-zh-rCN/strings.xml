@@ -33,6 +33,7 @@
     <string name="embedded_tsnet_logout_sessions_active">退出前请先断开所有内嵌 Tailscale 会话。</string>
     <string name="embedded_tsnet_logout_failed">无法退出内嵌 Tailscale，请重试。</string>
     <string name="embedded_tsnet_invalid_authorization_url">内嵌 Tailscale 返回了无效的授权请求。</string>
+    <string name="embedded_tsnet_enrollment_required">请先在设置中登录内嵌 Tailscale，再连接此配置。</string>
     <string name="active_sessions_notification_public_title">MangoSSH 正在运行</string>
     <string name="active_sessions_notification_public_text">正在保护一个活动终端会话。</string>
     <string name="active_session_notification_title">%1$s</string>

@@ -2199,8 +2199,8 @@ private fun HostEditorSheet(
     var startupSnippetId by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.startupSnippetId) }
     var agentForwarding by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.agentForwarding ?: false) }
     val port = portText.toIntOrNull()
-    val usesTailscaleSsh = route == ConnectionRoute.TAILNET
-    val authenticationIsConfigured = usesTailscaleSsh ||
+    val usesSystemTailscale = route == ConnectionRoute.TAILNET
+    val authenticationIsConfigured = usesSystemTailscale ||
         authentication != AuthenticationMethod.PRIVATE_KEY ||
         keys.any { it.id == keyId }
     val canSave = hostname.isNotBlank() &&
@@ -2283,21 +2283,16 @@ private fun HostEditorSheet(
             Spacer(Modifier.height(20.dp))
             Text("网络路由", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ConnectionRoute.entries.forEach { option ->
-                    FilterChip(
-                        selected = route == option,
-                        onClick = {
-                            route = option
-                            if (option == ConnectionRoute.DIRECT && authentication == AuthenticationMethod.TAILSCALE_SSH) {
-                                authentication = AuthenticationMethod.PRIVATE_KEY
-                            }
-                        },
-                        label = { Text(option.label) },
-                    )
-                }
-            }
-            if (usesTailscaleSsh) {
+            ConnectionRouteSelector(
+                selected = route,
+                onSelected = { option ->
+                    if (route != option) {
+                        authentication = authenticationAfterRouteSelection(option, authentication)
+                    }
+                    route = option
+                },
+            )
+            if (usesSystemTailscale) {
                 Spacer(Modifier.height(12.dp))
                 Text(
                     text = "Tailnet 路由通过设备已启用的 Tailscale VPN 访问目标；认证方式会设为 Tailscale SSH。",
@@ -2308,9 +2303,12 @@ private fun HostEditorSheet(
                 Spacer(Modifier.height(20.dp))
                 Text("认证方式", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     AuthenticationMethod.entries
-                        .filterNot { it == AuthenticationMethod.TAILSCALE_SSH }
+                        .filterNot {
+                            route == ConnectionRoute.DIRECT &&
+                                it == AuthenticationMethod.TAILSCALE_SSH
+                        }
                         .forEach { option ->
                             FilterChip(
                                 selected = authentication == option,
@@ -2318,6 +2316,14 @@ private fun HostEditorSheet(
                                 label = { Text(option.label) },
                             )
                         }
+                }
+                if (route == ConnectionRoute.TSNET) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "内嵌 Tailscale 仅代理此配置的 SSH 和 Mosh 流量；默认使用 Tailscale SSH，也可以改用常规 SSH 认证。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 if (authentication == AuthenticationMethod.PRIVATE_KEY) {
                     Spacer(Modifier.height(16.dp))
@@ -2404,6 +2410,35 @@ private fun HostEditorSheet(
             }
         }
     }
+}
+
+/** Three-route selector kept vertical so all choices remain visible on narrow phones. */
+@Composable
+internal fun ConnectionRouteSelector(
+    selected: ConnectionRoute,
+    onSelected: (ConnectionRoute) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ConnectionRoute.entries.forEach { option ->
+            FilterChip(
+                selected = selected == option,
+                onClick = { onSelected(option) },
+                modifier = Modifier.testTag("connection_route_${option.name}"),
+                label = { Text(option.label) },
+            )
+        }
+    }
+}
+
+internal fun authenticationAfterRouteSelection(
+    route: ConnectionRoute,
+    current: AuthenticationMethod,
+): AuthenticationMethod = when {
+    route == ConnectionRoute.TAILNET || route == ConnectionRoute.TSNET ->
+        AuthenticationMethod.TAILSCALE_SSH
+    current == AuthenticationMethod.TAILSCALE_SSH ->
+        AuthenticationMethod.PRIVATE_KEY
+    else -> current
 }
 
 @Composable

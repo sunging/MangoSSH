@@ -25,6 +25,14 @@ class MangoUiLiteralLocalizationTest {
                 "en",
             ),
         )
+        assertEquals(
+            "System Tailscale",
+            MangoUiLiteralLocalization.resolve("系统 Tailscale", "en"),
+        )
+        assertEquals(
+            "Embedded Tailscale",
+            MangoUiLiteralLocalization.resolve("内嵌 Tailscale", "en"),
+        )
     }
 
     @Test

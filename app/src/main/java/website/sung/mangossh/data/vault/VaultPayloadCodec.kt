@@ -116,7 +116,7 @@ internal object VaultPayloadCodec {
         require(schemaVersion in 1..VaultSnapshot.CURRENT_SCHEMA_VERSION) {
             "Unsupported vault schema version: $schemaVersion"
         }
-        val profiles = root.optJSONArray("profiles")?.toProfiles().orEmpty()
+        val profiles = root.optJSONArray("profiles")?.toProfiles(schemaVersion).orEmpty()
         val keys = root.optJSONArray("keys")?.toKeys().orEmpty()
         val knownHosts = root.optJSONArray("knownHosts")?.toKnownHosts().orEmpty()
         val snippets = root.optJSONArray("snippets")?.toSnippets().orEmpty()
@@ -133,7 +133,7 @@ internal object VaultPayloadCodec {
         )
     }
 
-    private fun JSONArray.toProfiles(): List<ConnectionProfile> = buildList {
+    private fun JSONArray.toProfiles(schemaVersion: Int): List<ConnectionProfile> = buildList {
         repeat(length()) { index ->
             val value = getJSONObject(index)
             add(
@@ -144,7 +144,7 @@ internal object VaultPayloadCodec {
                     port = value.getInt("port"),
                     username = value.getString("username"),
                     protocol = value.enumOrDefault("protocol", ConnectionProtocol.SSH),
-                    route = value.enumOrDefault("route", ConnectionRoute.DIRECT),
+                    route = value.connectionRoute(schemaVersion),
                     authentication = value.enumOrDefault(
                         "authentication",
                         AuthenticationMethod.PRIVATE_KEY,
@@ -236,4 +236,19 @@ internal object VaultPayloadCodec {
 
     private inline fun <reified T : Enum<T>> JSONObject.enumOrDefault(name: String, fallback: T): T =
         runCatching { enumValueOf<T>(getString(name)) }.getOrDefault(fallback)
+
+    /**
+     * Missing route fields are accepted only for legacy payloads and mean
+     * direct routing. An explicit unknown value is always rejected so TSNET can
+     * never silently become a public-network connection.
+     */
+    private fun JSONObject.connectionRoute(schemaVersion: Int): ConnectionRoute {
+        if (!has("route") || isNull("route")) {
+            require(schemaVersion < 4) { "Vault schema 4 profile is missing its route" }
+            return ConnectionRoute.DIRECT
+        }
+        val serialized = getString("route")
+        return ConnectionRoute.entries.firstOrNull { it.name == serialized }
+            ?: throw IllegalArgumentException("Unsupported connection route")
+    }
 }

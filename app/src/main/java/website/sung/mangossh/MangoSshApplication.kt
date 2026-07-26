@@ -41,5 +41,10 @@ class MangoSessionRuntime(context: Context) {
     internal val embeddedTsnetManager = EmbeddedTsnetManager(context.applicationContext)
 
     /** The sole live transport owner for this app process. */
-    val sessionController = SshSessionController(context.applicationContext, vault, keyManager)
+    val sessionController = SshSessionController(
+        context.applicationContext,
+        vault,
+        keyManager,
+        embeddedTsnetManager,
+    )
 }
