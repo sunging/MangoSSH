@@ -1,18 +1,19 @@
 [versions]
 agp = "9.3.1"
-kotlin = "2.3.21"
-composeBom = "2026.06.00"
-coreKtx = "1.18.0"
+kotlin = "2.4.10"
+composeBom = "2026.06.01"
+coreKtx = "1.19.0"
 activityCompose = "1.13.0"
-lifecycle = "2.10.0"
+lifecycle = "2.11.0"
 junit = "4.13.2"
-junitVersion = "1.1.5"
-espressoCore = "3.5.1"
-material = "1.13.0"
+junitVersion = "1.3.0"
+espressoCore = "3.7.0"
+material = "1.14.0"
 connectbotSshlib = "2.2.48"
 termlib = "0.1.0"
-conscrypt = "2.6.0"
-biometric = "1.4.0-alpha02"
+conscrypt = "2.6.1"
+biometric = "1.4.0-alpha07"
+json = "20260719"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -36,6 +37,7 @@ connectbot-sshlib = { group = "org.connectbot", name = "sshlib", version.ref = "
 connectbot-termlib = { group = "org.connectbot", name = "termlib", version.ref = "termlib" }
 conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+json = { group = "org.json", name = "json", version.ref = "json" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -19,16 +19,12 @@ val hasReleaseSigning = listOf(
 
 android {
     namespace = "website.sung.mangossh"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "website.sung.mangossh"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
@@ -97,7 +93,7 @@ dependencies {
     implementation(libs.androidx.biometric)
 
     testImplementation(libs.junit)
-    testImplementation("org.json:json:20250517")
+    testImplementation(libs.json)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
