@@ -48,6 +48,9 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      - name: Install 16 KiB-aware Android zipalign
+        run: sdkmanager "build-tools;36.0.0"
+
       - name: Cache pinned native toolchains
         uses: actions/cache@v5
         with:
@@ -128,11 +131,12 @@ jobs:
 
       - name: Verify signed APK and 16 KiB native alignment
         run: |
-          build_tools_dir="$ANDROID_HOME/build-tools/34.0.0"
-          test -x "$build_tools_dir/apksigner"
-          test -x "$build_tools_dir/zipalign"
-          "$build_tools_dir/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
-          "$build_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/release/app-release.apk
+          signing_tools_dir="$ANDROID_HOME/build-tools/34.0.0"
+          alignment_tools_dir="$ANDROID_HOME/build-tools/36.0.0"
+          test -x "$signing_tools_dir/apksigner"
+          test -x "$alignment_tools_dir/zipalign"
+          "$signing_tools_dir/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          "$alignment_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/release/app-release.apk
           bash tools/check-16kb-elf-wsl.sh app/build/outputs/apk/release/app-release.apk
 
       - name: Create release checksums
