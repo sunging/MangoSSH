@@ -10,7 +10,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,6 +43,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -54,8 +54,6 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -174,8 +172,6 @@ private fun Text(
         style = style,
     )
 }
-
-private val WIDE_LAYOUT_MIN_WIDTH = 600.dp
 
 private sealed interface PendingRemovalRequest {
     val id: String
@@ -351,14 +347,13 @@ fun MangoSshApp(
         return
     }
 
-    BoxWithConstraints(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .focusProperties {
                 canFocus = !showHostEditor && pendingRemoval == null && userMessage == null
             },
     ) {
-        val useNavigationRail = maxWidth >= WIDE_LAYOUT_MIN_WIDTH
         Scaffold(
             topBar = {
                 CenterAlignedTopAppBar(
@@ -372,28 +367,23 @@ fun MangoSshApp(
                             )
                         }
                     },
-                    actions = {
-                        if (selectedSection == AppSection.HOSTS) {
-                            IconButton(
-                                onClick = { openHostEditor() },
-                                enabled = vaultStatus !is VaultStatus.Failed,
-                            ) {
-                                Icon(
-                                    Icons.Outlined.Add,
-                                    contentDescription = localizedUiLiteral("新建主机配置"),
-                                )
-                            }
-                        }
-                    },
                 )
             },
-            bottomBar = {
-                if (!useNavigationRail) {
-                    MangoNavigationBar(
-                        selectedSection = selectedSection,
-                        onSelectSection = viewModel::selectSection,
+            floatingActionButton = {
+                if (selectedSection == AppSection.HOSTS && vaultStatus !is VaultStatus.Failed) {
+                    ExtendedFloatingActionButton(
+                        modifier = Modifier.testTag("home-add-host-action"),
+                        onClick = { openHostEditor() },
+                        icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                        text = { Text("新建主机配置") },
                     )
                 }
+            },
+            bottomBar = {
+                MangoNavigationBar(
+                    selectedSection = selectedSection,
+                    onSelectSection = viewModel::selectSection,
+                )
             },
         ) { contentPadding ->
             Row(
@@ -401,12 +391,6 @@ fun MangoSshApp(
                     .fillMaxSize()
                     .padding(contentPadding),
             ) {
-                if (useNavigationRail) {
-                    MangoNavigationRail(
-                        selectedSection = selectedSection,
-                        onSelectSection = viewModel::selectSection,
-                    )
-                }
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -417,7 +401,6 @@ fun MangoSshApp(
                             hosts = hosts,
                             sessions = sessions,
                             vaultStatus = vaultStatus,
-                            onAddHost = { openHostEditor() },
                             onEditHost = { openHostEditor(it) },
                             onRemoveHost = { pendingRemoval = PendingRemovalRequest.Host(it) },
                             onConnectHost = { host ->
@@ -542,30 +525,6 @@ private fun MangoNavigationBar(
                 label = { Text(section.label) },
             )
         }
-    }
-}
-
-@Composable
-private fun MangoNavigationRail(
-    selectedSection: AppSection,
-    onSelectSection: (AppSection) -> Unit,
-) {
-    NavigationRail(modifier = Modifier.fillMaxHeight()) {
-        Spacer(Modifier.weight(1f))
-        AppSection.entries.forEach { section ->
-            NavigationRailItem(
-                selected = section == selectedSection,
-                onClick = { onSelectSection(section) },
-                icon = {
-                    Icon(
-                        imageVector = section.icon(),
-                        contentDescription = localizedUiLiteral(section.label),
-                    )
-                },
-                label = { Text(section.label) },
-            )
-        }
-        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -700,7 +659,6 @@ private fun HostsScreen(
     hosts: List<ConnectionProfile>,
     sessions: List<website.sung.mangossh.session.TerminalSessionState>,
     vaultStatus: VaultStatus,
-    onAddHost: () -> Unit,
     onEditHost: (ConnectionProfile) -> Unit,
     onRemoveHost: (String) -> Unit,
     onConnectHost: (ConnectionProfile) -> Unit,
@@ -708,13 +666,18 @@ private fun HostsScreen(
     onDisconnectSession: (String) -> Unit,
 ) {
     if (hosts.isEmpty() && sessions.isEmpty()) {
-        EmptyHosts(vaultStatus = vaultStatus, onAddHost = onAddHost)
+        EmptyHosts(vaultStatus = vaultStatus)
         return
     }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            start = 16.dp,
+            top = 16.dp,
+            end = 16.dp,
+            bottom = 96.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -756,7 +719,7 @@ private fun HostsScreen(
 }
 
 @Composable
-private fun EmptyHosts(vaultStatus: VaultStatus, onAddHost: () -> Unit) {
+private fun EmptyHosts(vaultStatus: VaultStatus) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -778,7 +741,6 @@ private fun EmptyHosts(vaultStatus: VaultStatus, onAddHost: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(24.dp))
         if (vaultStatus is VaultStatus.Failed) {
             Spacer(Modifier.height(12.dp))
             Text(
@@ -786,14 +748,6 @@ private fun EmptyHosts(vaultStatus: VaultStatus, onAddHost: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
-        }
-        Button(
-            onClick = onAddHost,
-            enabled = vaultStatus !is VaultStatus.Failed,
-        ) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("新建主机配置")
         }
     }
 }

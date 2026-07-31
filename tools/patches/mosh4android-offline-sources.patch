@@ -1,0 +1,150 @@
+diff --git a/android/build-android-release-assets.sh b/android/build-android-release-assets.sh
+index 10e9338..04c6d55 100755
+--- a/android/build-android-release-assets.sh
++++ b/android/build-android-release-assets.sh
+@@ -12,6 +12,9 @@ NCURSES_VERSION="${NCURSES_VERSION:-v6.4}"
+ GMP_VERSION="${GMP_VERSION:-v6.2.1}"
+ NETTLE_VERSION="${NETTLE_VERSION:-nettle_3.10_release_20240616}"
+ 
++EXTERNAL_SOURCES_DIR="${MANGOSSH_MOSH_DEPS_DIR:-}"
++EXTERNAL_PROTOC="${MANGOSSH_PROTOC:-}"
++
+ die() {
+   echo "error: $*" >&2
+   exit 1
+@@ -62,6 +65,25 @@ fetch_git() {
+   fi
+ }
+ 
++prepare_source() {
++  local dest="$1"
++  local name="$2"
++  local url="$3"
++  local ref="$4"
++  shift 4
++
++  if [[ -n "$EXTERNAL_SOURCES_DIR" ]]; then
++    local source="$EXTERNAL_SOURCES_DIR/$name"
++    [[ -d "$source" ]] || die "offline source is missing: $source"
++    rm -rf "$dest"
++    mkdir -p "$dest"
++    rsync -a --exclude .git "$source/" "$dest/"
++    return
++  fi
++
++  fetch_git "$dest" "$url" "$ref" "$@"
++}
++
+ download_protoc() {
+   local platform="$1"
+   local dest="$WORK_DIR/protoc-$PROTOBUF_VERSION-$platform"
+@@ -79,6 +101,20 @@ download_protoc() {
+   echo "$dest"
+ }
+ 
++resolve_protoc() {
++  if [[ -n "$EXTERNAL_PROTOC" ]]; then
++    [[ -x "$EXTERNAL_PROTOC" ]] || die "MANGOSSH_PROTOC is not executable"
++    local version
++    version="$("$EXTERNAL_PROTOC" --version)"
++    [[ "$version" == "libprotoc $PROTOBUF_VERSION" ]] ||
++      die "protoc $PROTOBUF_VERSION is required, found: $version"
++    echo "$EXTERNAL_PROTOC"
++    return
++  fi
++
++  echo "$(download_protoc "$(host_tag)")/bin/protoc"
++}
++
+ abi_config() {
+   case "$1" in
+     arm64-v8a) echo "aarch64-linux-android aarch64-linux-android" ;;
+@@ -274,10 +310,10 @@ build_mosh_client() {
+   (
+     cd "$src_dir"
+     env \
+-      PATH="$PROTOC_DIR/bin:$PATH" \
++      PATH="$(dirname "$PROTOC_BIN"):$PATH" \
+       PKG_CONFIG="pkg-config --static" \
+       PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig:$prefix/share/pkgconfig" \
+-      PROTOC="$PROTOC_DIR/bin/protoc" \
++      PROTOC="$PROTOC_BIN" \
+       CC="$CC" \
+       CXX="$CXX" \
+       CFLAGS="$CFLAGS -DHAVE_LANGINFO_H" \
+@@ -335,11 +371,10 @@ package_and_validate() {
+   (
+     cd "$package_dir"
+-    zip -q -X -r "$output" mosh-client terminfo.zip
++    touch -d '@315532800' mosh-client terminfo.zip
++    TZ=UTC zip -q -X -r "$output" mosh-client terminfo.zip
+   )
+ }
+ 
+-need_tool curl
+-need_tool git
+ need_tool make
+ need_tool patch
+ need_tool perl
+@@ -351,6 +386,16 @@ need_tool ninja
+ need_tool autoreconf
+ need_tool pkg-config
+ 
++if [[ -z "$EXTERNAL_SOURCES_DIR" ]]; then
++  need_tool curl
++  need_tool git
++else
++  [[ -d "$EXTERNAL_SOURCES_DIR" ]] ||
++    die "MANGOSSH_MOSH_DEPS_DIR must contain offline dependency sources"
++  [[ -n "$EXTERNAL_PROTOC" ]] ||
++    die "MANGOSSH_PROTOC is required with offline dependency sources"
++fi
++
+ if [[ "${KEEP_WORK_DIR:-0}" != "1" ]]; then
+   rm -rf "$WORK_DIR"
+ fi
+@@ -369,13 +414,13 @@ NCPU="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+ SOURCES_DIR="$WORK_DIR/sources"
+ mkdir -p "$SOURCES_DIR"
+ rm -f "$WORK_DIR"/mosh-android-*.zip
+ 
+-PROTOC_DIR="$(download_protoc "$(host_tag)")"
++PROTOC_BIN="$(resolve_protoc)"
+ 
+-fetch_git "$SOURCES_DIR/zlib" https://github.com/madler/zlib.git "$ZLIB_VERSION"
+-fetch_git "$SOURCES_DIR/protobuf" https://github.com/protocolbuffers/protobuf.git "v$PROTOBUF_VERSION" --recurse-submodules --shallow-submodules
+-fetch_git "$SOURCES_DIR/ncurses" https://github.com/mirror/ncurses.git "$NCURSES_VERSION"
+-fetch_git "$SOURCES_DIR/gmp" https://github.com/alisw/GMP.git "$GMP_VERSION"
+-fetch_git "$SOURCES_DIR/nettle" https://gitlab.com/gnutls/nettle.git "$NETTLE_VERSION" --config core.autocrlf=input
++prepare_source "$SOURCES_DIR/zlib" zlib https://github.com/madler/zlib.git "$ZLIB_VERSION"
++prepare_source "$SOURCES_DIR/protobuf" protobuf https://github.com/protocolbuffers/protobuf.git "v$PROTOBUF_VERSION" --recurse-submodules --shallow-submodules
++prepare_source "$SOURCES_DIR/ncurses" ncurses https://github.com/mirror/ncurses.git "$NCURSES_VERSION"
++prepare_source "$SOURCES_DIR/gmp" gmp https://github.com/alisw/GMP.git "$GMP_VERSION"
++prepare_source "$SOURCES_DIR/nettle" nettle https://gitlab.com/gnutls/nettle.git "$NETTLE_VERSION" --config core.autocrlf=input
+ 
+ sed -i /tsearch/d "$SOURCES_DIR/ncurses/configure"
+@@ -396,21 +441,22 @@ for abi in $ABIS; do
+   CFLAGS="$COMMON_FLAGS -std=gnu17"
+   CXXFLAGS="$COMMON_FLAGS -std=gnu++17"
+   ASMFLAGS="--target=$HOST -w -D_FORTIFY_SOURCE=2 -fPIE -fPIC"
+-  LDFLAGS="-pie -Wl,-z,max-page-size=16384"
++  LDFLAGS="-pie -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
+ 
+   build_dir="$WORK_DIR/build-$abi"
+   prefix="$WORK_DIR/prefix-$abi"
+   package_dir="$WORK_DIR/package-$abi"
+   rm -rf "$package_dir"
+   mkdir -p "$build_dir" "$prefix" "$package_dir"
+ 
+   build_zlib "$abi" "$prefix" "$build_dir"
+   build_protobuf "$abi" "$prefix" "$build_dir"
+   build_ncurses "$HOST" "$prefix" "$build_dir"
+   (
+     cd "$prefix"
+-    zip -q -X -r "$prefix/share/terminfo.zip" share/terminfo
++    find share/terminfo -exec touch -h -d '@315532800' {} +
++    TZ=UTC zip -q -X -r "$prefix/share/terminfo.zip" share/terminfo
+   )
+   build_gmp "$HOST" "$prefix" "$build_dir"
+   build_nettle "$HOST" "$prefix" "$build_dir"
+   build_mosh_client "$HOST" "$prefix" "$build_dir" "$package_dir"

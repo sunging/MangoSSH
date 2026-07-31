@@ -17,21 +17,24 @@ branch.
   `27.3.13750724`; `tools/fetch-android-ndk-wsl.sh` obtains that NDK into the
   ignored project-local `.tools` directory.
 
-The upstream Android build script fetches its source dependencies at their
-declared tags (zlib, protobuf, ncurses, GMP, and nettle). Their source and
-license information remain available through the reproducible build directory
-and upstream repositories. Do not replace the packaged binary with an
-unverifiable build or remove the source submodule, license text, or this notice.
+The upstream Android build script uses its declared zlib, protobuf, ncurses,
+GMP, and nettle tags. F-Droid supplies those exact source trees through its
+source-library mechanism, and MangoSSH applies
+`tools/patches/mosh4android-offline-sources.patch` so its network-isolated build
+never downloads compiler binaries or dependency source. Do not replace the
+packaged binary with an unverifiable build or remove the source submodule,
+license text, build patch, or this notice.
 
 ## Tailscale tsnet
 
 MangoSSH builds an outbound-only gomobile bridge against
 [`tailscale.com` v1.98.8](https://github.com/tailscale/tailscale/tree/v1.98.8).
-Tailscale is distributed under the BSD 3-Clause license. The source archive is
-fetched through the Go module checksum database and is not vendored into this
-repository.
+Tailscale is distributed under the BSD 3-Clause license. The packages linked
+into the bridge are committed as vendored Go source so F-Droid can rebuild the
+AAR without network access.
 
-- The exact module checksum is recorded in `native/tsnetbridge/go.sum`.
+- Exact module checksums are recorded in `native/tsnetbridge/go.sum`, and the
+  matching source is under `native/tsnetbridge/vendor`.
 - `tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch` disables creation
   and upload of tsnet's raw logtail buffer; the build fails if the patch no
   longer applies exactly.

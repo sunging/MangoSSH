@@ -26,10 +26,14 @@ def load_json_stream(path: Path) -> list[dict[str, object]]:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print("usage: generate-tsnet-notices.py MODULES_JSON OUTPUT", file=sys.stderr)
+    if len(sys.argv) not in (3, 4):
+        print(
+            "usage: generate-tsnet-notices.py MODULES_JSON OUTPUT [VENDOR_ROOT]",
+            file=sys.stderr,
+        )
         return 2
     values = load_json_stream(Path(sys.argv[1]))
+    vendor_root = Path(sys.argv[3]).resolve() if len(sys.argv) == 4 else None
     modules_by_path: dict[str, dict[str, object]] = {}
     for value in values:
         module = value.get("Module")
@@ -52,6 +56,10 @@ def main() -> int:
             go_mod = replacement.get("GoMod", go_mod)
         if not directory and go_mod:
             directory = str(Path(str(go_mod)).parent)
+        if not directory and vendor_root is not None:
+            vendored_directory = vendor_root.joinpath(*path.split("/"))
+            if vendored_directory.is_dir():
+                directory = str(vendored_directory)
         if not directory:
             print(f"module directory missing for {path}", file=sys.stderr)
             return 1

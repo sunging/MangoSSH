@@ -1,0 +1,10 @@
+{
+  "toolchain": {
+    "rev": "e877d973840c91ec9d4bc1921b0845789de359ae",
+    "sri": "sha256-HeD70CytKL0Ks/VDqMU73bN8fxpWkNc6mNgNr9PEO7k="
+  },
+  "vendor": {
+    "goModSum": "sha256-OmQBjUQQ74uvSTpxPXopKRgMp91RGcuPDq1Ka3twSKc=",
+    "sri": "sha256-Sd2iLJ7eDfDYdIRuW4xuiKgzhQWJWGAnz97FJWrVRlE="
+  }
+}

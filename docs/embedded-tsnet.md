@@ -27,8 +27,11 @@ The reproducible bridge build pins:
 - `tailscale.com v1.98.8`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
 
-Download scripts verify the published Go SHA-256, Temurin SHA-256, and NDK
-size/SHA-1 before extracting. In addition to `go.sum`, both patched Tailscale
+Local-development download scripts verify the published Go SHA-256, Temurin
+SHA-256, and NDK size/SHA-1 before extracting. F-Droid builds instead require
+those toolchains to be supplied by the build environment and fail before any
+download is attempted. The complete Go module source graph is committed under
+`native/tsnetbridge/vendor`. In addition to `go.sum`, both patched Tailscale
 source files have pinned pre-patch and post-patch SHA-256 values.
 `tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch` is applied with
 `git apply --check`; a source mismatch, skipped hunk, or unexpected patched
@@ -59,8 +62,14 @@ The output is `app/build/generated/tsnet/mangossh-tsnet.aar`. It contains
 `-Wl,-z,common-page-size=16384` are passed to the external linker. The
 normalized AAR has deterministic ZIP metadata and includes the Tailscale BSD
 license plus notices for the packages linked into the binary. The AAR,
-downloaded toolchains, and intermediate module sources are ignored build
-artifacts.
+downloaded local-development toolchains, and intermediate build trees are
+ignored build artifacts; the vendored Go source is versioned input.
+
+For the network-isolated F-Droid path, export the externally provided JDK 17,
+Android SDK/NDK r27d, Go 1.26.5, and pinned Mosh dependency source roots, then
+run `tools/build-fdroid-release.sh`. The entry point rejects signing variables,
+sets the Go proxy and checksum database offline, and creates only the unsigned
+release APK.
 
 ## Identity and secret boundaries
 
