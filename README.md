@@ -60,3 +60,35 @@ Gradle builds the pinned four-ABI gomobile AAR on demand through
 are ignored and must not be committed. See
 [docs/embedded-tsnet.md](docs/embedded-tsnet.md) for the exact tool versions,
 security boundaries, build commands, and emulator/lab verification checklist.
+
+The Go packages linked into that bridge are committed as source under
+`native/tsnetbridge/vendor`. Local builds may download the pinned Go, JDK, and
+NDK toolchains when they are missing, but do not download Go module source.
+
+## F-Droid source build
+
+F-Droid builds use `tools/build-fdroid-release.sh` with network access disabled.
+The build environment must provide JDK 17, Android SDK/NDK r27d, Go 1.26.5,
+and the pinned zlib, protobuf, ncurses, GMP, and nettle source trees. It builds
+protoc 29.1 from the supplied protobuf source unless `MANGOSSH_PROTOC` already
+points to an exact host build. The script rejects release-signing variables and
+produces an unsigned APK after rebuilding the PTY bridge, Mosh client, and
+embedded tsnet bridge from source.
+
+The expected external source layout is selected by
+`MANGOSSH_MOSH_DEPS_DIR`:
+
+```text
+zlib/      v1.3.1
+protobuf/  v29.1, including its submodules
+ncurses/   v6.4
+gmp/       v6.2.1
+nettle/    nettle_3.10_release_20240616
+```
+
+`MANGOSSH_GO_ROOT`, `JAVA_HOME`, `ANDROID_HOME`, and `ANDROID_NDK_HOME`
+must point to the corresponding pre-fetched toolchains. This interface keeps
+the official F-Droid build independent of developer machines and downloaded
+compiler binaries. Offline Mosh builds use isolated ABI workers; tune their
+safe concurrency with `MANGOSSH_ABI_PARALLELISM` and
+`MANGOSSH_ABI_BUILD_JOBS` (both default to `2` in the F-Droid path).

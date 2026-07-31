@@ -13,16 +13,53 @@ NDK_REVISION="27.3.13750724"
 NDK_HOME="${ANDROID_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/$NDK_REVISION}"
 # A temporary LF-normalized checkout can be supplied when the Windows working
 # tree has converted the submodule's shell scripts to CRLF for local tooling.
-MOSH_SOURCE="${MOSH_SOURCE:-$PROJECT_DIR/third_party/mosh4android}"
+UPSTREAM_MOSH_SOURCE="${MOSH_SOURCE:-$PROJECT_DIR/third_party/mosh4android}"
+PATCH_FILE="$PROJECT_DIR/tools/patches/mosh4android-offline-sources.patch"
+PATCHED_MOSH_SOURCE="${MANGOSSH_PATCHED_MOSH_SOURCE:-$PROJECT_DIR/.tools/mosh4android-patched}"
 
 [[ -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]] || {
     echo "Android NDK r27d is required; run tools/fetch-android-ndk-wsl.sh first." >&2
     exit 1
 }
-[[ -f "$MOSH_SOURCE/android/build-android-release-assets.sh" ]] || {
+[[ -f "$UPSTREAM_MOSH_SOURCE/android/build-android-release-assets.sh" ]] || {
     echo "The mosh4android submodule is unavailable; initialize submodules first." >&2
     exit 1
 }
+[[ -f "$PATCH_FILE" ]] || { echo "Missing Mosh offline-source patch." >&2; exit 1; }
+
+case "$PATCHED_MOSH_SOURCE" in
+    "$PROJECT_DIR"/.tools/*) ;;
+    *) echo "Unsafe patched Mosh source path: $PATCHED_MOSH_SOURCE" >&2; exit 1 ;;
+esac
+command -v git >/dev/null 2>&1 || { echo "git is required." >&2; exit 1; }
+command -v tar >/dev/null 2>&1 || { echo "tar is required." >&2; exit 1; }
+git -C "$UPSTREAM_MOSH_SOURCE" rev-parse --verify HEAD >/dev/null 2>&1 || {
+    echo "The Mosh source must be a checked-out Git work tree." >&2
+    exit 1
+}
+rm -rf -- "$PATCHED_MOSH_SOURCE"
+mkdir -p "$PATCHED_MOSH_SOURCE"
+# Export canonical Git blobs instead of copying the Windows work tree. This
+# preserves the upstream LF line endings needed by autoconf and its patches.
+git -C "$UPSTREAM_MOSH_SOURCE" archive --format=tar HEAD |
+    tar -xf - -C "$PATCHED_MOSH_SOURCE"
+(
+    cd "$PATCHED_MOSH_SOURCE"
+    git apply --check --whitespace=nowarn "$PATCH_FILE"
+    git apply --whitespace=nowarn "$PATCH_FILE"
+)
+MOSH_SOURCE="$PATCHED_MOSH_SOURCE"
+
+if [[ "${MANGOSSH_OFFLINE_BUILD:-0}" == "1" ]]; then
+    [[ -d "${MANGOSSH_MOSH_DEPS_DIR:-}" ]] || {
+        echo "MANGOSSH_MOSH_DEPS_DIR is required in offline mode." >&2
+        exit 1
+    }
+    [[ -x "${MANGOSSH_PROTOC:-}" ]] || {
+        echo "MANGOSSH_PROTOC must provide protoc 29.1 in offline mode." >&2
+        exit 1
+    }
+fi
 
 export ANDROID_NDK_HOME="$NDK_HOME"
 export WORK_DIR="${WORK_DIR:-$PROJECT_DIR/.tools/mosh-android-build}"

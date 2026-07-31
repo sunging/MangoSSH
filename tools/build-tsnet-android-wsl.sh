@@ -14,25 +14,53 @@ TAILSCALE_TSNET_PATCHED_SHA256="d2ce46080b1c772010ee74b005696371cb37c1b91eb22ff5
 TAILSCALE_SOCKS5_PATCHED_SHA256="68c1b5eb44a76210f120931a83ab259b0d539f84c9b33452cd8023d6b34ea95f"
 GOMOBILE_VERSION="v0.0.0-20260709172247-6129f5bee9d5"
 NDK_REVISION="27.3.13750724"
-GO_ROOT="$TOOLS_DIR/go/$GO_VERSION"
-GOBIN="$TOOLS_DIR/go-bin/$GO_VERSION"
+STRICT_OFFLINE="${MANGOSSH_OFFLINE_BUILD:-0}"
+GO_ROOT="${MANGOSSH_GO_ROOT:-${GOROOT:-$TOOLS_DIR/go/$GO_VERSION}}"
+GOBIN="${MANGOSSH_GOBIN:-$TOOLS_DIR/go-bin/$GO_VERSION}"
 WORK_DIR="/tmp/mangossh-tsnetbridge-v1.98.8"
 WORK_LOCK="/tmp/mangossh-tsnetbridge-v1.98.8.lock"
 OUTPUT_DIR="$PROJECT_DIR/app/build/generated/tsnet"
 OUTPUT_AAR="$OUTPUT_DIR/mangossh-tsnet.aar"
 PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch"
+VENDOR_DIR="$BRIDGE_DIR/vendor"
 
-bash "$PROJECT_DIR/tools/fetch-go-wsl.sh"
+if [[ ! -x "$GO_ROOT/bin/go" ]]; then
+    if [[ "$STRICT_OFFLINE" == "1" ]]; then
+        printf 'MANGOSSH_GO_ROOT or GOROOT must provide Go %s in offline mode.\n' "$GO_VERSION" >&2
+        exit 1
+    fi
+    bash "$PROJECT_DIR/tools/fetch-go-wsl.sh"
+    GO_ROOT="$TOOLS_DIR/go/$GO_VERSION"
+fi
+[[ "$("$GO_ROOT/bin/go" version)" == "go version go${GO_VERSION} linux/amd64" ]] || {
+    printf 'Go %s for linux/amd64 is required at %s.\n' "$GO_VERSION" "$GO_ROOT" >&2
+    exit 1
+}
+[[ -f "$VENDOR_DIR/modules.txt" ]] || {
+    printf 'Vendored Go sources are required at %s.\n' "$VENDOR_DIR" >&2
+    exit 1
+}
+grep -Fqx "# golang.org/x/mobile $GOMOBILE_VERSION" "$VENDOR_DIR/modules.txt" || {
+    printf 'Vendored gomobile source does not match %s.\n' "$GOMOBILE_VERSION" >&2
+    exit 1
+}
+grep -Fqx "# tailscale.com $TAILSCALE_VERSION" "$VENDOR_DIR/modules.txt" || {
+    printf 'Vendored Tailscale source does not match %s.\n' "$TAILSCALE_VERSION" >&2
+    exit 1
+}
 export PATH="$GO_ROOT/bin:$GOBIN:$PATH"
 export GOBIN
 export GOWORK=off
+export GOTOOLCHAIN=local
+export GOFLAGS="-mod=vendor -trimpath"
 export CGO_ENABLED=1
-export SOURCE_DATE_EPOCH=0
-GO_MODULE_CACHE_ROOT="${MANGOSSH_GO_MOD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mangossh/go-mod/tsnetbridge}"
-mkdir -p "$GO_MODULE_CACHE_ROOT"
-export GOMODCACHE="$GO_MODULE_CACHE_ROOT"
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-315532800}"
 
 if [[ -z "${JAVA_HOME:-}" || ! -x "$JAVA_HOME/bin/javac" ]]; then
+    if [[ "$STRICT_OFFLINE" == "1" ]]; then
+        printf 'JAVA_HOME must provide JDK 17 in offline mode.\n' >&2
+        exit 1
+    fi
     JDK_CACHE_ROOT="${MANGOSSH_JDK_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mangossh}"
     JAVA_HOME="$JDK_CACHE_ROOT/jdk/$JDK_VERSION"
     if [[ ! -x "$JAVA_HOME/bin/javac" ]]; then
@@ -47,6 +75,10 @@ export PATH="$JAVA_HOME/bin:$PATH"
 if [[ -n "${ANDROID_NDK_HOME:-}" ]] && [[ -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]]; then
     NDK_HOME="$ANDROID_NDK_HOME"
 else
+    if [[ "$STRICT_OFFLINE" == "1" ]]; then
+        printf 'ANDROID_NDK_HOME must provide Android NDK r27d in offline mode.\n' >&2
+        exit 1
+    fi
     # The NDK archive contains case-distinct Linux headers that cannot coexist
     # on the default case-insensitive Windows filesystem. Keep the large
     # archive in the ignored workspace cache, but extract into WSL's native
@@ -59,6 +91,10 @@ else
             bash "$PROJECT_DIR/tools/fetch-android-ndk-wsl.sh"
     fi
 fi
+grep -q '^Pkg.Revision = 27\.3\.13750724$' "$NDK_HOME/source.properties" || {
+    printf 'Android NDK revision %s (r27d) is required at %s.\n' "$NDK_REVISION" "$NDK_HOME" >&2
+    exit 1
+}
 export ANDROID_NDK_HOME="$NDK_HOME"
 
 if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
@@ -71,12 +107,17 @@ if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
 fi
 
 mkdir -p "$GOBIN" "$OUTPUT_DIR"
-if [[ ! -x "$GOBIN/gomobile" ]]; then
-    go install "golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION"
-fi
-if [[ ! -x "$GOBIN/gobind" ]]; then
-    go install "golang.org/x/mobile/cmd/gobind@$GOMOBILE_VERSION"
-fi
+# Go's tool directive makes the pinned command packages available from vendor
+# without treating them as ordinary module imports. Resolve and install those
+# exact binaries instead of invoking a network-capable `go install` command.
+pushd "$BRIDGE_DIR" >/dev/null
+gomobile_tool="$(go tool -n gomobile)"
+gobind_tool="$(go tool -n gobind)"
+[[ "$(realpath -m "$gomobile_tool")" == "$(realpath -m "$GOBIN/gomobile")" ]] ||
+    install -m 0755 "$gomobile_tool" "$GOBIN/gomobile"
+[[ "$(realpath -m "$gobind_tool")" == "$(realpath -m "$GOBIN/gobind")" ]] ||
+    install -m 0755 "$gobind_tool" "$GOBIN/gobind"
+popd >/dev/null
 
 case "$WORK_DIR" in
     /tmp/mangossh-tsnetbridge-v1.98.8) ;;
@@ -88,19 +129,22 @@ flock --wait 1800 9 || {
     exit 1
 }
 rm -rf -- "$WORK_DIR"
-mkdir -p "$WORK_DIR/bridge"
-cp "$BRIDGE_DIR"/*.go "$BRIDGE_DIR/go.mod" "$BRIDGE_DIR/go.sum" "$WORK_DIR/bridge/"
+GOPATH_ROOT="$WORK_DIR/gopath"
+BRIDGE_WORK_DIR="$GOPATH_ROOT/src/website.sung.mangossh/tsnetbridge"
+mkdir -p "$BRIDGE_WORK_DIR"
+cp "$BRIDGE_DIR"/*.go "$BRIDGE_DIR/go.mod" "$BRIDGE_DIR/go.sum" "$BRIDGE_WORK_DIR/"
+cp -a "$VENDOR_DIR" "$BRIDGE_WORK_DIR/vendor"
+find "$BRIDGE_WORK_DIR/vendor" -type d -exec chmod 0755 {} +
+find "$BRIDGE_WORK_DIR/vendor" -type f -exec chmod 0644 {} +
 
-pushd "$WORK_DIR/bridge" >/dev/null
-TAILSCALE_MODULE_DIR="$GOMODCACHE/tailscale.com@${TAILSCALE_VERSION}"
+pushd "$BRIDGE_WORK_DIR" >/dev/null
+TAILSCALE_MODULE_DIR="$BRIDGE_WORK_DIR/vendor/tailscale.com"
 case "$TAILSCALE_MODULE_DIR" in
-    "$GO_MODULE_CACHE_ROOT"/tailscale.com@v1.98.8) ;;
+    /tmp/mangossh-tsnetbridge-v1.98.8/gopath/src/website.sung.mangossh/tsnetbridge/vendor/tailscale.com) ;;
     *) printf 'Unsafe Tailscale module path: %s\n' "$TAILSCALE_MODULE_DIR" >&2; exit 1 ;;
 esac
-rm -rf -- "$TAILSCALE_MODULE_DIR"
-go mod download "tailscale.com@$TAILSCALE_VERSION"
 [[ -d "$TAILSCALE_MODULE_DIR" ]] || {
-    printf 'Unable to locate downloaded Tailscale module.\n' >&2
+    printf 'Unable to locate vendored Tailscale module.\n' >&2
     exit 1
 }
 printf '%s  %s\n%s  %s\n' \
@@ -118,16 +162,24 @@ printf '%s  %s\n%s  %s\n' \
     "$TAILSCALE_SOCKS5_PATCHED_SHA256" \
     "$TAILSCALE_MODULE_DIR/net/socks5/socks5.go" |
     sha256sum --check --status -
-go get -tool "golang.org/x/mobile/cmd/gobind@$GOMOBILE_VERSION"
-go mod tidy
 go list -deps -json ./... > "$WORK_DIR/modules.json"
 python3 "$PROJECT_DIR/tools/generate-tsnet-notices.py" \
     "$WORK_DIR/modules.json" \
-    "$WORK_DIR/tsnet-third-party-notices.txt"
+    "$WORK_DIR/tsnet-third-party-notices.txt" \
+    "$BRIDGE_WORK_DIR/vendor"
+
+# gomobile creates a temporary module and runs `go mod tidy` for each target
+# when invoked from module mode. GOPATH mode is deliberately used for the bind
+# step so every import resolves through the package-local vendor tree without
+# network access or a generated module cache.
+cp -a "$BRIDGE_WORK_DIR/vendor/." "$GOPATH_ROOT/src/"
+export GO111MODULE=off
+export GOPATH="$GOPATH_ROOT"
+export GOFLAGS="-trimpath"
 go test ./...
 
 UNSTRIPPED_AAR="$WORK_DIR/mangossh-tsnet-unstripped.aar"
-gomobile bind \
+"$GOBIN/gomobile" bind \
     -target android \
     -androidapi 26 \
     -trimpath \

@@ -1,0 +1,16 @@
+MangoSSH is a free and open-source SSH and Mosh client for Android phones and tablets.
+
+Features:
+* SSH and native Mosh terminal sessions
+* Password, private-key, and keyboard-interactive authentication
+* Explicit host-key confirmation and one-time password prompts
+* Encrypted local profiles and reusable private keys
+* Encrypted, portable WebDAV backups
+* Local and remote port forwarding
+* SCP file transfers
+* App lock and biometric unlock
+* Optional routing through the system Tailscale VPN or an embedded, outbound-only tsnet node
+
+Mosh is rebuilt from the included GPL-licensed source for arm64-v8a, armeabi-v7a, x86, and x86_64. Embedded Tailscale is opt-in, does not request Android VPN access, and requires the user to authorize their own Tailnet account.
+
+MangoSSH does not include advertisements or analytics. Credentials, private keys, host fingerprints, OTP answers, and session keys are never included in diagnostics.

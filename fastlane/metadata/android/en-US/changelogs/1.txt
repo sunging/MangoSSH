@@ -1,0 +1,3 @@
+Initial public release.
+
+Includes SSH and native Mosh sessions, encrypted profiles and keys, WebDAV backups, port forwarding, SCP, app lock, and optional Tailscale routing.
