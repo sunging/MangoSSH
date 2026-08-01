@@ -1,6 +1,7 @@
 package website.sung.mangossh.presentation
 
 import android.content.ClipData
+import android.graphics.Typeface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +38,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableIntStateOf
@@ -55,17 +57,22 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.res.ResourcesCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.TerminalEmulator
+import website.sung.mangossh.R
 import website.sung.mangossh.session.TerminalClipboardCopy
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
 import website.sung.mangossh.session.ServerResourceSnapshot
 import website.sung.mangossh.domain.ConnectionProtocol
+import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.domain.TerminalFont
 
 /**
  * Renders an already-running terminal emulator.
@@ -79,6 +86,7 @@ import website.sung.mangossh.domain.ConnectionProtocol
 fun TerminalSessionScreen(
     session: TerminalSessionState,
     terminalEmulator: TerminalEmulator,
+    appearance: TerminalAppearance,
     clipboardCopies: SharedFlow<TerminalClipboardCopy>,
     onSend: (ByteArray) -> Unit,
     resourceSnapshot: ServerResourceSnapshot?,
@@ -93,6 +101,10 @@ fun TerminalSessionScreen(
     val isOpen = session.phase == TerminalSessionPhase.OPEN
     val isImeVisible = WindowInsets.isImeVisible
     val supportsSshChannels = session.protocol == ConnectionProtocol.SSH
+    val colorScheme = appearance.colorScheme
+    val terminalTypeface = remember(appearance.font) {
+        ResourcesCompat.getFont(context, appearance.font.fontResourceId()) ?: Typeface.MONOSPACE
+    }
     var showSoftKeyboard by remember(session.id) { mutableStateOf(isOpen) }
     var keyboardShowRequest by remember(session.id) { mutableIntStateOf(0) }
     var showResourceReport by remember(session.id) { mutableStateOf(false) }
@@ -122,6 +134,14 @@ fun TerminalSessionScreen(
         showSoftKeyboard = isOpen
     }
 
+    LaunchedEffect(terminalEmulator, colorScheme) {
+        terminalEmulator.applyColorScheme(
+            ansiColors = colorScheme.ansiColors.toIntArray(),
+            defaultForeground = colorScheme.defaultForegroundArgb,
+            defaultBackground = colorScheme.defaultBackgroundArgb,
+        )
+    }
+
     LaunchedEffect(keyboardShowRequest, isOpen) {
         if (keyboardShowRequest == 0 || !isOpen) return@LaunchedEffect
 
@@ -134,8 +154,8 @@ fun TerminalSessionScreen(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Color(0xFF101416),
-        contentColor = Color(0xFFF4F4F4),
+        color = Color(colorScheme.defaultBackgroundArgb),
+        contentColor = Color(colorScheme.defaultForegroundArgb),
     ) {
         Column(
             modifier = Modifier
@@ -179,32 +199,42 @@ fun TerminalSessionScreen(
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                Terminal(
-                    terminalEmulator = terminalEmulator,
-                    modifier = Modifier.fillMaxSize(),
-                    keyboardEnabled = isOpen,
-                    showSoftKeyboard = showSoftKeyboard,
-                    focusRequester = terminalFocusRequester,
-                    onTerminalTap = {
-                        if (isOpen && !isImeVisible) {
-                            terminalFocusRequester.requestFocus()
-                            keyboardShowRequest += 1
-                        }
-                    },
-                    onPasteRequest = pasteFromClipboard,
-                    onInterceptKey = { event ->
-                        if (
-                            event.type == KeyEventType.KeyDown &&
-                            event.isCtrlPressed &&
-                            event.key == Key.V
-                        ) {
-                            pasteFromClipboard()
-                            true
-                        } else {
-                            false
-                        }
-                    },
-                )
+                key(appearance.font, appearance.fontSizeSp) {
+                    Terminal(
+                        terminalEmulator = terminalEmulator,
+                        modifier = Modifier.fillMaxSize(),
+                        typeface = terminalTypeface,
+                        initialFontSize = appearance.fontSizeSp.sp,
+                        backgroundColor = Color(colorScheme.defaultBackgroundArgb),
+                        // termlib uses this rendering argument for its cursor; text colors
+                        // continue to come from the emulator's configured default palette.
+                        foregroundColor = Color(colorScheme.cursorArgb),
+                        selectionBackgroundColor = Color(colorScheme.selectionBackgroundArgb),
+                        selectionForegroundColor = Color(colorScheme.selectionForegroundArgb),
+                        keyboardEnabled = isOpen,
+                        showSoftKeyboard = showSoftKeyboard,
+                        focusRequester = terminalFocusRequester,
+                        onTerminalTap = {
+                            if (isOpen && !isImeVisible) {
+                                terminalFocusRequester.requestFocus()
+                                keyboardShowRequest += 1
+                            }
+                        },
+                        onPasteRequest = pasteFromClipboard,
+                        onInterceptKey = { event ->
+                            if (
+                                event.type == KeyEventType.KeyDown &&
+                                event.isCtrlPressed &&
+                                event.key == Key.V
+                            ) {
+                                pasteFromClipboard()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    )
+                }
             }
 
             TerminalKeyBar(
@@ -236,6 +266,13 @@ fun TerminalSessionScreen(
             },
         )
     }
+}
+
+/** Maps a bundled appearance option to its packaged Android font resource. */
+internal fun TerminalFont.fontResourceId(): Int = when (this) {
+    TerminalFont.CASCADIA_MONO_PL -> R.font.cascadia_mono_pl_regular
+    TerminalFont.JETBRAINS_MONO_NL -> R.font.jetbrains_mono_nl_regular
+    TerminalFont.FIRA_CODE -> R.font.fira_code_regular
 }
 
 private const val IME_REOPEN_RESET_DELAY_MS = 50L

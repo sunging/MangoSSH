@@ -16,6 +16,25 @@ building:
 git submodule update --init --recursive
 ```
 
+## Terminal appearance
+
+Settings &gt; Terminal appearance controls the shared font, base size, and color
+theme used by every SSH and Mosh terminal. The default is Cascadia Mono PL at
+12sp with Mango Dark. JetBrains Mono NL and Fira Code are also bundled; each
+font is an open-source static Regular TTF.
+
+Choose Mango Dark, Dracula, Nord, Solarized Dark, or Solarized Light. The
+chosen theme is fixed and does not follow the Android system light/dark mode.
+Custom mode starts from one of those presets, preserving its ANSI palette and
+selection colors while letting you choose opaque `#RRGGBB` foreground,
+background, and cursor colors that meet a 3:1 contrast ratio.
+
+The preference is stored locally on the device outside the encrypted vault and
+portable backup archive. Pinch-to-zoom remains available inside a terminal but
+only changes that currently displayed terminal for its lifetime. Font and
+palette licenses, versions, and SHA-256 values are recorded in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Native Mosh build
 
 In Ubuntu WSL, run the following from the repository root:

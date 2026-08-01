@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
+import website.sung.mangossh.domain.TerminalAppearance
 
 /**
  * Retains terminal emulators while their transports run, including when no
@@ -18,6 +19,7 @@ import org.connectbot.terminal.TerminalEmulatorFactory
 internal class SessionTerminalStore(
     private val onKeyboardInput: (sessionId: String, bytes: ByteArray) -> Unit,
     private val onResize: (sessionId: String, columns: Int, rows: Int) -> Unit,
+    private val appearanceProvider: () -> TerminalAppearance,
 ) {
     private val emulators = ConcurrentHashMap<String, TerminalEmulator>()
     private val _clipboardCopies = MutableSharedFlow<TerminalClipboardCopy>(extraBufferCapacity = 8)
@@ -27,17 +29,24 @@ internal class SessionTerminalStore(
 
     /** Creates the terminal before the transport can start producing output. */
     fun create(sessionId: String) {
+        val appearance = appearanceProvider()
+        val scheme = appearance.colorScheme
         val emulator = TerminalEmulatorFactory.create(
             initialRows = INITIAL_ROWS,
             initialCols = INITIAL_COLUMNS,
-            defaultForeground = Color(0xFFF4F4F4),
-            defaultBackground = Color(0xFF101416),
+            defaultForeground = Color(scheme.defaultForegroundArgb),
+            defaultBackground = Color(scheme.defaultBackgroundArgb),
             onKeyboardInput = { bytes -> onKeyboardInput(sessionId, bytes) },
             onResize = { dimensions -> onResize(sessionId, dimensions.columns, dimensions.rows) },
             onClipboardCopy = { selected ->
                 _clipboardCopies.tryEmit(TerminalClipboardCopy(sessionId = sessionId, text = selected))
             },
             autoDetectUrls = true,
+        )
+        emulator.applyColorScheme(
+            ansiColors = scheme.ansiColors.toIntArray(),
+            defaultForeground = scheme.defaultForegroundArgb,
+            defaultBackground = scheme.defaultBackgroundArgb,
         )
         check(emulators.putIfAbsent(sessionId, emulator) == null) {
             "A terminal emulator already exists for this session."
@@ -46,6 +55,19 @@ internal class SessionTerminalStore(
 
     /** Returns the live emulator for a visible session, if it has not ended. */
     fun terminalFor(sessionId: String): TerminalEmulator? = emulators[sessionId]
+
+    /** Updates color rendering for all retained sessions without touching their transports. */
+    fun applyAppearance(appearance: TerminalAppearance) {
+        val scheme = appearance.colorScheme
+        val ansiColors = scheme.ansiColors.toIntArray()
+        emulators.values.forEach { emulator ->
+            emulator.applyColorScheme(
+                ansiColors = ansiColors,
+                defaultForeground = scheme.defaultForegroundArgb,
+                defaultBackground = scheme.defaultBackgroundArgb,
+            )
+        }
+    }
 
     /** Writes transport bytes even while the UI is backgrounded. */
     fun append(sessionId: String, bytes: ByteArray) {

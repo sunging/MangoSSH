@@ -51,6 +51,8 @@ import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
+import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.data.settings.TerminalAppearanceStore
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetLease
@@ -67,6 +69,7 @@ class SshSessionController internal constructor(
     private val vault: VaultRepository,
     private val keyManager: SshKeyManager = SshKeyManager(),
     private val embeddedTsnetManager: EmbeddedTsnetManager,
+    private val terminalAppearanceStore: TerminalAppearanceStore,
 ) {
     private val context = appContext.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -75,6 +78,7 @@ class SshSessionController internal constructor(
     private val terminalStore = SessionTerminalStore(
         onKeyboardInput = { sessionId, bytes -> send(sessionId, bytes) },
         onResize = { sessionId, columns, rows -> resize(sessionId, columns, rows) },
+        appearanceProvider = terminalAppearanceStore::current,
     )
 
     private val _sessions = MutableStateFlow<List<TerminalSessionState>>(emptyList())
@@ -172,6 +176,11 @@ class SshSessionController internal constructor(
 
     /** Returns the retained emulator for a still-live session. */
     fun terminalEmulator(sessionId: String): TerminalEmulator? = terminalStore.terminalFor(sessionId)
+
+    /** Applies a display-only scheme to retained sessions without reconnecting their transports. */
+    fun applyTerminalAppearance(appearance: TerminalAppearance) {
+        terminalStore.applyAppearance(appearance)
+    }
 
     fun startPortForward(sessionId: String, rule: PortForwardRule) {
         val runtimeId = portForwardRuntimeId(sessionId, rule.id)

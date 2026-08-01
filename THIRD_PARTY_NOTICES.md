@@ -45,6 +45,49 @@ AAR without network access.
   notices at `assets/licenses/tsnet-third-party-notices.txt`.
 - The generated AAR is build output and is deliberately not committed.
 
+## Terminal appearance assets
+
+MangoSSH packages the following static terminal fonts and color palettes. The
+appearance preference is device-local UI configuration; it is not part of the
+encrypted vault or portable backup format.
+
+### Fonts
+
+- **Cascadia Mono PL Regular**, from
+  [Cascadia Code v2407.24](https://github.com/microsoft/cascadia-code/releases/tag/v2407.24),
+  is licensed under the SIL Open Font License 1.1 (OFL-1.1). It is packaged at
+  `res/font/cascadia_mono_pl_regular.ttf` and has SHA-256
+  `41FEBF792BE11A8E05408DA9C6E9509994C4E56837E932CFB200847296950262`.
+  Its license text is included at `assets/licenses/OFL-1.1-Cascadia-Code.txt`.
+- **JetBrains Mono NL Regular**, from
+  [JetBrains Mono v2.304](https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304),
+  is licensed under OFL-1.1. It is packaged at
+  `res/font/jetbrains_mono_nl_regular.ttf` and has SHA-256
+  `FB3B2575D7B0657359707993288F12A7360344D39387BB26050E276D61F6BD2A`.
+  Its license text is included at
+  `assets/licenses/OFL-1.1-JetBrains-Mono.txt`.
+- **Fira Code Regular**, from
+  [Fira Code v6.2](https://github.com/tonsky/FiraCode/releases/tag/6.2), is
+  licensed under OFL-1.1. It is packaged at
+  `res/font/fira_code_regular.ttf` and has SHA-256
+  `5992AB9640E2DF491B2F609467B1DE60E8BC39B2C28DB184342A0592D98F6117`.
+  Its license text is included at `assets/licenses/OFL-1.1-Fira-Code.txt`.
+
+### Color palettes
+
+- The Dracula palette derives from
+  [dracula/windows-terminal](https://github.com/dracula/windows-terminal),
+  Copyright (c) 2019 thismat, MIT license. The APK includes its license at
+  `assets/licenses/MIT-Dracula-Windows-Terminal.txt`.
+- The Nord palette derives from
+  [nordtheme/terminal-app](https://github.com/nordtheme/terminal-app),
+  Copyright (c) 2016-present Sven Greb, MIT license. The APK includes its
+  license at `assets/licenses/MIT-Nord-Terminal-App.txt`.
+- The Solarized palettes derive from
+  [altercation/solarized](https://github.com/altercation/solarized), Copyright
+  (c) 2011 Ethan Schoonover, MIT license. The APK includes its license at
+  `assets/licenses/MIT-Solarized.txt`.
+
 ## Distribution commitment
 
 The Mosh-enabled MangoSSH distribution is offered under GPL-3.0-or-later.

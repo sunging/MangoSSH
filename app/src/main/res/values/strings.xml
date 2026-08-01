@@ -70,4 +70,34 @@
     <string name="biometric_unavailable">Biometric unlock is currently unavailable on this device. Use your PIN instead.</string>
     <string name="biometric_prompt_subtitle">Verify your identity to unlock MangoSSH</string>
     <string name="biometric_prompt_use_pin">Use PIN</string>
+    <string name="terminal_appearance_title">Terminal appearance</string>
+    <string name="terminal_appearance_description">Choose a bundled terminal font, base size, and color scheme. Pinch-to-zoom changes only the current terminal display.</string>
+    <string name="terminal_font_label">Font</string>
+    <string name="terminal_font_size_label">Base font size</string>
+    <string name="terminal_font_size_value">%1$d sp</string>
+    <string name="terminal_decrease_font_size">Decrease terminal font size</string>
+    <string name="terminal_increase_font_size">Increase terminal font size</string>
+    <string name="terminal_theme_label">Theme</string>
+    <string name="terminal_customize_colors">Customize colors</string>
+    <string name="terminal_restore_defaults">Restore defaults</string>
+    <string name="terminal_preview_text" translatable="false">mango@host:~ $ ls --color=auto</string>
+    <string name="terminal_custom_colors_title">Custom terminal colors</string>
+    <string name="terminal_custom_colors_description">Override foreground, background, and cursor colors. ANSI and selection colors remain from the base theme.</string>
+    <string name="terminal_custom_base_theme_label">Base theme</string>
+    <string name="terminal_foreground_label">Foreground</string>
+    <string name="terminal_background_label">Background</string>
+    <string name="terminal_cursor_label">Cursor</string>
+    <string name="terminal_color_hex_error">Use a six-digit color such as #F4F4F4.</string>
+    <string name="terminal_color_contrast_error">Foreground and cursor must each have at least 3:1 contrast against the background.</string>
+    <string name="terminal_save">Save</string>
+    <string name="terminal_cancel">Cancel</string>
+    <string name="terminal_font_cascadia_mono_pl" translatable="false">Cascadia Mono PL</string>
+    <string name="terminal_font_jetbrains_mono_nl" translatable="false">JetBrains Mono NL</string>
+    <string name="terminal_font_fira_code" translatable="false">Fira Code</string>
+    <string name="terminal_theme_mango_dark" translatable="false">Mango Dark</string>
+    <string name="terminal_theme_dracula" translatable="false">Dracula</string>
+    <string name="terminal_theme_nord" translatable="false">Nord</string>
+    <string name="terminal_theme_solarized_dark" translatable="false">Solarized Dark</string>
+    <string name="terminal_theme_solarized_light" translatable="false">Solarized Light</string>
+    <string name="terminal_theme_custom">Custom (%1$s)</string>
 </resources>

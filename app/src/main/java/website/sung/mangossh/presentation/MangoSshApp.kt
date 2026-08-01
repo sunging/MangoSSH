@@ -118,6 +118,10 @@ import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
+import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.domain.TerminalCustomColors
+import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
@@ -199,6 +203,7 @@ fun MangoSshApp(
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
+    val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -299,6 +304,7 @@ fun MangoSshApp(
         TerminalSessionScreen(
             session = activeSession,
             terminalEmulator = terminalEmulator,
+            appearance = terminalAppearance,
             clipboardCopies = viewModel.terminalClipboardCopies,
             onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
             resourceSnapshot = resourceSnapshots[activeSession.id],
@@ -459,6 +465,12 @@ fun MangoSshApp(
                             onBeginTsnetBrowserEnrollment = viewModel::beginEmbeddedTsnetBrowserEnrollment,
                             onBeginTsnetAuthKeyEnrollment = viewModel::beginEmbeddedTsnetAuthKeyEnrollment,
                             onLogoutTsnet = viewModel::logoutEmbeddedTsnet,
+                            terminalAppearance = terminalAppearance,
+                            onSetTerminalFont = viewModel::setTerminalFont,
+                            onSetTerminalFontSize = viewModel::setTerminalFontSize,
+                            onSetTerminalTheme = viewModel::setTerminalTheme,
+                            onSetTerminalCustomColors = viewModel::setTerminalCustomColors,
+                            onResetTerminalAppearance = viewModel::resetTerminalAppearance,
                         )
                     }
                 }
@@ -1797,6 +1809,12 @@ private fun SettingsScreen(
     onBeginTsnetBrowserEnrollment: () -> Unit,
     onBeginTsnetAuthKeyEnrollment: (CharArray) -> Unit,
     onLogoutTsnet: () -> Unit,
+    terminalAppearance: TerminalAppearance,
+    onSetTerminalFont: (TerminalFont) -> Unit,
+    onSetTerminalFontSize: (Int) -> Unit,
+    onSetTerminalTheme: (TerminalThemeId) -> Unit,
+    onSetTerminalCustomColors: (TerminalCustomColors) -> Unit,
+    onResetTerminalAppearance: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1838,6 +1856,16 @@ private fun SettingsScreen(
     ) {
         if (vaultStatus !is VaultStatus.Ready) {
             item { SecurityBanner(vaultStatus) }
+        }
+        item {
+            TerminalAppearanceCard(
+                appearance = terminalAppearance,
+                onSetFont = onSetTerminalFont,
+                onSetFontSize = onSetTerminalFontSize,
+                onSetTheme = onSetTerminalTheme,
+                onSetCustomColors = onSetTerminalCustomColors,
+                onReset = onResetTerminalAppearance,
+            )
         }
         item {
             EmbeddedTsnetCard(

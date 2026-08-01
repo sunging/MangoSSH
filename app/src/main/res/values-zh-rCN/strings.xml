@@ -68,4 +68,34 @@
     <string name="biometric_unavailable">此设备当前无法使用生物识别，请使用 PIN 解锁。</string>
     <string name="biometric_prompt_subtitle">验证身份以解锁 MangoSSH</string>
     <string name="biometric_prompt_use_pin">使用 PIN</string>
+    <string name="terminal_appearance_title">终端外观</string>
+    <string name="terminal_appearance_description">选择内置终端字体、基准字号和配色方案。双指缩放仅临时调整当前终端显示。</string>
+    <string name="terminal_font_label">字体</string>
+    <string name="terminal_font_size_label">基准字号</string>
+    <string name="terminal_font_size_value">%1$d sp</string>
+    <string name="terminal_decrease_font_size">减小终端字号</string>
+    <string name="terminal_increase_font_size">增大终端字号</string>
+    <string name="terminal_theme_label">主题</string>
+    <string name="terminal_customize_colors">自定义颜色</string>
+    <string name="terminal_restore_defaults">恢复默认</string>
+    <string name="terminal_preview_text" translatable="false">mango@host:~ $ ls --color=auto</string>
+    <string name="terminal_custom_colors_title">自定义终端颜色</string>
+    <string name="terminal_custom_colors_description">可覆盖前景、背景和光标颜色；ANSI 与选择区域颜色沿用基础主题。</string>
+    <string name="terminal_custom_base_theme_label">基础主题</string>
+    <string name="terminal_foreground_label">前景色</string>
+    <string name="terminal_background_label">背景色</string>
+    <string name="terminal_cursor_label">光标色</string>
+    <string name="terminal_color_hex_error">请输入六位颜色值，例如 #F4F4F4。</string>
+    <string name="terminal_color_contrast_error">前景色和光标色与背景色的对比度均须至少为 3:1。</string>
+    <string name="terminal_save">保存</string>
+    <string name="terminal_cancel">取消</string>
+    <string name="terminal_font_cascadia_mono_pl" translatable="false">Cascadia Mono PL</string>
+    <string name="terminal_font_jetbrains_mono_nl" translatable="false">JetBrains Mono NL</string>
+    <string name="terminal_font_fira_code" translatable="false">Fira Code</string>
+    <string name="terminal_theme_mango_dark" translatable="false">Mango Dark</string>
+    <string name="terminal_theme_dracula" translatable="false">Dracula</string>
+    <string name="terminal_theme_nord" translatable="false">Nord</string>
+    <string name="terminal_theme_solarized_dark" translatable="false">Solarized Dark</string>
+    <string name="terminal_theme_solarized_light" translatable="false">Solarized Light</string>
+    <string name="terminal_theme_custom">自定义（%1$s）</string>
 </resources>

@@ -3,6 +3,7 @@ package website.sung.mangossh
 import android.app.Application
 import android.content.Context
 import website.sung.mangossh.data.keys.SshKeyManager
+import website.sung.mangossh.data.settings.TerminalAppearanceStore
 import website.sung.mangossh.data.vault.VaultRepository
 import website.sung.mangossh.session.SshSessionController
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetManager
@@ -37,6 +38,9 @@ class MangoSessionRuntime(context: Context) {
     /** Key codec shared by vault operations and live authentication. */
     val keyManager = SshKeyManager()
 
+    /** Device-local display preferences shared by live terminals and Compose screens. */
+    val terminalAppearance = TerminalAppearanceStore(context.applicationContext)
+
     /** Process-wide outbound-only Tailnet node, started only for explicit TSNET work. */
     internal val embeddedTsnetManager = EmbeddedTsnetManager(context.applicationContext)
 
@@ -46,5 +50,6 @@ class MangoSessionRuntime(context: Context) {
         vault,
         keyManager,
         embeddedTsnetManager,
+        terminalAppearance,
     )
 }

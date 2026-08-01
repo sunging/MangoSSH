@@ -26,6 +26,10 @@ import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
+import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.domain.TerminalCustomColors
+import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
 import website.sung.mangossh.session.SessionEndedEvent
@@ -60,6 +64,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val keyManager = runtime.keyManager
     private val sessionController = runtime.sessionController
     private val embeddedTsnetManager = runtime.embeddedTsnetManager
+    private val terminalAppearanceStore = runtime.terminalAppearance
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
 
@@ -98,6 +103,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val terminalClipboardCopies = sessionController.clipboardCopies
     internal val embeddedTsnetStatus = embeddedTsnetManager.status
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
+    val terminalAppearance = terminalAppearanceStore.appearance
 
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage = _userMessage.asStateFlow()
@@ -151,6 +157,34 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun resizeTerminal(sessionId: String, columns: Int, rows: Int) {
         sessionController.resize(sessionId, columns, rows)
+    }
+
+    /** Persists a bundled terminal font; composed terminals update without reconnecting. */
+    fun setTerminalFont(font: TerminalFont) {
+        terminalAppearanceStore.setFont(font)
+    }
+
+    /** Persists a global base font size used whenever a terminal display is composed. */
+    fun setTerminalFontSize(fontSizeSp: Int) {
+        terminalAppearanceStore.setFontSize(fontSizeSp)
+    }
+
+    /** Applies a bundled terminal palette to existing and future sessions. */
+    fun setTerminalTheme(theme: TerminalThemeId) {
+        terminalAppearanceStore.setTheme(theme)
+        sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
+    }
+
+    /** Validated custom display colors layered over a bundled ANSI palette. */
+    fun setTerminalCustomColors(colors: TerminalCustomColors) {
+        terminalAppearanceStore.setCustomColors(colors)
+        sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
+    }
+
+    /** Restores the default bundled font, size, and Mango Dark palette. */
+    fun resetTerminalAppearance() {
+        terminalAppearanceStore.reset()
+        sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
     }
 
     /** Returns the retained terminal state for a live session screen. */
