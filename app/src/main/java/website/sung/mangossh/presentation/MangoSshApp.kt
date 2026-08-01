@@ -884,7 +884,9 @@ private fun KeysScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { SecurityBanner(vaultStatus) }
+        if (vaultStatus !is VaultStatus.Ready) {
+            item { SecurityBanner(vaultStatus) }
+        }
         item {
             Text("密钥保险库", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
@@ -1834,7 +1836,9 @@ private fun SettingsScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item { SecurityBanner(vaultStatus) }
+        if (vaultStatus !is VaultStatus.Ready) {
+            item { SecurityBanner(vaultStatus) }
+        }
         item {
             EmbeddedTsnetCard(
                 status = embeddedTsnetStatus,
