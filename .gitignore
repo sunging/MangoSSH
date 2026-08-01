@@ -17,5 +17,6 @@ local.properties
 *.pfx
 /app/release
 /third_party/tailscale/.cache
+/third_party/termlib/build/
 /.tools/
 /native/tsnetbridge/.build/

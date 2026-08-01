@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MangoSSH"
 include(":app")
+include(":third_party:termlib")

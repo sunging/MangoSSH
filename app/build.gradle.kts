@@ -125,7 +125,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.connectbot.sshlib)
-    implementation(libs.connectbot.termlib)
+    implementation(project(":third_party:termlib"))
     implementation(libs.conscrypt.android)
     implementation(libs.androidx.biometric)
 
