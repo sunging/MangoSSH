@@ -6,11 +6,14 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -34,10 +37,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -48,6 +53,7 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
@@ -66,6 +72,7 @@ import website.sung.mangossh.domain.ConnectionProtocol
  * composable, so leaving this screen keeps the remote session and scrollback
  * intact while foreground-service ownership continues in the background.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TerminalSessionScreen(
     session: TerminalSessionState,
@@ -80,8 +87,12 @@ fun TerminalSessionScreen(
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val terminalFocusRequester = remember(session.id) { FocusRequester() }
     val isOpen = session.phase == TerminalSessionPhase.OPEN
+    val isImeVisible = WindowInsets.isImeVisible
     val supportsSshChannels = session.protocol == ConnectionProtocol.SSH
+    var showSoftKeyboard by remember(session.id) { mutableStateOf(isOpen) }
+    var keyboardShowRequest by remember(session.id) { mutableIntStateOf(0) }
     var showResourceReport by remember(session.id) { mutableStateOf(false) }
     val pasteFromClipboard: () -> Unit = {
         scope.launch {
@@ -103,6 +114,20 @@ fun TerminalSessionScreen(
                     ClipEntry(ClipData.newPlainText("Terminal copy", copy.text)),
                 )
             }
+    }
+
+    LaunchedEffect(isOpen) {
+        showSoftKeyboard = isOpen
+    }
+
+    LaunchedEffect(keyboardShowRequest, isOpen) {
+        if (keyboardShowRequest == 0 || !isOpen) return@LaunchedEffect
+
+        // The terminal library only calls its forceful ImeInputView.showIme() when this
+        // flag changes. Keep the false state through a composition before raising it again.
+        showSoftKeyboard = false
+        delay(IME_REOPEN_RESET_DELAY_MS)
+        showSoftKeyboard = true
     }
 
     Surface(
@@ -151,7 +176,14 @@ fun TerminalSessionScreen(
                     terminalEmulator = terminalEmulator,
                     modifier = Modifier.fillMaxSize(),
                     keyboardEnabled = isOpen,
-                    showSoftKeyboard = isOpen,
+                    showSoftKeyboard = showSoftKeyboard,
+                    focusRequester = terminalFocusRequester,
+                    onTerminalTap = {
+                        if (isOpen && !isImeVisible) {
+                            terminalFocusRequester.requestFocus()
+                            keyboardShowRequest += 1
+                        }
+                    },
                     onPasteRequest = pasteFromClipboard,
                     onInterceptKey = { event ->
                         if (
@@ -198,6 +230,8 @@ fun TerminalSessionScreen(
         )
     }
 }
+
+private const val IME_REOPEN_RESET_DELAY_MS = 50L
 
 @Composable
 private fun TerminalKeyBar(
