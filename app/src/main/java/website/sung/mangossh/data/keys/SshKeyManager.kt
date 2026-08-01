@@ -8,22 +8,70 @@ import com.trilead.ssh2.crypto.keys.Ed25519KeyPairGenerator
 import com.trilead.ssh2.crypto.keys.Ed25519PrivateKey
 import com.trilead.ssh2.crypto.keys.Ed25519PublicKey
 import java.security.KeyPair
+import java.security.KeyPairGenerator
 import java.security.MessageDigest
+import java.security.interfaces.ECPrivateKey
+import java.security.interfaces.ECPublicKey
+import java.security.interfaces.RSAPrivateCrtKey
+import java.security.interfaces.RSAPublicKey
+import java.security.spec.ECGenParameterSpec
 import java.util.Base64
 import java.util.UUID
 import website.sung.mangossh.data.vault.StoredSshKey
+
+/** Algorithms and strengths available when creating a new SSH client key. */
+enum class SshKeyGenerationType(
+    internal val defaultLabel: String,
+) {
+    ED25519("MangoSSH Ed25519"),
+    ECDSA_P256("MangoSSH ECDSA P-256"),
+    ECDSA_P384("MangoSSH ECDSA P-384"),
+    ECDSA_P521("MangoSSH ECDSA P-521"),
+    RSA_2048("MangoSSH RSA 2048"),
+    RSA_3072("MangoSSH RSA 3072"),
+    RSA_4096("MangoSSH RSA 4096"),
+}
 
 /**
  * Imports and creates client keys entirely in memory. Persisting a returned key
  * is the caller's responsibility; MangoSSH stores it only inside the encrypted vault.
  */
 class SshKeyManager {
-    fun generateEd25519(label: String): StoredSshKey {
-        val keyPair = Ed25519KeyPairGenerator().generateKeyPair()
-        val privateKey = keyPair.private as Ed25519PrivateKey
-        val publicKey = keyPair.public as Ed25519PublicKey
-        val normalizedLabel = label.ifBlank { "MangoSSH Ed25519" }
-        val privateKeyPem = OpenSSHKeyEncoder.exportOpenSSHEd25519(privateKey, publicKey, normalizedLabel)
+    /** Creates an unencrypted OpenSSH private key for the requested algorithm. */
+    fun generateKey(type: SshKeyGenerationType, label: String): StoredSshKey {
+        val normalizedLabel = label.ifBlank { type.defaultLabel }
+        val keyPair = when (type) {
+            SshKeyGenerationType.ED25519 -> Ed25519KeyPairGenerator().generateKeyPair()
+            SshKeyGenerationType.ECDSA_P256 -> generateEcKeyPair("secp256r1")
+            SshKeyGenerationType.ECDSA_P384 -> generateEcKeyPair("secp384r1")
+            SshKeyGenerationType.ECDSA_P521 -> generateEcKeyPair("secp521r1")
+            SshKeyGenerationType.RSA_2048 -> generateRsaKeyPair(2048)
+            SshKeyGenerationType.RSA_3072 -> generateRsaKeyPair(3072)
+            SshKeyGenerationType.RSA_4096 -> generateRsaKeyPair(4096)
+        }
+        val privateKeyPem = when (type) {
+            SshKeyGenerationType.ED25519 -> OpenSSHKeyEncoder.exportOpenSSHEd25519(
+                keyPair.private as Ed25519PrivateKey,
+                keyPair.public as Ed25519PublicKey,
+                normalizedLabel,
+            )
+            SshKeyGenerationType.ECDSA_P256,
+            SshKeyGenerationType.ECDSA_P384,
+            SshKeyGenerationType.ECDSA_P521,
+            -> OpenSSHKeyEncoder.exportOpenSSHEC(
+                keyPair.private as ECPrivateKey,
+                keyPair.public as ECPublicKey,
+                normalizedLabel,
+            )
+            SshKeyGenerationType.RSA_2048,
+            SshKeyGenerationType.RSA_3072,
+            SshKeyGenerationType.RSA_4096,
+            -> OpenSSHKeyEncoder.exportOpenSSHRSA(
+                keyPair.private as RSAPrivateCrtKey,
+                keyPair.public as RSAPublicKey,
+                normalizedLabel,
+            )
+        }
         return recordFrom(
             id = UUID.randomUUID().toString(),
             label = normalizedLabel,
@@ -32,6 +80,10 @@ class SshKeyManager {
             requiresPassphrase = false,
         )
     }
+
+    /** Creates an Ed25519 key while preserving the original convenience API. */
+    fun generateEd25519(label: String): StoredSshKey =
+        generateKey(SshKeyGenerationType.ED25519, label)
 
     fun importPrivateKey(
         label: String,
@@ -90,6 +142,16 @@ class SshKeyManager {
             throw IllegalArgumentException("OpenSSH private key is not valid Base64", error)
         }
     }
+
+    private fun generateEcKeyPair(curveName: String): KeyPair =
+        KeyPairGenerator.getInstance("EC").apply {
+            initialize(ECGenParameterSpec(curveName))
+        }.generateKeyPair()
+
+    private fun generateRsaKeyPair(bitSize: Int): KeyPair =
+        KeyPairGenerator.getInstance("RSA").apply {
+            initialize(bitSize)
+        }.generateKeyPair()
 
     private fun recordFrom(
         id: String,

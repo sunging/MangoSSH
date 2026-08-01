@@ -42,7 +42,11 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
@@ -103,6 +107,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.R
+import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.PortForwardType
@@ -414,7 +419,7 @@ fun MangoSshApp(
                         AppSection.KEYS -> KeysScreen(
                             vaultStatus = vaultStatus,
                             keys = keys,
-                            onGenerate = viewModel::generateEd25519Key,
+                            onGenerate = viewModel::generateKey,
                             onImport = viewModel::importPrivateKey,
                             onRemove = { pendingRemoval = PendingRemovalRequest.Key(it) },
                         )
@@ -841,7 +846,7 @@ private fun HostCard(
 private fun KeysScreen(
     vaultStatus: VaultStatus,
     keys: List<StoredSshKey>,
-    onGenerate: (String) -> Unit,
+    onGenerate: (type: SshKeyGenerationType, label: String) -> Unit,
     onImport: (label: String, contents: String, passphrase: String?) -> Unit,
     onRemove: (String) -> Unit,
 ) {
@@ -891,7 +896,7 @@ private fun KeysScreen(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { showGenerator = true }, enabled = vaultStatus !is VaultStatus.Failed) {
-                    Text("生成 Ed25519")
+                    Text("生成密钥")
                 }
                 OutlinedButton(
                     onClick = { importLauncher.launch(arrayOf("application/x-pem-file", "text/plain", "application/octet-stream")) },
@@ -904,7 +909,7 @@ private fun KeysScreen(
         if (keys.isEmpty()) {
             item {
                 Text(
-                    "还没有密钥。建议新建 Ed25519 密钥，或导入 OpenSSH/PEM 私钥。",
+                    "还没有密钥。请选择适合服务器的算法生成密钥，或导入 OpenSSH/PEM 私钥。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -957,12 +962,10 @@ private fun KeysScreen(
     }
 
     if (showGenerator) {
-        KeyLabelDialog(
-            title = "生成 Ed25519 密钥",
-            confirmLabel = "生成",
+        GenerateKeyDialog(
             onDismiss = { showGenerator = false },
-            onConfirm = { label ->
-                onGenerate(label)
+            onConfirm = { type, label ->
+                onGenerate(type, label)
                 showGenerator = false
             },
         )
@@ -979,30 +982,147 @@ private fun KeysScreen(
 }
 
 @Composable
-private fun KeyLabelDialog(
-    title: String,
-    confirmLabel: String,
+private fun GenerateKeyDialog(
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
+    onConfirm: (type: SshKeyGenerationType, label: String) -> Unit,
 ) {
-    var label by rememberSaveable { mutableStateOf("MangoSSH Key") }
+    var algorithm by rememberSaveable { mutableStateOf(KeyGenerationAlgorithm.ED25519) }
+    var keyLength by rememberSaveable { mutableStateOf(algorithm.defaultLength) }
+    var label by rememberSaveable {
+        mutableStateOf(defaultGeneratedKeyLabel(algorithm, keyLength))
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = { Text("生成 SSH 密钥") },
         text = {
-            OutlinedTextField(
-                value = label,
-                onValueChange = { label = it },
-                label = { Text("密钥名称") },
-                singleLine = true,
-            )
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                KeyGenerationDropdown(
+                    label = "密钥算法",
+                    selected = algorithm,
+                    options = KeyGenerationAlgorithm.entries,
+                    displayText = KeyGenerationAlgorithm::uiLabel,
+                    onSelected = { selected ->
+                        val previousDefault = defaultGeneratedKeyLabel(algorithm, keyLength)
+                        algorithm = selected
+                        keyLength = selected.defaultLength
+                        if (label == previousDefault) {
+                            label = defaultGeneratedKeyLabel(algorithm, keyLength)
+                        }
+                    },
+                )
+                KeyGenerationDropdown(
+                    label = "密钥长度",
+                    selected = keyLength,
+                    options = algorithm.availableLengths,
+                    displayText = Int::toString,
+                    onSelected = { selected ->
+                        val previousDefault = defaultGeneratedKeyLabel(algorithm, keyLength)
+                        keyLength = selected
+                        if (label == previousDefault) {
+                            label = defaultGeneratedKeyLabel(algorithm, keyLength)
+                        }
+                    },
+                )
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("密钥名称") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+            }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(label.trim()) }) { Text(confirmLabel) }
+            TextButton(
+                onClick = { onConfirm(algorithm.toGenerationType(keyLength), label.trim()) },
+            ) {
+                Text("生成")
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
+
+@Composable
+private fun <T> KeyGenerationDropdown(
+    label: String,
+    selected: T,
+    options: List<T>,
+    displayText: (T) -> String,
+    onSelected: (T) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        OutlinedTextField(
+            value = displayText(selected),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(displayText(option), localize = false) },
+                    onClick = {
+                        onSelected(option)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+private enum class KeyGenerationAlgorithm(
+    val defaultLength: Int,
+    val availableLengths: List<Int>,
+) {
+    ED25519(256, listOf(256)),
+    ECDSA(256, listOf(256, 384, 521)),
+    RSA(3072, listOf(2048, 3072, 4096));
+
+    fun uiLabel(): String = when (this) {
+        ED25519 -> "Ed25519"
+        ECDSA -> "ECDSA"
+        RSA -> "RSA"
+    }
+
+    fun toGenerationType(keyLength: Int): SshKeyGenerationType = when (this) {
+        ED25519 -> SshKeyGenerationType.ED25519
+        ECDSA -> when (keyLength) {
+            256 -> SshKeyGenerationType.ECDSA_P256
+            384 -> SshKeyGenerationType.ECDSA_P384
+            521 -> SshKeyGenerationType.ECDSA_P521
+            else -> error("Unsupported ECDSA key length: $keyLength")
+        }
+        RSA -> when (keyLength) {
+            2048 -> SshKeyGenerationType.RSA_2048
+            3072 -> SshKeyGenerationType.RSA_3072
+            4096 -> SshKeyGenerationType.RSA_4096
+            else -> error("Unsupported RSA key length: $keyLength")
+        }
+    }
+}
+
+private fun defaultGeneratedKeyLabel(algorithm: KeyGenerationAlgorithm, keyLength: Int): String =
+    when (algorithm) {
+        KeyGenerationAlgorithm.ED25519 -> "MangoSSH Ed25519"
+        KeyGenerationAlgorithm.ECDSA -> "MangoSSH ECDSA P-$keyLength"
+        KeyGenerationAlgorithm.RSA -> "MangoSSH RSA $keyLength"
+    }
 
 @Composable
 private fun ImportKeyDialog(

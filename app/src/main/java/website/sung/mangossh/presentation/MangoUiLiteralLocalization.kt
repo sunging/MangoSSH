@@ -119,12 +119,14 @@ internal object MangoUiLiteralLocalization {
         "新建主机配置" to "New host profile",
         "安全优先" to "Security first",
         "密钥保险库" to "Key vault",
-        "生成 Ed25519" to "Generate Ed25519",
+        "生成密钥" to "Generate key",
         "导入私钥" to "Import private key",
         "复制公钥" to "Copy public key",
         "导出私钥" to "Export private key",
         "密钥名称" to "Key name",
-        "生成 Ed25519 密钥" to "Generate Ed25519 key",
+        "密钥算法" to "Key algorithm",
+        "密钥长度" to "Key length",
+        "生成 SSH 密钥" to "Generate SSH key",
         "导入的私钥" to "Imported private key",
         "私钥口令（可选）" to "Private-key passphrase (optional)",
         "端口转发" to "Port forwarding",
@@ -203,8 +205,8 @@ internal object MangoUiLiteralLocalization {
         "安全保险库：正在打开" to "Secure vault: opening",
         "安全保险库：已由 Android Keystore 加密" to "Secure vault: encrypted by Android Keystore",
         "安全保险库：不可用" to "Secure vault: unavailable",
-        "还没有密钥。建议新建 Ed25519 密钥，或导入 OpenSSH/PEM 私钥。" to
-            "No keys yet. Create an Ed25519 key or import an OpenSSH/PEM private key.",
+        "还没有密钥。请选择适合服务器的算法生成密钥，或导入 OpenSSH/PEM 私钥。" to
+            "No keys yet. Generate one with an algorithm supported by your server, or import an OpenSSH/PEM private key.",
         "此私钥还需要口令。" to "This private key also requires its passphrase.",
         "支持 OpenSSH 和 PEM 私钥。若密钥未加密，口令留空即可。" to
             "OpenSSH and PEM private keys are supported. Leave the passphrase blank for an unencrypted key.",

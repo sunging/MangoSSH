@@ -5,16 +5,19 @@ import android.net.Uri
 import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.MangoSshApplication
 import website.sung.mangossh.R
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
+import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
 import website.sung.mangossh.data.sync.WebDavDownloadResult
 import website.sung.mangossh.data.sync.WebDavResult
@@ -251,9 +254,14 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.respondToPrompt(prompt.requestId, values)
     }
 
-    fun generateEd25519Key(label: String) {
+    /** Generates the selected key type away from the main dispatcher and saves it encrypted. */
+    fun generateKey(type: SshKeyGenerationType, label: String) {
         viewModelScope.launch {
-            runCatching { keyManager.generateEd25519(label) }
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    keyManager.generateKey(type, label)
+                }
+            }
                 .onSuccess {
                     _userMessage.value = if (vault.upsertKey(it)) {
                         "已生成 ${it.label}。"
