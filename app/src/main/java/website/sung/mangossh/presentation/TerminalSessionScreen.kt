@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +37,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
@@ -73,6 +75,8 @@ import website.sung.mangossh.session.ServerResourceSnapshot
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalShortcutAction
+import website.sung.mangossh.domain.TerminalShortcutConfig
 
 /**
  * Renders an already-running terminal emulator.
@@ -87,6 +91,7 @@ fun TerminalSessionScreen(
     session: TerminalSessionState,
     terminalEmulator: TerminalEmulator,
     appearance: TerminalAppearance,
+    shortcutConfig: TerminalShortcutConfig,
     clipboardCopies: SharedFlow<TerminalClipboardCopy>,
     onSend: (ByteArray) -> Unit,
     resourceSnapshot: ServerResourceSnapshot?,
@@ -98,6 +103,7 @@ fun TerminalSessionScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val terminalFocusRequester = remember(session.id) { FocusRequester() }
+    val terminalModifierState = remember(session.id) { TerminalModifierState() }
     val isOpen = session.phase == TerminalSessionPhase.OPEN
     val isImeVisible = WindowInsets.isImeVisible
     val supportsSshChannels = session.protocol == ConnectionProtocol.SSH
@@ -132,6 +138,11 @@ fun TerminalSessionScreen(
 
     LaunchedEffect(isOpen) {
         showSoftKeyboard = isOpen
+        if (!isOpen) terminalModifierState.clearTransients()
+    }
+
+    DisposableEffect(session.id) {
+        onDispose(terminalModifierState::clearTransients)
     }
 
     LaunchedEffect(terminalEmulator, colorScheme) {
@@ -214,6 +225,7 @@ fun TerminalSessionScreen(
                         keyboardEnabled = isOpen,
                         showSoftKeyboard = showSoftKeyboard,
                         focusRequester = terminalFocusRequester,
+                        modifierManager = terminalModifierState,
                         onTerminalTap = {
                             if (isOpen && !isImeVisible) {
                                 terminalFocusRequester.requestFocus()
@@ -228,6 +240,7 @@ fun TerminalSessionScreen(
                                 event.key == Key.V
                             ) {
                                 pasteFromClipboard()
+                                terminalModifierState.clearTransients()
                                 true
                             } else {
                                 false
@@ -239,7 +252,9 @@ fun TerminalSessionScreen(
 
             TerminalKeyBar(
                 enabled = isOpen,
-                onSend = onSend,
+                config = shortcutConfig,
+                terminalEmulator = terminalEmulator,
+                modifierState = terminalModifierState,
                 onPaste = pasteFromClipboard,
             )
         }
@@ -280,24 +295,13 @@ private const val IME_REOPEN_RESET_DELAY_MS = 50L
 @Composable
 private fun TerminalKeyBar(
     enabled: Boolean,
-    onSend: (ByteArray) -> Unit,
+    config: TerminalShortcutConfig,
+    terminalEmulator: TerminalEmulator,
+    modifierState: TerminalModifierState,
     onPaste: () -> Unit,
 ) {
-    val keys = listOf(
-        "ESC" to "\u001B",
-        "TAB" to "\t",
-        "Ctrl+C" to "\u0003",
-        "Ctrl+D" to "\u0004",
-        "Ctrl+L" to "\u000C",
-        "Ctrl+Z" to "\u001A",
-        "↑" to "\u001B[A",
-        "↓" to "\u001B[B",
-        "←" to "\u001B[D",
-        "→" to "\u001B[C",
-        "|" to "|",
-        "~" to "~",
-        "/" to "/",
-    )
+    val visibleItems = config.items.filter { it.visible }
+    if (visibleItems.isEmpty()) return
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -307,18 +311,35 @@ private fun TerminalKeyBar(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AssistChip(
-            onClick = onPaste,
-            enabled = enabled,
-            label = { Text(localizedUiLiteral("粘贴")) },
-            leadingIcon = { Icon(Icons.Outlined.ContentPaste, contentDescription = null) },
-        )
-        keys.forEach { (label, value) ->
-            AssistChip(
-                onClick = { onSend(value.encodeToByteArray()) },
-                enabled = enabled,
-                label = { Text(label) },
-            )
+        visibleItems.forEach { item ->
+            val click = {
+                dispatchTerminalShortcut(
+                    action = item.action,
+                    modifierState = modifierState,
+                    terminalEmulator = terminalEmulator,
+                    onPaste = onPaste,
+                )
+            }
+            val modifierAction = item.action as? TerminalShortcutAction.Modifier
+            if (modifierAction != null) {
+                FilterChip(
+                    selected = modifierState.isActive(modifierAction.modifier),
+                    onClick = click,
+                    enabled = enabled,
+                    label = { Text(item.displayLabel()) },
+                )
+            } else {
+                AssistChip(
+                    onClick = click,
+                    enabled = enabled,
+                    label = { Text(item.displayLabel()) },
+                    leadingIcon = if (item.action == TerminalShortcutAction.Paste) {
+                        { Icon(Icons.Outlined.ContentPaste, contentDescription = null) }
+                    } else {
+                        null
+                    },
+                )
+            }
         }
         Spacer(Modifier.width(2.dp))
     }

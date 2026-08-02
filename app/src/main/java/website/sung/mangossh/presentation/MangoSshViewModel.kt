@@ -29,6 +29,7 @@ import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
@@ -77,6 +78,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val sessionController = runtime.sessionController
     private val embeddedTsnetManager = runtime.embeddedTsnetManager
     private val terminalAppearanceStore = runtime.terminalAppearance
+    private val terminalShortcutStore = runtime.terminalShortcuts
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
 
@@ -116,6 +118,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     internal val embeddedTsnetStatus = embeddedTsnetManager.status
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
     val terminalAppearance = terminalAppearanceStore.appearance
+    val terminalShortcuts = terminalShortcutStore.config
 
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage = _userMessage.asStateFlow()
@@ -197,6 +200,16 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun resetTerminalAppearance() {
         terminalAppearanceStore.reset()
         sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
+    }
+
+    /** Persists the complete ordered floating shortcut layout for this device. */
+    fun saveTerminalShortcuts(config: TerminalShortcutConfig) {
+        terminalShortcutStore.save(config)
+    }
+
+    /** Restores the bundled shortcut layout, including all three transient modifiers. */
+    fun resetTerminalShortcuts() {
+        terminalShortcutStore.reset()
     }
 
     /** Returns the retained terminal state for a live session screen. */

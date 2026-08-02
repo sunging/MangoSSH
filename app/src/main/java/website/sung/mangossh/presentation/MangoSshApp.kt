@@ -121,6 +121,7 @@ import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.PortForwardRuntimePhase
@@ -204,6 +205,7 @@ fun MangoSshApp(
     val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
     val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
+    val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -305,6 +307,7 @@ fun MangoSshApp(
             session = activeSession,
             terminalEmulator = terminalEmulator,
             appearance = terminalAppearance,
+            shortcutConfig = terminalShortcutConfig,
             clipboardCopies = viewModel.terminalClipboardCopies,
             onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
             resourceSnapshot = resourceSnapshots[activeSession.id],
@@ -466,11 +469,13 @@ fun MangoSshApp(
                             onBeginTsnetAuthKeyEnrollment = viewModel::beginEmbeddedTsnetAuthKeyEnrollment,
                             onLogoutTsnet = viewModel::logoutEmbeddedTsnet,
                             terminalAppearance = terminalAppearance,
+                            terminalShortcutConfig = terminalShortcutConfig,
                             onSetTerminalFont = viewModel::setTerminalFont,
                             onSetTerminalFontSize = viewModel::setTerminalFontSize,
                             onSetTerminalTheme = viewModel::setTerminalTheme,
                             onSetTerminalCustomColors = viewModel::setTerminalCustomColors,
                             onResetTerminalAppearance = viewModel::resetTerminalAppearance,
+                            onSaveTerminalShortcuts = viewModel::saveTerminalShortcuts,
                         )
                     }
                 }
@@ -1810,11 +1815,13 @@ private fun SettingsScreen(
     onBeginTsnetAuthKeyEnrollment: (CharArray) -> Unit,
     onLogoutTsnet: () -> Unit,
     terminalAppearance: TerminalAppearance,
+    terminalShortcutConfig: TerminalShortcutConfig,
     onSetTerminalFont: (TerminalFont) -> Unit,
     onSetTerminalFontSize: (Int) -> Unit,
     onSetTerminalTheme: (TerminalThemeId) -> Unit,
     onSetTerminalCustomColors: (TerminalCustomColors) -> Unit,
     onResetTerminalAppearance: () -> Unit,
+    onSaveTerminalShortcuts: (TerminalShortcutConfig) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1865,6 +1872,12 @@ private fun SettingsScreen(
                 onSetTheme = onSetTerminalTheme,
                 onSetCustomColors = onSetTerminalCustomColors,
                 onReset = onResetTerminalAppearance,
+            )
+        }
+        item {
+            TerminalShortcutSettingsCard(
+                config = terminalShortcutConfig,
+                onSave = onSaveTerminalShortcuts,
             )
         }
         item {
