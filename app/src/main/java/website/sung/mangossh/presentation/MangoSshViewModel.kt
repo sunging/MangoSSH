@@ -52,6 +52,18 @@ sealed interface SessionNavigationRequest {
     data class OpenSession(val sessionId: String) : SessionNavigationRequest
 }
 
+/** Resolves user-visible failure text while keeping orderly session exits silent. */
+internal fun resolveSessionEndMessage(
+    event: SessionEndedEvent,
+    getString: (Int) -> String,
+): String? = event.userMessage ?: when (event.reason) {
+    SessionEndReason.USER_REQUEST,
+    SessionEndReason.REMOTE_EXIT -> null
+
+    SessionEndReason.CONNECTION_LOST -> getString(R.string.session_ended_connection_lost)
+    SessionEndReason.CONNECTION_FAILED -> getString(R.string.session_ended_connection_failed)
+}
+
 /**
  * Bridges encrypted vault state and live session state to Compose.
  *
@@ -206,11 +218,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Maps a lifecycle event to its fixed current-locale message, when one is appropriate. */
-    fun sessionEndMessage(event: SessionEndedEvent): String? = event.userMessage ?: when (event.reason) {
-        SessionEndReason.USER_REQUEST -> null
-        SessionEndReason.REMOTE_EXIT -> getApplication<Application>().getString(R.string.session_ended_remote_exit)
-        SessionEndReason.CONNECTION_LOST -> getApplication<Application>().getString(R.string.session_ended_connection_lost)
-        SessionEndReason.CONNECTION_FAILED -> getApplication<Application>().getString(R.string.session_ended_connection_failed)
+    fun sessionEndMessage(event: SessionEndedEvent): String? = resolveSessionEndMessage(event) { resourceId ->
+        getApplication<Application>().getString(resourceId)
     }
 
     fun savePortForward(rule: PortForwardRule) {
