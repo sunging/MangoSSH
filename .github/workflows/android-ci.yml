@@ -45,8 +45,8 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Test, lint, and package debug APK
-        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lint :app:assembleDebug
+      - name: Verify version, test, lint, and package debug APK
+        run: ./gradlew --no-daemon :app:verifyReleaseVersion :app:testDebugUnitTest :app:lint :app:assembleDebug
 
       - name: Verify 16 KiB native alignment
         run: |

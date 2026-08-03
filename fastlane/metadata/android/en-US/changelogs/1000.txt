@@ -1,0 +1,6 @@
+New in 0.1.0:
+
+- Customize terminal fonts, color themes, and shortcut buttons.
+- Expanded SSH key generation options.
+- Improved idle-session keepalive, terminal resize and keyboard recovery, and clean session exits.
+- Hardened signed release builds and 16 KiB APK alignment checks.

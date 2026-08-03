@@ -1,7 +1,46 @@
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+// version.txt is the only source of truth for Android and GitHub releases.
+// Keep this parser deliberately strict so an invalid release cannot reach a
+// signed APK, GitHub Release, or F-Droid build with ambiguous version data.
+val appVersionRegularFile = rootProject.layout.projectDirectory.file("version.txt")
+val appVersionFile = appVersionRegularFile.asFile
+require(appVersionFile.isFile) {
+    "Missing version.txt at the repository root"
+}
+val appVersionName = providers.fileContents(appVersionRegularFile).asText.get().trim()
+val appVersionMatch = Regex("""^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$""")
+    .matchEntire(appVersionName)
+    ?: error(
+        "Invalid version in version.txt: '$appVersionName'. " +
+            "Expected stable MAJOR.MINOR.PATCH SemVer, for example 1.4.2.",
+    )
+val appVersionMajor = appVersionMatch.groupValues[1].toLongOrNull()
+    ?: error("Version major component is too large: ${appVersionMatch.groupValues[1]}")
+val appVersionMinor = appVersionMatch.groupValues[2].toLongOrNull()
+    ?: error("Version minor component is too large: ${appVersionMatch.groupValues[2]}")
+val appVersionPatch = appVersionMatch.groupValues[3].toLongOrNull()
+    ?: error("Version patch component is too large: ${appVersionMatch.groupValues[3]}")
+require(appVersionMajor <= 2_100L) {
+    "Version major component must be between 0 and 2100"
+}
+require(appVersionMinor <= 999L) {
+    "Version minor component must be between 0 and 999"
+}
+require(appVersionPatch <= 999L) {
+    "Version patch component must be between 0 and 999"
+}
+val derivedVersionCodeLong =
+    appVersionMajor * 1_000_000L + appVersionMinor * 1_000L + appVersionPatch
+require(derivedVersionCodeLong in 1L..2_100_000_000L) {
+    "Calculated Android versionCode is out of range: $derivedVersionCodeLong"
+}
+val appVersionCode = derivedVersionCodeLong.toInt()
 
 val embeddedTsnetAar = layout.buildDirectory.file("generated/tsnet/mangossh-tsnet.aar")
 val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
@@ -57,8 +96,8 @@ android {
         applicationId = "website.sung.mangossh"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.0.1"
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -111,6 +150,62 @@ tasks.named("preBuild").configure {
     dependsOn(buildEmbeddedTsnetAar)
 }
 
+val releaseTag = providers.gradleProperty("releaseTag")
+val localizedReleaseNotes = listOf(
+    "en-US" to rootProject.file(
+        "fastlane/metadata/android/en-US/changelogs/$appVersionCode.txt",
+    ),
+    "zh-CN" to rootProject.file(
+        "fastlane/metadata/android/zh-CN/changelogs/$appVersionCode.txt",
+    ),
+)
+
+tasks.register("verifyReleaseVersion") {
+    group = "verification"
+    description = "Verifies the app version, optional release tag, and localized release notes."
+
+    val expectedVersionName = appVersionName
+    val expectedVersionCode = appVersionCode
+    val expectedNoteLocales = localizedReleaseNotes.map { it.first }
+    val expectedNotePaths = localizedReleaseNotes.map { it.second.absolutePath }
+    val expectedNoteDisplayPaths = localizedReleaseNotes.map {
+        it.second.relativeTo(rootProject.projectDir).invariantSeparatorsPath
+    }
+
+    inputs.file(appVersionFile)
+    inputs.files(localizedReleaseNotes.map { it.second })
+    inputs.property("versionName", expectedVersionName)
+    inputs.property("versionCode", expectedVersionCode)
+    inputs.property("releaseTag", releaseTag.orElse(""))
+
+    doLast {
+        val suppliedTag = inputs.properties.getValue("releaseTag").toString()
+        if (suppliedTag.isNotEmpty()) {
+            require(suppliedTag == "v$expectedVersionName") {
+                "Release tag '$suppliedTag' does not match version.txt; " +
+                    "expected 'v$expectedVersionName'."
+            }
+        }
+
+        expectedNotePaths.indices.forEach { index ->
+            val notesPath = expectedNotePaths[index]
+            val notesDisplayPath = expectedNoteDisplayPaths[index]
+            val locale = expectedNoteLocales[index]
+            val notesFile = File(notesPath)
+            require(notesFile.isFile && notesFile.readText(Charsets.UTF_8).isNotBlank()) {
+                "Missing non-empty $locale release notes for versionCode $expectedVersionCode: " +
+                    notesDisplayPath
+            }
+        }
+
+        logger.lifecycle(
+            "MangoSSH release version verified: versionName={} versionCode={}",
+            expectedVersionName,
+            expectedVersionCode,
+        )
+    }
+}
+
 dependencies {
     implementation(files(embeddedTsnetAar))
     implementation(libs.androidx.core.ktx)
@@ -125,7 +220,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.connectbot.sshlib)
-    implementation(libs.connectbot.termlib)
+    implementation(project(":third_party:termlib"))
     implementation(libs.conscrypt.android)
     implementation(libs.androidx.biometric)
 

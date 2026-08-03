@@ -5,16 +5,19 @@ import android.net.Uri
 import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.MangoSshApplication
 import website.sung.mangossh.R
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
+import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
 import website.sung.mangossh.data.sync.WebDavDownloadResult
 import website.sung.mangossh.data.sync.WebDavResult
@@ -23,6 +26,11 @@ import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
+import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.domain.TerminalCustomColors
+import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalShortcutConfig
+import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
 import website.sung.mangossh.session.SessionEndedEvent
@@ -45,6 +53,18 @@ sealed interface SessionNavigationRequest {
     data class OpenSession(val sessionId: String) : SessionNavigationRequest
 }
 
+/** Resolves user-visible failure text while keeping orderly session exits silent. */
+internal fun resolveSessionEndMessage(
+    event: SessionEndedEvent,
+    getString: (Int) -> String,
+): String? = event.userMessage ?: when (event.reason) {
+    SessionEndReason.USER_REQUEST,
+    SessionEndReason.REMOTE_EXIT -> null
+
+    SessionEndReason.CONNECTION_LOST -> getString(R.string.session_ended_connection_lost)
+    SessionEndReason.CONNECTION_FAILED -> getString(R.string.session_ended_connection_failed)
+}
+
 /**
  * Bridges encrypted vault state and live session state to Compose.
  *
@@ -57,6 +77,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val keyManager = runtime.keyManager
     private val sessionController = runtime.sessionController
     private val embeddedTsnetManager = runtime.embeddedTsnetManager
+    private val terminalAppearanceStore = runtime.terminalAppearance
+    private val terminalShortcutStore = runtime.terminalShortcuts
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
 
@@ -95,6 +117,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val terminalClipboardCopies = sessionController.clipboardCopies
     internal val embeddedTsnetStatus = embeddedTsnetManager.status
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
+    val terminalAppearance = terminalAppearanceStore.appearance
+    val terminalShortcuts = terminalShortcutStore.config
 
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage = _userMessage.asStateFlow()
@@ -150,6 +174,44 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.resize(sessionId, columns, rows)
     }
 
+    /** Persists a bundled terminal font; composed terminals update without reconnecting. */
+    fun setTerminalFont(font: TerminalFont) {
+        terminalAppearanceStore.setFont(font)
+    }
+
+    /** Persists a global base font size used whenever a terminal display is composed. */
+    fun setTerminalFontSize(fontSizeSp: Int) {
+        terminalAppearanceStore.setFontSize(fontSizeSp)
+    }
+
+    /** Applies a bundled terminal palette to existing and future sessions. */
+    fun setTerminalTheme(theme: TerminalThemeId) {
+        terminalAppearanceStore.setTheme(theme)
+        sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
+    }
+
+    /** Validated custom display colors layered over a bundled ANSI palette. */
+    fun setTerminalCustomColors(colors: TerminalCustomColors) {
+        terminalAppearanceStore.setCustomColors(colors)
+        sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
+    }
+
+    /** Restores the default bundled font, size, and Mango Dark palette. */
+    fun resetTerminalAppearance() {
+        terminalAppearanceStore.reset()
+        sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
+    }
+
+    /** Persists the complete ordered floating shortcut layout for this device. */
+    fun saveTerminalShortcuts(config: TerminalShortcutConfig) {
+        terminalShortcutStore.save(config)
+    }
+
+    /** Restores the bundled shortcut layout, including all three transient modifiers. */
+    fun resetTerminalShortcuts() {
+        terminalShortcutStore.reset()
+    }
+
     /** Returns the retained terminal state for a live session screen. */
     fun terminalEmulator(sessionId: String): TerminalEmulator? = sessionController.terminalEmulator(sessionId)
 
@@ -169,11 +231,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Maps a lifecycle event to its fixed current-locale message, when one is appropriate. */
-    fun sessionEndMessage(event: SessionEndedEvent): String? = event.userMessage ?: when (event.reason) {
-        SessionEndReason.USER_REQUEST -> null
-        SessionEndReason.REMOTE_EXIT -> getApplication<Application>().getString(R.string.session_ended_remote_exit)
-        SessionEndReason.CONNECTION_LOST -> getApplication<Application>().getString(R.string.session_ended_connection_lost)
-        SessionEndReason.CONNECTION_FAILED -> getApplication<Application>().getString(R.string.session_ended_connection_failed)
+    fun sessionEndMessage(event: SessionEndedEvent): String? = resolveSessionEndMessage(event) { resourceId ->
+        getApplication<Application>().getString(resourceId)
     }
 
     fun savePortForward(rule: PortForwardRule) {
@@ -251,9 +310,14 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.respondToPrompt(prompt.requestId, values)
     }
 
-    fun generateEd25519Key(label: String) {
+    /** Generates the selected key type away from the main dispatcher and saves it encrypted. */
+    fun generateKey(type: SshKeyGenerationType, label: String) {
         viewModelScope.launch {
-            runCatching { keyManager.generateEd25519(label) }
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    keyManager.generateKey(type, label)
+                }
+            }
                 .onSuccess {
                     _userMessage.value = if (vault.upsertKey(it)) {
                         "已生成 ${it.label}。"

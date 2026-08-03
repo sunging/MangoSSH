@@ -68,4 +68,79 @@
     <string name="biometric_unavailable">此设备当前无法使用生物识别，请使用 PIN 解锁。</string>
     <string name="biometric_prompt_subtitle">验证身份以解锁 MangoSSH</string>
     <string name="biometric_prompt_use_pin">使用 PIN</string>
+    <string name="terminal_appearance_title">终端外观</string>
+    <string name="terminal_appearance_description">选择内置终端字体、基准字号和配色方案。双指缩放仅临时调整当前终端显示。</string>
+    <string name="terminal_font_label">字体</string>
+    <string name="terminal_font_size_label">基准字号</string>
+    <string name="terminal_font_size_value">%1$d sp</string>
+    <string name="terminal_decrease_font_size">减小终端字号</string>
+    <string name="terminal_increase_font_size">增大终端字号</string>
+    <string name="terminal_theme_label">主题</string>
+    <string name="terminal_customize_colors">自定义颜色</string>
+    <string name="terminal_restore_defaults">恢复默认</string>
+    <string name="terminal_preview_text" translatable="false">mango@host:~ $ ls --color=auto</string>
+    <string name="terminal_custom_colors_title">自定义终端颜色</string>
+    <string name="terminal_custom_colors_description">可覆盖前景、背景和光标颜色；ANSI 与选择区域颜色沿用基础主题。</string>
+    <string name="terminal_custom_base_theme_label">基础主题</string>
+    <string name="terminal_foreground_label">前景色</string>
+    <string name="terminal_background_label">背景色</string>
+    <string name="terminal_cursor_label">光标色</string>
+    <string name="terminal_color_hex_error">请输入六位颜色值，例如 #F4F4F4。</string>
+    <string name="terminal_color_contrast_error">前景色和光标色与背景色的对比度均须至少为 3:1。</string>
+    <string name="terminal_save">保存</string>
+    <string name="terminal_cancel">取消</string>
+    <string name="terminal_font_cascadia_mono_pl" translatable="false">Cascadia Mono PL</string>
+    <string name="terminal_font_jetbrains_mono_nl" translatable="false">JetBrains Mono NL</string>
+    <string name="terminal_font_fira_code" translatable="false">Fira Code</string>
+    <string name="terminal_theme_mango_dark" translatable="false">Mango Dark</string>
+    <string name="terminal_theme_dracula" translatable="false">Dracula</string>
+    <string name="terminal_theme_nord" translatable="false">Nord</string>
+    <string name="terminal_theme_solarized_dark" translatable="false">Solarized Dark</string>
+    <string name="terminal_theme_solarized_light" translatable="false">Solarized Light</string>
+    <string name="terminal_theme_custom">自定义（%1$s）</string>
+    <string name="terminal_shortcut_paste">粘贴</string>
+    <string name="terminal_shortcuts_title">浮动快捷键</string>
+    <string name="terminal_shortcuts_description">自定义所有 SSH 与 Mosh 会话中显示在终端键盘上方的有序按钮。</string>
+    <string name="terminal_shortcuts_warning">快捷键文本保存在未加密的本机设置中，请勿保存密码、OTP 或其他秘密。</string>
+    <string name="terminal_shortcuts_customize">自定义快捷键</string>
+    <string name="terminal_shortcuts_editor_title">编辑浮动快捷键</string>
+    <string name="terminal_shortcuts_empty">尚未配置快捷键，终端不会为快捷键栏预留空间。</string>
+    <string name="terminal_shortcuts_add">添加快捷键</string>
+    <string name="terminal_shortcuts_restore">恢复默认</string>
+    <string name="terminal_shortcuts_save">保存</string>
+    <string name="terminal_shortcuts_cancel">取消</string>
+    <string name="terminal_shortcuts_visible">显示</string>
+    <string name="terminal_shortcuts_move_up">向左移动快捷键</string>
+    <string name="terminal_shortcuts_move_down">向右移动快捷键</string>
+    <string name="terminal_shortcuts_edit">编辑快捷键</string>
+    <string name="terminal_shortcuts_delete">删除快捷键</string>
+    <string name="terminal_shortcut_add_title">添加快捷键</string>
+    <string name="terminal_shortcut_edit_title">编辑快捷键</string>
+    <string name="terminal_shortcut_label_optional">按钮标签（可选）</string>
+    <string name="terminal_shortcut_label_required">按钮标签</string>
+    <string name="terminal_shortcut_action_type">动作类型</string>
+    <string name="terminal_shortcut_action_paste">粘贴</string>
+    <string name="terminal_shortcut_action_modifier">单次修饰键</string>
+    <string name="terminal_shortcut_action_text">文本</string>
+    <string name="terminal_shortcut_action_special">特殊键</string>
+    <string name="terminal_shortcut_action_chord">组合键</string>
+    <string name="terminal_shortcut_modifier">修饰键</string>
+    <string name="terminal_shortcut_text_content">发送文本</string>
+    <string name="terminal_shortcut_special_key">特殊键</string>
+    <string name="terminal_shortcut_chord_modifiers">组合修饰键</string>
+    <string name="terminal_shortcut_chord_key">组合基础键</string>
+    <string name="terminal_shortcut_character">字符</string>
+    <string name="terminal_shortcut_key_character">单个可打印 ASCII 字符</string>
+    <string name="terminal_shortcut_key_special">特殊键</string>
+    <string name="terminal_shortcut_error_label">自定义标签须为 1–16 个字符，也可留空使用内置标签。</string>
+    <string name="terminal_shortcut_error_text_label">文本快捷键需要 1–16 个字符的标签。</string>
+    <string name="terminal_shortcut_error_text">请输入 1–256 个字符的非敏感文本。</string>
+    <string name="terminal_shortcut_error_character">请输入恰好一个可打印 ASCII 字符。</string>
+    <string name="terminal_shortcut_error_modifiers">请至少选择一个修饰键。</string>
+    <string name="terminal_shortcut_error_duplicate">粘贴及每一种单次修饰键最多只能添加一次。</string>
+    <string name="terminal_shortcut_summary_paste">粘贴剪贴板</string>
+    <string name="terminal_shortcut_summary_modifier">单次 %1$s 修饰键</string>
+    <string name="terminal_shortcut_summary_text">文本 · %1$d 个字符</string>
+    <string name="terminal_shortcut_summary_special">特殊键 · %1$s</string>
+    <string name="terminal_shortcut_summary_chord">组合键 · %1$s</string>
 </resources>

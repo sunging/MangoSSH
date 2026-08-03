@@ -51,6 +51,8 @@ import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
+import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.data.settings.TerminalAppearanceStore
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetLease
@@ -67,6 +69,7 @@ class SshSessionController internal constructor(
     private val vault: VaultRepository,
     private val keyManager: SshKeyManager = SshKeyManager(),
     private val embeddedTsnetManager: EmbeddedTsnetManager,
+    private val terminalAppearanceStore: TerminalAppearanceStore,
 ) {
     private val context = appContext.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -75,6 +78,7 @@ class SshSessionController internal constructor(
     private val terminalStore = SessionTerminalStore(
         onKeyboardInput = { sessionId, bytes -> send(sessionId, bytes) },
         onResize = { sessionId, columns, rows -> resize(sessionId, columns, rows) },
+        appearanceProvider = terminalAppearanceStore::current,
     )
 
     private val _sessions = MutableStateFlow<List<TerminalSessionState>>(emptyList())
@@ -172,6 +176,11 @@ class SshSessionController internal constructor(
 
     /** Returns the retained emulator for a still-live session. */
     fun terminalEmulator(sessionId: String): TerminalEmulator? = terminalStore.terminalFor(sessionId)
+
+    /** Applies a display-only scheme to retained sessions without reconnecting their transports. */
+    fun applyTerminalAppearance(appearance: TerminalAppearance) {
+        terminalStore.applyAppearance(appearance)
+    }
 
     fun startPortForward(sessionId: String, rule: PortForwardRule) {
         val runtimeId = portForwardRuntimeId(sessionId, rule.id)
@@ -348,6 +357,7 @@ class SshSessionController internal constructor(
         if (!sessionsById.remove(sessionId, managed)) return
 
         managed.connectionJob?.cancel()
+        managed.keepaliveJob?.cancel()
         managed.readerJobs.toList().forEach(Job::cancel)
         cancelPromptsForSession(sessionId)
         closePortForwards(sessionId, managed)
@@ -483,6 +493,7 @@ class SshSessionController internal constructor(
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.getString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             startSshReaders(sessionId, managed)
+            startSshKeepalive(sessionId, managed)
             runStartupSnippet(sessionId, profile, snapshot)
             snapshot.portForwards
                 .filter { it.profileId == profile.id && it.startOnConnect }
@@ -709,6 +720,26 @@ class SshSessionController internal constructor(
                 sessionId,
                 managed,
                 readStream(sessionId, session.stderr),
+            )
+        }
+    }
+
+    /**
+     * Keeps an authenticated SSH transport visible to idle network devices.
+     *
+     * Mosh sessions are excluded because their SSH transport closes after the
+     * UDP bootstrap and the native Mosh client owns its own network lifecycle.
+     */
+    private fun startSshKeepalive(sessionId: String, managed: ManagedSession) {
+        managed.keepaliveJob = scope.launch {
+            runSshKeepaliveLoop(
+                intervalMillis = SSH_KEEPALIVE_INTERVAL_MILLIS,
+                isSessionActive = { sessionsById[sessionId] === managed },
+                sendKeepalive = { managed.connection.sendIgnorePacket() },
+                onFailure = { error ->
+                    MangoLog.warn(MangoLogEvent.SSH_KEEPALIVE_FAILED, error)
+                    finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
+                },
             )
         }
     }
@@ -1048,6 +1079,9 @@ class SshSessionController internal constructor(
         var connectionJob: Job? = null
 
         @Volatile
+        var keepaliveJob: Job? = null
+
+        @Volatile
         var session: Session? = null
 
         @Volatile
@@ -1162,6 +1196,7 @@ class SshSessionController internal constructor(
         // Host-key verification runs inside key exchange, so this must outlive the full user prompt.
         const val KEY_EXCHANGE_TIMEOUT_MILLIS = 5 * 60 * 1_000 + 30_000
         const val PROMPT_TIMEOUT_MILLIS = 5 * 60 * 1_000L
+        const val SSH_KEEPALIVE_INTERVAL_MILLIS = 30_000L
         const val INITIAL_COLUMNS = 80
         const val INITIAL_ROWS = 24
         const val SSH_STREAM_COUNT = 2

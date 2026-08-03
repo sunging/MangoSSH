@@ -46,6 +46,7 @@ enum class MangoLogEvent(val code: String) {
     SSH_SESSION_OPENED("ssh.session.opened"),
     SSH_SESSION_CLOSED("ssh.session.closed"),
     SSH_SESSION_REMOTE_EXIT("ssh.session.remote_exit"),
+    SSH_KEEPALIVE_FAILED("ssh.keepalive.failed"),
     SSH_SESSION_FAILED("ssh.session.failed"),
     FOREGROUND_SERVICE_STARTED("foreground_service.started"),
     FOREGROUND_SERVICE_STOPPED("foreground_service.stopped"),
