@@ -78,6 +78,7 @@ import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalShortcutAction
 import website.sung.mangossh.domain.TerminalShortcutConfig
+import website.sung.mangossh.ui.theme.terminalChromeColorScheme
 
 /**
  * Renders an already-running terminal emulator.
@@ -164,124 +165,128 @@ fun TerminalSessionScreen(
         showSoftKeyboard = true
     }
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = Color(colorScheme.defaultBackgroundArgb),
-        contentColor = Color(colorScheme.defaultForegroundArgb),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding(),
+    // The whole session screen follows the terminal palette so the bars framing
+    // emulator output never fall back to the device light/dark theme.
+    MaterialTheme(colorScheme = remember(colorScheme) { terminalChromeColorScheme(colorScheme) }) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
-            Row(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .imePadding(),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(session.title, style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        text = "${session.endpoint} · ${session.phase.label()}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                IconButton(onClick = onRequestLeave) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = localizedUiLiteral("返回主机列表"),
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        showResourceReport = true
-                        onRequestResources()
-                    },
-                    enabled = isOpen && supportsSshChannels,
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Outlined.Storage, contentDescription = localizedUiLiteral("服务器资源"))
-                }
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Outlined.Close, contentDescription = localizedUiLiteral("关闭会话"))
-                }
-            }
-
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                key(appearance.font, appearance.fontSizeSp) {
-                    Terminal(
-                        terminalEmulator = terminalEmulator,
-                        modifier = Modifier.fillMaxSize(),
-                        typeface = terminalTypeface,
-                        initialFontSize = appearance.fontSizeSp.sp,
-                        backgroundColor = Color(colorScheme.defaultBackgroundArgb),
-                        // termlib uses this rendering argument for its cursor; text colors
-                        // continue to come from the emulator's configured default palette.
-                        foregroundColor = Color(colorScheme.cursorArgb),
-                        selectionBackgroundColor = Color(colorScheme.selectionBackgroundArgb),
-                        selectionForegroundColor = Color(colorScheme.selectionForegroundArgb),
-                        keyboardEnabled = isOpen,
-                        showSoftKeyboard = showSoftKeyboard,
-                        focusRequester = terminalFocusRequester,
-                        modifierManager = terminalModifierState,
-                        onTerminalTap = {
-                            if (isOpen && !isImeVisible) {
-                                terminalFocusRequester.requestFocus()
-                                keyboardShowRequest += 1
-                            }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(session.title, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            text = "${session.endpoint} · ${session.phase.label()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = onRequestLeave) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = localizedUiLiteral("返回主机列表"),
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            showResourceReport = true
+                            onRequestResources()
                         },
-                        onPasteRequest = pasteFromClipboard,
-                        onInterceptKey = { event ->
-                            if (
-                                event.type == KeyEventType.KeyDown &&
-                                event.isCtrlPressed &&
-                                event.key == Key.V
-                            ) {
-                                pasteFromClipboard()
-                                terminalModifierState.clearTransients()
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                    )
+                        enabled = isOpen && supportsSshChannels,
+                    ) {
+                        Icon(Icons.Outlined.Storage, contentDescription = localizedUiLiteral("服务器资源"))
+                    }
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Outlined.Close, contentDescription = localizedUiLiteral("关闭会话"))
+                    }
                 }
-            }
 
-            TerminalKeyBar(
-                enabled = isOpen,
-                config = shortcutConfig,
-                terminalEmulator = terminalEmulator,
-                modifierState = terminalModifierState,
-                onPaste = pasteFromClipboard,
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    key(appearance.font, appearance.fontSizeSp) {
+                        Terminal(
+                            terminalEmulator = terminalEmulator,
+                            modifier = Modifier.fillMaxSize(),
+                            typeface = terminalTypeface,
+                            initialFontSize = appearance.fontSizeSp.sp,
+                            backgroundColor = Color(colorScheme.defaultBackgroundArgb),
+                            // termlib uses this rendering argument for its cursor; text colors
+                            // continue to come from the emulator's configured default palette.
+                            foregroundColor = Color(colorScheme.cursorArgb),
+                            selectionBackgroundColor = Color(colorScheme.selectionBackgroundArgb),
+                            selectionForegroundColor = Color(colorScheme.selectionForegroundArgb),
+                            keyboardEnabled = isOpen,
+                            showSoftKeyboard = showSoftKeyboard,
+                            focusRequester = terminalFocusRequester,
+                            modifierManager = terminalModifierState,
+                            onTerminalTap = {
+                                if (isOpen && !isImeVisible) {
+                                    terminalFocusRequester.requestFocus()
+                                    keyboardShowRequest += 1
+                                }
+                            },
+                            onPasteRequest = pasteFromClipboard,
+                            onInterceptKey = { event ->
+                                if (
+                                    event.type == KeyEventType.KeyDown &&
+                                    event.isCtrlPressed &&
+                                    event.key == Key.V
+                                ) {
+                                    pasteFromClipboard()
+                                    terminalModifierState.clearTransients()
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                        )
+                    }
+                }
+
+                TerminalKeyBar(
+                    enabled = isOpen,
+                    config = shortcutConfig,
+                    terminalEmulator = terminalEmulator,
+                    modifierState = terminalModifierState,
+                    onPaste = pasteFromClipboard,
+                )
+            }
+        }
+
+        if (showResourceReport) {
+            AlertDialog(
+                onDismissRequest = { showResourceReport = false },
+                title = { Text(localizedUiLiteral("服务器资源")) },
+                text = {
+                    SelectionContainer {
+                        Text(
+                            resourceSnapshot?.report ?: localizedUiLiteral("正在从服务器读取资源信息…"),
+                            modifier = Modifier.verticalScroll(rememberScrollState()),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { onRequestResources() }) { Text(localizedUiLiteral("刷新")) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showResourceReport = false }) { Text(localizedUiLiteral("关闭")) }
+                },
             )
         }
-    }
-
-    if (showResourceReport) {
-        AlertDialog(
-            onDismissRequest = { showResourceReport = false },
-            title = { Text(localizedUiLiteral("服务器资源")) },
-            text = {
-                SelectionContainer {
-                    Text(
-                        resourceSnapshot?.report ?: localizedUiLiteral("正在从服务器读取资源信息…"),
-                        modifier = Modifier.verticalScroll(rememberScrollState()),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { onRequestResources() }) { Text(localizedUiLiteral("刷新")) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResourceReport = false }) { Text(localizedUiLiteral("关闭")) }
-            },
-        )
     }
 }
 
