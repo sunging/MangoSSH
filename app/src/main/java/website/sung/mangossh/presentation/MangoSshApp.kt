@@ -702,8 +702,8 @@ private fun HostsScreen(
         ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item {
-            SecurityBanner(vaultStatus)
+        if (vaultStatus !is VaultStatus.Ready) {
+            item { SecurityBanner(vaultStatus) }
         }
         val visibleSessions = sessions.filter { it.phase != TerminalSessionPhase.CLOSED }
         if (visibleSessions.isNotEmpty()) {
