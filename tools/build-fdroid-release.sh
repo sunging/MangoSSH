@@ -59,7 +59,7 @@ cd "$PROJECT_DIR"
 bash tools/build-pty-bridge-wsl.sh
 bash tools/build-mosh-android-parallel-wsl.sh
 bash tools/install-mosh-assets.sh
-./gradlew --offline --no-daemon :app:assembleRelease
+./gradlew --offline --no-daemon :app:verifyReleaseVersion :app:assembleRelease
 
 APK="$PROJECT_DIR/app/build/outputs/apk/release/app-release-unsigned.apk"
 [[ -f "$APK" ]] || die "unsigned release APK was not produced"

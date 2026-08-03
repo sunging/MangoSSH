@@ -1,42 +1,62 @@
-# Signed releases are generated only from version tags. The signing key is
-# restored from GitHub Secrets into the ephemeral runner and never committed.
+# Release Please is the sole writer of version tags and GitHub Releases. Signed
+# artifacts are built in this same workflow because events created with the
+# built-in GITHUB_TOKEN do not reliably trigger a second release workflow.
 name: Android signed release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
   workflow_dispatch:
 
-# Required for creating a GitHub Release and attaching signed APK/AAB assets.
-permissions:
-  contents: write
+permissions: {}
 
 concurrency:
   group: android-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  release-please:
+    name: Create or update release PR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
+
+    steps:
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   sign-and-publish:
     name: Sign and publish Android release
+    needs: release-please
+    if: >-
+      ${{
+        always() &&
+        (github.event_name == 'workflow_dispatch' ||
+         needs.release-please.outputs.release_created == 'true')
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    permissions:
+      contents: write
 
     steps:
       - name: Check out source and native Mosh source
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.release-please.outputs.sha || github.ref }}
           submodules: recursive
-
-      - name: Verify release tag matches the Android version
-        if: github.event_name == 'push'
-        run: |
-          version_name="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
-          version_code="$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\)/\1/p' app/build.gradle.kts)"
-          test -n "$version_name"
-          test -n "$version_code"
-          test "$GITHUB_REF_NAME" = "v$version_name"
-          test "$version_code" = "1"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -47,6 +67,28 @@ jobs:
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
+
+      - name: Verify release version and localized notes
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          if [[ -n "$RELEASE_TAG" ]]; then
+            ./gradlew --no-daemon :app:verifyReleaseVersion \
+              "-PreleaseTag=$RELEASE_TAG"
+          else
+            ./gradlew --no-daemon :app:verifyReleaseVersion
+          fi
+
+      - name: Select artifact version
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          if [[ -n "$RELEASE_TAG" ]]; then
+            artifact_version="$RELEASE_TAG"
+          else
+            artifact_version="manual-${GITHUB_SHA:0:12}"
+          fi
+          echo "MANGOSSH_ARTIFACT_VERSION=$artifact_version" >> "$GITHUB_ENV"
 
       - name: Install 16 KiB-aware Android zipalign
         run: |
@@ -142,38 +184,43 @@ jobs:
           "$alignment_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/release/app-release.apk
           bash tools/check-16kb-elf-wsl.sh app/build/outputs/apk/release/app-release.apk
 
-      - name: Create release checksums
+      - name: Create versioned release artifacts and checksums
         run: |
-          mkdir -p app/build/outputs/release
-          cd app/build/outputs
-          sha256sum \
-            apk/release/app-release.apk \
-            bundle/release/app-release.aab |
-            sed -e 's#  apk/release/#  #' -e 's#  bundle/release/#  #' \
-              > release/SHA256SUMS
+          release_dir="app/build/outputs/release"
+          apk_name="MangoSSH-$MANGOSSH_ARTIFACT_VERSION.apk"
+          aab_name="MangoSSH-$MANGOSSH_ARTIFACT_VERSION.aab"
+          mkdir -p "$release_dir"
+          cp app/build/outputs/apk/release/app-release.apk "$release_dir/$apk_name"
+          cp app/build/outputs/bundle/release/app-release.aab "$release_dir/$aab_name"
+          (
+            cd "$release_dir"
+            sha256sum "$apk_name" "$aab_name" > SHA256SUMS
+          )
 
       - name: Upload signed APK and AAB
         uses: actions/upload-artifact@v6
         with:
           name: MangoSSH-signed-${{ github.sha }}
           path: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/bundle/release/app-release.aab
+            app/build/outputs/release/MangoSSH-*.apk
+            app/build/outputs/release/MangoSSH-*.aab
             app/build/outputs/release/SHA256SUMS
           if-no-files-found: error
           retention-days: 90
 
-      # Manual dispatch validates signing without creating a release. A pushed
-      # version tag creates a matching GitHub Release containing both artifacts.
-      - name: Create GitHub Release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      # Manual dispatch validates signing and produces an Actions artifact only.
+      # A Release Please run uploads to its draft release, then publishes it only
+      # after every build, signature, alignment, and checksum check has passed.
+      - name: Upload assets and publish GitHub Release
+        if: needs.release-please.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --verify-tag \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            app/build/outputs/apk/release/app-release.apk \
-            app/build/outputs/bundle/release/app-release.aab \
-            app/build/outputs/release/SHA256SUMS
+          test -n "$RELEASE_TAG"
+          gh release upload "$RELEASE_TAG" \
+            "app/build/outputs/release/MangoSSH-$RELEASE_TAG.apk" \
+            "app/build/outputs/release/MangoSSH-$RELEASE_TAG.aab" \
+            app/build/outputs/release/SHA256SUMS \
+            --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

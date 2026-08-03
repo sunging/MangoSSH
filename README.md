@@ -84,6 +84,54 @@ The Go packages linked into that bridge are committed as source under
 `native/tsnetbridge/vendor`. Local builds may download the pinned Go, JDK, and
 NDK toolchains when they are missing, but do not download Go module source.
 
+## Versioning and releases
+
+`version.txt` is the only application-version source. It contains stable SemVer
+without a leading `v`, while Git tags and GitHub Releases use `v<version>`.
+Gradle derives both Android values from that file:
+
+```text
+versionName = MAJOR.MINOR.PATCH
+versionCode = MAJOR * 1,000,000 + MINOR * 1,000 + PATCH
+```
+
+For example, `0.0.1` maps to version code `1`, `0.1.0` to `1000`, and
+`1.2.3` to `1002003`. Minor and patch components are limited to `0..999`, and
+the resulting code must fit Android's `2,100,000,000` limit. This deterministic
+mapping ensures that GitHub and network-isolated F-Droid builds of the same tag
+carry identical version metadata.
+
+Release Please owns version changes, `CHANGELOG.md`, `v*` tags, and GitHub
+Releases. Commits merged into `main` must use Conventional Commit subjects;
+`fix:` requests a patch release, `feat:` a minor release, and `feat!:` or a
+`BREAKING CHANGE` footer a major release. Build, documentation, and CI-only
+commits do not request an application release by themselves.
+
+The release flow is:
+
+1. Release Please creates or updates a release PR against `main`.
+2. Review the proposed version and generated changelog. Add non-empty localized
+   store notes named after the derived version code, for example:
+   `fastlane/metadata/android/en-US/changelogs/1000.txt` and
+   `fastlane/metadata/android/zh-CN/changelogs/1000.txt` for version `0.1.0`.
+3. Approve the automated PR's Actions run when GitHub requests it, and merge
+   only after Android CI passes.
+4. The merge creates the version tag and a draft GitHub Release. The same
+   workflow rebuilds native assets, tests, signs, verifies 16 KiB alignment,
+   attaches the versioned APK/AAB and checksums, and then publishes the draft.
+
+The repository must allow GitHub Actions to create pull requests and grant the
+release workflow its declared `contents`, `issues`, and `pull-requests` write
+permissions. The workflow uses only the built-in `GITHUB_TOKEN`; no PAT or
+GitHub App credential is required. A manual run validates signing and uploads
+an Actions artifact, but never creates a tag or publishes a GitHub Release.
+
+Validate the current version, localized notes, and an optional tag locally:
+
+```text
+gradlew.bat :app:verifyReleaseVersion -PreleaseTag=v0.0.1
+```
+
 ## F-Droid source build
 
 F-Droid builds use `tools/build-fdroid-release.sh` with network access disabled.
