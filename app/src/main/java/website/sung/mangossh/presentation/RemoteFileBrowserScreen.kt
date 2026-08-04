@@ -77,7 +77,6 @@ import androidx.compose.ui.res.stringResource
 @Composable
 fun RemoteFileBrowserScreen(
     state: RemoteBrowserUiState,
-    sessionTitle: String,
     onNavigate: (String) -> Unit,
     onUp: () -> Unit,
     onRefresh: () -> Unit,
@@ -140,37 +139,51 @@ fun RemoteFileBrowserScreen(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = sessionTitle,
+                        text = state.title,
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = state.path,
+                        text = if (state.isConnecting) localizedUiLiteral("正在连接…") else state.path,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.MiddleEllipsis,
                     )
                 }
-                IconButton(onClick = onUp, enabled = state.path != RemoteFilePaths.ROOT) {
+                IconButton(
+                    onClick = onUp,
+                    enabled = !state.isConnecting && state.path != RemoteFilePaths.ROOT,
+                ) {
                     Icon(Icons.Outlined.ArrowUpward, contentDescription = localizedUiLiteral("上级目录"))
                 }
-                IconButton(onClick = { uploadLauncher.launch(arrayOf("*/*")) }) {
+                IconButton(
+                    onClick = { uploadLauncher.launch(arrayOf("*/*")) },
+                    enabled = !state.isConnecting,
+                ) {
                     Icon(Icons.Outlined.Upload, contentDescription = localizedUiLiteral("上传到当前目录"))
                 }
-                IconButton(onClick = onRefresh) {
+                IconButton(onClick = onRefresh, enabled = !state.isConnecting) {
                     Icon(Icons.Outlined.Refresh, contentDescription = localizedUiLiteral("刷新"))
                 }
             }
 
-            RemoteBreadcrumbs(path = state.path, onNavigate = onNavigate)
+            if (!state.isConnecting) {
+                RemoteBreadcrumbs(path = state.path, onNavigate = onNavigate)
+            }
 
-            if (state.isLoading) {
+            if (state.isLoading || state.isConnecting) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
 
             when {
+                state.isConnecting -> RemoteBrowserMessage(
+                    message = localizedUiLiteral("正在为文件传输建立连接…"),
+                    isError = false,
+                    onRetry = null,
+                )
+
                 state.errorMessage != null -> RemoteBrowserMessage(
                     message = state.errorMessage,
                     isError = true,

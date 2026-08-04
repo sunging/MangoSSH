@@ -11,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -29,6 +30,7 @@ import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
+import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
@@ -42,6 +44,7 @@ import website.sung.mangossh.session.RemoteFilePaths
 import website.sung.mangossh.session.SessionEndedEvent
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionEndReason
+import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
 
 /** Top-level areas exposed by the Compose navigation bar. */
@@ -155,6 +158,25 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     init {
         viewModelScope.launch { vault.open() }
+        // A browsed connection can fail while authenticating or drop mid-listing;
+        // surface that in the browser instead of leaving a spinner running.
+        viewModelScope.launch {
+            sessionEndedEvents.collect { event ->
+                _remoteBrowser.update { state ->
+                    if (state?.sessionId != event.sessionId) {
+                        state
+                    } else {
+                        state.copy(
+                            isConnecting = false,
+                            isLoading = false,
+                            errorMessage = sessionEndMessage(event)
+                                ?: getApplication<Application>()
+                                    .getString(R.string.session_ended_connection_failed),
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun selectSection(section: AppSection) {
@@ -322,7 +344,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Opens the remote file browser on the session's home directory.
+     * Opens the remote file browser on a terminal session that is already
+     * connected, reusing its authenticated transport.
      *
      * A repeated call for the session already being browsed is ignored so a
      * recomposition cannot throw the user back to their home directory.
@@ -330,13 +353,69 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun openRemoteBrowser(sessionId: String) {
         val existing = _remoteBrowser.value
         if (existing != null && existing.sessionId == sessionId) return
-        _remoteBrowser.value = RemoteBrowserUiState(sessionId = sessionId, path = RemoteFilePaths.ROOT)
-        browserJob?.cancel()
-        browserJob = viewModelScope.launch {
-            val home = runCatching { sessionController.resolveRemoteHome(sessionId) }
-                .getOrElse { RemoteFilePaths.ROOT }
-            loadRemoteDirectory(sessionId, home)
+        val session = sessions.value.firstOrNull { it.id == sessionId } ?: return
+        closeRemoteBrowser()
+        _remoteBrowser.value = RemoteBrowserUiState(
+            sessionId = sessionId,
+            title = session.title,
+            path = RemoteFilePaths.ROOT,
+        )
+        browserJob = viewModelScope.launch { openHomeDirectory(sessionId) }
+    }
+
+    /**
+     * Opens the remote file browser on a host that has no session yet.
+     *
+     * This authenticates a connection dedicated to file transfer, so browsing
+     * files does not require starting a shell first. The connection is released
+     * when the browser closes, once any transfer it started has finished.
+     */
+    fun openRemoteBrowserForProfile(profile: ConnectionProfile) {
+        val existing = _remoteBrowser.value
+        if (existing != null && existing.ownsSession && existing.profileId == profile.id) return
+        if (profile.protocol != ConnectionProtocol.SSH) {
+            _userMessage.value = getApplication<Application>()
+                .getString(R.string.mosh_not_supported_for_ssh_feature)
+            return
         }
+        closeRemoteBrowser()
+        val sessionId = runCatching { sessionController.connectForFileTransfer(profile) }
+            .getOrElse { error ->
+                _userMessage.value = sessionController.remoteFileMessage(error)
+                return
+            }
+        _remoteBrowser.value = RemoteBrowserUiState(
+            sessionId = sessionId,
+            title = profile.label,
+            path = RemoteFilePaths.ROOT,
+            isConnecting = true,
+            ownsSession = true,
+            profileId = profile.id,
+        )
+        browserJob = viewModelScope.launch {
+            if (!awaitSessionOpen(sessionId)) return@launch
+            _remoteBrowser.update { state ->
+                if (state?.sessionId == sessionId) state.copy(isConnecting = false) else state
+            }
+            openHomeDirectory(sessionId)
+        }
+    }
+
+    /**
+     * Suspends until the transfer-only session authenticates.
+     *
+     * Returns false when it ended first; the failure text is published by the
+     * session-ended collector, so no message is produced here.
+     */
+    private suspend fun awaitSessionOpen(sessionId: String): Boolean = sessions
+        .map { list -> list.firstOrNull { it.id == sessionId } }
+        .first { it == null || it.phase == TerminalSessionPhase.OPEN }
+        ?.phase == TerminalSessionPhase.OPEN
+
+    private suspend fun openHomeDirectory(sessionId: String) {
+        val home = runCatching { sessionController.resolveRemoteHome(sessionId) }
+            .getOrElse { RemoteFilePaths.ROOT }
+        loadRemoteDirectory(sessionId, home)
     }
 
     /** Lists [path] in the already-open browser. */
@@ -360,11 +439,17 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun closeRemoteBrowser() {
+        val current = _remoteBrowser.value
         browserJob?.cancel()
         browserJob = null
         previewJob?.cancel()
         previewJob = null
         _remoteBrowser.value = null
+        // A borrowed terminal session keeps running; only a connection this
+        // browser opened for itself is handed back.
+        if (current?.ownsSession == true) {
+            sessionController.releaseFileTransferSession(current.sessionId)
+        }
     }
 
     /**

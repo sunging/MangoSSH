@@ -124,6 +124,7 @@ import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
+import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
@@ -210,7 +211,6 @@ fun MangoSshApp(
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
-    var browserSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     val currentActiveSessionId by rememberUpdatedState(activeSessionId)
     val notificationTargetUnavailableMessage = stringResource(R.string.session_notification_target_unavailable)
     val invalidAuthorizationUrlMessage = stringResource(R.string.embedded_tsnet_invalid_authorization_url)
@@ -295,39 +295,25 @@ fun MangoSshApp(
     }
 
     // The remote browser is layered in front of the terminal so leaving it
-    // returns to whichever screen opened it.
+    // returns to whichever screen opened it. A browser-owned connection has no
+    // shell, so its host-key and authentication prompts are rendered here.
     val remoteBrowserState by viewModel.remoteBrowser.collectAsStateWithLifecycle()
-    val browserSession = browserSessionId?.let { id ->
-        sessions.firstOrNull {
-            it.id == id &&
-                it.phase == TerminalSessionPhase.OPEN &&
-                it.protocol == ConnectionProtocol.SSH
-        }
-    }
-    LaunchedEffect(browserSessionId, browserSession) {
-        if (browserSessionId != null && browserSession == null) {
-            browserSessionId = null
-            viewModel.closeRemoteBrowser()
-        }
-    }
-    if (browserSession != null) {
-        LaunchedEffect(browserSession.id) { viewModel.openRemoteBrowser(browserSession.id) }
-        val closeBrowser: () -> Unit = {
-            browserSessionId = null
-            viewModel.closeRemoteBrowser()
-        }
-        remoteBrowserState?.let { browserState ->
-            RemoteFileBrowserScreen(
-                state = browserState,
-                sessionTitle = browserSession.title,
-                onNavigate = viewModel::navigateRemoteBrowser,
-                onUp = viewModel::remoteBrowserUp,
-                onRefresh = viewModel::refreshRemoteBrowser,
-                onOpenEntry = viewModel::openRemoteEntry,
-                onDownload = viewModel::downloadRemoteFile,
-                onUpload = viewModel::uploadToRemoteBrowser,
-                onDismissPreview = viewModel::dismissRemotePreview,
-                onClose = closeBrowser,
+    remoteBrowserState?.let { browserState ->
+        RemoteFileBrowserScreen(
+            state = browserState,
+            onNavigate = viewModel::navigateRemoteBrowser,
+            onUp = viewModel::remoteBrowserUp,
+            onRefresh = viewModel::refreshRemoteBrowser,
+            onOpenEntry = viewModel::openRemoteEntry,
+            onDownload = viewModel::downloadRemoteFile,
+            onUpload = viewModel::uploadToRemoteBrowser,
+            onDismissPreview = viewModel::dismissRemotePreview,
+            onClose = viewModel::closeRemoteBrowser,
+        )
+        sessionPrompts.firstOrNull { it.sessionId == browserState.sessionId }?.let { prompt ->
+            SessionPromptDialog(
+                prompt = prompt,
+                onRespond = { values -> viewModel.respondToSessionPrompt(prompt, values) },
             )
         }
         return
@@ -353,7 +339,7 @@ fun MangoSshApp(
             onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
             resourceSnapshot = resourceSnapshots[activeSession.id],
             onRequestResources = { viewModel.requestServerResources(activeSession.id) },
-            onOpenFileBrowser = { browserSessionId = activeSession.id },
+            onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
             onRequestLeave = { leaveSessionId = activeSession.id },
             onClose = {
                 viewModel.disconnect(activeSession.id)
@@ -454,6 +440,7 @@ fun MangoSshApp(
                 ) {
                     when (selectedSection) {
                         AppSection.HOSTS -> HostsScreen(
+                            onBrowseHostFiles = viewModel::openRemoteBrowserForProfile,
                             hosts = hosts,
                             sessions = sessions,
                             vaultStatus = vaultStatus,
@@ -486,7 +473,8 @@ fun MangoSshApp(
                             onStopRule = viewModel::stopPortForward,
                             onUploadScp = viewModel::uploadScp,
                             onDownloadScp = viewModel::downloadScp,
-                            onOpenFileBrowser = { sessionId -> browserSessionId = sessionId },
+                            onBrowseSession = viewModel::openRemoteBrowser,
+                            onBrowseHost = viewModel::openRemoteBrowserForProfile,
                         )
                         AppSection.SETTINGS -> SettingsScreen(
                             vaultStatus = vaultStatus,
@@ -727,6 +715,7 @@ private fun HostsScreen(
     onEditHost: (ConnectionProfile) -> Unit,
     onRemoveHost: (String) -> Unit,
     onConnectHost: (ConnectionProfile) -> Unit,
+    onBrowseHostFiles: (ConnectionProfile) -> Unit,
     onOpenSession: (String) -> Unit,
     onDisconnectSession: (String) -> Unit,
 ) {
@@ -748,7 +737,11 @@ private fun HostsScreen(
         if (vaultStatus !is VaultStatus.Ready) {
             item { SecurityBanner(vaultStatus) }
         }
-        val visibleSessions = sessions.filter { it.phase != TerminalSessionPhase.CLOSED }
+        // Transfer-only connections have no shell to open, so they are owned by
+        // the file browser rather than listed as sessions the user can enter.
+        val visibleSessions = sessions.filter {
+            it.phase != TerminalSessionPhase.CLOSED && it.kind == SessionKind.TERMINAL
+        }
         if (visibleSessions.isNotEmpty()) {
             item { Text("活动会话", style = MaterialTheme.typography.titleMedium) }
             items(visibleSessions, key = { it.id }) { session ->
@@ -778,6 +771,7 @@ private fun HostsScreen(
                 onEdit = { onEditHost(host) },
                 onRemove = { onRemoveHost(host.id) },
                 onConnect = { onConnectHost(host) },
+                onBrowseFiles = { onBrowseHostFiles(host) },
             )
         }
     }
@@ -838,6 +832,7 @@ private fun HostCard(
     onEdit: () -> Unit,
     onRemove: () -> Unit,
     onConnect: () -> Unit,
+    onBrowseFiles: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -890,6 +885,13 @@ private fun HostCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onConnect) {
                     Text("连接")
+                }
+                // Mosh replaces its SSH bootstrap with a UDP terminal and has no
+                // channel left for SFTP.
+                if (host.protocol == ConnectionProtocol.SSH) {
+                    OutlinedButton(onClick = onBrowseFiles) {
+                        Text("文件")
+                    }
                 }
                 OutlinedButton(onClick = onEdit) {
                     Text("编辑")
@@ -1252,7 +1254,8 @@ private fun TransfersScreen(
     onStopRule: (String, String) -> Unit,
     onUploadScp: (String, android.net.Uri, String, String) -> Unit,
     onDownloadScp: (String, String, android.net.Uri) -> Unit,
-    onOpenFileBrowser: (String) -> Unit,
+    onBrowseSession: (String) -> Unit,
+    onBrowseHost: (ConnectionProfile) -> Unit,
 ) {
     val context = LocalContext.current
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
@@ -1264,8 +1267,12 @@ private fun TransfersScreen(
     // Mosh uses a UDP terminal after its bootstrap and has no SSH channels for
     // SCP or forwarding, so these actions list SSH sessions only.
     val openSshSessions = sessions.filter {
-        it.phase == TerminalSessionPhase.OPEN && it.protocol == ConnectionProtocol.SSH
+        it.phase == TerminalSessionPhase.OPEN &&
+            it.protocol == ConnectionProtocol.SSH &&
+            it.kind == SessionKind.TERMINAL
     }
+    // Browsing does not need a shell, so any SSH host can be reached directly.
+    val sshHosts = hosts.filter { it.protocol == ConnectionProtocol.SSH }
     val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val request = pendingUpload
         pendingUpload = null
@@ -1310,14 +1317,8 @@ private fun TransfersScreen(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = {
-                        if (openSshSessions.size == 1) {
-                            onOpenFileBrowser(openSshSessions.first().id)
-                        } else {
-                            showBrowserSessionPicker = true
-                        }
-                    },
-                    enabled = openSshSessions.isNotEmpty(),
+                    onClick = { showBrowserSessionPicker = true },
+                    enabled = openSshSessions.isNotEmpty() || sshHosts.isNotEmpty(),
                 ) { Text("远端文件浏览器") }
                 OutlinedButton(
                     onClick = { showScpDialog = true },
@@ -1499,21 +1500,42 @@ private fun TransfersScreen(
     if (showBrowserSessionPicker) {
         AlertDialog(
             onDismissRequest = { showBrowserSessionPicker = false },
-            title = { Text("选择会话") },
+            title = { Text("浏览远端文件") },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    openSshSessions.forEach { session ->
-                        FilterChip(
-                            selected = false,
-                            onClick = {
-                                showBrowserSessionPicker = false
-                                onOpenFileBrowser(session.id)
-                            },
-                            label = { Text(session.title + " · " + session.endpoint, localize = false) },
+                    if (openSshSessions.isNotEmpty()) {
+                        Text("已连接的会话", style = MaterialTheme.typography.titleSmall)
+                        openSshSessions.forEach { session ->
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    showBrowserSessionPicker = false
+                                    onBrowseSession(session.id)
+                                },
+                                label = { Text(session.title + " · " + session.endpoint, localize = false) },
+                            )
+                        }
+                    }
+                    if (sshHosts.isNotEmpty()) {
+                        Text("主机配置", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "将为文件传输单独建立连接，无需先打开终端。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        sshHosts.forEach { host ->
+                            FilterChip(
+                                selected = false,
+                                onClick = {
+                                    showBrowserSessionPicker = false
+                                    onBrowseHost(host)
+                                },
+                                label = { Text(host.label + " · " + host.endpoint, localize = false) },
+                            )
+                        }
                     }
                 }
             },

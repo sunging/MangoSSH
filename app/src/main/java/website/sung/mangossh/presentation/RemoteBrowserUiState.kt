@@ -13,12 +13,22 @@ import website.sung.mangossh.session.RemoteTextPreview
 @Immutable
 data class RemoteBrowserUiState(
     val sessionId: String,
+    val title: String,
     val path: String,
     val entries: List<RemoteFileEntry> = emptyList(),
     val truncated: Boolean = false,
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
     val preview: RemotePreviewUiState? = null,
+    /** True while a transfer-only connection is still authenticating. */
+    val isConnecting: Boolean = false,
+    /**
+     * True when the browser opened its own transfer-only connection and must
+     * release it on close; false when it borrowed a running terminal session.
+     */
+    val ownsSession: Boolean = false,
+    /** Set only for a browser-owned connection, to recognize a repeat request. */
+    val profileId: String? = null,
 )
 
 /**

@@ -14,6 +14,18 @@ enum class TerminalSessionPhase {
     CLOSED,
 }
 
+/**
+ * Why a live transport exists.
+ *
+ * A [FILE_TRANSFER] connection is authenticated exactly like a terminal one but
+ * never opens a shell channel, so it has no emulator and must not be presented
+ * as something the user can type into.
+ */
+enum class SessionKind {
+    TERMINAL,
+    FILE_TRANSFER,
+}
+
 /** Immutable terminal summary; it intentionally excludes credentials and command contents. */
 @Immutable
 data class TerminalSessionState(
@@ -24,6 +36,7 @@ data class TerminalSessionState(
     val protocol: ConnectionProtocol,
     val phase: TerminalSessionPhase,
     val detail: String? = null,
+    val kind: SessionKind = SessionKind.TERMINAL,
 )
 
 /** A transient terminal-originated clipboard request handled only by visible UI. */

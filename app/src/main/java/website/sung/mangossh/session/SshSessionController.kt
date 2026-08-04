@@ -140,6 +140,70 @@ class SshSessionController internal constructor(
         return sessionId
     }
 
+    /**
+     * Opens an SSH connection used only for browsing and transferring files.
+     *
+     * Host-key verification and authentication are identical to [connect], but
+     * no shell channel, PTY, or terminal emulator is created, so this session
+     * must never be presented as an interactive terminal. It is released
+     * through [releaseFileTransferSession] rather than by the terminal UI.
+     */
+    fun connectForFileTransfer(profile: ConnectionProfile): String {
+        check(profile.protocol == ConnectionProtocol.SSH) {
+            context.getString(R.string.mosh_not_supported_for_ssh_feature)
+        }
+        val sessionId = UUID.randomUUID().toString()
+        val managed = ManagedSession(
+            connection = Connection(profile.hostname, profile.port),
+            protocol = ConnectionProtocol.SSH,
+            kind = SessionKind.FILE_TRANSFER,
+        )
+        sessionsById[sessionId] = managed
+        MangoLog.info(MangoLogEvent.SSH_CONNECT_STARTED)
+        updateSession(
+            TerminalSessionState(
+                id = sessionId,
+                profileId = profile.id,
+                title = profile.label,
+                endpoint = profile.endpoint,
+                protocol = ConnectionProtocol.SSH,
+                phase = TerminalSessionPhase.CONNECTING,
+                detail = context.getString(R.string.session_connecting),
+                kind = SessionKind.FILE_TRANSFER,
+            ),
+        )
+        SessionForegroundService.start(context)
+
+        managed.connectionJob = scope.launch {
+            runFileTransferSession(sessionId, profile, managed)
+        }
+        return sessionId
+    }
+
+    /**
+     * Marks a file-transfer connection as no longer needed.
+     *
+     * Queued and running transfers keep it alive so closing the browser cannot
+     * abort a transfer the user already started; it closes as soon as the queue
+     * for that session drains.
+     */
+    fun releaseFileTransferSession(sessionId: String) {
+        val managed = sessionsById[sessionId] ?: return
+        if (managed.kind != SessionKind.FILE_TRANSFER) return
+        managed.releaseRequested = true
+        closeFileTransferIfIdle(sessionId)
+    }
+
+    private fun closeFileTransferIfIdle(sessionId: String) {
+        val managed = sessionsById[sessionId] ?: return
+        if (managed.kind != SessionKind.FILE_TRANSFER || !managed.releaseRequested) return
+        val busy = _scpTransfers.value.any { transfer ->
+            transfer.sessionId == sessionId &&
+                (transfer.phase == ScpTransferPhase.QUEUED || transfer.phase == ScpTransferPhase.RUNNING)
+        }
+        if (!busy) finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
+    }
+
     fun respondToPrompt(requestId: String, values: List<String>?) {
         promptWaiters.remove(requestId)?.complete(values)
         _prompts.update { prompts -> prompts.filterNot { it.requestId == requestId } }
@@ -667,6 +731,61 @@ class SshSessionController internal constructor(
     }
 
     /**
+     * Authenticates a transfer-only connection and stops before any shell work.
+     *
+     * No authentication banner callback is registered because this session has
+     * no terminal to display one in, and no startup snippet or auto-start port
+     * forward runs: those belong to interactive terminal sessions.
+     */
+    private suspend fun runFileTransferSession(
+        sessionId: String,
+        profile: ConnectionProfile,
+        managed: ManagedSession,
+    ) {
+        if (sessionsById[sessionId] !== managed) return
+        val snapshot = vault.snapshot.value
+        val connection = managed.connection
+        try {
+            prepareConnectionRoute(profile, managed)
+            updateSession(
+                sessionId,
+                TerminalSessionPhase.VERIFYING_HOST_KEY,
+                context.getString(R.string.session_verifying_host_key),
+            )
+            connection.connect(
+                HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
+                CONNECT_TIMEOUT_MILLIS,
+                KEY_EXCHANGE_TIMEOUT_MILLIS,
+            )
+
+            updateSession(
+                sessionId,
+                TerminalSessionPhase.AUTHENTICATING,
+                context.getString(R.string.session_authenticating),
+            )
+            if (!authenticate(connection, sessionId, profile, snapshot)) {
+                MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
+                throw SshAuthenticationException("服务器拒绝了此身份验证方式。")
+            }
+            MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
+
+            updateSession(sessionId, TerminalSessionPhase.OPEN, context.getString(R.string.session_open))
+            MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
+            startSshKeepalive(sessionId, managed)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            finishSession(
+                sessionId = sessionId,
+                managed = managed,
+                reason = SessionEndReason.CONNECTION_FAILED,
+                failure = error,
+                userMessage = connectionFailureMessage(error),
+            )
+        }
+    }
+
+    /**
      * Runs the SSH-only Mosh bootstrap, then replaces that transport with the
      * bundled native UDP client. The SSH connection is intentionally closed
      * after `MOSH CONNECT`: Mosh's design does not keep an SSH channel open.
@@ -1171,10 +1290,21 @@ class SshSessionController internal constructor(
     }
 
     private fun updateScpTransfer(transferId: String, phase: ScpTransferPhase, detail: String?) {
+        var owningSessionId: String? = null
         _scpTransfers.update { current ->
             current.map { state ->
-                if (state.id == transferId) state.copy(phase = phase, detail = detail) else state
+                if (state.id == transferId) {
+                    owningSessionId = state.sessionId
+                    state.copy(phase = phase, detail = detail)
+                } else {
+                    state
+                }
             }
+        }
+        // A transfer-only connection stays open until the queue that kept it
+        // alive after the browser closed has drained.
+        if (phase == ScpTransferPhase.COMPLETED || phase == ScpTransferPhase.FAILED) {
+            owningSessionId?.let(::closeFileTransferIfIdle)
         }
     }
 
@@ -1241,7 +1371,12 @@ class SshSessionController internal constructor(
     private class ManagedSession(
         val connection: Connection,
         val protocol: ConnectionProtocol,
+        val kind: SessionKind = SessionKind.TERMINAL,
     ) {
+        /** Set once the browser is done; the connection closes when its queue drains. */
+        @Volatile
+        var releaseRequested: Boolean = false
+
         @Volatile
         var connectionJob: Job? = null
 
