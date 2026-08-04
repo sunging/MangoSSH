@@ -302,6 +302,7 @@ fun MangoSshApp(
         RemoteFileBrowserScreen(
             state = browserState,
             onNavigate = viewModel::navigateRemoteBrowser,
+            onHome = viewModel::remoteBrowserHome,
             onUp = viewModel::remoteBrowserUp,
             onRefresh = viewModel::refreshRemoteBrowser,
             onOpenEntry = viewModel::openRemoteEntry,

@@ -415,7 +415,18 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private suspend fun openHomeDirectory(sessionId: String) {
         val home = runCatching { sessionController.resolveRemoteHome(sessionId) }
             .getOrElse { RemoteFilePaths.ROOT }
+        _remoteBrowser.update { state ->
+            if (state?.sessionId == sessionId) state.copy(homePath = home) else state
+        }
         loadRemoteDirectory(sessionId, home)
+    }
+
+    /** Returns to the directory the session's account starts in. */
+    fun remoteBrowserHome() {
+        val current = _remoteBrowser.value ?: return
+        val home = current.homePath ?: return
+        if (home == current.path) return
+        navigateRemoteBrowser(home)
     }
 
     /** Lists [path] in the already-open browser. */

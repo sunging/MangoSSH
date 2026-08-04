@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Upload
@@ -78,6 +79,7 @@ import androidx.compose.ui.res.stringResource
 fun RemoteFileBrowserScreen(
     state: RemoteBrowserUiState,
     onNavigate: (String) -> Unit,
+    onHome: () -> Unit,
     onUp: () -> Unit,
     onRefresh: () -> Unit,
     onOpenEntry: (RemoteFileEntry) -> Unit,
@@ -151,6 +153,14 @@ fun RemoteFileBrowserScreen(
                         maxLines = 1,
                         overflow = TextOverflow.MiddleEllipsis,
                     )
+                }
+                IconButton(
+                    onClick = onHome,
+                    enabled = !state.isConnecting &&
+                        state.homePath != null &&
+                        state.homePath != state.path,
+                ) {
+                    Icon(Icons.Outlined.Home, contentDescription = localizedUiLiteral("主目录"))
                 }
                 IconButton(
                     onClick = onUp,

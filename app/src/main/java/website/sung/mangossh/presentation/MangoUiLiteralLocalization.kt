@@ -144,6 +144,7 @@ internal object MangoUiLiteralLocalization {
         "正在连接…" to "Connecting…",
         "正在为文件传输建立连接…" to "Opening a connection for file transfer…",
         "关闭文件浏览器" to "Close the file browser",
+        "主目录" to "Home directory",
         "上级目录" to "Parent directory",
         "上传到当前目录" to "Upload to this directory",
         "此目录为空。" to "This directory is empty.",

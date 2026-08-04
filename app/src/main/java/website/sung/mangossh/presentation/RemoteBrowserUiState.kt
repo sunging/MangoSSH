@@ -15,6 +15,8 @@ data class RemoteBrowserUiState(
     val sessionId: String,
     val title: String,
     val path: String,
+    /** Where the session's account starts, resolved once when the browser opens. */
+    val homePath: String? = null,
     val entries: List<RemoteFileEntry> = emptyList(),
     val truncated: Boolean = false,
     val isLoading: Boolean = true,
