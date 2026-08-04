@@ -317,6 +317,22 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.startPortForward(sessionId, rule)
     }
 
+    /**
+     * Starts [rule] on a connection opened just for it, so a tunnel does not
+     * require a terminal session for the same host.
+     */
+    fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
+        val application = getApplication<Application>()
+        if (profile.protocol != ConnectionProtocol.SSH) {
+            _userMessage.value = application.getString(R.string.mosh_not_supported_for_ssh_feature)
+            return
+        }
+        runCatching { sessionController.startPortForwardOnNewConnection(profile, rule) }
+            .onFailure {
+                _userMessage.value = application.getString(R.string.session_ended_connection_failed)
+            }
+    }
+
     fun stopPortForward(sessionId: String, ruleId: String) {
         sessionController.stopPortForward(sessionId, ruleId)
     }

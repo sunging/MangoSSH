@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -153,12 +155,29 @@ class SshSessionController internal constructor(
     /**
      * Opens an SSH connection used only for browsing and transferring files.
      *
-     * Host-key verification and authentication are identical to [connect], but
-     * no shell channel, PTY, or terminal emulator is created, so this session
-     * must never be presented as an interactive terminal. It is released
-     * through [releaseFileTransferSession] rather than by the terminal UI.
+     * It is released through [releaseFileTransferSession] rather than by the
+     * terminal UI.
      */
-    fun connectForFileTransfer(profile: ConnectionProfile): String {
+    fun connectForFileTransfer(profile: ConnectionProfile): String =
+        connectWithoutShell(profile, SessionKind.FILE_TRANSFER)
+
+    /**
+     * Opens an SSH connection used only to carry port forwards.
+     *
+     * It closes as soon as the last forward on it stops, so a tunnel no longer
+     * requires keeping a terminal open for the same host.
+     */
+    fun connectForPortForward(profile: ConnectionProfile): String =
+        connectWithoutShell(profile, SessionKind.PORT_FORWARD)
+
+    /**
+     * Authenticates a connection that carries no shell.
+     *
+     * Host-key verification and authentication are identical to [connect], but
+     * no shell channel, PTY, or terminal emulator is created, so the session
+     * must never be presented as an interactive terminal.
+     */
+    private fun connectWithoutShell(profile: ConnectionProfile, kind: SessionKind): String {
         check(profile.protocol == ConnectionProtocol.SSH) {
             context.getString(R.string.mosh_not_supported_for_ssh_feature)
         }
@@ -166,7 +185,7 @@ class SshSessionController internal constructor(
         val managed = ManagedSession(
             connection = Connection(profile.hostname, profile.port),
             protocol = ConnectionProtocol.SSH,
-            kind = SessionKind.FILE_TRANSFER,
+            kind = kind,
         )
         sessionsById[sessionId] = managed
         MangoLog.info(MangoLogEvent.SSH_CONNECT_STARTED)
@@ -179,13 +198,13 @@ class SshSessionController internal constructor(
                 protocol = ConnectionProtocol.SSH,
                 phase = TerminalSessionPhase.CONNECTING,
                 detail = context.getString(R.string.session_connecting),
-                kind = SessionKind.FILE_TRANSFER,
+                kind = kind,
             ),
         )
         SessionForegroundService.start(context)
 
         managed.connectionJob = scope.launch {
-            runFileTransferSession(sessionId, profile, managed)
+            runShellessSession(sessionId, profile, managed)
         }
         return sessionId
     }
@@ -262,15 +281,35 @@ class SshSessionController internal constructor(
         if (existing?.phase == PortForwardRuntimePhase.ACTIVE || existing?.phase == PortForwardRuntimePhase.STARTING) {
             return
         }
+        markPortForwardStarting(runtimeId, sessionId, rule, "Starting tunnel")
+        activatePortForward(sessionId, rule, runtimeId)
+    }
+
+    private fun markPortForwardStarting(
+        runtimeId: String,
+        sessionId: String,
+        rule: PortForwardRule,
+        detail: String,
+    ) {
         updatePortForward(
             PortForwardRuntimeState(
                 runtimeId = runtimeId,
                 sessionId = sessionId,
                 rule = rule,
                 phase = PortForwardRuntimePhase.STARTING,
-                detail = "Starting tunnel",
+                detail = detail,
             ),
         )
+    }
+
+    /**
+     * Opens the tunnel for a rule already published as starting.
+     *
+     * This is separate from [startPortForward] because a rule on its own
+     * connection is marked starting while that connection authenticates, and
+     * the duplicate-start guard would otherwise reject its own placeholder.
+     */
+    private fun activatePortForward(sessionId: String, rule: PortForwardRule, runtimeId: String) {
         scope.launch {
             val managed = sessionsById[sessionId]
             if (managed == null) {
@@ -283,6 +322,7 @@ class SshSessionController internal constructor(
                     PortForwardRuntimePhase.FAILED,
                     context.getString(R.string.mosh_not_supported_for_ssh_feature),
                 )
+                closePortForwardSessionIfIdle(sessionId)
                 return@launch
             }
             try {
@@ -291,15 +331,76 @@ class SshSessionController internal constructor(
                 updatePortForward(runtimeId, PortForwardRuntimePhase.ACTIVE, "Listening")
             } catch (error: Exception) {
                 updatePortForward(runtimeId, PortForwardRuntimePhase.FAILED, error.toSafeMessage())
+                // A connection opened only for this forward has nothing left to do.
+                closePortForwardSessionIfIdle(sessionId)
             }
         }
     }
+
+    /**
+     * Starts [rule] on a connection opened just for it.
+     *
+     * A forward no longer depends on an open terminal for the same host. The
+     * runtime state is published before the connection exists so the rule shows
+     * as starting while authentication runs, and the connection closes again as
+     * soon as the forward stops.
+     */
+    fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
+        val sessionId = connectForPortForward(profile)
+        val runtimeId = portForwardRuntimeId(sessionId, rule.id)
+        markPortForwardStarting(runtimeId, sessionId, rule, context.getString(R.string.session_connecting))
+        scope.launch {
+            val open = awaitSessionOpen(sessionId)
+            // Stopping the rule while it authenticates already closed the
+            // connection, and that is not a failure to report.
+            val stillStarting = _portForwards.value
+                .firstOrNull { it.runtimeId == runtimeId }
+                ?.phase == PortForwardRuntimePhase.STARTING
+            if (!stillStarting) return@launch
+            if (open) {
+                activatePortForward(sessionId, rule, runtimeId)
+            } else {
+                // The session-ended collector reports why the connection failed.
+                updatePortForward(
+                    runtimeId,
+                    PortForwardRuntimePhase.FAILED,
+                    context.getString(R.string.session_ended_connection_failed),
+                )
+            }
+        }
+    }
+
+    /** Suspends until [sessionId] authenticates, returning false when it ended first. */
+    private suspend fun awaitSessionOpen(sessionId: String): Boolean = _sessions
+        .map { list -> list.firstOrNull { it.id == sessionId } }
+        .first { it == null || it.phase == TerminalSessionPhase.OPEN }
+        ?.phase == TerminalSessionPhase.OPEN
 
     fun stopPortForward(sessionId: String, ruleId: String) {
         val runtimeId = portForwardRuntimeId(sessionId, ruleId)
         val managed = sessionsById[sessionId]
         runCatching { managed?.forwards?.remove(runtimeId)?.close() }
         updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPED, "Stopped")
+        closePortForwardSessionIfIdle(sessionId)
+    }
+
+    /**
+     * Closes a forwarding-only connection once nothing is listening on it.
+     *
+     * Such a session exists only to carry forwards, so unlike a browser
+     * connection it needs no explicit release from the UI.
+     */
+    private fun closePortForwardSessionIfIdle(sessionId: String) {
+        val managed = sessionsById[sessionId] ?: return
+        if (managed.kind != SessionKind.PORT_FORWARD) return
+        val busy = _portForwards.value.any { state ->
+            state.sessionId == sessionId &&
+                (
+                    state.phase == PortForwardRuntimePhase.ACTIVE ||
+                        state.phase == PortForwardRuntimePhase.STARTING
+                    )
+        }
+        if (!busy) finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
     }
 
     /** Resolves the directory the session's account starts in, for the file browser. */
@@ -606,7 +707,8 @@ class SshSessionController internal constructor(
      * no terminal to display one in, and no startup snippet or auto-start port
      * forward runs: those belong to interactive terminal sessions.
      */
-    private suspend fun runFileTransferSession(
+    /** Connects and authenticates without opening a shell, for file transfer and port forwarding. */
+    private suspend fun runShellessSession(
         sessionId: String,
         profile: ConnectionProfile,
         managed: ManagedSession,

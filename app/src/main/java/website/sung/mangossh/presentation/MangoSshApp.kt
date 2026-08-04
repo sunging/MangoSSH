@@ -247,11 +247,26 @@ fun MangoSshApp(
             }
 
             is SessionNavigationRequest.OpenSession -> {
-                if (sessions.any { it.id == request.sessionId }) {
-                    activeSessionId = request.sessionId
-                    leaveSessionId = null
-                } else {
-                    viewModel.reportUserMessage(notificationTargetUnavailableMessage)
+                val session = sessions.firstOrNull { it.id == request.sessionId }
+                when {
+                    session == null -> viewModel.reportUserMessage(notificationTargetUnavailableMessage)
+                    session.kind == SessionKind.TERMINAL -> {
+                        activeSessionId = request.sessionId
+                        leaveSessionId = null
+                    }
+                    // A shell-less connection has no terminal to open, so its
+                    // notification leads to the page that owns it instead.
+                    else -> {
+                        activeSessionId = null
+                        leaveSessionId = null
+                        viewModel.selectSection(
+                            if (session.kind == SessionKind.PORT_FORWARD) {
+                                AppSection.FORWARDS
+                            } else {
+                                AppSection.HOSTS
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -388,11 +403,20 @@ fun MangoSshApp(
         return
     }
 
+    // A forwarding-only connection has no screen of its own, so its host-key and
+    // authentication prompts are rendered over whichever tab is showing.
+    val backgroundPrompt = sessionPrompts.firstOrNull { prompt ->
+        sessions.firstOrNull { it.id == prompt.sessionId }?.kind == SessionKind.PORT_FORWARD
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .focusProperties {
-                canFocus = !showHostEditor && pendingRemoval == null && userMessage == null
+                canFocus = !showHostEditor &&
+                    pendingRemoval == null &&
+                    userMessage == null &&
+                    backgroundPrompt == null
             },
     ) {
         Scaffold(
@@ -485,6 +509,7 @@ fun MangoSshApp(
                             onSaveRule = viewModel::savePortForward,
                             onRemoveRule = { pendingRemoval = PendingRemovalRequest.PortForward(it) },
                             onStartRule = viewModel::startPortForward,
+                            onStartOnNewConnection = viewModel::startPortForwardOnNewConnection,
                             onStopRule = viewModel::stopPortForward,
                         )
                         AppSection.SETTINGS -> SettingsScreen(
@@ -523,6 +548,13 @@ fun MangoSshApp(
                 }
             }
         }
+    }
+
+    backgroundPrompt?.let { prompt ->
+        SessionPromptDialog(
+            prompt = prompt,
+            onRespond = { values -> viewModel.respondToSessionPrompt(prompt, values) },
+        )
     }
 
     // Clearing the last record closes the sheet with the top bar action.
@@ -765,8 +797,9 @@ private fun HostsScreen(
         if (vaultStatus !is VaultStatus.Ready) {
             item { SecurityBanner(vaultStatus) }
         }
-        // Transfer-only connections have no shell to open, so they are owned by
-        // the file browser rather than listed as sessions the user can enter.
+        // Transfer-only and forwarding-only connections have no shell to open,
+        // so they are owned by the file browser and the forwarding rules rather
+        // than listed as sessions the user can enter.
         val visibleSessions = sessions.filter {
             it.phase != TerminalSessionPhase.CLOSED && it.kind == SessionKind.TERMINAL
         }
@@ -1264,6 +1297,7 @@ private fun PortForwardsScreen(
     onSaveRule: (PortForwardRule) -> Unit,
     onRemoveRule: (String) -> Unit,
     onStartRule: (String, PortForwardRule) -> Unit,
+    onStartOnNewConnection: (ConnectionProfile, PortForwardRule) -> Unit,
     onStopRule: (String, String) -> Unit,
 ) {
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
@@ -1342,6 +1376,11 @@ private fun PortForwardsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         localize = false,
                     )
+                    // A forward without a terminal session runs on a connection
+                    // opened only for it, which is worth showing: it explains why
+                    // the host is connected while no terminal is open.
+                    val ownConnection = active != null &&
+                        sessions.firstOrNull { it.id == active.sessionId }?.kind == SessionKind.PORT_FORWARD
                     val status = active?.let { runtime ->
                         when (runtime.phase) {
                             PortForwardRuntimePhase.ACTIVE -> "运行中"
@@ -1350,15 +1389,30 @@ private fun PortForwardsScreen(
                         }
                     } ?: if (rule.startOnConnect) "连接后自动启动" else "未启动"
                     Spacer(Modifier.height(4.dp))
-                    Text(status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    val statusText = localizedUiLiteral(status)
+                    val ownConnectionText = localizedUiLiteral("独立连接")
+                    Text(
+                        if (ownConnection) "$statusText · $ownConnectionText" else statusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        localize = false,
+                    )
                     Spacer(Modifier.height(12.dp))
+                    val canStart = profile != null && profile.protocol == ConnectionProtocol.SSH
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (active != null) {
                             Button(onClick = { onStopRule(active.sessionId, rule.id) }) { Text("停止") }
                         } else {
                             Button(
-                                onClick = { eligibleSession?.let { onStartRule(it.id, rule) } },
-                                enabled = eligibleSession != null,
+                                onClick = {
+                                    val session = eligibleSession
+                                    if (session != null) {
+                                        onStartRule(session.id, rule)
+                                    } else if (profile != null) {
+                                        onStartOnNewConnection(profile, rule)
+                                    }
+                                },
+                                enabled = canStart,
                             ) { Text("启动") }
                         }
                         OutlinedButton(
@@ -1369,10 +1423,18 @@ private fun PortForwardsScreen(
                         ) { Text("编辑") }
                         TextButton(onClick = { onRemoveRule(rule.id) }) { Text("移除") }
                     }
-                    if (active == null && eligibleSession == null) {
+                    if (active == null && canStart && eligibleSession == null) {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "连接对应主机后即可手动启动。",
+                            "启动后会为此转发单独建立连接，无需先打开终端。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (profile != null && profile.protocol != ConnectionProtocol.SSH) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.mosh_not_supported_for_ssh_feature),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

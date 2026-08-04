@@ -6,6 +6,15 @@ and folder transfer, keyboard shortcuts, app lock, system-Tailscale routing,
 and an outbound-only embedded tsnet node for explicitly selected SSH/Mosh
 profiles.
 
+## Port forwarding
+
+Local, remote, and SOCKS5 rules live on the **Forwarding** page. Starting a rule
+reuses an open terminal session for the same host when there is one, and
+otherwise opens a connection dedicated to that forward, so a tunnel does not
+require keeping a shell open. A dedicated connection closes as soon as its last
+forward stops, and its host-key or password prompt appears over the page that
+started it.
+
 ## File transfers
 
 Open a host's **Files** action to browse it over SFTP; a connection dedicated to

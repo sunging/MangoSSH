@@ -24,6 +24,9 @@ enum class TerminalSessionPhase {
 enum class SessionKind {
     TERMINAL,
     FILE_TRANSFER,
+
+    /** Carries port forwards only; it has no shell and is never shown as a terminal. */
+    PORT_FORWARD,
 }
 
 /** Immutable terminal summary; it intentionally excludes credentials and command contents. */

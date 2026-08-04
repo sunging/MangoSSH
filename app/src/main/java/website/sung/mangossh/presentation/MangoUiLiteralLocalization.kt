@@ -233,6 +233,9 @@ internal object MangoUiLiteralLocalization {
         "本地、远程和 SOCKS5 转发均绑定到已打开的 SSH 会话；会话关闭后转发会自动停止。" to
             "Local, remote, and SOCKS5 forwards attach to an open SSH session and stop when it closes.",
         "请先创建主机配置，再为其添加端口转发。" to "Create a host profile before adding a port forward.",
+        "独立连接" to "Own connection",
+        "启动后会为此转发单独建立连接，无需先打开终端。" to
+            "Starting opens a connection dedicated to this forward, so no terminal is needed first.",
         "还没有端口转发规则。可以设置连接后自动启动。" to
             "No port-forwarding rules yet. A rule can start automatically after connection.",
         "SOCKS5 代理不需要目标主机和端口。" to "A SOCKS5 proxy does not need a destination host or port.",
