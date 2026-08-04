@@ -472,8 +472,6 @@ fun MangoSshApp(
                             onRemoveRule = { pendingRemoval = PendingRemovalRequest.PortForward(it) },
                             onStartRule = viewModel::startPortForward,
                             onStopRule = viewModel::stopPortForward,
-                            onUploadScp = viewModel::uploadScp,
-                            onDownloadScp = viewModel::downloadScp,
                             onBrowseSession = viewModel::openRemoteBrowser,
                             onBrowseHost = viewModel::openRemoteBrowserForProfile,
                         )
@@ -1253,20 +1251,14 @@ private fun TransfersScreen(
     onRemoveRule: (String) -> Unit,
     onStartRule: (String, PortForwardRule) -> Unit,
     onStopRule: (String, String) -> Unit,
-    onUploadScp: (String, android.net.Uri, String, String) -> Unit,
-    onDownloadScp: (String, String, android.net.Uri) -> Unit,
     onBrowseSession: (String) -> Unit,
     onBrowseHost: (ConnectionProfile) -> Unit,
 ) {
-    val context = LocalContext.current
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
     var showRuleEditor by rememberSaveable { mutableStateOf(false) }
-    var showScpDialog by rememberSaveable { mutableStateOf(false) }
     var showBrowserSessionPicker by rememberSaveable { mutableStateOf(false) }
-    var pendingUpload by remember { mutableStateOf<ScpUploadRequest?>(null) }
-    var pendingDownload by remember { mutableStateOf<ScpDownloadRequest?>(null) }
     // Mosh uses a UDP terminal after its bootstrap and has no SSH channels for
-    // SCP or forwarding, so these actions list SSH sessions only.
+    // file transfer or forwarding, so these actions list SSH sessions only.
     val openSshSessions = sessions.filter {
         it.phase == TerminalSessionPhase.OPEN &&
             it.protocol == ConnectionProtocol.SSH &&
@@ -1274,20 +1266,6 @@ private fun TransfersScreen(
     }
     // Browsing does not need a shell, so any SSH host can be reached directly.
     val sshHosts = hosts.filter { it.protocol == ConnectionProtocol.SSH }
-    val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val request = pendingUpload
-        pendingUpload = null
-        if (uri != null && request != null) {
-            onUploadScp(request.sessionId, uri, uri.displayName(context), request.remoteDirectory)
-        }
-    }
-    val downloadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        val request = pendingDownload
-        pendingDownload = null
-        if (uri != null && request != null) {
-            onDownloadScp(request.sessionId, request.remotePath, uri)
-        }
-    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1316,19 +1294,13 @@ private fun TransfersScreen(
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { showBrowserSessionPicker = true },
-                    enabled = openSshSessions.isNotEmpty() || sshHosts.isNotEmpty(),
-                ) { Text("远端文件浏览器") }
-                OutlinedButton(
-                    onClick = { showScpDialog = true },
-                    enabled = openSshSessions.isNotEmpty(),
-                ) { Text("SCP 上传 / 下载") }
-            }
+            OutlinedButton(
+                onClick = { showBrowserSessionPicker = true },
+                enabled = openSshSessions.isNotEmpty() || sshHosts.isNotEmpty(),
+            ) { Text("远端文件浏览器") }
         }
         if (scpTransfers.isNotEmpty()) {
-            item { Text("SCP 传输", style = MaterialTheme.typography.titleMedium) }
+            item { Text("文件传输", style = MaterialTheme.typography.titleMedium) }
             items(scpTransfers.reversed(), key = { it.id }) { transfer ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
@@ -1479,22 +1451,6 @@ private fun TransfersScreen(
                 onSaveRule(rule)
                 showRuleEditor = false
                 editingRule = null
-            },
-        )
-    }
-    if (showScpDialog) {
-        ScpTransferDialog(
-            sessions = openSshSessions,
-            onDismiss = { showScpDialog = false },
-            onUpload = { request ->
-                pendingUpload = request
-                uploadLauncher.launch(arrayOf("*/*"))
-                showScpDialog = false
-            },
-            onDownload = { request ->
-                pendingDownload = request
-                downloadLauncher.launch(request.suggestedName)
-                showScpDialog = false
             },
         )
     }
@@ -1653,77 +1609,6 @@ private fun PortForwardRuleDialog(
                 },
                 enabled = canSave,
             ) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-private data class ScpUploadRequest(
-    val sessionId: String,
-    val remoteDirectory: String,
-)
-
-private data class ScpDownloadRequest(
-    val sessionId: String,
-    val remotePath: String,
-) {
-    val suggestedName: String = remotePath.substringAfterLast('/').ifBlank { "download" }
-}
-
-@Composable
-private fun ScpTransferDialog(
-    sessions: List<website.sung.mangossh.session.TerminalSessionState>,
-    onDismiss: () -> Unit,
-    onUpload: (ScpUploadRequest) -> Unit,
-    onDownload: (ScpDownloadRequest) -> Unit,
-) {
-    var sessionId by rememberSaveable { mutableStateOf(sessions.firstOrNull()?.id.orEmpty()) }
-    var upload by rememberSaveable { mutableStateOf(true) }
-    var remotePath by rememberSaveable { mutableStateOf("") }
-    val canContinue = sessionId.isNotBlank() && remotePath.isNotBlank()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("SCP 文件传输") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text("会话", style = MaterialTheme.typography.titleSmall)
-                sessions.forEach { session ->
-                    FilterChip(
-                        selected = sessionId == session.id,
-                        onClick = { sessionId = session.id },
-                        label = { Text(session.title + " · " + session.endpoint, localize = false) },
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = upload, onClick = { upload = true }, label = { Text("上传") })
-                    FilterChip(selected = !upload, onClick = { upload = false }, label = { Text("下载") })
-                }
-                OutlinedTextField(
-                    value = remotePath,
-                    onValueChange = { remotePath = it },
-                    label = { Text(if (upload) "远端目录" else "远端文件路径") },
-                    supportingText = {
-                        Text(if (upload) "选择本地文件后将上传到此远端目录。路径不能含空格或 shell 特殊字符。" else "选择保存位置后将下载此远端文件。路径不能含空格或 shell 特殊字符。")
-                    },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    if (upload) {
-                        onUpload(ScpUploadRequest(sessionId, remotePath.trim()))
-                    } else {
-                        onDownload(ScpDownloadRequest(sessionId, remotePath.trim()))
-                    }
-                },
-                enabled = canContinue,
-            ) { Text(if (upload) "选择本地文件" else "选择保存位置") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
@@ -2786,7 +2671,7 @@ private fun AppSection.icon(): ImageVector = when (this) {
 private fun sectionSubtitle(section: AppSection): String = when (section) {
     AppSection.HOSTS -> "连接工作区"
     AppSection.KEYS -> "共享密钥与代理"
-    AppSection.TRANSFERS -> "SFTP、SCP 与端口转发"
+    AppSection.TRANSFERS -> "文件传输与端口转发"
     AppSection.SETTINGS -> "应用锁、同步与 Tailnet"
 }
 

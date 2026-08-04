@@ -13,8 +13,6 @@ import com.trilead.ssh2.Session
 import com.trilead.ssh2.UserAuthBannerCallback
 import com.trilead.ssh2.crypto.PublicKeyUtils
 import java.io.InputStream
-import java.io.File
-import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.security.KeyPair
 import java.security.MessageDigest
@@ -294,75 +292,6 @@ class SshSessionController internal constructor(
         updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPED, "Stopped")
     }
 
-    fun uploadScp(sessionId: String, sourceUri: Uri, displayName: String, remoteDirectory: String) {
-        val safeRemoteDirectory = requireSafeScpRemotePath(remoteDirectory)
-        val remoteFileName = sanitizeScpFileName(displayName)
-        val transferId = UUID.randomUUID().toString()
-        updateScpTransfer(
-            ScpTransferState(
-                id = transferId,
-                sessionId = sessionId,
-                direction = ScpTransferDirection.UPLOAD,
-                displayName = remoteFileName,
-                remotePath = safeRemoteDirectory,
-                phase = ScpTransferPhase.QUEUED,
-            ),
-        )
-        scope.launch {
-            var stagingFile: File? = null
-            try {
-                val connection = requireSshConnection(sessionId)
-                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Preparing file")
-                stagingFile = File.createTempFile("mangossh-scp-", ".upload", context.cacheDir)
-                requireNotNull(context.contentResolver.openInputStream(sourceUri)) { "Cannot open selected file" }.use { input ->
-                    stagingFile.outputStream().use { output -> copyWithLimit(input, output) }
-                }
-                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Uploading")
-                connection.createSCPClient().put(
-                    stagingFile.absolutePath,
-                    remoteFileName,
-                    safeRemoteDirectory,
-                    "0600",
-                )
-                updateScpTransfer(transferId, ScpTransferPhase.COMPLETED, "Completed")
-            } catch (error: Exception) {
-                updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toSafeMessage())
-            } finally {
-                stagingFile?.delete()
-            }
-        }
-    }
-
-    fun downloadScp(sessionId: String, remotePath: String, destinationUri: Uri) {
-        val safeRemotePath = requireSafeScpRemotePath(remotePath)
-        val transferId = UUID.randomUUID().toString()
-        val displayName = safeRemotePath.substringAfterLast('/').ifBlank { "download" }
-        updateScpTransfer(
-            ScpTransferState(
-                id = transferId,
-                sessionId = sessionId,
-                direction = ScpTransferDirection.DOWNLOAD,
-                displayName = displayName,
-                remotePath = safeRemotePath,
-                phase = ScpTransferPhase.QUEUED,
-            ),
-        )
-        scope.launch {
-            try {
-                val connection = requireSshConnection(sessionId)
-                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Downloading")
-                requireNotNull(context.contentResolver.openOutputStream(destinationUri, "w")) {
-                    "Cannot create destination file"
-                }.use { output ->
-                    connection.createSCPClient().get(safeRemotePath, output)
-                }
-                updateScpTransfer(transferId, ScpTransferPhase.COMPLETED, "Completed")
-            } catch (error: Exception) {
-                updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toSafeMessage())
-            }
-        }
-    }
-
     /** Resolves the directory the session's account starts in, for the file browser. */
     suspend fun resolveRemoteHome(sessionId: String): String = withContext(Dispatchers.IO) {
         remoteFiles.resolveHome(requireSshConnection(sessionId))
@@ -402,8 +331,8 @@ class SshSessionController internal constructor(
     /**
      * Downloads a browsed remote file over SFTP into a caller-selected document.
      *
-     * Unlike [downloadScp] the path never reaches a remote shell, so spaces and
-     * other punctuation are supported, and the read loop reports byte progress.
+     * The path never reaches a remote shell, so spaces and other punctuation
+     * are supported, and the read loop reports byte progress.
      */
     fun downloadRemoteFile(sessionId: String, remotePath: String, destinationUri: Uri) {
         val transferId = UUID.randomUUID().toString()
@@ -440,8 +369,8 @@ class SshSessionController internal constructor(
 
     /**
      * Uploads a caller-selected document into a browsed remote directory over
-     * SFTP. The stream is written straight through, so unlike [uploadScp] no
-     * copy is staged in the application cache first.
+     * SFTP. The stream is written straight through, so no copy is staged in
+     * the application cache first.
      */
     fun uploadRemoteFile(
         sessionId: String,
@@ -449,7 +378,7 @@ class SshSessionController internal constructor(
         displayName: String,
         remoteDirectory: String,
     ) {
-        val fileName = sanitizeScpFileName(displayName)
+        val fileName = sanitizeRemoteFileName(displayName)
         val transferId = UUID.randomUUID().toString()
         updateScpTransfer(
             ScpTransferState(
@@ -476,7 +405,7 @@ class SshSessionController internal constructor(
                         remoteDirectory = remoteDirectory,
                         fileName = fileName,
                         totalBytes = totalBytes,
-                        maxBytes = MAX_SCP_STAGING_BYTES,
+                        maxBytes = MAX_UPLOAD_BYTES,
                     ) { transferred, total ->
                         if (throttle.shouldEmit(transferred, total)) {
                             updateScpTransferProgress(transferId, transferred, total)
@@ -1146,32 +1075,12 @@ class SshSessionController internal constructor(
         }
     }
 
-    private fun copyWithLimit(input: InputStream, output: OutputStream) {
-        val buffer = ByteArray(64 * 1024)
-        var copied = 0L
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            copied += count
-            require(copied <= MAX_SCP_STAGING_BYTES) { "Selected file is too large for SCP staging" }
-            output.write(buffer, 0, count)
-        }
-    }
-
-    private fun requireSafeScpRemotePath(value: String): String {
-        val normalized = value.trim()
-        require(normalized.isNotEmpty() && !normalized.startsWith('-')) { "Remote SCP path is invalid" }
-        require(normalized.all { character ->
-            character.isLetterOrDigit() || character in SAFE_SCP_PATH_CHARACTERS
-        }) { "Remote SCP path contains unsupported shell characters" }
-        return normalized
-    }
-
-    private fun sanitizeScpFileName(value: String): String {
+    /** Reduces a picked document's display name to one safe remote file name. */
+    private fun sanitizeRemoteFileName(value: String): String {
         val normalized = value.substringAfterLast('/').trim()
-        require(normalized.isNotEmpty() && normalized.length <= MAX_SCP_FILENAME_CHARS) { "SCP file name is invalid" }
+        require(normalized.isNotEmpty() && normalized.length <= MAX_REMOTE_FILENAME_CHARS) { "Remote file name is invalid" }
         require(normalized.none { character -> character == '\r' || character == '\n' || character == '\u0000' }) {
-            "SCP file name contains control characters"
+            "Remote file name contains control characters"
         }
         return normalized
     }
@@ -1528,9 +1437,8 @@ class SshSessionController internal constructor(
         const val TRUST_APPROVAL = "trust"
         const val MAX_ERROR_LENGTH = 240
         const val MAX_REMOTE_BANNER_CHARS = 2_048
-        const val MAX_SCP_STAGING_BYTES = 1024L * 1024L * 1024L
-        const val MAX_SCP_FILENAME_CHARS = 255
-        const val SAFE_SCP_PATH_CHARACTERS = "._/@%+=:,~-"
+        const val MAX_UPLOAD_BYTES = 1024L * 1024L * 1024L
+        const val MAX_REMOTE_FILENAME_CHARS = 255
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
         const val PROGRESS_MIN_BYTES = 256L * 1024L
         const val PROGRESS_MIN_INTERVAL_MILLIS = 200L

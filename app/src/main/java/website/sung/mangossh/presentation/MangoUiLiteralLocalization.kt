@@ -131,8 +131,7 @@ internal object MangoUiLiteralLocalization {
         "私钥口令（可选）" to "Private-key passphrase (optional)",
         "端口转发" to "Port forwarding",
         "新建转发" to "New forward",
-        "SCP 上传 / 下载" to "SCP upload / download",
-        "SCP 传输" to "SCP transfers",
+        "文件传输" to "File transfers",
         "远端文件浏览器" to "Remote file browser",
         "远端文件" to "Remote files",
         "文件" to "Files",
@@ -170,12 +169,6 @@ internal object MangoUiLiteralLocalization {
         "目标主机" to "Destination host",
         "目标端口" to "Destination port",
         "连接后自动启动" to "Start on connection",
-        "SCP 文件传输" to "SCP file transfer",
-        "会话" to "Session",
-        "远端目录" to "Remote directory",
-        "远端文件路径" to "Remote file path",
-        "选择本地文件" to "Choose local file",
-        "选择保存位置" to "Choose save location",
         "安全与同步" to "Security and sync",
         "加密备份" to "Encrypted backup",
         "自定义 WebDAV" to "Custom WebDAV",
@@ -221,7 +214,7 @@ internal object MangoUiLiteralLocalization {
         "信任并连接" to "Trust and connect",
         "连接工作区" to "Connection workspace",
         "共享密钥与代理" to "Shared keys and agent",
-        "SFTP、SCP 与端口转发" to "SFTP, SCP, and port forwarding",
+        "文件传输与端口转发" to "File transfer and port forwarding",
         "应用锁、同步与 Tailnet" to "App lock, sync, and Tailnet",
         "安全保险库：正在打开" to "Secure vault: opening",
         "安全保险库：已由 Android Keystore 加密" to "Secure vault: encrypted by Android Keystore",
@@ -241,10 +234,6 @@ internal object MangoUiLiteralLocalization {
         "还没有端口转发规则。可以设置连接后自动启动。" to
             "No port-forwarding rules yet. A rule can start automatically after connection.",
         "SOCKS5 代理不需要目标主机和端口。" to "A SOCKS5 proxy does not need a destination host or port.",
-        "选择本地文件后将上传到此远端目录。路径不能含空格或 shell 特殊字符。" to
-            "The selected local file will upload to this directory. Paths cannot contain spaces or shell-special characters.",
-        "选择保存位置后将下载此远端文件。路径不能含空格或 shell 特殊字符。" to
-            "The remote file will download to the selected location. Paths cannot contain spaces or shell-special characters.",
         "只接受 HTTPS WebDAV 地址。地址应指向要保存备份的目录。" to
             "Only HTTPS WebDAV URLs are accepted. The URL should point to the directory that stores backups.",
         "PIN 只在本机保存为加盐验证值，不能恢复。" to
@@ -302,10 +291,6 @@ internal object MangoUiLiteralLocalization {
         "已保存端口转发" to "Port forwarding saved.",
         "代码片段名称和内容不能为空" to "Snippet name and contents cannot be empty.",
         "已保存代码片段" to "Snippet saved.",
-        "请输入远端目录" to "Enter a remote directory.",
-        "远端目录包含不支持的字符" to "The remote directory contains unsupported characters.",
-        "请输入远端文件路径" to "Enter a remote file path.",
-        "远端文件路径包含不支持的字符" to "The remote file path contains unsupported characters.",
         "无法保存加密保险库。数据未被覆盖。" to
             "Unable to save the encrypted vault. Existing data was not overwritten.",
         "无法生成密钥。" to "Unable to generate the key.",

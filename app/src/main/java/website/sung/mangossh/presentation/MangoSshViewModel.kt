@@ -319,26 +319,6 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.stopPortForward(sessionId, ruleId)
     }
 
-    /** Validates local UI form input before delegating an SCP upload to an SSH session. */
-    fun uploadScp(sessionId: String, sourceUri: Uri, displayName: String, remoteDirectory: String) {
-        if (remoteDirectory.isBlank()) {
-            _userMessage.value = "请输入远端目录"
-            return
-        }
-        runCatching { sessionController.uploadScp(sessionId, sourceUri, displayName, remoteDirectory) }
-            .onFailure { _userMessage.value = "远端目录包含不支持的字符" }
-    }
-
-    /** Validates local UI form input before delegating an SCP download to an SSH session. */
-    fun downloadScp(sessionId: String, remotePath: String, destinationUri: Uri) {
-        if (remotePath.isBlank()) {
-            _userMessage.value = "请输入远端文件路径"
-            return
-        }
-        runCatching { sessionController.downloadScp(sessionId, remotePath, destinationUri) }
-            .onFailure { _userMessage.value = "远端文件路径包含不支持的字符" }
-    }
-
     fun requestServerResources(sessionId: String) {
         sessionController.requestServerResources(sessionId)
     }
