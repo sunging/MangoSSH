@@ -30,6 +30,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -87,8 +88,19 @@ class SshSessionController internal constructor(
     private val _portForwards = MutableStateFlow<List<PortForwardRuntimeState>>(emptyList())
     val portForwards = _portForwards.asStateFlow()
 
-    private val _scpTransfers = MutableStateFlow<List<ScpTransferState>>(emptyList())
-    val scpTransfers = _scpTransfers.asStateFlow()
+    /**
+     * File transfers run beside sessions rather than inside them: they can be
+     * paused, resumed, and retried after the browser screen that started them
+     * is gone, so the engine is kept separate from session lifetime.
+     */
+    private val fileTransfers = FileTransferManager(
+        context = context,
+        scope = scope,
+        remoteFiles = remoteFiles,
+        connectionOf = ::requireSshConnection,
+        onSessionIdle = ::closeFileTransferIfIdle,
+    )
+    val scpTransfers: StateFlow<List<ScpTransferState>> = fileTransfers.transfers
 
     private val _resourceSnapshots = MutableStateFlow<Map<String, ServerResourceSnapshot>>(emptyMap())
     val resourceSnapshots = _resourceSnapshots.asStateFlow()
@@ -181,9 +193,9 @@ class SshSessionController internal constructor(
     /**
      * Marks a file-transfer connection as no longer needed.
      *
-     * Queued and running transfers keep it alive so closing the browser cannot
-     * abort a transfer the user already started; it closes as soon as the queue
-     * for that session drains.
+     * Unfinished transfers keep it alive so closing the browser cannot abort a
+     * transfer the user already started, or strand one they paused on purpose;
+     * it closes as soon as the queue for that session drains.
      */
     fun releaseFileTransferSession(sessionId: String) {
         val managed = sessionsById[sessionId] ?: return
@@ -195,11 +207,9 @@ class SshSessionController internal constructor(
     private fun closeFileTransferIfIdle(sessionId: String) {
         val managed = sessionsById[sessionId] ?: return
         if (managed.kind != SessionKind.FILE_TRANSFER || !managed.releaseRequested) return
-        val busy = _scpTransfers.value.any { transfer ->
-            transfer.sessionId == sessionId &&
-                (transfer.phase == ScpTransferPhase.QUEUED || transfer.phase == ScpTransferPhase.RUNNING)
+        if (!fileTransfers.hasBusyTransfers(sessionId)) {
+            finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
         }
-        if (!busy) finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
     }
 
     fun respondToPrompt(requestId: String, values: List<String>?) {
@@ -335,36 +345,12 @@ class SshSessionController internal constructor(
      * are supported, and the read loop reports byte progress.
      */
     fun downloadRemoteFile(sessionId: String, remotePath: String, destinationUri: Uri) {
-        val transferId = UUID.randomUUID().toString()
-        updateScpTransfer(
-            ScpTransferState(
-                id = transferId,
-                sessionId = sessionId,
-                direction = ScpTransferDirection.DOWNLOAD,
-                displayName = RemoteFilePaths.nameOf(remotePath),
-                remotePath = remotePath,
-                phase = ScpTransferPhase.QUEUED,
-            ),
-        )
-        scope.launch {
-            try {
-                val connection = requireSshConnection(sessionId)
-                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Downloading")
-                val throttle = ProgressThrottle()
-                requireNotNull(context.contentResolver.openOutputStream(destinationUri, "w")) {
-                    "Cannot create destination file"
-                }.use { output ->
-                    remoteFiles.download(connection, remotePath, output) { transferred, total ->
-                        if (throttle.shouldEmit(transferred, total)) {
-                            updateScpTransferProgress(transferId, transferred, total)
-                        }
-                    }
-                }
-                updateScpTransfer(transferId, ScpTransferPhase.COMPLETED, "Completed")
-            } catch (error: Exception) {
-                updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toRemoteFileMessage())
-            }
-        }
+        fileTransfers.downloadFile(sessionId, remotePath, destinationUri)
+    }
+
+    /** Downloads a browsed remote directory into a caller-selected folder. */
+    fun downloadRemoteDirectory(sessionId: String, remotePath: String, destinationTreeUri: Uri) {
+        fileTransfers.downloadDirectory(sessionId, remotePath, destinationTreeUri)
     }
 
     /**
@@ -378,72 +364,40 @@ class SshSessionController internal constructor(
         displayName: String,
         remoteDirectory: String,
     ) {
-        val fileName = sanitizeRemoteFileName(displayName)
-        val transferId = UUID.randomUUID().toString()
-        updateScpTransfer(
-            ScpTransferState(
-                id = transferId,
-                sessionId = sessionId,
-                direction = ScpTransferDirection.UPLOAD,
-                displayName = fileName,
-                remotePath = remoteDirectory,
-                phase = ScpTransferPhase.QUEUED,
-            ),
-        )
-        scope.launch {
-            try {
-                val connection = requireSshConnection(sessionId)
-                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Uploading")
-                val totalBytes = sourceLength(sourceUri)
-                val throttle = ProgressThrottle()
-                requireNotNull(context.contentResolver.openInputStream(sourceUri)) {
-                    "Cannot open selected file"
-                }.use { input ->
-                    remoteFiles.upload(
-                        connection = connection,
-                        input = input,
-                        remoteDirectory = remoteDirectory,
-                        fileName = fileName,
-                        totalBytes = totalBytes,
-                        maxBytes = MAX_UPLOAD_BYTES,
-                    ) { transferred, total ->
-                        if (throttle.shouldEmit(transferred, total)) {
-                            updateScpTransferProgress(transferId, transferred, total)
-                        }
-                    }
-                }
-                updateScpTransfer(transferId, ScpTransferPhase.COMPLETED, "Completed")
-            } catch (error: Exception) {
-                updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toRemoteFileMessage())
-            }
-        }
+        fileTransfers.uploadFile(sessionId, sourceUri, displayName, remoteDirectory)
     }
 
-    /** Reads the byte length of a selected document, or null when unavailable. */
-    private fun sourceLength(sourceUri: Uri): Long? = runCatching {
-        context.contentResolver.openAssetFileDescriptor(sourceUri, "r")?.use { descriptor ->
-            descriptor.length.takeIf { it >= 0 }
-        }
-    }.getOrNull()
+    /** Uploads a caller-selected local folder into a browsed remote directory. */
+    fun uploadRemoteDirectory(
+        sessionId: String,
+        sourceTreeUri: Uri,
+        displayName: String,
+        remoteDirectory: String,
+    ) {
+        fileTransfers.uploadDirectory(sessionId, sourceTreeUri, remoteDirectory, displayName)
+    }
+
+    /** Stops a running transfer at the next chunk boundary, keeping its offset. */
+    fun pauseTransfer(transferId: String) = fileTransfers.pause(transferId)
+
+    /** Continues a paused transfer on the connection it started on. */
+    fun resumeTransfer(transferId: String) = fileTransfers.resume(transferId)
+
+    /** Stops a queued, running, or paused transfer for good. */
+    fun cancelTransfer(transferId: String) = fileTransfers.cancel(transferId)
+
+    /** Re-runs a failed or cancelled transfer from the beginning. */
+    fun retryTransfer(transferId: String) = fileTransfers.retry(transferId)
+
+    /** Drops finished transfer records; unfinished transfers are kept. */
+    fun clearFinishedTransfers() = fileTransfers.clearFinished()
 
     /** Fixed application wording for a failure raised by a remote file operation. */
     fun remoteFileMessage(error: Throwable): String = error.toRemoteFileMessage()
 
     /** Maps a remote file failure onto fixed application wording. */
-    private fun Throwable.toRemoteFileMessage(): String = when (this) {
-        is RemoteFileException -> context.getString(
-            when (failure) {
-                RemoteFileFailure.SUBSYSTEM_UNAVAILABLE -> R.string.remote_file_subsystem_unavailable
-                RemoteFileFailure.NOT_FOUND -> R.string.remote_file_not_found
-                RemoteFileFailure.ACCESS_DENIED -> R.string.remote_file_access_denied
-                RemoteFileFailure.NOT_A_FILE -> R.string.remote_file_not_a_file
-                RemoteFileFailure.TOO_LARGE -> R.string.remote_file_too_large
-                RemoteFileFailure.IO_FAILURE -> R.string.remote_file_io_failure
-            },
-        )
-
-        else -> toSafeMessage()
-    }
+    private fun Throwable.toRemoteFileMessage(): String =
+        context.remoteFileMessageOrNull(this) ?: toSafeMessage()
 
     fun requestServerResources(sessionId: String) {
         scope.launch {
@@ -542,21 +496,7 @@ class SshSessionController internal constructor(
         }
 
         _resourceSnapshots.update { snapshots -> snapshots - sessionId }
-        _scpTransfers.update { transfers ->
-            transfers.map { transfer ->
-                if (
-                    transfer.sessionId == sessionId &&
-                    (transfer.phase == ScpTransferPhase.QUEUED || transfer.phase == ScpTransferPhase.RUNNING)
-                ) {
-                    transfer.copy(
-                        phase = ScpTransferPhase.FAILED,
-                        detail = context.getString(R.string.scp_transfer_session_closed),
-                    )
-                } else {
-                    transfer
-                }
-            }
-        }
+        fileTransfers.onSessionEnded(sessionId)
         terminalStore.remove(sessionId)
         _sessions.update { sessions -> sessions.filterNot { it.id == sessionId } }
         _sessionEndedEvents.tryEmit(
@@ -1075,16 +1015,6 @@ class SshSessionController internal constructor(
         }
     }
 
-    /** Reduces a picked document's display name to one safe remote file name. */
-    private fun sanitizeRemoteFileName(value: String): String {
-        val normalized = value.substringAfterLast('/').trim()
-        require(normalized.isNotEmpty() && normalized.length <= MAX_REMOTE_FILENAME_CHARS) { "Remote file name is invalid" }
-        require(normalized.none { character -> character == '\r' || character == '\n' || character == '\u0000' }) {
-            "Remote file name contains control characters"
-        }
-        return normalized
-    }
-
     /**
      * Starts the remote Mosh server through a fixed command and extracts the
      * generated UDP port/key pair. The command supplies an explicit UTF-8
@@ -1190,41 +1120,6 @@ class SshSessionController internal constructor(
         _portForwards.update { current ->
             current.map { state ->
                 if (state.runtimeId == runtimeId) state.copy(phase = phase, detail = detail) else state
-            }
-        }
-    }
-
-    private fun updateScpTransfer(state: ScpTransferState) {
-        _scpTransfers.update { current -> current.filterNot { it.id == state.id } + state }
-    }
-
-    private fun updateScpTransfer(transferId: String, phase: ScpTransferPhase, detail: String?) {
-        var owningSessionId: String? = null
-        _scpTransfers.update { current ->
-            current.map { state ->
-                if (state.id == transferId) {
-                    owningSessionId = state.sessionId
-                    state.copy(phase = phase, detail = detail)
-                } else {
-                    state
-                }
-            }
-        }
-        // A transfer-only connection stays open until the queue that kept it
-        // alive after the browser closed has drained.
-        if (phase == ScpTransferPhase.COMPLETED || phase == ScpTransferPhase.FAILED) {
-            owningSessionId?.let(::closeFileTransferIfIdle)
-        }
-    }
-
-    private fun updateScpTransferProgress(transferId: String, transferred: Long, total: Long?) {
-        _scpTransfers.update { current ->
-            current.map { state ->
-                if (state.id == transferId) {
-                    state.copy(transferredBytes = transferred, totalBytes = total ?: state.totalBytes)
-                } else {
-                    state
-                }
             }
         }
     }
@@ -1393,29 +1288,6 @@ class SshSessionController internal constructor(
             }
         }.trim().take(MAX_REMOTE_BANNER_CHARS).ifBlank { "Authentication banner received" }
 
-    /**
-     * Rate limiter for transfer progress.
-     *
-     * A 32 KiB SFTP chunk arrives many times per second on a fast link, and
-     * every update recomposes the transfer list, so intermediate progress is
-     * only published on a byte or time step. Completion always passes through.
-     */
-    private class ProgressThrottle {
-        private var lastEmittedBytes = -1L
-        private var lastEmittedAtMillis = 0L
-
-        fun shouldEmit(transferred: Long, total: Long?): Boolean {
-            val now = System.currentTimeMillis()
-            val finished = total != null && transferred >= total
-            val steppedBytes = transferred - lastEmittedBytes >= PROGRESS_MIN_BYTES
-            val steppedTime = now - lastEmittedAtMillis >= PROGRESS_MIN_INTERVAL_MILLIS
-            if (!finished && !steppedBytes && !steppedTime) return false
-            lastEmittedBytes = transferred
-            lastEmittedAtMillis = now
-            return true
-        }
-    }
-
     /** Authentication rejection intentionally carries a user-safe message only. */
     private class SshAuthenticationException(message: String) : Exception(message)
 
@@ -1437,11 +1309,7 @@ class SshSessionController internal constructor(
         const val TRUST_APPROVAL = "trust"
         const val MAX_ERROR_LENGTH = 240
         const val MAX_REMOTE_BANNER_CHARS = 2_048
-        const val MAX_UPLOAD_BYTES = 1024L * 1024L * 1024L
-        const val MAX_REMOTE_FILENAME_CHARS = 255
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
-        const val PROGRESS_MIN_BYTES = 256L * 1024L
-        const val PROGRESS_MIN_INTERVAL_MILLIS = 200L
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
         const val TSNET_LOOPBACK_HOST = "127.0.0.1"
         const val TSNET_MOSH_GRACEFUL_RELEASE_MILLIS = 2_000L

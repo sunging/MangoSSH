@@ -36,6 +36,21 @@ class MangoUiLiteralLocalizationTest {
     }
 
     @Test
+    fun resolvesTransferChromeForEnglish() {
+        assertEquals("Forwarding", MangoUiLiteralLocalization.resolve("转发", "en"))
+        assertEquals("SSH port forwarding", MangoUiLiteralLocalization.resolve("SSH 端口转发", "en"))
+        assertEquals("File transfers", MangoUiLiteralLocalization.resolve("文件传输", "en"))
+        assertEquals("Clear finished", MangoUiLiteralLocalization.resolve("清除已完成", "en"))
+        assertEquals("Pause", MangoUiLiteralLocalization.resolve("暂停", "en"))
+        assertEquals("Resume", MangoUiLiteralLocalization.resolve("继续", "en"))
+        assertEquals("Cancel transfer", MangoUiLiteralLocalization.resolve("取消传输", "en"))
+        assertEquals("Paused", MangoUiLiteralLocalization.resolve("已暂停", "en"))
+        assertEquals("Cancelled", MangoUiLiteralLocalization.resolve("已取消", "en"))
+        assertEquals("Upload folder", MangoUiLiteralLocalization.resolve("上传文件夹", "en"))
+        assertEquals("Download folder", MangoUiLiteralLocalization.resolve("下载文件夹", "en"))
+    }
+
+    @Test
     fun resolvesTemplatesWithoutChangingRuntimeValues() {
         assertEquals(
             "Generated 生产服务器.",

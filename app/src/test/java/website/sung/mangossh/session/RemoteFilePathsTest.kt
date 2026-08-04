@@ -53,6 +53,34 @@ class RemoteFilePathsTest {
     }
 
     @Test
+    fun relativizesPathsInsideATransferRoot() {
+        assertEquals("", RemoteFilePaths.relativize("/home/sung", "/home/sung"))
+        assertEquals("notes.txt", RemoteFilePaths.relativize("/home/sung", "/home/sung/notes.txt"))
+        assertEquals("a/b/c.txt", RemoteFilePaths.relativize("/home/sung/", "/home/sung/a/b/c.txt"))
+        assertEquals("etc", RemoteFilePaths.relativize("/", "/etc"))
+    }
+
+    @Test
+    fun rejectsPathsOutsideTheTransferRoot() {
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteFilePaths.relativize("/home/sung", "/home/sungx/notes.txt")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteFilePaths.relativize("/home/sung", "/etc/passwd")
+        }
+    }
+
+    @Test
+    fun resolvesRelativePathsUnderABase() {
+        assertEquals("/home/sung", RemoteFilePaths.resolve("/home/sung", ""))
+        assertEquals("/home/sung/a/b", RemoteFilePaths.resolve("/home/sung", "a/b"))
+        assertEquals("/a", RemoteFilePaths.resolve("/", "a"))
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteFilePaths.resolve("/home/sung", "a/../../etc")
+        }
+    }
+
+    @Test
     fun buildsBreadcrumbTrail() {
         assertEquals(listOf("/" to "/"), RemoteFilePaths.breadcrumbs("/"))
         assertEquals(

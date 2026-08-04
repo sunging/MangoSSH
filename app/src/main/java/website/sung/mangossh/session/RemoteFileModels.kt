@@ -10,6 +10,12 @@ const val MAX_REMOTE_DIRECTORY_ENTRIES: Int = 5_000
 /** Upper bound on the leading bytes fetched for a read-only text preview. */
 const val MAX_REMOTE_PREVIEW_BYTES: Int = 128 * 1024
 
+/** Upper bound on files a single directory transfer will move. */
+const val MAX_TRANSFER_TREE_ENTRIES: Int = 2_000
+
+/** Upper bound on how deep a directory transfer descends. */
+const val MAX_TRANSFER_TREE_DEPTH: Int = 32
+
 /** Coarse remote entry classification used to pick navigation and icon behavior. */
 enum class RemoteFileKind {
     DIRECTORY,
@@ -61,6 +67,37 @@ data class RemoteTextPreview(
     val text: String,
     val truncated: Boolean,
     val totalSizeBytes: Long?,
+)
+
+/**
+ * One file discovered while enumerating a remote directory tree.
+ *
+ * [relativePath] is `/`-separated and relative to the walked root, which is what
+ * both the local document tree and the remote upload target are rebuilt from.
+ */
+@Immutable
+data class RemoteTreeEntry(
+    val relativePath: String,
+    val absolutePath: String,
+    val sizeBytes: Long?,
+)
+
+/**
+ * Result of enumerating a remote directory before transferring it.
+ *
+ * [directories] lists parents before children so the destination tree can be
+ * created in order. Symbolic links are counted in [skippedEntries] instead of
+ * being followed: the server is untrusted and a link may point back up the tree.
+ * [truncated] means the walk hit its entry or depth cap and is incomplete.
+ */
+@Immutable
+data class RemoteTreeWalk(
+    val root: String,
+    val directories: List<String>,
+    val files: List<RemoteTreeEntry>,
+    val totalBytes: Long,
+    val truncated: Boolean = false,
+    val skippedEntries: Int = 0,
 )
 
 /**
@@ -123,6 +160,30 @@ object RemoteFilePaths {
             crumbs += segment to current
         }
         return crumbs
+    }
+
+    /**
+     * Returns [path] expressed relative to [root], with `/` separators.
+     *
+     * Throws when [path] is not inside [root], which keeps a malicious listing
+     * from steering a directory transfer outside the tree the user picked.
+     */
+    fun relativize(root: String, path: String): String {
+        val base = normalize(root)
+        val target = normalize(path)
+        if (base == target) return ""
+        val prefix = if (base == ROOT) ROOT else "$base/"
+        require(target.startsWith(prefix)) { "Path is outside the transfer root" }
+        return target.removePrefix(prefix)
+    }
+
+    /** Resolves a `/`-separated [relativePath] under [base], validating every component. */
+    fun resolve(base: String, relativePath: String): String {
+        var current = normalize(base)
+        relativePath.split('/').forEach { segment ->
+            if (segment.isNotEmpty()) current = join(current, segment)
+        }
+        return current
     }
 
     /** Rejects names that cannot be addressed as a single remote path component. */

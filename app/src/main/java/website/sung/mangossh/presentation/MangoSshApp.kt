@@ -30,10 +30,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.AlertDialog
@@ -50,10 +50,8 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.ModalBottomSheet
@@ -128,9 +126,6 @@ import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
-import website.sung.mangossh.session.ScpTransferDirection
-import website.sung.mangossh.session.ScpTransferPhase
-import website.sung.mangossh.session.ScpTransferState
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetPhase
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
@@ -287,6 +282,7 @@ fun MangoSshApp(
     val portableExport by viewModel.portableExport.collectAsStateWithLifecycle()
     var editingHost by remember { mutableStateOf<ConnectionProfile?>(null) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
+    var showTransfers by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
 
     fun openHostEditor(host: ConnectionProfile? = null) {
@@ -307,7 +303,9 @@ fun MangoSshApp(
             onRefresh = viewModel::refreshRemoteBrowser,
             onOpenEntry = viewModel::openRemoteEntry,
             onDownload = viewModel::downloadRemoteFile,
+            onDownloadDirectory = viewModel::downloadRemoteDirectory,
             onUpload = viewModel::uploadToRemoteBrowser,
+            onUploadDirectory = viewModel::uploadDirectoryToRemoteBrowser,
             onDismissPreview = viewModel::dismissRemotePreview,
             onClose = viewModel::closeRemoteBrowser,
         )
@@ -402,11 +400,28 @@ fun MangoSshApp(
                 CenterAlignedTopAppBar(
                     title = {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("MangoSSH", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "MangoSSH",
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Text(
                                 text = sectionSubtitle(selectedSection),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    },
+                    actions = {
+                        // Transfers are started from the host list, so their
+                        // status lives here rather than on a tab of its own.
+                        if (selectedSection == AppSection.HOSTS && scpTransfers.isNotEmpty()) {
+                            FileTransferStatusAction(
+                                transfers = scpTransfers,
+                                onClick = { showTransfers = true },
                             )
                         }
                     },
@@ -462,18 +477,15 @@ fun MangoSshApp(
                             onImport = viewModel::importPrivateKey,
                             onRemove = { pendingRemoval = PendingRemovalRequest.Key(it) },
                         )
-                        AppSection.TRANSFERS -> TransfersScreen(
+                        AppSection.FORWARDS -> PortForwardsScreen(
                             hosts = hosts,
                             rules = portForwardRules,
                             activeForwards = activePortForwards,
-                            scpTransfers = scpTransfers,
                             sessions = sessions,
                             onSaveRule = viewModel::savePortForward,
                             onRemoveRule = { pendingRemoval = PendingRemovalRequest.PortForward(it) },
                             onStartRule = viewModel::startPortForward,
                             onStopRule = viewModel::stopPortForward,
-                            onBrowseSession = viewModel::openRemoteBrowser,
-                            onBrowseHost = viewModel::openRemoteBrowserForProfile,
                         )
                         AppSection.SETTINGS -> SettingsScreen(
                             vaultStatus = vaultStatus,
@@ -511,6 +523,23 @@ fun MangoSshApp(
                 }
             }
         }
+    }
+
+    // Clearing the last record closes the sheet with the top bar action.
+    if (showTransfers && scpTransfers.isNotEmpty()) {
+        FileTransfersSheet(
+            transfers = scpTransfers,
+            onPause = viewModel::pauseTransfer,
+            onResume = viewModel::resumeTransfer,
+            onCancel = viewModel::cancelTransfer,
+            onRetry = viewModel::retryTransfer,
+            onOpenRemoteDirectory = { transfer ->
+                showTransfers = false
+                viewModel.openRemoteDirectoryFromTransfer(transfer)
+            },
+            onClearFinished = viewModel::clearFinishedTransfers,
+            onDismiss = { showTransfers = false },
+        )
     }
 
     if (showHostEditor) {
@@ -1227,45 +1256,25 @@ private fun ImportKeyDialog(
 }
 
 @Composable
-private fun TransfersScreen() {
-    FeatureScreen(
-        icon = Icons.Outlined.FolderOpen,
-        title = "文件与转发",
-        description = "SFTP、SCP、本地/远程/SOCKS 转发和传输进度会集中显示在这里。",
-        states = listOf(
-            "活动传输：0",
-            "活动端口转发：0",
-            "仅在用户启动会话后运行前台服务",
-        ),
-    )
-}
-
-@Composable
-private fun TransfersScreen(
+private fun PortForwardsScreen(
     hosts: List<ConnectionProfile>,
     rules: List<PortForwardRule>,
     activeForwards: List<PortForwardRuntimeState>,
-    scpTransfers: List<ScpTransferState>,
     sessions: List<website.sung.mangossh.session.TerminalSessionState>,
     onSaveRule: (PortForwardRule) -> Unit,
     onRemoveRule: (String) -> Unit,
     onStartRule: (String, PortForwardRule) -> Unit,
     onStopRule: (String, String) -> Unit,
-    onBrowseSession: (String) -> Unit,
-    onBrowseHost: (ConnectionProfile) -> Unit,
 ) {
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
     var showRuleEditor by rememberSaveable { mutableStateOf(false) }
-    var showBrowserSessionPicker by rememberSaveable { mutableStateOf(false) }
     // Mosh uses a UDP terminal after its bootstrap and has no SSH channels for
-    // file transfer or forwarding, so these actions list SSH sessions only.
+    // forwarding, so these actions list SSH sessions only.
     val openSshSessions = sessions.filter {
         it.phase == TerminalSessionPhase.OPEN &&
             it.protocol == ConnectionProtocol.SSH &&
             it.kind == SessionKind.TERMINAL
     }
-    // Browsing does not need a shell, so any SSH host can be reached directly.
-    val sshHosts = hosts.filter { it.protocol == ConnectionProtocol.SSH }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1291,72 +1300,6 @@ private fun TransfersScreen(
                 Icon(Icons.Outlined.Add, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("新建转发")
-            }
-        }
-        item {
-            OutlinedButton(
-                onClick = { showBrowserSessionPicker = true },
-                enabled = openSshSessions.isNotEmpty() || sshHosts.isNotEmpty(),
-            ) { Text("远端文件浏览器") }
-        }
-        if (scpTransfers.isNotEmpty()) {
-            item { Text("文件传输", style = MaterialTheme.typography.titleMedium) }
-            items(scpTransfers.reversed(), key = { it.id }) { transfer ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        val direction = if (transfer.direction == ScpTransferDirection.UPLOAD) "上传" else "下载"
-                        Text(
-                            "${localizedUiLiteral(direction)} · ${transfer.displayName}",
-                            fontWeight = FontWeight.SemiBold,
-                            localize = false,
-                        )
-                        Text(
-                            transfer.remotePath,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            localize = false,
-                        )
-                        // Byte counters are only reported by SFTP transfers started
-                        // from the remote file browser.
-                        val totalBytes = transfer.totalBytes
-                        if (totalBytes != null && totalBytes > 0L) {
-                            Spacer(Modifier.height(6.dp))
-                            LinearProgressIndicator(
-                                progress = {
-                                    (transfer.transferredBytes.toFloat() / totalBytes.toFloat())
-                                        .coerceIn(0f, 1f)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                "${formatByteSize(transfer.transferredBytes)} / ${formatByteSize(totalBytes)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                localize = false,
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        val phase = when (transfer.phase) {
-                            ScpTransferPhase.QUEUED -> "排队中"
-                            ScpTransferPhase.RUNNING -> "传输中"
-                            ScpTransferPhase.COMPLETED -> "已完成"
-                            ScpTransferPhase.FAILED -> "失败"
-                        }
-                        Text(
-                            listOfNotNull(localizedUiLiteral(phase), transfer.detail).joinToString(" · "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (transfer.phase == ScpTransferPhase.FAILED) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
-                            localize = false,
-                        )
-                    }
-                }
             }
         }
         if (hosts.isEmpty()) {
@@ -1451,53 +1394,6 @@ private fun TransfersScreen(
                 onSaveRule(rule)
                 showRuleEditor = false
                 editingRule = null
-            },
-        )
-    }
-    if (showBrowserSessionPicker) {
-        AlertDialog(
-            onDismissRequest = { showBrowserSessionPicker = false },
-            title = { Text("浏览远端文件") },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (openSshSessions.isNotEmpty()) {
-                        Text("已连接的会话", style = MaterialTheme.typography.titleSmall)
-                        openSshSessions.forEach { session ->
-                            FilterChip(
-                                selected = false,
-                                onClick = {
-                                    showBrowserSessionPicker = false
-                                    onBrowseSession(session.id)
-                                },
-                                label = { Text(session.title + " · " + session.endpoint, localize = false) },
-                            )
-                        }
-                    }
-                    if (sshHosts.isNotEmpty()) {
-                        Text("主机配置", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "将为文件传输单独建立连接，无需先打开终端。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        sshHosts.forEach { host ->
-                            FilterChip(
-                                selected = false,
-                                onClick = {
-                                    showBrowserSessionPicker = false
-                                    onBrowseHost(host)
-                                },
-                                label = { Text(host.label + " · " + host.endpoint, localize = false) },
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showBrowserSessionPicker = false }) { Text("取消") }
             },
         )
     }
@@ -2270,45 +2166,6 @@ private fun AppPinDialog(
 }
 
 @Composable
-private fun FeatureScreen(
-    icon: ImageVector,
-    title: String,
-    description: String,
-    states: List<String>,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(16.dp))
-        Text(title, style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = description,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(20.dp))
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                states.forEachIndexed { index, state ->
-                    Text(state, style = MaterialTheme.typography.bodyMedium)
-                    if (index != states.lastIndex) {
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider()
-                        Spacer(Modifier.height(12.dp))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun HostEditorSheet(
     initialHost: ConnectionProfile?,
     keys: List<StoredSshKey>,
@@ -2664,14 +2521,14 @@ private fun SessionPromptDialog(
 private fun AppSection.icon(): ImageVector = when (this) {
     AppSection.HOSTS -> Icons.Outlined.Dns
     AppSection.KEYS -> Icons.Outlined.Key
-    AppSection.TRANSFERS -> Icons.Outlined.FolderOpen
+    AppSection.FORWARDS -> Icons.Outlined.SwapHoriz
     AppSection.SETTINGS -> Icons.Outlined.Settings
 }
 
 private fun sectionSubtitle(section: AppSection): String = when (section) {
     AppSection.HOSTS -> "连接工作区"
     AppSection.KEYS -> "共享密钥与代理"
-    AppSection.TRANSFERS -> "文件传输与端口转发"
+    AppSection.FORWARDS -> "SSH 端口转发"
     AppSection.SETTINGS -> "应用锁、同步与 Tailnet"
 }
 

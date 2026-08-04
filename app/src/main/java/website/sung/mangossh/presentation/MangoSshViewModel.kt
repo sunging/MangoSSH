@@ -41,7 +41,9 @@ import website.sung.mangossh.security.AppLockStore
 import website.sung.mangossh.session.RemoteFileEntry
 import website.sung.mangossh.session.RemoteFileKind
 import website.sung.mangossh.session.RemoteFilePaths
+import website.sung.mangossh.session.ScpTransferState
 import website.sung.mangossh.session.SessionEndedEvent
+import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionEndReason
 import website.sung.mangossh.session.TerminalSessionPhase
@@ -51,7 +53,7 @@ import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
 enum class AppSection(val label: String) {
     HOSTS("主机"),
     KEYS("密钥"),
-    TRANSFERS("传输"),
+    FORWARDS("转发"),
     SETTINGS("设置"),
 }
 
@@ -509,6 +511,12 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.downloadRemoteFile(current.sessionId, remotePath, destination)
     }
 
+    /** Downloads a browsed remote directory into a folder the user selected. */
+    fun downloadRemoteDirectory(remotePath: String, destinationTree: Uri) {
+        val current = _remoteBrowser.value ?: return
+        sessionController.downloadRemoteDirectory(current.sessionId, remotePath, destinationTree)
+    }
+
     /** Uploads a selected document into the directory currently being browsed. */
     fun uploadToRemoteBrowser(source: Uri, displayName: String) {
         val current = _remoteBrowser.value ?: return
@@ -516,6 +524,63 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             sessionController.uploadRemoteFile(current.sessionId, source, displayName, current.path)
         }.onFailure { error ->
             _userMessage.value = sessionController.remoteFileMessage(error)
+        }
+    }
+
+    /** Uploads a selected local folder into the directory currently being browsed. */
+    fun uploadDirectoryToRemoteBrowser(sourceTree: Uri, displayName: String) {
+        val current = _remoteBrowser.value ?: return
+        runCatching {
+            sessionController.uploadRemoteDirectory(current.sessionId, sourceTree, displayName, current.path)
+        }.onFailure { error ->
+            _userMessage.value = sessionController.remoteFileMessage(error)
+        }
+    }
+
+    fun pauseTransfer(transferId: String) = sessionController.pauseTransfer(transferId)
+
+    fun resumeTransfer(transferId: String) = sessionController.resumeTransfer(transferId)
+
+    fun cancelTransfer(transferId: String) = sessionController.cancelTransfer(transferId)
+
+    fun retryTransfer(transferId: String) = sessionController.retryTransfer(transferId)
+
+    fun clearFinishedTransfers() = sessionController.clearFinishedTransfers()
+
+    /**
+     * Reopens the remote browser on the directory a finished upload landed in.
+     *
+     * Only the connection the upload ran on is reused; a closed session cannot
+     * be reopened from here because its prompts would have nowhere to render.
+     */
+    fun openRemoteDirectoryFromTransfer(transfer: ScpTransferState) {
+        val session = sessions.value.firstOrNull { it.id == transfer.sessionId }
+        if (session == null || session.phase != TerminalSessionPhase.OPEN) {
+            _userMessage.value = getApplication<Application>()
+                .getString(R.string.remote_file_transfer_session_closed)
+            return
+        }
+        if (_remoteBrowser.value?.sessionId == transfer.sessionId) {
+            navigateRemoteBrowser(transfer.remotePath)
+            return
+        }
+        closeRemoteBrowser()
+        // A transfer-only connection stays owned by the browser, so closing it
+        // still hands that connection back.
+        _remoteBrowser.value = RemoteBrowserUiState(
+            sessionId = transfer.sessionId,
+            title = session.title,
+            path = transfer.remotePath,
+            ownsSession = session.kind == SessionKind.FILE_TRANSFER,
+            profileId = session.profileId.takeIf { session.kind == SessionKind.FILE_TRANSFER },
+        )
+        browserJob = viewModelScope.launch {
+            val home = runCatching { sessionController.resolveRemoteHome(transfer.sessionId) }
+                .getOrElse { RemoteFilePaths.ROOT }
+            _remoteBrowser.update { state ->
+                if (state?.sessionId == transfer.sessionId) state.copy(homePath = home) else state
+            }
+            loadRemoteDirectory(transfer.sessionId, transfer.remotePath)
         }
     }
 

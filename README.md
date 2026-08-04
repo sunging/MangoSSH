@@ -1,9 +1,23 @@
 # MangoSSH
 
 MangoSSH is a Jetpack Compose Android SSH and Mosh client with encrypted local
-profiles, reusable keys, encrypted WebDAV backups, port forwarding, SCP,
-keyboard shortcuts, app lock, system-Tailscale routing, and an outbound-only
-embedded tsnet node for explicitly selected SSH/Mosh profiles.
+profiles, reusable keys, encrypted WebDAV backups, port forwarding, SFTP file
+and folder transfer, keyboard shortcuts, app lock, system-Tailscale routing,
+and an outbound-only embedded tsnet node for explicitly selected SSH/Mosh
+profiles.
+
+## File transfers
+
+Open a host's **Files** action to browse it over SFTP; a connection dedicated to
+transfers is opened when no terminal session is running. Single files and whole
+folders can be downloaded and uploaded.
+
+Running transfers appear behind the transfer icon in the host list top bar, with
+combined progress. That sheet can pause, resume, cancel, and retry a transfer,
+open a finished download in another app, and clear finished records. Pausing
+stops at a chunk boundary and keeps the byte offset, so resuming continues from
+there over the same connection. Resuming and retrying need that connection: once
+it closes, the transfer has to be started again from the file browser.
 
 ## License
 

@@ -92,8 +92,18 @@ enum class ScpTransferDirection {
 enum class ScpTransferPhase {
     QUEUED,
     RUNNING,
+
+    /** Stopped at a chunk boundary by the user; [ScpTransferState.transferredBytes] is the resume offset. */
+    PAUSED,
     COMPLETED,
     FAILED,
+    CANCELLED,
+}
+
+/** Whether a transfer moves a single file or a whole directory tree. */
+enum class ScpTransferKind {
+    FILE,
+    DIRECTORY,
 }
 
 /**
@@ -102,6 +112,9 @@ enum class ScpTransferPhase {
  * [totalBytes] is only known for SFTP transfers started from the remote file
  * browser; the legacy SCP path cannot report progress, so both byte counters
  * stay at their defaults there.
+ *
+ * [displayName], [remotePath], and [currentItem] are user or server data: they
+ * are rendered verbatim, never translated, and never logged.
  */
 @Immutable
 data class ScpTransferState(
@@ -111,10 +124,65 @@ data class ScpTransferState(
     val displayName: String,
     val remotePath: String,
     val phase: ScpTransferPhase,
+    val kind: ScpTransferKind = ScpTransferKind.FILE,
     val detail: String? = null,
     val transferredBytes: Long = 0L,
     val totalBytes: Long? = null,
+    /**
+     * Download destination or upload source document, as a string so this model
+     * stays free of Android types. Null for the legacy SCP path, which cannot
+     * be resumed, retried, or opened.
+     */
+    val localUri: String? = null,
+    /** Relative path of the entry a directory transfer is currently moving. */
+    val currentItem: String? = null,
+    val completedItems: Int = 0,
+    val totalItems: Int? = null,
+    /**
+     * False once the connection that owns this transfer is gone. Resuming and
+     * retrying need that connection, and the transfer list must never open a
+     * new one, because host-key and authentication prompts are only rendered by
+     * the remote file browser.
+     */
+    val controllable: Boolean = true,
 )
+
+/** True while the transfer is queued or moving bytes. */
+val ScpTransferState.isActive: Boolean
+    get() = phase == ScpTransferPhase.QUEUED || phase == ScpTransferPhase.RUNNING
+
+/** True once the transfer reached a terminal phase and holds no connection. */
+val ScpTransferState.isFinished: Boolean
+    get() = phase == ScpTransferPhase.COMPLETED ||
+        phase == ScpTransferPhase.FAILED ||
+        phase == ScpTransferPhase.CANCELLED
+
+val ScpTransferState.canPause: Boolean
+    get() = isActive && controllable
+
+val ScpTransferState.canResume: Boolean
+    get() = phase == ScpTransferPhase.PAUSED && controllable
+
+val ScpTransferState.canCancel: Boolean
+    get() = isActive || phase == ScpTransferPhase.PAUSED
+
+/** Retrying re-runs the original request from the start, so it needs the local document. */
+val ScpTransferState.canRetry: Boolean
+    get() = (phase == ScpTransferPhase.FAILED || phase == ScpTransferPhase.CANCELLED) &&
+        controllable &&
+        localUri != null
+
+/** A finished download can be handed to another app through its destination document. */
+val ScpTransferState.canOpenLocally: Boolean
+    get() = phase == ScpTransferPhase.COMPLETED &&
+        direction == ScpTransferDirection.DOWNLOAD &&
+        localUri != null
+
+/** A finished upload can be revisited by browsing the directory it landed in. */
+val ScpTransferState.canOpenRemote: Boolean
+    get() = phase == ScpTransferPhase.COMPLETED &&
+        direction == ScpTransferDirection.UPLOAD &&
+        controllable
 
 @Immutable
 data class ServerResourceSnapshot(

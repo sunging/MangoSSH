@@ -1,5 +1,6 @@
 package website.sung.mangossh.presentation
 
+import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -37,6 +38,8 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
+import website.sung.mangossh.session.LocalDocumentTree
 import website.sung.mangossh.session.MAX_REMOTE_DIRECTORY_ENTRIES
 import website.sung.mangossh.session.RemoteFileEntry
 import website.sung.mangossh.session.RemoteFileKind
@@ -84,12 +88,16 @@ fun RemoteFileBrowserScreen(
     onRefresh: () -> Unit,
     onOpenEntry: (RemoteFileEntry) -> Unit,
     onDownload: (String, Uri) -> Unit,
+    onDownloadDirectory: (String, Uri) -> Unit,
     onUpload: (Uri, String) -> Unit,
+    onUploadDirectory: (Uri, String) -> Unit,
     onDismissPreview: () -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
     var pendingDownloadPath by remember { mutableStateOf<String?>(null) }
+    var pendingDirectoryPath by remember { mutableStateOf<String?>(null) }
+    var showUploadMenu by remember { mutableStateOf(false) }
     val downloadLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
@@ -97,12 +105,30 @@ fun RemoteFileBrowserScreen(
         pendingDownloadPath = null
         if (uri != null && remotePath != null) onDownload(remotePath, uri)
     }
+    // A directory download needs a folder to build its tree in, which only the
+    // tree contract can grant.
+    val directoryDownloadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        val remotePath = pendingDirectoryPath
+        pendingDirectoryPath = null
+        if (uri != null && remotePath != null) onDownloadDirectory(remotePath, uri)
+    }
     val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onUpload(uri, uri.displayName(context))
+    }
+    val directoryUploadLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) onUploadDirectory(uri, uri.treeDisplayName(context))
     }
     val startDownload: (String) -> Unit = { remotePath ->
         pendingDownloadPath = remotePath
         downloadLauncher.launch(RemoteFilePaths.nameOf(remotePath))
+    }
+    val startDirectoryDownload: (String) -> Unit = { remotePath ->
+        pendingDirectoryPath = remotePath
+        directoryDownloadLauncher.launch(null)
     }
 
     BackHandler {
@@ -168,11 +194,32 @@ fun RemoteFileBrowserScreen(
                 ) {
                     Icon(Icons.Outlined.ArrowUpward, contentDescription = localizedUiLiteral("上级目录"))
                 }
-                IconButton(
-                    onClick = { uploadLauncher.launch(arrayOf("*/*")) },
-                    enabled = !state.isConnecting,
-                ) {
-                    Icon(Icons.Outlined.Upload, contentDescription = localizedUiLiteral("上传到当前目录"))
+                Box {
+                    IconButton(
+                        onClick = { showUploadMenu = true },
+                        enabled = !state.isConnecting,
+                    ) {
+                        Icon(Icons.Outlined.Upload, contentDescription = localizedUiLiteral("上传到当前目录"))
+                    }
+                    DropdownMenu(
+                        expanded = showUploadMenu,
+                        onDismissRequest = { showUploadMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(localizedUiLiteral("上传文件")) },
+                            onClick = {
+                                showUploadMenu = false
+                                uploadLauncher.launch(arrayOf("*/*"))
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(localizedUiLiteral("上传文件夹")) },
+                            onClick = {
+                                showUploadMenu = false
+                                directoryUploadLauncher.launch(null)
+                            },
+                        )
+                    }
                 }
                 IconButton(onClick = onRefresh, enabled = !state.isConnecting) {
                     Icon(Icons.Outlined.Refresh, contentDescription = localizedUiLiteral("刷新"))
@@ -224,7 +271,13 @@ fun RemoteFileBrowserScreen(
                         RemoteFileRow(
                             entry = entry,
                             onOpen = { onOpenEntry(entry) },
-                            onDownload = { startDownload(entry.path) },
+                            onDownload = {
+                                if (entry.kind == RemoteFileKind.DIRECTORY) {
+                                    startDirectoryDownload(entry.path)
+                                } else {
+                                    startDownload(entry.path)
+                                }
+                            },
                         )
                         HorizontalDivider()
                     }
@@ -241,6 +294,18 @@ fun RemoteFileBrowserScreen(
         }
     }
 }
+
+/**
+ * Display name of a folder the user picked with the tree contract.
+ *
+ * A tree URI is not openable, so the name comes from the document it points at
+ * rather than from [OpenableColumns].
+ */
+private fun Uri.treeDisplayName(context: Context): String = runCatching {
+    LocalDocumentTree.displayName(context.contentResolver, LocalDocumentTree.rootOf(this))
+}.getOrNull()?.takeIf(String::isNotBlank)
+    ?: lastPathSegment?.substringAfterLast('/')?.takeIf(String::isNotBlank)
+    ?: "upload"
 
 /** Clickable path trail so the user can jump several levels up at once. */
 @Composable
@@ -323,10 +388,15 @@ private fun RemoteFileRow(
                 )
             }
         }
-        if (entry.kind != RemoteFileKind.DIRECTORY) {
-            IconButton(onClick = onDownload) {
-                Icon(Icons.Outlined.Download, contentDescription = localizedUiLiteral("下载"))
-            }
+        IconButton(onClick = onDownload) {
+            Icon(
+                Icons.Outlined.Download,
+                contentDescription = if (entry.kind == RemoteFileKind.DIRECTORY) {
+                    localizedUiLiteral("下载文件夹")
+                } else {
+                    localizedUiLiteral("下载")
+                },
+            )
         }
     }
 }
