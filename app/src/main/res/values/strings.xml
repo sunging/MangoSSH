@@ -50,6 +50,13 @@
     <string name="terminal_resource_query_failed">Unable to retrieve server resources.</string>
     <string name="terminal_agent_forwarding_rejected">The server did not accept SSH agent forwarding.</string>
     <string name="scp_transfer_session_closed">The SSH session closed before this transfer completed.</string>
+    <string name="remote_file_subsystem_unavailable">The server did not provide an SFTP subsystem, so remote files cannot be browsed.</string>
+    <string name="remote_file_not_found">That remote path no longer exists.</string>
+    <string name="remote_file_access_denied">The server denied access to that remote path.</string>
+    <string name="remote_file_not_a_file">That remote path is a directory, not a file.</string>
+    <string name="remote_file_too_large">The selected file exceeds the transfer size limit.</string>
+    <string name="remote_file_io_failure">The remote file operation failed.</string>
+    <string name="remote_file_directory_truncated">Only the first %1$d entries of this directory are shown.</string>
     <string name="session_ended_remote_exit">The session ended on the remote host.</string>
     <string name="session_ended_connection_lost">The connection was interrupted.</string>
     <string name="session_ended_connection_failed">Unable to establish the connection.</string>

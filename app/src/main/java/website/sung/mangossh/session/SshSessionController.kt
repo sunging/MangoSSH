@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
@@ -75,6 +76,7 @@ class SshSessionController internal constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessionsById = ConcurrentHashMap<String, ManagedSession>()
     private val promptWaiters = ConcurrentHashMap<String, CompletableDeferred<List<String>?>>()
+    private val remoteFiles = RemoteFileClient()
     private val terminalStore = SessionTerminalStore(
         onKeyboardInput = { sessionId, bytes -> send(sessionId, bytes) },
         onResize = { sessionId, columns, rows -> resize(sessionId, columns, rows) },
@@ -295,6 +297,159 @@ class SshSessionController internal constructor(
                 updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toSafeMessage())
             }
         }
+    }
+
+    /** Resolves the directory the session's account starts in, for the file browser. */
+    suspend fun resolveRemoteHome(sessionId: String): String = withContext(Dispatchers.IO) {
+        remoteFiles.resolveHome(requireSshConnection(sessionId))
+    }
+
+    /** Lists one remote directory for the file browser. */
+    suspend fun listRemoteDirectory(sessionId: String, path: String): RemoteDirectoryListing =
+        withContext(Dispatchers.IO) {
+            remoteFiles.list(
+                connection = requireSshConnection(sessionId),
+                sessionId = sessionId,
+                path = path,
+                maxEntries = MAX_REMOTE_DIRECTORY_ENTRIES,
+            )
+        }
+
+    /** Resolves what a remote path actually is after following symlinks. */
+    suspend fun resolveRemoteKind(sessionId: String, path: String): RemoteFileKind =
+        withContext(Dispatchers.IO) {
+            remoteFiles.statKind(requireSshConnection(sessionId), path)
+        }
+
+    /**
+     * Reads the leading bytes of a remote file for a read-only preview.
+     *
+     * Returns null when the content is not valid UTF-8 text.
+     */
+    suspend fun readRemoteTextPreview(sessionId: String, path: String): RemoteTextPreview? =
+        withContext(Dispatchers.IO) {
+            remoteFiles.readTextPreview(
+                connection = requireSshConnection(sessionId),
+                path = path,
+                maxBytes = MAX_REMOTE_PREVIEW_BYTES,
+            )
+        }
+
+    /**
+     * Downloads a browsed remote file over SFTP into a caller-selected document.
+     *
+     * Unlike [downloadScp] the path never reaches a remote shell, so spaces and
+     * other punctuation are supported, and the read loop reports byte progress.
+     */
+    fun downloadRemoteFile(sessionId: String, remotePath: String, destinationUri: Uri) {
+        val transferId = UUID.randomUUID().toString()
+        updateScpTransfer(
+            ScpTransferState(
+                id = transferId,
+                sessionId = sessionId,
+                direction = ScpTransferDirection.DOWNLOAD,
+                displayName = RemoteFilePaths.nameOf(remotePath),
+                remotePath = remotePath,
+                phase = ScpTransferPhase.QUEUED,
+            ),
+        )
+        scope.launch {
+            try {
+                val connection = requireSshConnection(sessionId)
+                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Downloading")
+                val throttle = ProgressThrottle()
+                requireNotNull(context.contentResolver.openOutputStream(destinationUri, "w")) {
+                    "Cannot create destination file"
+                }.use { output ->
+                    remoteFiles.download(connection, remotePath, output) { transferred, total ->
+                        if (throttle.shouldEmit(transferred, total)) {
+                            updateScpTransferProgress(transferId, transferred, total)
+                        }
+                    }
+                }
+                updateScpTransfer(transferId, ScpTransferPhase.COMPLETED, "Completed")
+            } catch (error: Exception) {
+                updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toRemoteFileMessage())
+            }
+        }
+    }
+
+    /**
+     * Uploads a caller-selected document into a browsed remote directory over
+     * SFTP. The stream is written straight through, so unlike [uploadScp] no
+     * copy is staged in the application cache first.
+     */
+    fun uploadRemoteFile(
+        sessionId: String,
+        sourceUri: Uri,
+        displayName: String,
+        remoteDirectory: String,
+    ) {
+        val fileName = sanitizeScpFileName(displayName)
+        val transferId = UUID.randomUUID().toString()
+        updateScpTransfer(
+            ScpTransferState(
+                id = transferId,
+                sessionId = sessionId,
+                direction = ScpTransferDirection.UPLOAD,
+                displayName = fileName,
+                remotePath = remoteDirectory,
+                phase = ScpTransferPhase.QUEUED,
+            ),
+        )
+        scope.launch {
+            try {
+                val connection = requireSshConnection(sessionId)
+                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Uploading")
+                val totalBytes = sourceLength(sourceUri)
+                val throttle = ProgressThrottle()
+                requireNotNull(context.contentResolver.openInputStream(sourceUri)) {
+                    "Cannot open selected file"
+                }.use { input ->
+                    remoteFiles.upload(
+                        connection = connection,
+                        input = input,
+                        remoteDirectory = remoteDirectory,
+                        fileName = fileName,
+                        totalBytes = totalBytes,
+                        maxBytes = MAX_SCP_STAGING_BYTES,
+                    ) { transferred, total ->
+                        if (throttle.shouldEmit(transferred, total)) {
+                            updateScpTransferProgress(transferId, transferred, total)
+                        }
+                    }
+                }
+                updateScpTransfer(transferId, ScpTransferPhase.COMPLETED, "Completed")
+            } catch (error: Exception) {
+                updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toRemoteFileMessage())
+            }
+        }
+    }
+
+    /** Reads the byte length of a selected document, or null when unavailable. */
+    private fun sourceLength(sourceUri: Uri): Long? = runCatching {
+        context.contentResolver.openAssetFileDescriptor(sourceUri, "r")?.use { descriptor ->
+            descriptor.length.takeIf { it >= 0 }
+        }
+    }.getOrNull()
+
+    /** Fixed application wording for a failure raised by a remote file operation. */
+    fun remoteFileMessage(error: Throwable): String = error.toRemoteFileMessage()
+
+    /** Maps a remote file failure onto fixed application wording. */
+    private fun Throwable.toRemoteFileMessage(): String = when (this) {
+        is RemoteFileException -> context.getString(
+            when (failure) {
+                RemoteFileFailure.SUBSYSTEM_UNAVAILABLE -> R.string.remote_file_subsystem_unavailable
+                RemoteFileFailure.NOT_FOUND -> R.string.remote_file_not_found
+                RemoteFileFailure.ACCESS_DENIED -> R.string.remote_file_access_denied
+                RemoteFileFailure.NOT_A_FILE -> R.string.remote_file_not_a_file
+                RemoteFileFailure.TOO_LARGE -> R.string.remote_file_too_large
+                RemoteFileFailure.IO_FAILURE -> R.string.remote_file_io_failure
+            },
+        )
+
+        else -> toSafeMessage()
     }
 
     fun requestServerResources(sessionId: String) {
@@ -1023,6 +1178,18 @@ class SshSessionController internal constructor(
         }
     }
 
+    private fun updateScpTransferProgress(transferId: String, transferred: Long, total: Long?) {
+        _scpTransfers.update { current ->
+            current.map { state ->
+                if (state.id == transferId) {
+                    state.copy(transferredBytes = transferred, totalBytes = total ?: state.totalBytes)
+                } else {
+                    state
+                }
+            }
+        }
+    }
+
     private inner class HostKeyVerifier(
         private val sessionId: String,
         private val profile: ConnectionProfile,
@@ -1182,6 +1349,29 @@ class SshSessionController internal constructor(
             }
         }.trim().take(MAX_REMOTE_BANNER_CHARS).ifBlank { "Authentication banner received" }
 
+    /**
+     * Rate limiter for transfer progress.
+     *
+     * A 32 KiB SFTP chunk arrives many times per second on a fast link, and
+     * every update recomposes the transfer list, so intermediate progress is
+     * only published on a byte or time step. Completion always passes through.
+     */
+    private class ProgressThrottle {
+        private var lastEmittedBytes = -1L
+        private var lastEmittedAtMillis = 0L
+
+        fun shouldEmit(transferred: Long, total: Long?): Boolean {
+            val now = System.currentTimeMillis()
+            val finished = total != null && transferred >= total
+            val steppedBytes = transferred - lastEmittedBytes >= PROGRESS_MIN_BYTES
+            val steppedTime = now - lastEmittedAtMillis >= PROGRESS_MIN_INTERVAL_MILLIS
+            if (!finished && !steppedBytes && !steppedTime) return false
+            lastEmittedBytes = transferred
+            lastEmittedAtMillis = now
+            return true
+        }
+    }
+
     /** Authentication rejection intentionally carries a user-safe message only. */
     private class SshAuthenticationException(message: String) : Exception(message)
 
@@ -1207,6 +1397,8 @@ class SshSessionController internal constructor(
         const val MAX_SCP_FILENAME_CHARS = 255
         const val SAFE_SCP_PATH_CHARACTERS = "._/@%+=:,~-"
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
+        const val PROGRESS_MIN_BYTES = 256L * 1024L
+        const val PROGRESS_MIN_INTERVAL_MILLIS = 200L
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
         const val TSNET_LOOPBACK_HOST = "127.0.0.1"
         const val TSNET_MOSH_GRACEFUL_RELEASE_MILLIS = 2_000L

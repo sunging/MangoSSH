@@ -53,6 +53,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.ModalBottomSheet
@@ -209,6 +210,7 @@ fun MangoSshApp(
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var browserSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     val currentActiveSessionId by rememberUpdatedState(activeSessionId)
     val notificationTargetUnavailableMessage = stringResource(R.string.session_notification_target_unavailable)
     val invalidAuthorizationUrlMessage = stringResource(R.string.embedded_tsnet_invalid_authorization_url)
@@ -292,6 +294,45 @@ fun MangoSshApp(
         showHostEditor = true
     }
 
+    // The remote browser is layered in front of the terminal so leaving it
+    // returns to whichever screen opened it.
+    val remoteBrowserState by viewModel.remoteBrowser.collectAsStateWithLifecycle()
+    val browserSession = browserSessionId?.let { id ->
+        sessions.firstOrNull {
+            it.id == id &&
+                it.phase == TerminalSessionPhase.OPEN &&
+                it.protocol == ConnectionProtocol.SSH
+        }
+    }
+    LaunchedEffect(browserSessionId, browserSession) {
+        if (browserSessionId != null && browserSession == null) {
+            browserSessionId = null
+            viewModel.closeRemoteBrowser()
+        }
+    }
+    if (browserSession != null) {
+        LaunchedEffect(browserSession.id) { viewModel.openRemoteBrowser(browserSession.id) }
+        val closeBrowser: () -> Unit = {
+            browserSessionId = null
+            viewModel.closeRemoteBrowser()
+        }
+        remoteBrowserState?.let { browserState ->
+            RemoteFileBrowserScreen(
+                state = browserState,
+                sessionTitle = browserSession.title,
+                onNavigate = viewModel::navigateRemoteBrowser,
+                onUp = viewModel::remoteBrowserUp,
+                onRefresh = viewModel::refreshRemoteBrowser,
+                onOpenEntry = viewModel::openRemoteEntry,
+                onDownload = viewModel::downloadRemoteFile,
+                onUpload = viewModel::uploadToRemoteBrowser,
+                onDismissPreview = viewModel::dismissRemotePreview,
+                onClose = closeBrowser,
+            )
+        }
+        return
+    }
+
     val activeSession = activeSessionId?.let { id -> sessions.firstOrNull { it.id == id } }
     if (activeSession != null) {
         val activePrompt = sessionPrompts.firstOrNull { it.sessionId == activeSession.id }
@@ -312,6 +353,7 @@ fun MangoSshApp(
             onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
             resourceSnapshot = resourceSnapshots[activeSession.id],
             onRequestResources = { viewModel.requestServerResources(activeSession.id) },
+            onOpenFileBrowser = { browserSessionId = activeSession.id },
             onRequestLeave = { leaveSessionId = activeSession.id },
             onClose = {
                 viewModel.disconnect(activeSession.id)
@@ -444,6 +486,7 @@ fun MangoSshApp(
                             onStopRule = viewModel::stopPortForward,
                             onUploadScp = viewModel::uploadScp,
                             onDownloadScp = viewModel::downloadScp,
+                            onOpenFileBrowser = { sessionId -> browserSessionId = sessionId },
                         )
                         AppSection.SETTINGS -> SettingsScreen(
                             vaultStatus = vaultStatus,
@@ -1209,11 +1252,13 @@ private fun TransfersScreen(
     onStopRule: (String, String) -> Unit,
     onUploadScp: (String, android.net.Uri, String, String) -> Unit,
     onDownloadScp: (String, String, android.net.Uri) -> Unit,
+    onOpenFileBrowser: (String) -> Unit,
 ) {
     val context = LocalContext.current
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
     var showRuleEditor by rememberSaveable { mutableStateOf(false) }
     var showScpDialog by rememberSaveable { mutableStateOf(false) }
+    var showBrowserSessionPicker by rememberSaveable { mutableStateOf(false) }
     var pendingUpload by remember { mutableStateOf<ScpUploadRequest?>(null) }
     var pendingDownload by remember { mutableStateOf<ScpDownloadRequest?>(null) }
     // Mosh uses a UDP terminal after its bootstrap and has no SSH channels for
@@ -1263,10 +1308,22 @@ private fun TransfersScreen(
             }
         }
         item {
-            OutlinedButton(
-                onClick = { showScpDialog = true },
-                enabled = openSshSessions.isNotEmpty(),
-            ) { Text("SCP 上传 / 下载") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        if (openSshSessions.size == 1) {
+                            onOpenFileBrowser(openSshSessions.first().id)
+                        } else {
+                            showBrowserSessionPicker = true
+                        }
+                    },
+                    enabled = openSshSessions.isNotEmpty(),
+                ) { Text("远端文件浏览器") }
+                OutlinedButton(
+                    onClick = { showScpDialog = true },
+                    enabled = openSshSessions.isNotEmpty(),
+                ) { Text("SCP 上传 / 下载") }
+            }
         }
         if (scpTransfers.isNotEmpty()) {
             item { Text("SCP 传输", style = MaterialTheme.typography.titleMedium) }
@@ -1287,6 +1344,26 @@ private fun TransfersScreen(
                             overflow = TextOverflow.Ellipsis,
                             localize = false,
                         )
+                        // Byte counters are only reported by SFTP transfers started
+                        // from the remote file browser.
+                        val totalBytes = transfer.totalBytes
+                        if (totalBytes != null && totalBytes > 0L) {
+                            Spacer(Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = {
+                                    (transfer.transferredBytes.toFloat() / totalBytes.toFloat())
+                                        .coerceIn(0f, 1f)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "${formatByteSize(transfer.transferredBytes)} / ${formatByteSize(totalBytes)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                localize = false,
+                            )
+                        }
                         Spacer(Modifier.height(4.dp))
                         val phase = when (transfer.phase) {
                             ScpTransferPhase.QUEUED -> "排队中"
@@ -1416,6 +1493,32 @@ private fun TransfersScreen(
                 pendingDownload = request
                 downloadLauncher.launch(request.suggestedName)
                 showScpDialog = false
+            },
+        )
+    }
+    if (showBrowserSessionPicker) {
+        AlertDialog(
+            onDismissRequest = { showBrowserSessionPicker = false },
+            title = { Text("选择会话") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    openSshSessions.forEach { session ->
+                        FilterChip(
+                            selected = false,
+                            onClick = {
+                                showBrowserSessionPicker = false
+                                onOpenFileBrowser(session.id)
+                            },
+                            label = { Text(session.title + " · " + session.endpoint, localize = false) },
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBrowserSessionPicker = false }) { Text("取消") }
             },
         )
     }
@@ -1603,7 +1706,7 @@ private fun ScpTransferDialog(
     )
 }
 
-private fun android.net.Uri.displayName(context: android.content.Context): String {
+internal fun android.net.Uri.displayName(context: android.content.Context): String {
     val fromProvider = context.contentResolver
         .query(this, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
         ?.use { cursor ->

@@ -5,12 +5,15 @@ import android.net.Uri
 import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.connectbot.terminal.TerminalEmulator
@@ -33,6 +36,9 @@ import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
+import website.sung.mangossh.session.RemoteFileEntry
+import website.sung.mangossh.session.RemoteFileKind
+import website.sung.mangossh.session.RemoteFilePaths
 import website.sung.mangossh.session.SessionEndedEvent
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionEndReason
@@ -133,6 +139,15 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     private val _selectedSection = kotlinx.coroutines.flow.MutableStateFlow(AppSection.HOSTS)
     val selectedSection = _selectedSection.asStateFlow()
+
+    private val _remoteBrowser = MutableStateFlow<RemoteBrowserUiState?>(null)
+    /** Null whenever the remote file browser is closed. */
+    val remoteBrowser = _remoteBrowser.asStateFlow()
+
+    // Directory listing and preview reads are cancelled when the user moves on,
+    // so a slow server cannot overwrite a newer destination.
+    private var browserJob: Job? = null
+    private var previewJob: Job? = null
 
     private val _sessionNavigationRequest = MutableStateFlow<SessionNavigationRequest?>(null)
     /** Foreground-notification destination retained until the app lock is cleared. */
@@ -304,6 +319,163 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun requestServerResources(sessionId: String) {
         sessionController.requestServerResources(sessionId)
+    }
+
+    /**
+     * Opens the remote file browser on the session's home directory.
+     *
+     * A repeated call for the session already being browsed is ignored so a
+     * recomposition cannot throw the user back to their home directory.
+     */
+    fun openRemoteBrowser(sessionId: String) {
+        val existing = _remoteBrowser.value
+        if (existing != null && existing.sessionId == sessionId) return
+        _remoteBrowser.value = RemoteBrowserUiState(sessionId = sessionId, path = RemoteFilePaths.ROOT)
+        browserJob?.cancel()
+        browserJob = viewModelScope.launch {
+            val home = runCatching { sessionController.resolveRemoteHome(sessionId) }
+                .getOrElse { RemoteFilePaths.ROOT }
+            loadRemoteDirectory(sessionId, home)
+        }
+    }
+
+    /** Lists [path] in the already-open browser. */
+    fun navigateRemoteBrowser(path: String) {
+        val current = _remoteBrowser.value ?: return
+        browserJob?.cancel()
+        browserJob = viewModelScope.launch { loadRemoteDirectory(current.sessionId, path) }
+    }
+
+    /** Navigates to the parent of the current directory. */
+    fun remoteBrowserUp() {
+        val current = _remoteBrowser.value ?: return
+        if (current.path == RemoteFilePaths.ROOT) return
+        navigateRemoteBrowser(RemoteFilePaths.parentOf(current.path))
+    }
+
+    /** Re-lists the current directory, for example after an upload. */
+    fun refreshRemoteBrowser() {
+        val current = _remoteBrowser.value ?: return
+        navigateRemoteBrowser(current.path)
+    }
+
+    fun closeRemoteBrowser() {
+        browserJob?.cancel()
+        browserJob = null
+        previewJob?.cancel()
+        previewJob = null
+        _remoteBrowser.value = null
+    }
+
+    /**
+     * Opens [entry]: directories are listed, files are previewed, and a symlink
+     * is resolved on the server first because a listing only reports the link
+     * itself, not what it points at.
+     */
+    fun openRemoteEntry(entry: RemoteFileEntry) {
+        val current = _remoteBrowser.value ?: return
+        when (entry.kind) {
+            RemoteFileKind.DIRECTORY -> navigateRemoteBrowser(entry.path)
+            RemoteFileKind.SYMLINK -> viewModelScope.launch {
+                val kind = runCatching { sessionController.resolveRemoteKind(current.sessionId, entry.path) }
+                    .getOrDefault(RemoteFileKind.FILE)
+                if (kind == RemoteFileKind.DIRECTORY) {
+                    navigateRemoteBrowser(entry.path)
+                } else {
+                    previewRemoteFile(entry.path)
+                }
+            }
+
+            RemoteFileKind.FILE, RemoteFileKind.OTHER -> previewRemoteFile(entry.path)
+        }
+    }
+
+    /** Loads a read-only text preview of a remote file. */
+    fun previewRemoteFile(path: String) {
+        val current = _remoteBrowser.value ?: return
+        _remoteBrowser.value = current.copy(preview = RemotePreviewUiState(path = path))
+        previewJob?.cancel()
+        previewJob = viewModelScope.launch {
+            val result = runCatching { sessionController.readRemoteTextPreview(current.sessionId, path) }
+            result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            val preview = result.fold(
+                onSuccess = { content ->
+                    RemotePreviewUiState(
+                        path = path,
+                        isLoading = false,
+                        content = content,
+                        isBinary = content == null,
+                    )
+                },
+                onFailure = { error ->
+                    RemotePreviewUiState(
+                        path = path,
+                        isLoading = false,
+                        errorMessage = sessionController.remoteFileMessage(error),
+                    )
+                },
+            )
+            _remoteBrowser.update { state ->
+                if (state?.preview?.path == path) state.copy(preview = preview) else state
+            }
+        }
+    }
+
+    fun dismissRemotePreview() {
+        previewJob?.cancel()
+        previewJob = null
+        _remoteBrowser.update { state -> state?.copy(preview = null) }
+    }
+
+    /** Downloads a browsed remote file into a document the user selected. */
+    fun downloadRemoteFile(remotePath: String, destination: Uri) {
+        val current = _remoteBrowser.value ?: return
+        sessionController.downloadRemoteFile(current.sessionId, remotePath, destination)
+    }
+
+    /** Uploads a selected document into the directory currently being browsed. */
+    fun uploadToRemoteBrowser(source: Uri, displayName: String) {
+        val current = _remoteBrowser.value ?: return
+        runCatching {
+            sessionController.uploadRemoteFile(current.sessionId, source, displayName, current.path)
+        }.onFailure { error ->
+            _userMessage.value = sessionController.remoteFileMessage(error)
+        }
+    }
+
+    private suspend fun loadRemoteDirectory(sessionId: String, path: String) {
+        _remoteBrowser.update { state ->
+            state?.copy(path = path, isLoading = true, errorMessage = null)
+        }
+        runCatching { sessionController.listRemoteDirectory(sessionId, path) }
+            .onSuccess { listing ->
+                _remoteBrowser.update { state ->
+                    if (state?.sessionId != sessionId) {
+                        state
+                    } else {
+                        state.copy(
+                            path = listing.path,
+                            entries = listing.entries,
+                            truncated = listing.truncated,
+                            isLoading = false,
+                            errorMessage = null,
+                        )
+                    }
+                }
+            }
+            .onFailure { error ->
+                if (error is CancellationException) throw error
+                _remoteBrowser.update { state ->
+                    if (state?.sessionId != sessionId) {
+                        state
+                    } else {
+                        state.copy(
+                            isLoading = false,
+                            errorMessage = sessionController.remoteFileMessage(error),
+                        )
+                    }
+                }
+            }
     }
 
     fun respondToSessionPrompt(prompt: SessionPrompt, values: List<String>?) {

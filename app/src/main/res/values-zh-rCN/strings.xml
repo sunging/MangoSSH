@@ -48,6 +48,13 @@
     <string name="terminal_resource_query_failed">无法获取服务器资源。</string>
     <string name="terminal_agent_forwarding_rejected">服务器未接受 SSH 代理转发。</string>
     <string name="scp_transfer_session_closed">SSH 会话在传输完成前已关闭。</string>
+    <string name="remote_file_subsystem_unavailable">服务器未提供 SFTP 子系统，无法浏览远端文件。</string>
+    <string name="remote_file_not_found">该远端路径已不存在。</string>
+    <string name="remote_file_access_denied">服务器拒绝访问该远端路径。</string>
+    <string name="remote_file_not_a_file">该远端路径是目录，不是文件。</string>
+    <string name="remote_file_too_large">所选文件超出传输大小上限。</string>
+    <string name="remote_file_io_failure">远端文件操作失败。</string>
+    <string name="remote_file_directory_truncated">此目录仅显示前 %1$d 项。</string>
     <string name="session_ended_remote_exit">远端主机已结束该会话。</string>
     <string name="session_ended_connection_lost">连接已中断。</string>
     <string name="session_ended_connection_failed">无法建立连接。</string>

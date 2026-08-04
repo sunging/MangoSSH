@@ -83,6 +83,13 @@ enum class ScpTransferPhase {
     FAILED,
 }
 
+/**
+ * Progress of one file transfer.
+ *
+ * [totalBytes] is only known for SFTP transfers started from the remote file
+ * browser; the legacy SCP path cannot report progress, so both byte counters
+ * stay at their defaults there.
+ */
 @Immutable
 data class ScpTransferState(
     val id: String,
@@ -92,6 +99,8 @@ data class ScpTransferState(
     val remotePath: String,
     val phase: ScpTransferPhase,
     val detail: String? = null,
+    val transferredBytes: Long = 0L,
+    val totalBytes: Long? = null,
 )
 
 @Immutable

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
@@ -98,6 +99,7 @@ fun TerminalSessionScreen(
     onSend: (ByteArray) -> Unit,
     resourceSnapshot: ServerResourceSnapshot?,
     onRequestResources: () -> Unit,
+    onOpenFileBrowser: () -> Unit,
     onRequestLeave: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -199,6 +201,15 @@ fun TerminalSessionScreen(
                         Icon(
                             Icons.AutoMirrored.Outlined.ArrowBack,
                             contentDescription = localizedUiLiteral("返回主机列表"),
+                        )
+                    }
+                    IconButton(
+                        onClick = onOpenFileBrowser,
+                        enabled = isOpen && supportsSshChannels,
+                    ) {
+                        Icon(
+                            Icons.Outlined.FolderOpen,
+                            contentDescription = localizedUiLiteral("远端文件"),
                         )
                     }
                     IconButton(
