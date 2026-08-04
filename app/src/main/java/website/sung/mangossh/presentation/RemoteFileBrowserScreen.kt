@@ -245,7 +245,8 @@ private fun RemoteBreadcrumbs(path: String, onNavigate: (String) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         crumbs.forEachIndexed { index, (label, target) ->
-            if (index > 0) {
+            // The root crumb is itself "/", so the separator starts one later.
+            if (index > 1) {
                 Text(
                     text = "/",
                     style = MaterialTheme.typography.labelSmall,
