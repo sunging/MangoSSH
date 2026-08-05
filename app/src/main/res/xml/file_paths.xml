@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Scoped to the update subdirectory so no other cached file is shareable. -->
+    <cache-path
+        name="app-updates"
+        path="updates/" />
+</paths>

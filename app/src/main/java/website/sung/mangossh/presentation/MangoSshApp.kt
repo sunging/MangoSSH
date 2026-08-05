@@ -2,6 +2,7 @@
 
 package website.sung.mangossh.presentation
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.provider.OpenableColumns
@@ -38,6 +39,8 @@ import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -87,6 +90,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.core.net.toUri
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -249,6 +254,39 @@ fun MangoSshApp(
     val resourceSnapshots by viewModel.resourceSnapshots.collectAsStateWithLifecycle()
     val webDavConfig by viewModel.webDavConfig.collectAsStateWithLifecycle()
     val portableExport by viewModel.portableExport.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val updateCallbacks = remember(viewModel) {
+        UpdateCardCallbacks(
+            onCheckNow = viewModel::checkForUpdates,
+            onDownload = viewModel::downloadUpdate,
+            onCancelDownload = viewModel::cancelUpdateDownload,
+            onInstall = {
+                val uri = viewModel.readyInstallUri()
+                if (uri != null) {
+                    val intent = Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, "application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: ActivityNotFoundException) {
+                        viewModel.reportInstallHandoffFailed()
+                    }
+                }
+            },
+            onDismissNotice = viewModel::dismissUpdateNotice,
+            onSetAutomaticCheck = viewModel::setAutomaticUpdateCheckEnabled,
+            onOpenReleasePage = {
+                val uri = runCatching { viewModel.releasePageUrl()?.toUri() }.getOrNull()
+                if (uri?.scheme != "https" || uri.host != "github.com") {
+                    viewModel.reportReleasePageOpenFailed()
+                } else {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                    }.onFailure { viewModel.reportReleasePageOpenFailed() }
+                }
+            },
+        )
+    }
     var editingHost by remember { mutableStateOf<ConnectionProfile?>(null) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
     var showTransfers by rememberSaveable { mutableStateOf(false) }
@@ -414,6 +452,7 @@ fun MangoSshApp(
                 MangoNavigationBar(
                     selectedSection = selectedSection,
                     onSelectSection = viewModel::selectSection,
+                    showUpdateBadge = updateState.hasPendingUpdate,
                 )
             },
         ) { contentPadding ->
@@ -494,6 +533,8 @@ fun MangoSshApp(
                             onSaveTerminalShortcuts = viewModel::saveTerminalShortcuts,
                             selectedAppLanguage = selectedAppLanguage,
                             onSetAppLanguage = onSetAppLanguage,
+                            updateState = updateState,
+                            updateCallbacks = updateCallbacks,
                         )
                     }
                 }
@@ -574,17 +615,28 @@ fun MangoSshApp(
 private fun MangoNavigationBar(
     selectedSection: AppSection,
     onSelectSection: (AppSection) -> Unit,
+    showUpdateBadge: Boolean,
 ) {
+    val updateBadgeDescription = stringResource(R.string.app_update_badge_description)
     NavigationBar {
         AppSection.entries.forEach { section ->
             NavigationBarItem(
                 selected = section == selectedSection,
                 onClick = { onSelectSection(section) },
                 icon = {
-                    Icon(
-                        imageVector = section.icon(),
-                        contentDescription = section.label(),
-                    )
+                    val badged = showUpdateBadge && section == AppSection.SETTINGS
+                    BadgedBox(
+                        badge = {
+                            if (badged) {
+                                Badge(modifier = Modifier.semantics { contentDescription = updateBadgeDescription })
+                            }
+                        },
+                    ) {
+                        Icon(
+                            imageVector = section.icon(),
+                            contentDescription = section.label(),
+                        )
+                    }
                 },
                 label = { Text(section.label()) },
             )
@@ -1741,6 +1793,8 @@ private fun SettingsScreen(
     onSaveTerminalShortcuts: (TerminalShortcutConfig) -> Unit,
     selectedAppLanguage: AppLanguage,
     onSetAppLanguage: (AppLanguage) -> Unit,
+    updateState: UpdateUiState,
+    updateCallbacks: UpdateCardCallbacks,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1785,6 +1839,9 @@ private fun SettingsScreen(
                 selected = selectedAppLanguage,
                 onSelect = onSetAppLanguage,
             )
+        }
+        if (updateState.supported) {
+            item { UpdateSettingsCard(state = updateState, callbacks = updateCallbacks) }
         }
         if (vaultStatus !is VaultStatus.Ready) {
             item { SecurityBanner(vaultStatus) }

@@ -11,7 +11,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -21,15 +23,24 @@ import kotlinx.coroutines.withContext
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.MangoSshApplication
 import website.sung.mangossh.R
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
 import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
+import website.sung.mangossh.data.update.AppUpdateCheckResult
+import website.sung.mangossh.data.update.AppUpdateDownloadResult
+import website.sung.mangossh.data.update.AppUpdateFailureReason
+import website.sung.mangossh.data.update.AppUpdateFileStore
+import website.sung.mangossh.data.update.GitHubReleaseClient
+import website.sung.mangossh.data.update.archiveMatchesInstalledSigner
 import website.sung.mangossh.data.sync.WebDavDownloadResult
 import website.sung.mangossh.data.sync.WebDavResult
 import website.sung.mangossh.data.sync.WebDavFailureReason
 import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
+import website.sung.mangossh.domain.AppRelease
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.domain.ConnectionProtocol
@@ -90,6 +101,23 @@ private fun webDavFailureText(
     WebDavFailureReason.NETWORK -> uiText(networkResource)
 }
 
+private fun AppUpdateFailureReason.toUiText(statusCode: Int?): UiText = when (this) {
+    AppUpdateFailureReason.INVALID_RESPONSE -> uiText(R.string.app_update_failed_invalid_response)
+    AppUpdateFailureReason.NO_RELEASE -> uiText(R.string.app_update_failed_no_release)
+    AppUpdateFailureReason.ASSET_MISSING -> uiText(R.string.app_update_failed_asset_missing)
+    AppUpdateFailureReason.CHECKSUM_MISSING -> uiText(R.string.app_update_failed_checksum_missing)
+    AppUpdateFailureReason.CHECKSUM_MISMATCH -> uiText(R.string.app_update_failed_checksum_mismatch)
+    AppUpdateFailureReason.SIGNATURE_MISMATCH -> uiText(R.string.app_update_failed_signature_mismatch)
+    AppUpdateFailureReason.RATE_LIMITED -> uiText(R.string.app_update_failed_rate_limited)
+    AppUpdateFailureReason.HTTP_STATUS -> statusCode
+        ?.let { uiText(R.string.app_update_failed_http, it) }
+        ?: uiText(R.string.app_update_failed_network)
+    AppUpdateFailureReason.RESPONSE_TOO_LARGE -> uiText(R.string.app_update_failed_too_large)
+    AppUpdateFailureReason.INSECURE_REDIRECT -> uiText(R.string.app_update_failed_insecure)
+    AppUpdateFailureReason.STORAGE -> uiText(R.string.app_update_failed_storage)
+    AppUpdateFailureReason.NETWORK -> uiText(R.string.app_update_failed_network)
+}
+
 /** One pending foreground-notification destination, retained across app unlock. */
 sealed interface SessionNavigationRequest {
     data object OpenSessions : SessionNavigationRequest
@@ -133,6 +161,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val terminalShortcutStore = runtime.terminalShortcuts
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
+    private val updatePreferencesStore = runtime.updatePreferences
+    private val updateFiles = AppUpdateFileStore(application)
+    private val releaseClient = GitHubReleaseClient(appVersionName = runtime.installedAppInfo?.versionName ?: "unknown")
+    private var updateJob: Job? = null
 
     val hosts = vault.snapshot
         .map { snapshot ->
@@ -171,6 +203,21 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
     val terminalAppearance = terminalAppearanceStore.appearance
     val terminalShortcuts = terminalShortcutStore.config
+
+    private val _updatePhase = MutableStateFlow<UpdatePhase>(UpdatePhase.Idle)
+
+    /** Immutable self-update state for the settings card and the settings navigation badge. */
+    val updateState: StateFlow<UpdateUiState> = combine(
+        _updatePhase,
+        updatePreferencesStore.preferences,
+    ) { phase, preferences ->
+        UpdateUiState(
+            supported = runtime.selfUpdateSupported,
+            automaticCheckEnabled = preferences.automaticCheckEnabled,
+            installedVersion = runtime.installedAppInfo?.versionName.orEmpty(),
+            phase = phase,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UpdateUiState())
 
     private val _userMessage = MutableStateFlow<UiText?>(null)
     val userMessage = _userMessage.asStateFlow()
@@ -218,6 +265,19 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
             }
+        }
+        viewModelScope.launch {
+            // A stale or partial archive from a previous process is never
+            // reusable, and the install-source binder call belongs off the
+            // main thread regardless of whether an automatic check follows.
+            val selfUpdateSupported = withContext(Dispatchers.IO) {
+                updateFiles.purgeExcept(null)
+                runtime.selfUpdateSupported
+            }
+            if (!selfUpdateSupported) return@launch
+            // The lock screen owns the whole window; no background work runs behind it.
+            appLocked.first { !it }
+            maybeRunAutomaticUpdateCheck()
         }
     }
 
@@ -919,4 +979,149 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         if (_appLockConfiguration.value.biometricEnabled) _appLocked.value = false
     }
 
+    /** Checks GitHub now, always reporting a result even if the same version was previously dismissed. */
+    fun checkForUpdates() {
+        updateJob?.cancel()
+        updatePreferencesStore.clearDismissal()
+        updateJob = viewModelScope.launch { runUpdateCheck() }
+    }
+
+    private suspend fun maybeRunAutomaticUpdateCheck() {
+        if (!updatePreferencesStore.current().shouldAutoCheck(System.currentTimeMillis())) return
+        runUpdateCheck()
+    }
+
+    private suspend fun runUpdateCheck() {
+        _updatePhase.value = UpdatePhase.Checking
+        val result = releaseClient.latestRelease()
+        // Recorded even on failure, including a rate-limited response, so a
+        // persistently failing check cannot repeat within the throttle window.
+        updatePreferencesStore.recordCheck(System.currentTimeMillis())
+        _updatePhase.value = when (result) {
+            is AppUpdateCheckResult.Success -> {
+                val release = result.release
+                val installedVersionCode = runtime.installedAppInfo?.versionCode ?: 0L
+                when {
+                    release.version.versionCode <= installedVersionCode -> UpdatePhase.UpToDate
+                    updatePreferencesStore.current().isDismissed(release.version.versionCode) -> UpdatePhase.Idle
+                    else -> UpdatePhase.Available(release)
+                }
+            }
+
+            is AppUpdateCheckResult.Failure ->
+                UpdatePhase.Failed(result.reason.toUiText(result.statusCode), release = null)
+        }
+    }
+
+    /** Downloads and digest-verifies the release offered by the current [UpdatePhase]. */
+    fun downloadUpdate() {
+        val release = when (val phase = _updatePhase.value) {
+            is UpdatePhase.Available -> phase.release
+            is UpdatePhase.Failed -> phase.release
+            else -> null
+        } ?: return
+        updateJob?.cancel()
+        updateJob = viewModelScope.launch {
+            _updatePhase.value = UpdatePhase.Downloading(release, 0L, release.apkAsset.sizeBytes)
+            try {
+                downloadVerifyAndPromote(release)
+            } catch (error: CancellationException) {
+                // Cancellation is user- or lifecycle-driven, not a download
+                // failure; return to the pre-download phase instead of
+                // leaving a stale progress bar on screen.
+                _updatePhase.value = UpdatePhase.Available(release)
+                throw error
+            }
+        }
+    }
+
+    private suspend fun downloadVerifyAndPromote(release: AppRelease) {
+        val partFile = updateFiles.partFile(release.tag)
+        val result = releaseClient.downloadApk(release, partFile) { downloaded, total ->
+            _updatePhase.update { current ->
+                if (current is UpdatePhase.Downloading) current.copy(downloadedBytes = downloaded, totalBytes = total)
+                else current
+            }
+        }
+        when (result) {
+            is AppUpdateDownloadResult.Failure ->
+                _updatePhase.value = UpdatePhase.Failed(result.reason.toUiText(result.statusCode), release)
+
+            is AppUpdateDownloadResult.Success -> {
+                _updatePhase.value = UpdatePhase.Verifying(release)
+                val verifiedFile = withContext(Dispatchers.IO) {
+                    val promoted = updateFiles.promote(result.file, release.tag) ?: return@withContext null
+                    // Defence in depth beyond the SHA-256 check: confirms the
+                    // archive is signed with this exact install's key before
+                    // the system installer is invoked, most commonly relevant
+                    // when a differently-signed debug build tries to update.
+                    promoted.takeIf { getApplication<Application>().archiveMatchesInstalledSigner(it) }
+                }
+                _updatePhase.value = if (verifiedFile != null) {
+                    UpdatePhase.ReadyToInstall(release)
+                } else {
+                    withContext(Dispatchers.IO) { updateFiles.purgeExcept(null) }
+                    UpdatePhase.Failed(uiText(R.string.app_update_failed_signature_mismatch), release)
+                }
+            }
+        }
+    }
+
+    fun cancelUpdateDownload() {
+        updateJob?.cancel()
+    }
+
+    /**
+     * Resolves a short-lived content URI for the verified update archive.
+     *
+     * Returns `null` and drops back to [UpdatePhase.Available] if the cache
+     * was evicted between verification and this call, since [UpdateSettingsCard]
+     * has no other way to detect that the file it was about to install is gone.
+     */
+    fun readyInstallUri(): Uri? {
+        val release = (_updatePhase.value as? UpdatePhase.ReadyToInstall)?.release ?: return null
+        val file = updateFiles.verifiedFile(release.tag)
+        if (!file.exists()) {
+            _updatePhase.value = UpdatePhase.Available(release)
+            return null
+        }
+        MangoLog.info(MangoLogEvent.APP_UPDATE_INSTALL_HANDOFF)
+        return updateFiles.contentUri(file)
+    }
+
+    /** Records that handing the verified archive to the system installer failed. */
+    fun reportInstallHandoffFailed() {
+        MangoLog.warn(MangoLogEvent.APP_UPDATE_INSTALL_HANDOFF_FAILED)
+        _userMessage.value = uiText(R.string.app_update_installer_unavailable)
+    }
+
+    /** Surfaces a failure to open the validated GitHub release page in a browser. */
+    fun reportReleasePageOpenFailed() {
+        _userMessage.value = uiText(R.string.app_update_release_page_unavailable)
+    }
+
+    fun setAutomaticUpdateCheckEnabled(enabled: Boolean) {
+        updatePreferencesStore.setAutomaticCheckEnabled(enabled)
+    }
+
+    /** Dismisses the current offer until a newer release is published. */
+    fun dismissUpdateNotice() {
+        val release = (_updatePhase.value as? UpdatePhase.Available)?.release ?: return
+        updatePreferencesStore.dismissVersion(release.version.versionCode)
+        _updatePhase.value = UpdatePhase.Idle
+    }
+
+    /** The validated release page for the release currently offered or in flight, if any. */
+    fun releasePageUrl(): String? = when (val phase = _updatePhase.value) {
+        is UpdatePhase.Available -> phase.release.htmlUrl
+        is UpdatePhase.Downloading -> phase.release.htmlUrl
+        is UpdatePhase.Verifying -> phase.release.htmlUrl
+        is UpdatePhase.ReadyToInstall -> phase.release.htmlUrl
+        is UpdatePhase.Failed -> phase.release?.htmlUrl
+        UpdatePhase.Idle, UpdatePhase.Checking, UpdatePhase.UpToDate -> null
+    }
+
+    override fun onCleared() {
+        updateJob?.cancel()
+    }
 }
