@@ -26,7 +26,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Storage
@@ -103,7 +102,6 @@ fun TerminalSessionScreen(
     onRequestResources: () -> Unit,
     onOpenFileBrowser: () -> Unit,
     onRequestLeave: () -> Unit,
-    onClose: () -> Unit,
 ) {
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
@@ -222,9 +220,6 @@ fun TerminalSessionScreen(
                         enabled = isOpen && supportsSshChannels,
                     ) {
                         Icon(Icons.Outlined.Storage, contentDescription = stringResource(R.string.ui_server_resources))
-                    }
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.ui_close_session))
                     }
                 }
 

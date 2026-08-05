@@ -245,7 +245,6 @@
     <string name="ui_change_pin">修改 PIN</string>
     <string name="ui_clear_finished">清除已完成</string>
     <string name="ui_close_preview">关闭预览</string>
-    <string name="ui_close_session">关闭会话</string>
     <string name="ui_close_the_file_browser">关闭文件浏览器</string>
     <string name="ui_closed">已关闭</string>
     <string name="ui_completed">已完成</string>

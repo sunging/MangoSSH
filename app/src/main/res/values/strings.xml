@@ -260,7 +260,6 @@
     <string name="ui_change_pin">Change PIN</string>
     <string name="ui_clear_finished">Clear finished</string>
     <string name="ui_close_preview">Close preview</string>
-    <string name="ui_close_session">Close session</string>
     <string name="ui_close_the_file_browser">Close the file browser</string>
     <string name="ui_closed">Closed</string>
     <string name="ui_completed">Completed</string>

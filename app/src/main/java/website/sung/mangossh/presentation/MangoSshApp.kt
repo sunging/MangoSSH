@@ -309,11 +309,6 @@ fun MangoSshApp(
             onRequestResources = { viewModel.requestServerResources(activeSession.id) },
             onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
             onRequestLeave = { leaveSessionId = activeSession.id },
-            onClose = {
-                viewModel.disconnect(activeSession.id)
-                activeSessionId = null
-                leaveSessionId = null
-            },
         )
         activePrompt?.let { prompt ->
             SessionPromptDialog(
