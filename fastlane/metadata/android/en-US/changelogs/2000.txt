@@ -1,0 +1,5 @@
+New in 0.2.0:
+
+- Browse, preview, and transfer remote files with a new SFTP file browser.
+- Start port forwards and file transfers directly from the host list, without opening a terminal session.
+- Check for and install app updates from a new in-app update settings card.
