@@ -39,6 +39,13 @@ building:
 git submodule update --init --recursive
 ```
 
+## Language
+
+MangoSSH includes English and Simplified Chinese. The language card at the top
+of **Settings** can follow the Android system/app-language preference (the
+default), or explicitly select **English** or **简体中文**. Changing it recreates
+the UI but keeps application-scoped SSH/Mosh sessions and transfers running.
+
 ## Terminal appearance
 
 Settings &gt; Terminal appearance controls the shared font, base size, and color

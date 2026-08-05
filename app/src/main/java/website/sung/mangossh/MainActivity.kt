@@ -11,21 +11,24 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
+import website.sung.mangossh.presentation.AppLanguage
 import website.sung.mangossh.presentation.MangoSshApp
 import website.sung.mangossh.presentation.MangoSshViewModel
+import website.sung.mangossh.session.SessionForegroundService
 import website.sung.mangossh.ui.theme.MangoSshTheme
 
 /** Hosts the Compose UI and delegates biometric verification without retaining biometric data. */
-class MainActivity : FragmentActivity() {
+class MainActivity : AppCompatActivity() {
     private val mangoViewModel: MangoSshViewModel by viewModels()
     private var pendingNotificationPermissionAction: (() -> Unit)? = null
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (!granted) {
-            mangoViewModel.reportUserMessage(getString(R.string.notification_permission_denied))
+            mangoViewModel.reportUserMessage(R.string.notification_permission_denied)
         }
         pendingNotificationPermissionAction
             ?.also { pendingNotificationPermissionAction = null }
@@ -42,6 +45,8 @@ class MainActivity : FragmentActivity() {
                     viewModel = mangoViewModel,
                     onRequestBiometricUnlock = ::requestBiometricUnlock,
                     onRequestNotificationPermission = ::requestNotificationPermission,
+                    selectedAppLanguage = AppLanguage.current(),
+                    onSetAppLanguage = ::setAppLanguage,
                 )
             }
         }
@@ -63,7 +68,7 @@ class MainActivity : FragmentActivity() {
         val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
         val availability = BiometricManager.from(this).canAuthenticate(authenticators)
         if (availability != BiometricManager.BIOMETRIC_SUCCESS) {
-            mangoViewModel.reportUserMessage(getString(R.string.biometric_unavailable))
+            mangoViewModel.reportUserMessage(R.string.biometric_unavailable)
             return
         }
         val prompt = BiometricPrompt(
@@ -106,6 +111,15 @@ class MainActivity : FragmentActivity() {
         } else {
             onReady()
         }
+    }
+
+    /** Applies one supported app locale and refreshes existing foreground-session notifications. */
+    private fun setAppLanguage(language: AppLanguage) {
+        val runtime = (application as MangoSshApplication).sessionRuntime
+        val hasForegroundWork = runtime.sessionController.sessions.value.isNotEmpty() ||
+            runtime.embeddedTsnetManager.foregroundRequired.value
+        AppCompatDelegate.setApplicationLocales(language.localeList())
+        if (hasForegroundWork) SessionForegroundService.start(this)
     }
 
     /** Routes foreground notification destinations without exposing session identifiers in logs. */

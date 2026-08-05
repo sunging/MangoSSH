@@ -67,16 +67,16 @@ import website.sung.mangossh.session.MAX_REMOTE_DIRECTORY_ENTRIES
 import website.sung.mangossh.session.RemoteFileEntry
 import website.sung.mangossh.session.RemoteFileKind
 import website.sung.mangossh.session.RemoteFilePaths
-import java.text.SimpleDateFormat
+import java.text.DateFormat
 import java.util.Date
-import java.util.Locale
+import android.text.format.Formatter
 import androidx.compose.ui.res.stringResource
 
 /**
  * Full-screen SFTP file browser for one open SSH session.
  *
  * Every remote name, path, and preview body is server-provided user data and is
- * rendered verbatim; only the fixed chrome goes through [localizedUiLiteral].
+ * rendered verbatim; fixed chrome is resolved from Android string resources.
  * Directory reads happen in the view model, never in this composable.
  */
 @Composable
@@ -162,7 +162,7 @@ fun RemoteFileBrowserScreen(
                 IconButton(onClick = onClose) {
                     Icon(
                         Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = localizedUiLiteral("关闭文件浏览器"),
+                        contentDescription = stringResource(R.string.ui_close_the_file_browser),
                     )
                 }
                 Column(modifier = Modifier.weight(1f)) {
@@ -173,7 +173,7 @@ fun RemoteFileBrowserScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = if (state.isConnecting) localizedUiLiteral("正在连接…") else state.path,
+                        text = if (state.isConnecting) stringResource(R.string.ui_connecting) else state.path,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -186,34 +186,34 @@ fun RemoteFileBrowserScreen(
                         state.homePath != null &&
                         state.homePath != state.path,
                 ) {
-                    Icon(Icons.Outlined.Home, contentDescription = localizedUiLiteral("主目录"))
+                    Icon(Icons.Outlined.Home, contentDescription = stringResource(R.string.ui_home_directory))
                 }
                 IconButton(
                     onClick = onUp,
                     enabled = !state.isConnecting && state.path != RemoteFilePaths.ROOT,
                 ) {
-                    Icon(Icons.Outlined.ArrowUpward, contentDescription = localizedUiLiteral("上级目录"))
+                    Icon(Icons.Outlined.ArrowUpward, contentDescription = stringResource(R.string.ui_parent_directory))
                 }
                 Box {
                     IconButton(
                         onClick = { showUploadMenu = true },
                         enabled = !state.isConnecting,
                     ) {
-                        Icon(Icons.Outlined.Upload, contentDescription = localizedUiLiteral("上传到当前目录"))
+                        Icon(Icons.Outlined.Upload, contentDescription = stringResource(R.string.ui_upload_to_this_directory))
                     }
                     DropdownMenu(
                         expanded = showUploadMenu,
                         onDismissRequest = { showUploadMenu = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text(localizedUiLiteral("上传文件")) },
+                            text = { Text(stringResource(R.string.ui_upload_file)) },
                             onClick = {
                                 showUploadMenu = false
                                 uploadLauncher.launch(arrayOf("*/*"))
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text(localizedUiLiteral("上传文件夹")) },
+                            text = { Text(stringResource(R.string.ui_upload_folder)) },
                             onClick = {
                                 showUploadMenu = false
                                 directoryUploadLauncher.launch(null)
@@ -222,7 +222,7 @@ fun RemoteFileBrowserScreen(
                     }
                 }
                 IconButton(onClick = onRefresh, enabled = !state.isConnecting) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = localizedUiLiteral("刷新"))
+                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.common_refresh))
                 }
             }
 
@@ -236,19 +236,19 @@ fun RemoteFileBrowserScreen(
 
             when {
                 state.isConnecting -> RemoteBrowserMessage(
-                    message = localizedUiLiteral("正在为文件传输建立连接…"),
+                    message = stringResource(R.string.ui_opening_a_connection_for_file_transfer),
                     isError = false,
                     onRetry = null,
                 )
 
                 state.errorMessage != null -> RemoteBrowserMessage(
-                    message = state.errorMessage,
+                    message = state.errorMessage.asString(),
                     isError = true,
                     onRetry = onRefresh,
                 )
 
                 !state.isLoading && state.entries.isEmpty() -> RemoteBrowserMessage(
-                    message = localizedUiLiteral("此目录为空。"),
+                    message = stringResource(R.string.ui_this_directory_is_empty),
                     isError = false,
                     onRetry = null,
                 )
@@ -348,6 +348,7 @@ private fun RemoteFileRow(
     onOpen: () -> Unit,
     onDownload: () -> Unit,
 ) {
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -374,8 +375,9 @@ private fun RemoteFileRow(
                 overflow = TextOverflow.MiddleEllipsis,
             )
             val details = listOfNotNull(
-                entry.sizeBytes?.takeIf { entry.kind != RemoteFileKind.DIRECTORY }?.let(::formatByteSize),
-                entry.modifiedEpochSeconds?.let(::formatModifiedTime),
+                entry.sizeBytes?.takeIf { entry.kind != RemoteFileKind.DIRECTORY }
+                    ?.let { formatByteSize(context, it) },
+                entry.modifiedEpochSeconds?.let { formatModifiedTime(context, it) },
                 entry.permissions,
             )
             if (details.isNotEmpty()) {
@@ -392,9 +394,9 @@ private fun RemoteFileRow(
             Icon(
                 Icons.Outlined.Download,
                 contentDescription = if (entry.kind == RemoteFileKind.DIRECTORY) {
-                    localizedUiLiteral("下载文件夹")
+                    stringResource(R.string.ui_download_folder)
                 } else {
-                    localizedUiLiteral("下载")
+                    stringResource(R.string.common_download)
                 },
             )
         }
@@ -420,7 +422,7 @@ private fun RemoteBrowserMessage(message: String, isError: Boolean, onRetry: (()
         )
         if (onRetry != null) {
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onRetry) { Text(localizedUiLiteral("重试")) }
+            TextButton(onClick = onRetry) { Text(stringResource(R.string.common_retry)) }
         }
     }
 }
@@ -473,10 +475,10 @@ private fun RemoteFilePreviewLayer(
                     )
                 }
                 IconButton(onClick = onDownload) {
-                    Icon(Icons.Outlined.Download, contentDescription = localizedUiLiteral("下载"))
+                    Icon(Icons.Outlined.Download, contentDescription = stringResource(R.string.common_download))
                 }
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Outlined.Close, contentDescription = localizedUiLiteral("关闭预览"))
+                    Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.ui_close_preview))
                 }
             }
 
@@ -490,13 +492,13 @@ private fun RemoteFilePreviewLayer(
                 }
 
                 preview.errorMessage != null -> RemoteBrowserMessage(
-                    message = preview.errorMessage,
+                    message = preview.errorMessage.asString(),
                     isError = true,
                     onRetry = null,
                 )
 
                 preview.isBinary || content == null -> RemoteBrowserMessage(
-                    message = localizedUiLiteral("此文件不是文本，无法预览。可以直接下载。"),
+                    message = stringResource(R.string.ui_this_file_is_not_text_and_cannot_be_previewed_you_can_download_it_instea),
                     isError = false,
                     onRetry = null,
                 )
@@ -504,7 +506,7 @@ private fun RemoteFilePreviewLayer(
                 else -> Column(modifier = Modifier.weight(1f)) {
                     if (content.truncated) {
                         Text(
-                            text = localizedUiLiteral("仅预览文件开头部分。") +
+                            text = stringResource(R.string.ui_only_the_beginning_of_this_file_is_previewed) +
                                 " " + formatPreviewSize(content.totalSizeBytes),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -536,16 +538,20 @@ private fun RemoteFilePreviewLayer(
 }
 
 /** Formats a byte count for listing subtitles and transfer progress. */
-internal fun formatByteSize(bytes: Long): String = when {
-    bytes < 1024L -> "$bytes B"
-    bytes < 1024L * 1024L -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
-    bytes < 1024L * 1024L * 1024L -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
-    else -> String.format(Locale.US, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
-}
+internal fun formatByteSize(context: android.content.Context, bytes: Long): String =
+    Formatter.formatShortFileSize(context, bytes)
 
-private fun formatModifiedTime(epochSeconds: Long): String =
-    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(epochSeconds * 1000L))
+private fun formatModifiedTime(context: android.content.Context, epochSeconds: Long): String {
+    val locale = context.resources.configuration.locales[0]
+    return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale)
+        .format(Date(epochSeconds * 1000L))
+}
 
 @Composable
 private fun formatPreviewSize(totalSizeBytes: Long?): String =
-    if (totalSizeBytes == null) "" else localizedUiLiteral("完整大小") + " " + formatByteSize(totalSizeBytes)
+    if (totalSizeBytes == null) {
+        ""
+    } else {
+        val context = LocalContext.current
+        stringResource(R.string.preview_full_size, formatByteSize(context, totalSizeBytes))
+    }

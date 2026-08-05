@@ -118,7 +118,7 @@ internal fun FileTransferStatusAction(
                 }
                 Icon(
                     Icons.Outlined.SwapVert,
-                    contentDescription = localizedUiLiteral("文件传输"),
+                    contentDescription = stringResource(R.string.ui_file_transfers),
                 )
             }
         }
@@ -152,7 +152,7 @@ internal fun FileTransfersSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = localizedUiLiteral("文件传输"),
+                text = stringResource(R.string.ui_file_transfers),
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
             )
@@ -160,7 +160,7 @@ internal fun FileTransfersSheet(
                 onClick = onClearFinished,
                 enabled = transfers.any { it.isFinished },
             ) {
-                Text(localizedUiLiteral("清除已完成"))
+                Text(stringResource(R.string.ui_clear_finished))
             }
         }
         LazyColumn(
@@ -199,18 +199,19 @@ private fun TransferCard(
     onRetry: () -> Unit,
     onOpen: () -> Unit,
 ) {
+    val context = LocalContext.current
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             val upload = transfer.direction == ScpTransferDirection.UPLOAD
             val directory = transfer.kind == ScpTransferKind.DIRECTORY
             val label = when {
-                upload && directory -> "上传文件夹"
-                upload -> "上传文件"
-                directory -> "下载文件夹"
-                else -> "下载文件"
+                upload && directory -> stringResource(R.string.ui_upload_folder)
+                upload -> stringResource(R.string.ui_upload_file)
+                directory -> stringResource(R.string.ui_download_folder)
+                else -> stringResource(R.string.ui_download_file)
             }
             Text(
-                text = "${localizedUiLiteral(label)} · ${transfer.displayName}",
+                text = "$label · ${transfer.displayName}",
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
@@ -233,7 +234,7 @@ private fun TransferCard(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "${formatByteSize(transfer.transferredBytes)} / ${formatByteSize(totalBytes)}",
+                    text = "${formatByteSize(context, transfer.transferredBytes)} / ${formatByteSize(context, totalBytes)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -259,7 +260,7 @@ private fun TransferCard(
             Spacer(Modifier.height(4.dp))
             val failed = transfer.phase == ScpTransferPhase.FAILED
             Text(
-                text = listOfNotNull(localizedUiLiteral(transfer.phase.label()), transfer.detail)
+                text = listOfNotNull(transfer.phase.label(), transfer.detail?.toUiText()?.asString())
                     .joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
@@ -274,19 +275,19 @@ private fun TransferCard(
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (transfer.canPause) {
-                    TransferAction(Icons.Outlined.Pause, "暂停", onPause)
+                    TransferAction(Icons.Outlined.Pause, stringResource(R.string.ui_pause), onPause)
                 }
                 if (transfer.phase == ScpTransferPhase.PAUSED) {
-                    TransferAction(Icons.Outlined.PlayArrow, "继续", onResume, enabled = transfer.canResume)
+                    TransferAction(Icons.Outlined.PlayArrow, stringResource(R.string.transfer_resume), onResume, enabled = transfer.canResume)
                 }
                 if (transfer.canCancel) {
-                    TransferAction(Icons.Outlined.Cancel, "取消传输", onCancel)
+                    TransferAction(Icons.Outlined.Cancel, stringResource(R.string.ui_cancel_transfer), onCancel)
                 }
                 if (transfer.phase == ScpTransferPhase.FAILED || transfer.phase == ScpTransferPhase.CANCELLED) {
-                    TransferAction(Icons.Outlined.Refresh, "重试", onRetry, enabled = transfer.canRetry)
+                    TransferAction(Icons.Outlined.Refresh, stringResource(R.string.common_retry), onRetry, enabled = transfer.canRetry)
                 }
                 if (transfer.canOpenLocally || transfer.canOpenRemote) {
-                    TransferAction(Icons.AutoMirrored.Outlined.OpenInNew, "打开", onOpen)
+                    TransferAction(Icons.AutoMirrored.Outlined.OpenInNew, stringResource(R.string.common_open), onOpen)
                 }
             }
         }
@@ -301,17 +302,18 @@ private fun TransferAction(
     enabled: Boolean = true,
 ) {
     IconButton(onClick = onClick, enabled = enabled) {
-        Icon(icon, contentDescription = localizedUiLiteral(label))
+        Icon(icon, contentDescription = label)
     }
 }
 
+@Composable
 private fun ScpTransferPhase.label(): String = when (this) {
-    ScpTransferPhase.QUEUED -> "排队中"
-    ScpTransferPhase.RUNNING -> "传输中"
-    ScpTransferPhase.PAUSED -> "已暂停"
-    ScpTransferPhase.COMPLETED -> "已完成"
-    ScpTransferPhase.FAILED -> "失败"
-    ScpTransferPhase.CANCELLED -> "已取消"
+    ScpTransferPhase.QUEUED -> stringResource(R.string.ui_queued)
+    ScpTransferPhase.RUNNING -> stringResource(R.string.ui_transferring)
+    ScpTransferPhase.PAUSED -> stringResource(R.string.ui_paused)
+    ScpTransferPhase.COMPLETED -> stringResource(R.string.ui_completed)
+    ScpTransferPhase.FAILED -> stringResource(R.string.ui_failed)
+    ScpTransferPhase.CANCELLED -> stringResource(R.string.ui_cancelled)
 }
 
 /**

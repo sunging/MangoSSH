@@ -19,7 +19,7 @@ class AppLockStore(context: Context) {
 
     fun setPin(pin: CharArray) {
         require(pin.size in MIN_PIN_LENGTH..MAX_PIN_LENGTH && pin.all(Char::isDigit)) {
-            "PIN 必须为 $MIN_PIN_LENGTH 到 $MAX_PIN_LENGTH 位数字。"
+            "PIN is outside the supported length or contains a non-digit character."
         }
         val salt = ByteArray(SALT_BYTES).also(SecureRandom()::nextBytes)
         val verifier = derive(pin, salt)
@@ -48,7 +48,7 @@ class AppLockStore(context: Context) {
     }
 
     fun setBiometricEnabled(enabled: Boolean) {
-        require(configuration().pinConfigured) { "请先设置 PIN。" }
+        require(configuration().pinConfigured) { "An app PIN must be configured first." }
         preferences.edit { putBoolean(KEY_BIOMETRIC_ENABLED, enabled) }
     }
 
@@ -65,16 +65,20 @@ class AppLockStore(context: Context) {
         }
     }
 
-    private companion object {
-        const val PREFERENCES_NAME = "mangossh-app-lock"
-        const val KEY_PIN_SALT = "pin_salt"
-        const val KEY_PIN_HASH = "pin_hash"
-        const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"
-        const val SALT_BYTES = 16
-        const val KEY_BITS = 256
-        const val PBKDF2_ITERATIONS = 310_000
+    companion object {
+        /** Shortest PIN accepted by the local app-lock verifier. */
         const val MIN_PIN_LENGTH = 4
+
+        /** Longest PIN accepted by the local app-lock verifier. */
         const val MAX_PIN_LENGTH = 12
+
+        private const val PREFERENCES_NAME = "mangossh-app-lock"
+        private const val KEY_PIN_SALT = "pin_salt"
+        private const val KEY_PIN_HASH = "pin_hash"
+        private const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"
+        private const val SALT_BYTES = 16
+        private const val KEY_BITS = 256
+        private const val PBKDF2_ITERATIONS = 310_000
     }
 }
 

@@ -1,5 +1,7 @@
 package website.sung.mangossh.presentation
 
+import androidx.compose.ui.res.stringResource
+
 import android.content.ClipData
 import android.graphics.Typeface
 import androidx.compose.foundation.background
@@ -200,7 +202,7 @@ fun TerminalSessionScreen(
                     IconButton(onClick = onRequestLeave) {
                         Icon(
                             Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = localizedUiLiteral("返回主机列表"),
+                            contentDescription = stringResource(R.string.ui_back_to_hosts),
                         )
                     }
                     IconButton(
@@ -209,7 +211,7 @@ fun TerminalSessionScreen(
                     ) {
                         Icon(
                             Icons.Outlined.FolderOpen,
-                            contentDescription = localizedUiLiteral("远端文件"),
+                            contentDescription = stringResource(R.string.ui_remote_files),
                         )
                     }
                     IconButton(
@@ -219,10 +221,10 @@ fun TerminalSessionScreen(
                         },
                         enabled = isOpen && supportsSshChannels,
                     ) {
-                        Icon(Icons.Outlined.Storage, contentDescription = localizedUiLiteral("服务器资源"))
+                        Icon(Icons.Outlined.Storage, contentDescription = stringResource(R.string.ui_server_resources))
                     }
                     IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.Close, contentDescription = localizedUiLiteral("关闭会话"))
+                        Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.ui_close_session))
                     }
                 }
 
@@ -280,21 +282,21 @@ fun TerminalSessionScreen(
         if (showResourceReport) {
             AlertDialog(
                 onDismissRequest = { showResourceReport = false },
-                title = { Text(localizedUiLiteral("服务器资源")) },
+                title = { Text(stringResource(R.string.ui_server_resources)) },
                 text = {
                     SelectionContainer {
                         Text(
-                            resourceSnapshot?.report ?: localizedUiLiteral("正在从服务器读取资源信息…"),
+                            resourceSnapshot?.report ?: stringResource(R.string.ui_reading_resource_information_from_the_server),
                             modifier = Modifier.verticalScroll(rememberScrollState()),
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { onRequestResources() }) { Text(localizedUiLiteral("刷新")) }
+                    TextButton(onClick = { onRequestResources() }) { Text(stringResource(R.string.common_refresh)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showResourceReport = false }) { Text(localizedUiLiteral("关闭")) }
+                    TextButton(onClick = { showResourceReport = false }) { Text(stringResource(R.string.common_close)) }
                 },
             )
         }
@@ -365,13 +367,11 @@ private fun TerminalKeyBar(
 
 /** Returns the localized, application-owned label for a live session phase. */
 @Composable
-internal fun TerminalSessionPhase.label(): String = localizedUiLiteral(
-    when (this) {
-        TerminalSessionPhase.CONNECTING -> "连接中"
-        TerminalSessionPhase.VERIFYING_HOST_KEY -> "验证指纹"
-        TerminalSessionPhase.AUTHENTICATING -> "认证中"
-        TerminalSessionPhase.OPEN -> "已连接"
-        TerminalSessionPhase.FAILED -> "失败"
-        TerminalSessionPhase.CLOSED -> "已关闭"
-    },
-)
+internal fun TerminalSessionPhase.label(): String = when (this) {
+    TerminalSessionPhase.CONNECTING -> stringResource(R.string.ui_connecting_2)
+    TerminalSessionPhase.VERIFYING_HOST_KEY -> stringResource(R.string.ui_verifying_fingerprint)
+    TerminalSessionPhase.AUTHENTICATING -> stringResource(R.string.ui_authenticating)
+    TerminalSessionPhase.OPEN -> stringResource(R.string.ui_connected)
+    TerminalSessionPhase.FAILED -> stringResource(R.string.ui_failed)
+    TerminalSessionPhase.CLOSED -> stringResource(R.string.ui_closed)
+}

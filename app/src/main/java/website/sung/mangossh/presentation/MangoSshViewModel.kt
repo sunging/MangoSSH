@@ -2,6 +2,7 @@ package website.sung.mangossh.presentation
 
 import android.app.Application
 import android.net.Uri
+import androidx.annotation.StringRes
 import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +26,7 @@ import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
 import website.sung.mangossh.data.sync.WebDavDownloadResult
 import website.sung.mangossh.data.sync.WebDavResult
+import website.sung.mangossh.data.sync.WebDavFailureReason
 import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
@@ -46,15 +48,46 @@ import website.sung.mangossh.session.SessionEndedEvent
 import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionEndReason
+import website.sung.mangossh.session.SessionEndMessageKind
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
 
 /** Top-level areas exposed by the Compose navigation bar. */
-enum class AppSection(val label: String) {
-    HOSTS("主机"),
-    KEYS("密钥"),
-    FORWARDS("转发"),
-    SETTINGS("设置"),
+enum class AppSection {
+    HOSTS,
+    KEYS,
+    FORWARDS,
+    SETTINGS,
+}
+
+private fun WebDavResult.Failure.toUiText(upload: Boolean): UiText = webDavFailureText(
+    reason = reason,
+    statusCode = statusCode,
+    networkResource = if (upload) {
+        R.string.message_webdav_upload_failed
+    } else {
+        R.string.message_webdav_download_failed
+    },
+)
+
+private fun WebDavDownloadResult.Failure.toUiText(): UiText = webDavFailureText(
+    reason = reason,
+    statusCode = statusCode,
+    networkResource = R.string.message_webdav_download_failed,
+)
+
+private fun webDavFailureText(
+    reason: WebDavFailureReason,
+    statusCode: Int?,
+    @StringRes networkResource: Int,
+): UiText = when (reason) {
+    WebDavFailureReason.INVALID_CONFIGURATION -> uiText(R.string.message_webdav_invalid_configuration)
+    WebDavFailureReason.INVALID_BACKUP_SIZE -> uiText(R.string.message_webdav_invalid_backup_size)
+    WebDavFailureReason.HTTP_STATUS -> statusCode
+        ?.let { uiText(R.string.message_webdav_http_failed, it) }
+        ?: uiText(networkResource)
+    WebDavFailureReason.RESPONSE_TOO_LARGE -> uiText(R.string.message_webdav_response_too_large)
+    WebDavFailureReason.NETWORK -> uiText(networkResource)
 }
 
 /** One pending foreground-notification destination, retained across app unlock. */
@@ -67,14 +100,22 @@ sealed interface SessionNavigationRequest {
 /** Resolves user-visible failure text while keeping orderly session exits silent. */
 internal fun resolveSessionEndMessage(
     event: SessionEndedEvent,
-    getString: (Int) -> String,
-): String? = event.userMessage ?: when (event.reason) {
+): UiText? = event.messageKind?.toUiText() ?: when (event.reason) {
     SessionEndReason.USER_REQUEST,
     SessionEndReason.REMOTE_EXIT -> null
 
-    SessionEndReason.CONNECTION_LOST -> getString(R.string.session_ended_connection_lost)
-    SessionEndReason.CONNECTION_FAILED -> getString(R.string.session_ended_connection_failed)
+    SessionEndReason.CONNECTION_LOST -> uiText(R.string.session_ended_connection_lost)
+    SessionEndReason.CONNECTION_FAILED -> uiText(R.string.session_ended_connection_failed)
 }
+
+private fun SessionEndMessageKind.toUiText(): UiText = uiText(
+    when (this) {
+        SessionEndMessageKind.AUTHENTICATION_FAILED -> R.string.session_ended_authentication_failed
+        SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED -> R.string.mosh_bootstrap_failed
+        SessionEndMessageKind.MOSH_RUNTIME_MISSING -> R.string.mosh_runtime_missing
+        SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED -> R.string.embedded_tsnet_enrollment_required
+    },
+)
 
 /**
  * Bridges encrypted vault state and live session state to Compose.
@@ -131,7 +172,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val terminalAppearance = terminalAppearanceStore.appearance
     val terminalShortcuts = terminalShortcutStore.config
 
-    private val _userMessage = MutableStateFlow<String?>(null)
+    private val _userMessage = MutableStateFlow<UiText?>(null)
     val userMessage = _userMessage.asStateFlow()
 
     private val _portableExport = MutableStateFlow<ByteArray?>(null)
@@ -172,8 +213,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                             isConnecting = false,
                             isLoading = false,
                             errorMessage = sessionEndMessage(event)
-                                ?: getApplication<Application>()
-                                    .getString(R.string.session_ended_connection_failed),
+                                ?: uiText(R.string.session_ended_connection_failed),
                         )
                     }
                 }
@@ -269,21 +309,19 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         if (_sessionNavigationRequest.value == request) _sessionNavigationRequest.value = null
     }
 
-    /** Maps a lifecycle event to its fixed current-locale message, when one is appropriate. */
-    fun sessionEndMessage(event: SessionEndedEvent): String? = resolveSessionEndMessage(event) { resourceId ->
-        getApplication<Application>().getString(resourceId)
-    }
+    /** Maps a lifecycle event to resource-backed wording, keeping orderly exits silent. */
+    fun sessionEndMessage(event: SessionEndedEvent): UiText? = resolveSessionEndMessage(event)
 
     fun savePortForward(rule: PortForwardRule) {
         val isDestinationValid = rule.type == website.sung.mangossh.data.vault.PortForwardType.DYNAMIC ||
             (!rule.destinationHost.isNullOrBlank() && rule.destinationPort in 1..65535)
         if (rule.bindPort !in 1..65535 || !isDestinationValid) {
-            _userMessage.value = "端口转发配置不完整"
+            _userMessage.value = uiText(R.string.message_port_forward_incomplete)
             return
         }
         viewModelScope.launch {
             vault.upsertPortForward(rule)
-            _userMessage.value = "已保存端口转发"
+            _userMessage.value = uiText(R.string.message_port_forward_saved)
         }
     }
 
@@ -293,7 +331,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun saveSnippet(id: String?, label: String, script: String, appendNewline: Boolean) {
         if (label.isBlank() || script.isBlank()) {
-            _userMessage.value = "代码片段名称和内容不能为空"
+            _userMessage.value = uiText(R.string.message_snippet_required)
             return
         }
         viewModelScope.launch {
@@ -305,7 +343,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                     appendNewline = appendNewline,
                 ),
             )
-            _userMessage.value = "已保存代码片段"
+            _userMessage.value = uiText(R.string.message_snippet_saved)
         }
     }
 
@@ -324,12 +362,12 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
         val application = getApplication<Application>()
         if (profile.protocol != ConnectionProtocol.SSH) {
-            _userMessage.value = application.getString(R.string.mosh_not_supported_for_ssh_feature)
+            _userMessage.value = uiText(R.string.mosh_not_supported_for_ssh_feature)
             return
         }
         runCatching { sessionController.startPortForwardOnNewConnection(profile, rule) }
             .onFailure {
-                _userMessage.value = application.getString(R.string.session_ended_connection_failed)
+                _userMessage.value = uiText(R.string.session_ended_connection_failed)
             }
     }
 
@@ -372,14 +410,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         val existing = _remoteBrowser.value
         if (existing != null && existing.ownsSession && existing.profileId == profile.id) return
         if (profile.protocol != ConnectionProtocol.SSH) {
-            _userMessage.value = getApplication<Application>()
-                .getString(R.string.mosh_not_supported_for_ssh_feature)
+            _userMessage.value = uiText(R.string.mosh_not_supported_for_ssh_feature)
             return
         }
         closeRemoteBrowser()
         val sessionId = runCatching { sessionController.connectForFileTransfer(profile) }
             .getOrElse { error ->
-                _userMessage.value = sessionController.remoteFileMessage(error)
+                _userMessage.value = sessionController.remoteFileMessage(error).toUiText()
                 return
             }
         _remoteBrowser.value = RemoteBrowserUiState(
@@ -505,7 +542,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                     RemotePreviewUiState(
                         path = path,
                         isLoading = false,
-                        errorMessage = sessionController.remoteFileMessage(error),
+                        errorMessage = sessionController.remoteFileMessage(error).toUiText(),
                     )
                 },
             )
@@ -539,7 +576,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         runCatching {
             sessionController.uploadRemoteFile(current.sessionId, source, displayName, current.path)
         }.onFailure { error ->
-            _userMessage.value = sessionController.remoteFileMessage(error)
+            _userMessage.value = sessionController.remoteFileMessage(error).toUiText()
         }
     }
 
@@ -549,7 +586,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         runCatching {
             sessionController.uploadRemoteDirectory(current.sessionId, sourceTree, displayName, current.path)
         }.onFailure { error ->
-            _userMessage.value = sessionController.remoteFileMessage(error)
+            _userMessage.value = sessionController.remoteFileMessage(error).toUiText()
         }
     }
 
@@ -572,8 +609,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun openRemoteDirectoryFromTransfer(transfer: ScpTransferState) {
         val session = sessions.value.firstOrNull { it.id == transfer.sessionId }
         if (session == null || session.phase != TerminalSessionPhase.OPEN) {
-            _userMessage.value = getApplication<Application>()
-                .getString(R.string.remote_file_transfer_session_closed)
+            _userMessage.value = uiText(R.string.remote_file_transfer_session_closed)
             return
         }
         if (_remoteBrowser.value?.sessionId == transfer.sessionId) {
@@ -628,7 +664,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                     } else {
                         state.copy(
                             isLoading = false,
-                            errorMessage = sessionController.remoteFileMessage(error),
+                            errorMessage = sessionController.remoteFileMessage(error).toUiText(),
                         )
                     }
                 }
@@ -649,13 +685,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             }
                 .onSuccess {
                     _userMessage.value = if (vault.upsertKey(it)) {
-                        "已生成 ${it.label}。"
+                        uiText(R.string.message_key_generated, it.label)
                     } else {
-                        "无法保存加密保险库。数据未被覆盖。"
+                        uiText(R.string.message_vault_save_failed)
                     }
                 }
                 .onFailure {
-                    _userMessage.value = "无法生成密钥。"
+                    _userMessage.value = uiText(R.string.message_key_generation_failed)
                 }
         }
     }
@@ -665,16 +701,19 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             runCatching { keyManager.importPrivateKey(label, contents, passphrase) }
                 .onSuccess {
                     _userMessage.value = if (vault.upsertKey(it)) {
-                        "已导入 ${it.label}。"
+                        uiText(R.string.message_key_imported, it.label)
                     } else {
-                        "无法保存加密保险库。数据未被覆盖。"
+                        uiText(R.string.message_vault_save_failed)
                     }
                 }
                 .onFailure { error ->
-                    _userMessage.value = when (error) {
-                        is KeyPassphraseRequiredException -> "此密钥需要口令。"
-                        else -> "无法导入私钥。请检查格式和口令。"
-                    }
+                    _userMessage.value = uiText(
+                        if (error is KeyPassphraseRequiredException) {
+                            R.string.message_key_passphrase_required
+                        } else {
+                            R.string.message_key_import_failed
+                        },
+                    )
                 }
         }
     }
@@ -691,8 +730,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             runCatching { embeddedTsnetManager.beginBrowserEnrollment() }
                 .onFailure {
-                    _userMessage.value = getApplication<Application>()
-                        .getString(R.string.embedded_tsnet_browser_start_failed)
+                    _userMessage.value = uiText(R.string.embedded_tsnet_browser_start_failed)
                 }
         }
     }
@@ -703,8 +741,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             try {
                 runCatching { embeddedTsnetManager.beginAuthKeyEnrollment(authKey) }
                     .onFailure {
-                        _userMessage.value = getApplication<Application>()
-                            .getString(R.string.embedded_tsnet_auth_key_failed)
+                        _userMessage.value = uiText(R.string.embedded_tsnet_auth_key_failed)
                     }
             } finally {
                 authKey.fill('\u0000')
@@ -716,11 +753,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             runCatching { embeddedTsnetManager.logout() }
                 .onSuccess {
-                    _userMessage.value = getApplication<Application>()
-                        .getString(R.string.embedded_tsnet_logout_complete)
+                    _userMessage.value = uiText(R.string.embedded_tsnet_logout_complete)
                 }
                 .onFailure { error ->
-                    _userMessage.value = getApplication<Application>().getString(
+                    _userMessage.value = uiText(
                         if (error is TsnetSessionsActiveException) {
                             R.string.embedded_tsnet_logout_sessions_active
                         } else {
@@ -731,8 +767,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun reportUserMessage(message: String) {
+    fun reportUserMessage(message: UiText) {
         _userMessage.value = message
+    }
+
+    /** Reports fixed application wording without resolving it before a locale change. */
+    fun reportUserMessage(@StringRes resourceId: Int, vararg arguments: Any) {
+        _userMessage.value = uiText(resourceId, *arguments)
     }
 
     fun saveWebDavConfig(
@@ -744,7 +785,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         val normalizedEndpoint = endpoint.trim().trimEnd('/')
         val normalizedFileName = remoteFileName.trim().trimStart('/')
         if (!normalizedEndpoint.startsWith("https://") || username.isBlank() || normalizedFileName.isBlank()) {
-            _userMessage.value = "请填写 HTTPS WebDAV 地址、用户名和远端文件名。"
+            _userMessage.value = uiText(R.string.message_webdav_fields_required)
             return
         }
         viewModelScope.launch {
@@ -756,7 +797,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                     remoteFileName = normalizedFileName,
                 ),
             )
-            _userMessage.value = "已保存 WebDAV 配置。"
+            _userMessage.value = uiText(R.string.message_webdav_saved)
         }
     }
 
@@ -769,10 +810,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             runCatching { vault.exportPortable(passphrase.toCharArray()) }
                 .onSuccess { blob ->
                     _portableExport.value = blob
-                    _userMessage.value = "请选择备份文件的保存位置。"
+                    _userMessage.value = uiText(R.string.message_choose_backup_destination)
                 }
                 .onFailure {
-                    _userMessage.value = "无法创建加密备份。请确认已设置同步口令。"
+                    _userMessage.value = uiText(R.string.message_backup_create_missing_passphrase)
                 }
         }
     }
@@ -784,8 +825,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun importPortable(bytes: ByteArray, passphrase: String) {
         viewModelScope.launch {
             runCatching { vault.importPortable(bytes, passphrase.toCharArray()) }
-                .onSuccess { _userMessage.value = "已导入加密备份，主机与密钥已替换。" }
-                .onFailure { _userMessage.value = "无法导入备份：口令错误或文件已损坏。" }
+                .onSuccess { _userMessage.value = uiText(R.string.message_backup_imported) }
+                .onFailure { _userMessage.value = uiText(R.string.message_backup_import_failed) }
         }
     }
 
@@ -793,16 +834,16 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val config = vault.snapshot.value.webDavConfig
             if (config == null) {
-                _userMessage.value = "请先配置 WebDAV。"
+                _userMessage.value = uiText(R.string.message_webdav_configure_first)
                 return@launch
             }
             val blob = runCatching { vault.exportPortable(passphrase.toCharArray()) }.getOrElse {
-                _userMessage.value = "无法创建加密备份。"
+                _userMessage.value = uiText(R.string.message_backup_create_failed)
                 return@launch
             }
             when (val result = webDavClient.upload(config, blob)) {
-                WebDavResult.Success -> _userMessage.value = "已上传加密备份到 WebDAV。"
-                is WebDavResult.Failure -> _userMessage.value = result.message
+                WebDavResult.Success -> _userMessage.value = uiText(R.string.message_webdav_upload_complete)
+                is WebDavResult.Failure -> _userMessage.value = result.toUiText(upload = true)
             }
         }
     }
@@ -811,15 +852,15 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val config = vault.snapshot.value.webDavConfig
             if (config == null) {
-                _userMessage.value = "请先配置 WebDAV。"
+                _userMessage.value = uiText(R.string.message_webdav_configure_first)
                 return@launch
             }
             when (val result = webDavClient.download(config)) {
-                is WebDavDownloadResult.Failure -> _userMessage.value = result.message
+                is WebDavDownloadResult.Failure -> _userMessage.value = result.toUiText()
                 is WebDavDownloadResult.Success -> {
                     runCatching { vault.importPortable(result.encryptedBlob, passphrase.toCharArray()) }
-                        .onSuccess { _userMessage.value = "已从 WebDAV 导入加密备份。" }
-                        .onFailure { _userMessage.value = "无法导入 WebDAV 备份：口令错误或文件已损坏。" }
+                        .onSuccess { _userMessage.value = uiText(R.string.message_webdav_import_complete) }
+                        .onFailure { _userMessage.value = uiText(R.string.message_webdav_import_failed) }
                 }
             }
         }
@@ -832,9 +873,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             appLockStore.setPin(chars)
             _appLockConfiguration.value = appLockStore.configuration()
             _appLocked.value = false
-            _userMessage.value = "已启用应用 PIN 解锁。"
+            _userMessage.value = uiText(R.string.message_app_lock_enabled)
         } catch (_: IllegalArgumentException) {
-            _userMessage.value = "PIN 必须为 4 到 12 位数字。"
+            _userMessage.value = uiText(
+                R.string.message_pin_invalid,
+                AppLockStore.MIN_PIN_LENGTH,
+                AppLockStore.MAX_PIN_LENGTH,
+            )
         } finally {
             chars.fill('\u0000')
         }
@@ -844,13 +889,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         appLockStore.clear()
         _appLockConfiguration.value = appLockStore.configuration()
         _appLocked.value = false
-        _userMessage.value = "已关闭应用锁。"
+        _userMessage.value = uiText(R.string.message_app_lock_disabled)
     }
 
     fun setBiometricUnlockEnabled(enabled: Boolean) {
         runCatching { appLockStore.setBiometricEnabled(enabled) }
             .onSuccess { _appLockConfiguration.value = appLockStore.configuration() }
-            .onFailure { _userMessage.value = "请先设置应用 PIN。" }
+            .onFailure { _userMessage.value = uiText(R.string.message_app_pin_required) }
     }
 
     fun lockForBackground() {
@@ -863,7 +908,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             if (appLockStore.verifyPin(chars)) {
                 _appLocked.value = false
             } else {
-                _userMessage.value = "PIN 不正确。"
+                _userMessage.value = uiText(R.string.message_pin_incorrect)
             }
         } finally {
             chars.fill('\u0000')

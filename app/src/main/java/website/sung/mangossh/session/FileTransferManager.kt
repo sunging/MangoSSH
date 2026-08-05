@@ -170,7 +170,7 @@ internal class FileTransferManager(
      * connection, and the transfer list is not allowed to open a new one.
      */
     fun onSessionEnded(sessionId: String) {
-        val closedMessage = context.getString(R.string.remote_file_transfer_session_closed)
+        val closedMessage = RemoteFileMessage.TransferSessionClosed
         _transfers.update { current ->
             current.map { transfer ->
                 when {
@@ -259,7 +259,7 @@ internal class FileTransferManager(
                     phase = ScpTransferPhase.FAILED,
                     transferredBytes = current?.transferredBytes ?: startOffset,
                     completedItems = current?.completedItems ?: completedItems,
-                    detail = context.remoteFileMessage(error),
+                    detail = error.toRemoteFileMessage(),
                 )
             }
         }
@@ -506,7 +506,7 @@ internal class FileTransferManager(
         phase: ScpTransferPhase,
         transferredBytes: Long,
         completedItems: Int,
-        detail: String? = null,
+        detail: RemoteFileMessage? = null,
     ) {
         var sessionId: String? = null
         _transfers.update { current ->
@@ -563,11 +563,11 @@ internal class FileTransferManager(
             val appended = runCatching { resolver.openOutputStream(destination, "wa") }.getOrNull()
             if (appended != null) return DownloadTarget(appended, startOffset)
             update(transferId) { state ->
-                state.copy(detail = context.getString(R.string.remote_file_resume_restarted))
+                state.copy(detail = RemoteFileMessage.ResumeRestarted)
             }
         } else if (startOffset > 0L) {
             update(transferId) { state ->
-                state.copy(detail = context.getString(R.string.remote_file_resume_restarted))
+                state.copy(detail = RemoteFileMessage.ResumeRestarted)
             }
         }
         val stream = try {
@@ -593,9 +593,9 @@ internal class FileTransferManager(
         }
     }.getOrNull()
 
-    private fun skippedDetail(skippedEntries: Int): String? = skippedEntries
+    private fun skippedDetail(skippedEntries: Int): RemoteFileMessage? = skippedEntries
         .takeIf { it > 0 }
-        ?.let { context.getString(R.string.remote_file_tree_links_skipped, it) }
+        ?.let(RemoteFileMessage::LinksSkipped)
 
     /** Returns the `/`-separated parent of a relative path, or `""` at the top. */
     private fun parentRelativePath(relativePath: String): String =

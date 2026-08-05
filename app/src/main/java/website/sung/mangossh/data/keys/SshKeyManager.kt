@@ -91,7 +91,7 @@ class SshKeyManager {
         passphrase: String? = null,
     ): StoredSshKey {
         val normalized = privateKeyPem.replace("\r\n", "\n").trim().plus("\n")
-        require(normalized.contains("PRIVATE KEY")) { "请选择私钥文件，而不是公钥文件。" }
+        require(normalized.contains("PRIVATE KEY")) { "The selected data is not a private key." }
         val encrypted = isPassphraseProtected(normalized)
         if (encrypted && passphrase.isNullOrEmpty()) {
             throw KeyPassphraseRequiredException()
@@ -177,4 +177,4 @@ class SshKeyManager {
     }
 }
 
-class KeyPassphraseRequiredException : IllegalArgumentException("此私钥受口令保护。")
+class KeyPassphraseRequiredException : IllegalArgumentException("The private key requires a passphrase.")

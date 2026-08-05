@@ -138,7 +138,7 @@ class SshSessionController internal constructor(
                 endpoint = profile.endpoint,
                 protocol = profile.protocol,
                 phase = TerminalSessionPhase.CONNECTING,
-                detail = context.getString(R.string.session_connecting),
+                detail = context.appString(R.string.session_connecting),
             ),
         )
         SessionForegroundService.start(context)
@@ -179,7 +179,7 @@ class SshSessionController internal constructor(
      */
     private fun connectWithoutShell(profile: ConnectionProfile, kind: SessionKind): String {
         check(profile.protocol == ConnectionProtocol.SSH) {
-            context.getString(R.string.mosh_not_supported_for_ssh_feature)
+            context.appString(R.string.mosh_not_supported_for_ssh_feature)
         }
         val sessionId = UUID.randomUUID().toString()
         val managed = ManagedSession(
@@ -197,7 +197,7 @@ class SshSessionController internal constructor(
                 endpoint = profile.endpoint,
                 protocol = ConnectionProtocol.SSH,
                 phase = TerminalSessionPhase.CONNECTING,
-                detail = context.getString(R.string.session_connecting),
+                detail = context.appString(R.string.session_connecting),
                 kind = kind,
             ),
         )
@@ -320,7 +320,7 @@ class SshSessionController internal constructor(
                 updatePortForward(
                     runtimeId,
                     PortForwardRuntimePhase.FAILED,
-                    context.getString(R.string.mosh_not_supported_for_ssh_feature),
+                    context.appString(R.string.mosh_not_supported_for_ssh_feature),
                 )
                 closePortForwardSessionIfIdle(sessionId)
                 return@launch
@@ -348,7 +348,7 @@ class SshSessionController internal constructor(
     fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
         val sessionId = connectForPortForward(profile)
         val runtimeId = portForwardRuntimeId(sessionId, rule.id)
-        markPortForwardStarting(runtimeId, sessionId, rule, context.getString(R.string.session_connecting))
+        markPortForwardStarting(runtimeId, sessionId, rule, context.appString(R.string.session_connecting))
         scope.launch {
             val open = awaitSessionOpen(sessionId)
             // Stopping the rule while it authenticates already closed the
@@ -364,7 +364,7 @@ class SshSessionController internal constructor(
                 updatePortForward(
                     runtimeId,
                     PortForwardRuntimePhase.FAILED,
-                    context.getString(R.string.session_ended_connection_failed),
+                    context.appString(R.string.session_ended_connection_failed),
                 )
             }
         }
@@ -494,11 +494,7 @@ class SshSessionController internal constructor(
     fun clearFinishedTransfers() = fileTransfers.clearFinished()
 
     /** Fixed application wording for a failure raised by a remote file operation. */
-    fun remoteFileMessage(error: Throwable): String = error.toRemoteFileMessage()
-
-    /** Maps a remote file failure onto fixed application wording. */
-    private fun Throwable.toRemoteFileMessage(): String =
-        context.remoteFileMessageOrNull(this) ?: toSafeMessage()
+    fun remoteFileMessage(error: Throwable): RemoteFileMessage = error.toRemoteFileMessage()
 
     fun requestServerResources(sessionId: String) {
         scope.launch {
@@ -511,7 +507,7 @@ class SshSessionController internal constructor(
             } catch (error: Exception) {
                 publishLocalizableNotice(
                     sessionId,
-                    "\r\n[MangoSSH] ${context.getString(R.string.terminal_resource_query_failed)}\r\n",
+                    "\r\n[MangoSSH] ${context.appString(R.string.terminal_resource_query_failed)}\r\n",
                 )
             }
         }
@@ -554,7 +550,7 @@ class SshSessionController internal constructor(
         managed: ManagedSession,
         reason: SessionEndReason,
         failure: Throwable? = null,
-        userMessage: String? = null,
+        messageKind: SessionEndMessageKind? = null,
         deferTsnetMoshRelease: Boolean = true,
     ) {
         if (!sessionsById.remove(sessionId, managed)) return
@@ -604,7 +600,7 @@ class SshSessionController internal constructor(
             SessionEndedEvent(
                 sessionId = sessionId,
                 reason = reason,
-                userMessage = userMessage,
+                messageKind = messageKind,
             ),
         )
 
@@ -646,7 +642,7 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
-                context.getString(R.string.session_verifying_host_key),
+                context.appString(R.string.session_verifying_host_key),
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
@@ -657,11 +653,11 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.AUTHENTICATING,
-                context.getString(R.string.session_authenticating),
+                context.appString(R.string.session_authenticating),
             )
             if (!authenticate(connection, sessionId, profile, snapshot)) {
                 MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
-                throw SshAuthenticationException("服务器拒绝了此身份验证方式。")
+                throw SshAuthenticationException()
             }
             MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
@@ -673,13 +669,13 @@ class SshSessionController internal constructor(
                 if (!enabled) {
                     publishLocalizableNotice(
                         sessionId,
-                        "\r\n[MangoSSH] ${context.getString(R.string.terminal_agent_forwarding_rejected)}\r\n",
+                        "\r\n[MangoSSH] ${context.appString(R.string.terminal_agent_forwarding_rejected)}\r\n",
                     )
                 }
             }
             session.startShell()
 
-            updateSession(sessionId, TerminalSessionPhase.OPEN, context.getString(R.string.session_open))
+            updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             startSshReaders(sessionId, managed)
             startSshKeepalive(sessionId, managed)
@@ -695,7 +691,7 @@ class SshSessionController internal constructor(
                 managed = managed,
                 reason = SessionEndReason.CONNECTION_FAILED,
                 failure = error,
-                userMessage = connectionFailureMessage(error),
+                messageKind = connectionFailureMessage(error),
             )
         }
     }
@@ -721,7 +717,7 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
-                context.getString(R.string.session_verifying_host_key),
+                context.appString(R.string.session_verifying_host_key),
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
@@ -732,15 +728,15 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.AUTHENTICATING,
-                context.getString(R.string.session_authenticating),
+                context.appString(R.string.session_authenticating),
             )
             if (!authenticate(connection, sessionId, profile, snapshot)) {
                 MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
-                throw SshAuthenticationException("服务器拒绝了此身份验证方式。")
+                throw SshAuthenticationException()
             }
             MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
-            updateSession(sessionId, TerminalSessionPhase.OPEN, context.getString(R.string.session_open))
+            updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             startSshKeepalive(sessionId, managed)
         } catch (cancelled: CancellationException) {
@@ -751,7 +747,7 @@ class SshSessionController internal constructor(
                 managed = managed,
                 reason = SessionEndReason.CONNECTION_FAILED,
                 failure = error,
-                userMessage = connectionFailureMessage(error),
+                messageKind = connectionFailureMessage(error),
             )
         }
     }
@@ -779,7 +775,7 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
-                context.getString(R.string.session_verifying_host_key),
+                context.appString(R.string.session_verifying_host_key),
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
@@ -789,18 +785,18 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.AUTHENTICATING,
-                context.getString(R.string.session_authenticating),
+                context.appString(R.string.session_authenticating),
             )
             if (!authenticate(connection, sessionId, profile, snapshot)) {
                 MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
-                throw SshAuthenticationException("服务器拒绝了此身份验证方式。")
+                throw SshAuthenticationException()
             }
             MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
             updateSession(
                 sessionId,
                 TerminalSessionPhase.CONNECTING,
-                context.getString(R.string.mosh_connecting),
+                context.appString(R.string.mosh_connecting),
             )
             MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_STARTED)
             val bootstrap = runCatching { bootstrapMosh(connection) }.getOrElse { error ->
@@ -839,7 +835,7 @@ class SshSessionController internal constructor(
             managed.moshProcess = moshProcess
             MangoLog.info(MangoLogEvent.MOSH_PROCESS_STARTED)
 
-            updateSession(sessionId, TerminalSessionPhase.OPEN, context.getString(R.string.mosh_open))
+            updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.mosh_open))
             startMoshReader(sessionId, managed, moshProcess)
             runStartupSnippet(sessionId, profile, snapshot)
         } catch (cancelled: CancellationException) {
@@ -850,18 +846,17 @@ class SshSessionController internal constructor(
                 managed = managed,
                 reason = SessionEndReason.CONNECTION_FAILED,
                 failure = error,
-                userMessage = connectionFailureMessage(error),
+                messageKind = connectionFailureMessage(error),
             )
         }
     }
 
     /** Returns only fixed localized wording for failure categories that need clarification. */
-    private fun connectionFailureMessage(error: Exception): String? = when (error) {
-        is SshAuthenticationException -> context.getString(R.string.session_ended_authentication_failed)
-        is MoshBootstrapException -> context.getString(R.string.mosh_bootstrap_failed)
-        is MoshRuntimeException -> context.getString(R.string.mosh_runtime_missing)
-        is TsnetEnrollmentRequiredException ->
-            context.getString(R.string.embedded_tsnet_enrollment_required)
+    private fun connectionFailureMessage(error: Exception): SessionEndMessageKind? = when (error) {
+        is SshAuthenticationException -> SessionEndMessageKind.AUTHENTICATION_FAILED
+        is MoshBootstrapException -> SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED
+        is MoshRuntimeException -> SessionEndMessageKind.MOSH_RUNTIME_MISSING
+        is TsnetEnrollmentRequiredException -> SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED
         else -> null
     }
 
@@ -893,22 +888,32 @@ class SshSessionController internal constructor(
         AuthenticationMethod.PASSWORD -> {
             val password = requestAuthentication(
                 sessionId = sessionId,
-                title = "${profile.label} 的密码",
-                instruction = "密码仅用于本次连接，不会保存。",
-                fields = listOf(AuthenticationField("密码", echo = false)),
+                title = SessionPromptText.App(SessionPromptTextKind.PASSWORD_TITLE, profile.label),
+                instruction = SessionPromptText.App(SessionPromptTextKind.PASSWORD_INSTRUCTION),
+                fields = listOf(
+                    AuthenticationField(
+                        SessionPromptText.App(SessionPromptTextKind.PASSWORD_FIELD),
+                        echo = false,
+                    ),
+                ),
             )?.firstOrNull() ?: return false
             connection.authenticateWithPassword(profile.username, password)
         }
 
         AuthenticationMethod.PRIVATE_KEY -> {
             val key = profile.keyId?.let { keyId -> snapshot.keys.firstOrNull { it.id == keyId } }
-                ?: throw SshAuthenticationException("此主机尚未选择私钥。")
+                ?: throw SshAuthenticationException()
             val passphrase = if (key.requiresPassphrase) {
                 requestAuthentication(
                     sessionId = sessionId,
-                    title = "解锁 ${key.label}",
-                    instruction = "私钥口令仅用于本次连接。",
-                    fields = listOf(AuthenticationField("私钥口令", echo = false)),
+                    title = SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, key.label),
+                    instruction = SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
+                    fields = listOf(
+                        AuthenticationField(
+                            SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD),
+                            echo = false,
+                        ),
+                    ),
                 )?.firstOrNull() ?: return false
             } else {
                 null
@@ -925,18 +930,21 @@ class SshSessionController internal constructor(
             profile.username,
             InteractiveCallback { name, instruction, numberOfPrompts, prompts, echo ->
                 val fields = (0 until numberOfPrompts).map { index ->
-                    AuthenticationField(prompts[index], echo[index])
+                    AuthenticationField(SessionPromptText.Verbatim(prompts[index]), echo[index])
                 }
                 requestAuthentication(
                     sessionId = sessionId,
-                    title = name.ifBlank {
-                        if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH) {
-                            "Tailscale SSH 登录"
-                        } else {
-                            "交互式 SSH 登录"
-                        }
-                    },
-                    instruction = instruction.takeIf(String::isNotBlank),
+                    title = name.takeIf(String::isNotBlank)
+                        ?.let(SessionPromptText::Verbatim)
+                        ?: SessionPromptText.App(
+                            if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH) {
+                                SessionPromptTextKind.TAILSCALE_LOGIN_TITLE
+                            } else {
+                                SessionPromptTextKind.INTERACTIVE_LOGIN_TITLE
+                            },
+                        ),
+                    instruction = instruction.takeIf(String::isNotBlank)
+                        ?.let(SessionPromptText::Verbatim),
                     fields = fields,
                 )?.takeIf { it.size == numberOfPrompts }?.toTypedArray() ?: emptyArray()
             },
@@ -1144,7 +1152,7 @@ class SshSessionController internal constructor(
     private fun requireSshConnection(sessionId: String): Connection {
         val managed = requireNotNull(sessionsById[sessionId]) { "The SSH session is not open" }
         check(managed.protocol == ConnectionProtocol.SSH) {
-            context.getString(R.string.mosh_not_supported_for_ssh_feature)
+            context.appString(R.string.mosh_not_supported_for_ssh_feature)
         }
         return managed.connection
     }
@@ -1163,8 +1171,8 @@ class SshSessionController internal constructor(
 
     private fun requestAuthentication(
         sessionId: String,
-        title: String,
-        instruction: String?,
+        title: SessionPromptText,
+        instruction: SessionPromptText?,
         fields: List<AuthenticationField>,
     ): List<String>? = requestPrompt(
         SessionPrompt.Authentication(
@@ -1375,10 +1383,9 @@ class SshSessionController internal constructor(
         Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(hostKey))
 
     private fun Throwable.toSafeMessage(): String = when (this) {
-        is SshAuthenticationException -> message ?: "身份验证失败。"
-        is KeyPassphraseRequiredException -> "此私钥需要口令。"
-        else -> message?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_LENGTH)
-            ?: "连接已中断。请检查网络、主机地址和服务器日志。"
+        is SshAuthenticationException -> context.appString(R.string.session_ended_authentication_failed)
+        is KeyPassphraseRequiredException -> context.appString(R.string.message_key_passphrase_required)
+        else -> context.appString(R.string.session_ended_connection_lost)
     }
 
     private fun String.sanitizeRemoteBanner(): String =
@@ -1388,10 +1395,12 @@ class SshSessionController internal constructor(
                     append(character)
                 }
             }
-        }.trim().take(MAX_REMOTE_BANNER_CHARS).ifBlank { "Authentication banner received" }
+        }.trim().take(MAX_REMOTE_BANNER_CHARS).ifBlank {
+            context.appString(R.string.authentication_banner_received)
+        }
 
     /** Authentication rejection intentionally carries a user-safe message only. */
-    private class SshAuthenticationException(message: String) : Exception(message)
+    private class SshAuthenticationException : Exception()
 
     /** Signals that the remote command did not return a valid Mosh bootstrap record. */
     private class MoshBootstrapException(cause: Throwable? = null) : Exception(cause)

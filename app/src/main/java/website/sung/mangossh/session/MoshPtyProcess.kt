@@ -110,7 +110,7 @@ internal class MoshPtyProcess private constructor(
         ): MoshPtyProcess {
             require(port in 1..65535) { "Mosh UDP port is invalid" }
             val executable = File(context.applicationInfo.nativeLibraryDir, CLIENT_FILE_NAME)
-            check(executable.isFile) { context.getString(R.string.mosh_client_missing) }
+            check(executable.isFile) { context.appString(R.string.mosh_client_missing) }
             val terminfoDir = MoshRuntimeInstaller(context.applicationContext).install()
             val keyText = key.concatToString()
             val handle = try {
@@ -227,7 +227,7 @@ private class MoshRuntimeInstaller(private val context: Context) {
     /** The upstream archive stores terminfo below `share/terminfo`. */
     private fun terminfoDirectory(destination: File): File {
         val terminfo = File(destination, "share/terminfo")
-        check(terminfo.isDirectory) { context.getString(R.string.mosh_runtime_missing) }
+        check(terminfo.isDirectory) { context.appString(R.string.mosh_runtime_missing) }
         return terminfo
     }
 

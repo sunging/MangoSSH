@@ -1,40 +1,28 @@
 package website.sung.mangossh.session
 
-import android.content.Context
-import website.sung.mangossh.R
-
 /**
- * Fixed application wording for a file-operation failure, or null when the
- * failure is not one this mapping recognizes.
+ * Sanitized application-owned category for a remote file or transfer failure.
  *
- * Server-supplied error text never reaches the UI: [RemoteFileException] only
- * carries a category, and every category maps to a string resource here.
+ * Server-supplied error text never reaches this model. Presentation resolves
+ * the category against the current locale only when it is displayed.
  */
-internal fun Context.remoteFileMessageOrNull(error: Throwable): String? = when (error) {
-    is RemoteFileException -> getString(
-        when (error.failure) {
-            RemoteFileFailure.SUBSYSTEM_UNAVAILABLE -> R.string.remote_file_subsystem_unavailable
-            RemoteFileFailure.NOT_FOUND -> R.string.remote_file_not_found
-            RemoteFileFailure.ACCESS_DENIED -> R.string.remote_file_access_denied
-            RemoteFileFailure.NOT_A_FILE -> R.string.remote_file_not_a_file
-            RemoteFileFailure.TOO_LARGE -> R.string.remote_file_too_large
-            RemoteFileFailure.IO_FAILURE -> R.string.remote_file_io_failure
-        },
-    )
-
-    is LocalDocumentException -> getString(R.string.remote_file_local_document_failure)
-    is TransferTreeTooLargeException -> getString(
-        R.string.remote_file_tree_too_large,
-        MAX_TRANSFER_TREE_ENTRIES,
-        MAX_TRANSFER_TREE_DEPTH,
-    )
-
-    else -> null
+sealed interface RemoteFileMessage {
+    data class Failure(val reason: RemoteFileFailure) : RemoteFileMessage
+    data object LocalDocumentFailure : RemoteFileMessage
+    data object TreeTooLarge : RemoteFileMessage
+    data object TransferSessionClosed : RemoteFileMessage
+    data object ResumeRestarted : RemoteFileMessage
+    data class LinksSkipped(val count: Int) : RemoteFileMessage
+    data object IoFailure : RemoteFileMessage
 }
 
-/** Fixed application wording for a failure raised by a file transfer. */
-internal fun Context.remoteFileMessage(error: Throwable): String =
-    remoteFileMessageOrNull(error) ?: getString(R.string.remote_file_io_failure)
+/** Maps a throwable to a category without retaining library or server text. */
+internal fun Throwable.toRemoteFileMessage(): RemoteFileMessage = when (this) {
+    is RemoteFileException -> RemoteFileMessage.Failure(failure)
+    is LocalDocumentException -> RemoteFileMessage.LocalDocumentFailure
+    is TransferTreeTooLargeException -> RemoteFileMessage.TreeTooLarge
+    else -> RemoteFileMessage.IoFailure
+}
 
 /** Signals that a directory transfer exceeded the entry or depth cap. */
 class TransferTreeTooLargeException : Exception()

@@ -20,7 +20,7 @@ data class RemoteBrowserUiState(
     val entries: List<RemoteFileEntry> = emptyList(),
     val truncated: Boolean = false,
     val isLoading: Boolean = true,
-    val errorMessage: String? = null,
+    val errorMessage: UiText? = null,
     val preview: RemotePreviewUiState? = null,
     /** True while a transfer-only connection is still authenticating. */
     val isConnecting: Boolean = false,
@@ -45,5 +45,5 @@ data class RemotePreviewUiState(
     val isLoading: Boolean = true,
     val content: RemoteTextPreview? = null,
     val isBinary: Boolean = false,
-    val errorMessage: String? = null,
+    val errorMessage: UiText? = null,
 )

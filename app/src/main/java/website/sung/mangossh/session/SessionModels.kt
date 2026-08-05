@@ -60,16 +60,23 @@ enum class SessionEndReason {
 /**
  * One-shot lifecycle event for returning a visible terminal to the host list.
  *
- * [userMessage] is optional fixed, application-owned wording for failures
- * that need a more specific explanation than [reason]. It must never contain
- * host, credential, command, or protocol-library error data.
+ * [messageKind] is an optional fixed, application-owned category for failures
+ * that need a more specific explanation than [reason].
  */
 @Immutable
 data class SessionEndedEvent(
     val sessionId: String,
     val reason: SessionEndReason,
-    val userMessage: String? = null,
+    val messageKind: SessionEndMessageKind? = null,
 )
+
+/** Specific sanitized failure wording selected after a connection attempt ends. */
+enum class SessionEndMessageKind {
+    AUTHENTICATION_FAILED,
+    MOSH_BOOTSTRAP_FAILED,
+    MOSH_RUNTIME_MISSING,
+    TSNET_ENROLLMENT_REQUIRED,
+}
 
 enum class PortForwardRuntimePhase {
     STARTING,
@@ -128,7 +135,7 @@ data class ScpTransferState(
     val remotePath: String,
     val phase: ScpTransferPhase,
     val kind: ScpTransferKind = ScpTransferKind.FILE,
-    val detail: String? = null,
+    val detail: RemoteFileMessage? = null,
     val transferredBytes: Long = 0L,
     val totalBytes: Long? = null,
     /**
@@ -214,14 +221,37 @@ sealed interface SessionPrompt {
     data class Authentication(
         override val requestId: String,
         override val sessionId: String,
-        val title: String,
-        val instruction: String?,
+        val title: SessionPromptText,
+        val instruction: SessionPromptText?,
         val fields: List<AuthenticationField>,
     ) : SessionPrompt
 }
 
 @Immutable
 data class AuthenticationField(
-    val label: String,
+    val label: SessionPromptText,
     val echo: Boolean,
 )
+
+/** Distinguishes fixed application prompts from SSH server-provided wording. */
+@Immutable
+sealed interface SessionPromptText {
+    data class App(
+        val kind: SessionPromptTextKind,
+        val argument: String? = null,
+    ) : SessionPromptText
+
+    data class Verbatim(val value: String) : SessionPromptText
+}
+
+/** Resource-independent identifiers for authentication wording owned by MangoSSH. */
+enum class SessionPromptTextKind {
+    PASSWORD_TITLE,
+    PASSWORD_INSTRUCTION,
+    PASSWORD_FIELD,
+    UNLOCK_KEY_TITLE,
+    KEY_PASSPHRASE_INSTRUCTION,
+    KEY_PASSPHRASE_FIELD,
+    TAILSCALE_LOGIN_TITLE,
+    INTERACTIVE_LOGIN_TITLE,
+}

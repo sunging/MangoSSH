@@ -10,18 +10,18 @@ enum class ConnectionProtocol(val label: String) {
 }
 
 /** Network path used before protocol authentication. */
-enum class ConnectionRoute(val label: String) {
-    DIRECT("直接连接"),
-    TAILNET("系统 Tailscale"),
-    TSNET("内嵌 Tailscale"),
+enum class ConnectionRoute {
+    DIRECT,
+    TAILNET,
+    TSNET,
 }
 
 /** Credential exchange offered to the SSH server during connection setup. */
-enum class AuthenticationMethod(val label: String) {
-    PRIVATE_KEY("私钥"),
-    PASSWORD("密码"),
-    KEYBOARD_INTERACTIVE("交互式 / OTP"),
-    TAILSCALE_SSH("Tailscale SSH"),
+enum class AuthenticationMethod {
+    PRIVATE_KEY,
+    PASSWORD,
+    KEYBOARD_INTERACTIVE,
+    TAILSCALE_SSH,
 }
 
 /** Persisted non-secret connection settings; referenced keys live separately in the encrypted vault. */

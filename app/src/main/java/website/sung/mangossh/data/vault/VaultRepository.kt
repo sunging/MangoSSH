@@ -32,7 +32,7 @@ class VaultRepository(context: Context) {
                 _status.value = VaultStatus.Ready
                 MangoLog.info(MangoLogEvent.VAULT_OPEN_SUCCEEDED)
             } catch (error: Exception) {
-                _status.value = VaultStatus.Failed("无法打开本地加密保险库。请检查设备安全设置。")
+                _status.value = VaultStatus.Failed(VaultFailureReason.OPEN)
                 MangoLog.warn(MangoLogEvent.VAULT_OPEN_FAILED, error)
             }
         }
@@ -132,7 +132,7 @@ class VaultRepository(context: Context) {
                 MangoLog.info(MangoLogEvent.VAULT_WRITE_SUCCEEDED)
                 true
             } catch (error: Exception) {
-                _status.value = VaultStatus.Failed("无法保存加密保险库。数据未被覆盖。")
+                _status.value = VaultStatus.Failed(VaultFailureReason.WRITE)
                 MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error)
                 false
             }
