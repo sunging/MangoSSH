@@ -162,6 +162,31 @@ Validate the current version, localized notes, and an optional tag locally:
 gradlew.bat :app:verifyReleaseVersion -PreleaseTag=v0.0.1
 ```
 
+## In-app updates
+
+A sideloaded install can check `Settings` for a newer signed release from
+`https://github.com/sunging/MangoSSH/releases/latest`, download its APK to
+app-private cache storage, verify the download's SHA-256 against the
+release's published `SHA256SUMS` asset, and hand the verified file to the
+system package installer. A release with no `SHA256SUMS` cannot be installed
+in-app; MangoSSH links to the release page instead. Checking is manual
+("Check now") plus an opt-in, throttled automatic check (at most once every
+24 hours) on app start.
+
+The feature depends on the same asset names the release workflow produces
+(`MangoSSH-<tag>.apk`, `SHA256SUMS`) and is entirely absent from the request
+made to GitHub's API rate limit budget until the user opens Settings or an
+automatic check is due; it never sends a GitHub token.
+
+The whole feature is hidden at runtime — not just disabled — whenever
+`PackageManager` reports the app was installed by a store that already owns
+its own updates (F-Droid, Google Play, and common OEM app stores). This keeps
+a single build and manifest for every distribution channel, including the
+network-isolated F-Droid build, so the `REQUEST_INSTALL_PACKAGES` permission
+declared in the manifest is present but its code path is unreachable on
+F-Droid installs. See `data/update/InstallSource.kt` for the exact channel
+list.
+
 ## F-Droid source build
 
 F-Droid builds use `tools/build-fdroid-release.sh` with network access disabled.
