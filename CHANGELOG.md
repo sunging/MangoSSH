@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.0](https://github.com/sunging/MangoSSH/compare/v0.1.0...v0.2.0) (2026-08-05)
+
+
+### Features
+
+* add a GitHub release client and update file store ([590ba94](https://github.com/sunging/MangoSSH/commit/590ba943b2e9ce2839f3dce8e7d03256d460a4b3))
+* add a home shortcut to the remote file browser ([c4b96c2](https://github.com/sunging/MangoSSH/commit/c4b96c23c3ac5577962bc216ffb003888a3d44cd))
+* add an in-app update settings card ([0824498](https://github.com/sunging/MangoSSH/commit/0824498dabc5ad7aa2c13aa2753dae1fe5ede320))
+* add an SFTP remote file browser with text preview ([4134348](https://github.com/sunging/MangoSSH/commit/4134348451ee4ba19dbddd1ec7e9c5d3ff2d5381))
+* add self-update version and preference models ([b8d0558](https://github.com/sunging/MangoSSH/commit/b8d05584700b7b609388ce33608278c753cb6bef))
+* browse and transfer remote files without a shell session ([56e8bf1](https://github.com/sunging/MangoSSH/commit/56e8bf1604cb61595df31f60b233e877dbb5c6df))
+* control file transfers from the host list and transfer folders ([1e44484](https://github.com/sunging/MangoSSH/commit/1e44484bd3e9a894dd9c5e2a568468d26364faf6))
+* SFTP browsing, file transfers, port forwarding, and in-app updates ([05614e8](https://github.com/sunging/MangoSSH/commit/05614e85c67ee4deb11bf24350557bcf9464e3b8))
+* start a port forward without a terminal session ([6410809](https://github.com/sunging/MangoSSH/commit/64108096cd1e092a5faa8ec3893eff8d4665e5fd))
+
+
+### Bug Fixes
+
+* drop the duplicated separator after the breadcrumb root ([55b1b60](https://github.com/sunging/MangoSSH/commit/55b1b606e753c7400bc7e1eb498d941e868fa810))
+* hide ready vault banner on home screen ([ae511e8](https://github.com/sunging/MangoSSH/commit/ae511e8b3ac9ac5ba6fa26dbcc8262cc55f5f68a))
+* keep terminal below status bar ([93e9600](https://github.com/sunging/MangoSSH/commit/93e96005af8b1560ef00de5ba5166e8900c34810))
+* match session bars to the terminal palette ([93f5e7f](https://github.com/sunging/MangoSSH/commit/93f5e7fe969da7f9e4b2a209167647711630c7ed))
+
 ## [0.1.0](https://github.com/sunging/MangoSSH/compare/v0.0.1...v0.1.0) (2026-08-03)
 
 
