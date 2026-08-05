@@ -2,30 +2,48 @@ package website.sung.mangossh.presentation
 
 import android.app.Application
 import android.net.Uri
+import androidx.annotation.StringRes
 import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.MangoSshApplication
 import website.sung.mangossh.R
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
 import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
+import website.sung.mangossh.data.update.AppUpdateCheckResult
+import website.sung.mangossh.data.update.AppUpdateDownloadResult
+import website.sung.mangossh.data.update.AppUpdateFailureReason
+import website.sung.mangossh.data.update.AppUpdateFileStore
+import website.sung.mangossh.data.update.GitHubReleaseClient
+import website.sung.mangossh.data.update.archiveMatchesInstalledSigner
 import website.sung.mangossh.data.sync.WebDavDownloadResult
 import website.sung.mangossh.data.sync.WebDavResult
+import website.sung.mangossh.data.sync.WebDavFailureReason
 import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
+import website.sung.mangossh.domain.AppRelease
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
+import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
@@ -33,17 +51,71 @@ import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
+import website.sung.mangossh.session.RemoteFileEntry
+import website.sung.mangossh.session.RemoteFileKind
+import website.sung.mangossh.session.RemoteFilePaths
+import website.sung.mangossh.session.ScpTransferState
 import website.sung.mangossh.session.SessionEndedEvent
+import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionEndReason
+import website.sung.mangossh.session.SessionEndMessageKind
+import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
 
 /** Top-level areas exposed by the Compose navigation bar. */
-enum class AppSection(val label: String) {
-    HOSTS("主机"),
-    KEYS("密钥"),
-    TRANSFERS("传输"),
-    SETTINGS("设置"),
+enum class AppSection {
+    HOSTS,
+    KEYS,
+    FORWARDS,
+    SETTINGS,
+}
+
+private fun WebDavResult.Failure.toUiText(upload: Boolean): UiText = webDavFailureText(
+    reason = reason,
+    statusCode = statusCode,
+    networkResource = if (upload) {
+        R.string.message_webdav_upload_failed
+    } else {
+        R.string.message_webdav_download_failed
+    },
+)
+
+private fun WebDavDownloadResult.Failure.toUiText(): UiText = webDavFailureText(
+    reason = reason,
+    statusCode = statusCode,
+    networkResource = R.string.message_webdav_download_failed,
+)
+
+private fun webDavFailureText(
+    reason: WebDavFailureReason,
+    statusCode: Int?,
+    @StringRes networkResource: Int,
+): UiText = when (reason) {
+    WebDavFailureReason.INVALID_CONFIGURATION -> uiText(R.string.message_webdav_invalid_configuration)
+    WebDavFailureReason.INVALID_BACKUP_SIZE -> uiText(R.string.message_webdav_invalid_backup_size)
+    WebDavFailureReason.HTTP_STATUS -> statusCode
+        ?.let { uiText(R.string.message_webdav_http_failed, it) }
+        ?: uiText(networkResource)
+    WebDavFailureReason.RESPONSE_TOO_LARGE -> uiText(R.string.message_webdav_response_too_large)
+    WebDavFailureReason.NETWORK -> uiText(networkResource)
+}
+
+private fun AppUpdateFailureReason.toUiText(statusCode: Int?): UiText = when (this) {
+    AppUpdateFailureReason.INVALID_RESPONSE -> uiText(R.string.app_update_failed_invalid_response)
+    AppUpdateFailureReason.NO_RELEASE -> uiText(R.string.app_update_failed_no_release)
+    AppUpdateFailureReason.ASSET_MISSING -> uiText(R.string.app_update_failed_asset_missing)
+    AppUpdateFailureReason.CHECKSUM_MISSING -> uiText(R.string.app_update_failed_checksum_missing)
+    AppUpdateFailureReason.CHECKSUM_MISMATCH -> uiText(R.string.app_update_failed_checksum_mismatch)
+    AppUpdateFailureReason.SIGNATURE_MISMATCH -> uiText(R.string.app_update_failed_signature_mismatch)
+    AppUpdateFailureReason.RATE_LIMITED -> uiText(R.string.app_update_failed_rate_limited)
+    AppUpdateFailureReason.HTTP_STATUS -> statusCode
+        ?.let { uiText(R.string.app_update_failed_http, it) }
+        ?: uiText(R.string.app_update_failed_network)
+    AppUpdateFailureReason.RESPONSE_TOO_LARGE -> uiText(R.string.app_update_failed_too_large)
+    AppUpdateFailureReason.INSECURE_REDIRECT -> uiText(R.string.app_update_failed_insecure)
+    AppUpdateFailureReason.STORAGE -> uiText(R.string.app_update_failed_storage)
+    AppUpdateFailureReason.NETWORK -> uiText(R.string.app_update_failed_network)
 }
 
 /** One pending foreground-notification destination, retained across app unlock. */
@@ -56,14 +128,22 @@ sealed interface SessionNavigationRequest {
 /** Resolves user-visible failure text while keeping orderly session exits silent. */
 internal fun resolveSessionEndMessage(
     event: SessionEndedEvent,
-    getString: (Int) -> String,
-): String? = event.userMessage ?: when (event.reason) {
+): UiText? = event.messageKind?.toUiText() ?: when (event.reason) {
     SessionEndReason.USER_REQUEST,
     SessionEndReason.REMOTE_EXIT -> null
 
-    SessionEndReason.CONNECTION_LOST -> getString(R.string.session_ended_connection_lost)
-    SessionEndReason.CONNECTION_FAILED -> getString(R.string.session_ended_connection_failed)
+    SessionEndReason.CONNECTION_LOST -> uiText(R.string.session_ended_connection_lost)
+    SessionEndReason.CONNECTION_FAILED -> uiText(R.string.session_ended_connection_failed)
 }
+
+private fun SessionEndMessageKind.toUiText(): UiText = uiText(
+    when (this) {
+        SessionEndMessageKind.AUTHENTICATION_FAILED -> R.string.session_ended_authentication_failed
+        SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED -> R.string.mosh_bootstrap_failed
+        SessionEndMessageKind.MOSH_RUNTIME_MISSING -> R.string.mosh_runtime_missing
+        SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED -> R.string.embedded_tsnet_enrollment_required
+    },
+)
 
 /**
  * Bridges encrypted vault state and live session state to Compose.
@@ -81,6 +161,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val terminalShortcutStore = runtime.terminalShortcuts
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
+    private val updatePreferencesStore = runtime.updatePreferences
+    private val updateFiles = AppUpdateFileStore(application)
+    private val releaseClient = GitHubReleaseClient(appVersionName = runtime.installedAppInfo?.versionName ?: "unknown")
+    private var updateJob: Job? = null
 
     val hosts = vault.snapshot
         .map { snapshot ->
@@ -120,7 +204,22 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val terminalAppearance = terminalAppearanceStore.appearance
     val terminalShortcuts = terminalShortcutStore.config
 
-    private val _userMessage = MutableStateFlow<String?>(null)
+    private val _updatePhase = MutableStateFlow<UpdatePhase>(UpdatePhase.Idle)
+
+    /** Immutable self-update state for the settings card and the settings navigation badge. */
+    val updateState: StateFlow<UpdateUiState> = combine(
+        _updatePhase,
+        updatePreferencesStore.preferences,
+    ) { phase, preferences ->
+        UpdateUiState(
+            supported = runtime.selfUpdateSupported,
+            automaticCheckEnabled = preferences.automaticCheckEnabled,
+            installedVersion = runtime.installedAppInfo?.versionName.orEmpty(),
+            phase = phase,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UpdateUiState())
+
+    private val _userMessage = MutableStateFlow<UiText?>(null)
     val userMessage = _userMessage.asStateFlow()
 
     private val _portableExport = MutableStateFlow<ByteArray?>(null)
@@ -134,12 +233,52 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val _selectedSection = kotlinx.coroutines.flow.MutableStateFlow(AppSection.HOSTS)
     val selectedSection = _selectedSection.asStateFlow()
 
+    private val _remoteBrowser = MutableStateFlow<RemoteBrowserUiState?>(null)
+    /** Null whenever the remote file browser is closed. */
+    val remoteBrowser = _remoteBrowser.asStateFlow()
+
+    // Directory listing and preview reads are cancelled when the user moves on,
+    // so a slow server cannot overwrite a newer destination.
+    private var browserJob: Job? = null
+    private var previewJob: Job? = null
+
     private val _sessionNavigationRequest = MutableStateFlow<SessionNavigationRequest?>(null)
     /** Foreground-notification destination retained until the app lock is cleared. */
     val sessionNavigationRequest = _sessionNavigationRequest.asStateFlow()
 
     init {
         viewModelScope.launch { vault.open() }
+        // A browsed connection can fail while authenticating or drop mid-listing;
+        // surface that in the browser instead of leaving a spinner running.
+        viewModelScope.launch {
+            sessionEndedEvents.collect { event ->
+                _remoteBrowser.update { state ->
+                    if (state?.sessionId != event.sessionId) {
+                        state
+                    } else {
+                        state.copy(
+                            isConnecting = false,
+                            isLoading = false,
+                            errorMessage = sessionEndMessage(event)
+                                ?: uiText(R.string.session_ended_connection_failed),
+                        )
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            // A stale or partial archive from a previous process is never
+            // reusable, and the install-source binder call belongs off the
+            // main thread regardless of whether an automatic check follows.
+            val selfUpdateSupported = withContext(Dispatchers.IO) {
+                updateFiles.purgeExcept(null)
+                runtime.selfUpdateSupported
+            }
+            if (!selfUpdateSupported) return@launch
+            // The lock screen owns the whole window; no background work runs behind it.
+            appLocked.first { !it }
+            maybeRunAutomaticUpdateCheck()
+        }
     }
 
     fun selectSection(section: AppSection) {
@@ -230,21 +369,19 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         if (_sessionNavigationRequest.value == request) _sessionNavigationRequest.value = null
     }
 
-    /** Maps a lifecycle event to its fixed current-locale message, when one is appropriate. */
-    fun sessionEndMessage(event: SessionEndedEvent): String? = resolveSessionEndMessage(event) { resourceId ->
-        getApplication<Application>().getString(resourceId)
-    }
+    /** Maps a lifecycle event to resource-backed wording, keeping orderly exits silent. */
+    fun sessionEndMessage(event: SessionEndedEvent): UiText? = resolveSessionEndMessage(event)
 
     fun savePortForward(rule: PortForwardRule) {
         val isDestinationValid = rule.type == website.sung.mangossh.data.vault.PortForwardType.DYNAMIC ||
             (!rule.destinationHost.isNullOrBlank() && rule.destinationPort in 1..65535)
         if (rule.bindPort !in 1..65535 || !isDestinationValid) {
-            _userMessage.value = "端口转发配置不完整"
+            _userMessage.value = uiText(R.string.message_port_forward_incomplete)
             return
         }
         viewModelScope.launch {
             vault.upsertPortForward(rule)
-            _userMessage.value = "已保存端口转发"
+            _userMessage.value = uiText(R.string.message_port_forward_saved)
         }
     }
 
@@ -254,7 +391,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun saveSnippet(id: String?, label: String, script: String, appendNewline: Boolean) {
         if (label.isBlank() || script.isBlank()) {
-            _userMessage.value = "代码片段名称和内容不能为空"
+            _userMessage.value = uiText(R.string.message_snippet_required)
             return
         }
         viewModelScope.launch {
@@ -266,7 +403,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                     appendNewline = appendNewline,
                 ),
             )
-            _userMessage.value = "已保存代码片段"
+            _userMessage.value = uiText(R.string.message_snippet_saved)
         }
     }
 
@@ -278,32 +415,320 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.startPortForward(sessionId, rule)
     }
 
+    /**
+     * Starts [rule] on a connection opened just for it, so a tunnel does not
+     * require a terminal session for the same host.
+     */
+    fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
+        val application = getApplication<Application>()
+        if (profile.protocol != ConnectionProtocol.SSH) {
+            _userMessage.value = uiText(R.string.mosh_not_supported_for_ssh_feature)
+            return
+        }
+        runCatching { sessionController.startPortForwardOnNewConnection(profile, rule) }
+            .onFailure {
+                _userMessage.value = uiText(R.string.session_ended_connection_failed)
+            }
+    }
+
     fun stopPortForward(sessionId: String, ruleId: String) {
         sessionController.stopPortForward(sessionId, ruleId)
     }
 
-    /** Validates local UI form input before delegating an SCP upload to an SSH session. */
-    fun uploadScp(sessionId: String, sourceUri: Uri, displayName: String, remoteDirectory: String) {
-        if (remoteDirectory.isBlank()) {
-            _userMessage.value = "请输入远端目录"
-            return
-        }
-        runCatching { sessionController.uploadScp(sessionId, sourceUri, displayName, remoteDirectory) }
-            .onFailure { _userMessage.value = "远端目录包含不支持的字符" }
-    }
-
-    /** Validates local UI form input before delegating an SCP download to an SSH session. */
-    fun downloadScp(sessionId: String, remotePath: String, destinationUri: Uri) {
-        if (remotePath.isBlank()) {
-            _userMessage.value = "请输入远端文件路径"
-            return
-        }
-        runCatching { sessionController.downloadScp(sessionId, remotePath, destinationUri) }
-            .onFailure { _userMessage.value = "远端文件路径包含不支持的字符" }
-    }
-
     fun requestServerResources(sessionId: String) {
         sessionController.requestServerResources(sessionId)
+    }
+
+    /**
+     * Opens the remote file browser on a terminal session that is already
+     * connected, reusing its authenticated transport.
+     *
+     * A repeated call for the session already being browsed is ignored so a
+     * recomposition cannot throw the user back to their home directory.
+     */
+    fun openRemoteBrowser(sessionId: String) {
+        val existing = _remoteBrowser.value
+        if (existing != null && existing.sessionId == sessionId) return
+        val session = sessions.value.firstOrNull { it.id == sessionId } ?: return
+        closeRemoteBrowser()
+        _remoteBrowser.value = RemoteBrowserUiState(
+            sessionId = sessionId,
+            title = session.title,
+            path = RemoteFilePaths.ROOT,
+        )
+        browserJob = viewModelScope.launch { openHomeDirectory(sessionId) }
+    }
+
+    /**
+     * Opens the remote file browser on a host that has no session yet.
+     *
+     * This authenticates a connection dedicated to file transfer, so browsing
+     * files does not require starting a shell first. The connection is released
+     * when the browser closes, once any transfer it started has finished.
+     */
+    fun openRemoteBrowserForProfile(profile: ConnectionProfile) {
+        val existing = _remoteBrowser.value
+        if (existing != null && existing.ownsSession && existing.profileId == profile.id) return
+        if (profile.protocol != ConnectionProtocol.SSH) {
+            _userMessage.value = uiText(R.string.mosh_not_supported_for_ssh_feature)
+            return
+        }
+        closeRemoteBrowser()
+        val sessionId = runCatching { sessionController.connectForFileTransfer(profile) }
+            .getOrElse { error ->
+                _userMessage.value = sessionController.remoteFileMessage(error).toUiText()
+                return
+            }
+        _remoteBrowser.value = RemoteBrowserUiState(
+            sessionId = sessionId,
+            title = profile.label,
+            path = RemoteFilePaths.ROOT,
+            isConnecting = true,
+            ownsSession = true,
+            profileId = profile.id,
+        )
+        browserJob = viewModelScope.launch {
+            if (!awaitSessionOpen(sessionId)) return@launch
+            _remoteBrowser.update { state ->
+                if (state?.sessionId == sessionId) state.copy(isConnecting = false) else state
+            }
+            openHomeDirectory(sessionId)
+        }
+    }
+
+    /**
+     * Suspends until the transfer-only session authenticates.
+     *
+     * Returns false when it ended first; the failure text is published by the
+     * session-ended collector, so no message is produced here.
+     */
+    private suspend fun awaitSessionOpen(sessionId: String): Boolean = sessions
+        .map { list -> list.firstOrNull { it.id == sessionId } }
+        .first { it == null || it.phase == TerminalSessionPhase.OPEN }
+        ?.phase == TerminalSessionPhase.OPEN
+
+    private suspend fun openHomeDirectory(sessionId: String) {
+        val home = runCatching { sessionController.resolveRemoteHome(sessionId) }
+            .getOrElse { RemoteFilePaths.ROOT }
+        _remoteBrowser.update { state ->
+            if (state?.sessionId == sessionId) state.copy(homePath = home) else state
+        }
+        loadRemoteDirectory(sessionId, home)
+    }
+
+    /** Returns to the directory the session's account starts in. */
+    fun remoteBrowserHome() {
+        val current = _remoteBrowser.value ?: return
+        val home = current.homePath ?: return
+        if (home == current.path) return
+        navigateRemoteBrowser(home)
+    }
+
+    /** Lists [path] in the already-open browser. */
+    fun navigateRemoteBrowser(path: String) {
+        val current = _remoteBrowser.value ?: return
+        browserJob?.cancel()
+        browserJob = viewModelScope.launch { loadRemoteDirectory(current.sessionId, path) }
+    }
+
+    /** Navigates to the parent of the current directory. */
+    fun remoteBrowserUp() {
+        val current = _remoteBrowser.value ?: return
+        if (current.path == RemoteFilePaths.ROOT) return
+        navigateRemoteBrowser(RemoteFilePaths.parentOf(current.path))
+    }
+
+    /** Re-lists the current directory, for example after an upload. */
+    fun refreshRemoteBrowser() {
+        val current = _remoteBrowser.value ?: return
+        navigateRemoteBrowser(current.path)
+    }
+
+    fun closeRemoteBrowser() {
+        val current = _remoteBrowser.value
+        browserJob?.cancel()
+        browserJob = null
+        previewJob?.cancel()
+        previewJob = null
+        _remoteBrowser.value = null
+        // A borrowed terminal session keeps running; only a connection this
+        // browser opened for itself is handed back.
+        if (current?.ownsSession == true) {
+            sessionController.releaseFileTransferSession(current.sessionId)
+        }
+    }
+
+    /**
+     * Opens [entry]: directories are listed, files are previewed, and a symlink
+     * is resolved on the server first because a listing only reports the link
+     * itself, not what it points at.
+     */
+    fun openRemoteEntry(entry: RemoteFileEntry) {
+        val current = _remoteBrowser.value ?: return
+        when (entry.kind) {
+            RemoteFileKind.DIRECTORY -> navigateRemoteBrowser(entry.path)
+            RemoteFileKind.SYMLINK -> viewModelScope.launch {
+                val kind = runCatching { sessionController.resolveRemoteKind(current.sessionId, entry.path) }
+                    .getOrDefault(RemoteFileKind.FILE)
+                if (kind == RemoteFileKind.DIRECTORY) {
+                    navigateRemoteBrowser(entry.path)
+                } else {
+                    previewRemoteFile(entry.path)
+                }
+            }
+
+            RemoteFileKind.FILE, RemoteFileKind.OTHER -> previewRemoteFile(entry.path)
+        }
+    }
+
+    /** Loads a read-only text preview of a remote file. */
+    fun previewRemoteFile(path: String) {
+        val current = _remoteBrowser.value ?: return
+        _remoteBrowser.value = current.copy(preview = RemotePreviewUiState(path = path))
+        previewJob?.cancel()
+        previewJob = viewModelScope.launch {
+            val result = runCatching { sessionController.readRemoteTextPreview(current.sessionId, path) }
+            result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            val preview = result.fold(
+                onSuccess = { content ->
+                    RemotePreviewUiState(
+                        path = path,
+                        isLoading = false,
+                        content = content,
+                        isBinary = content == null,
+                    )
+                },
+                onFailure = { error ->
+                    RemotePreviewUiState(
+                        path = path,
+                        isLoading = false,
+                        errorMessage = sessionController.remoteFileMessage(error).toUiText(),
+                    )
+                },
+            )
+            _remoteBrowser.update { state ->
+                if (state?.preview?.path == path) state.copy(preview = preview) else state
+            }
+        }
+    }
+
+    fun dismissRemotePreview() {
+        previewJob?.cancel()
+        previewJob = null
+        _remoteBrowser.update { state -> state?.copy(preview = null) }
+    }
+
+    /** Downloads a browsed remote file into a document the user selected. */
+    fun downloadRemoteFile(remotePath: String, destination: Uri) {
+        val current = _remoteBrowser.value ?: return
+        sessionController.downloadRemoteFile(current.sessionId, remotePath, destination)
+    }
+
+    /** Downloads a browsed remote directory into a folder the user selected. */
+    fun downloadRemoteDirectory(remotePath: String, destinationTree: Uri) {
+        val current = _remoteBrowser.value ?: return
+        sessionController.downloadRemoteDirectory(current.sessionId, remotePath, destinationTree)
+    }
+
+    /** Uploads a selected document into the directory currently being browsed. */
+    fun uploadToRemoteBrowser(source: Uri, displayName: String) {
+        val current = _remoteBrowser.value ?: return
+        runCatching {
+            sessionController.uploadRemoteFile(current.sessionId, source, displayName, current.path)
+        }.onFailure { error ->
+            _userMessage.value = sessionController.remoteFileMessage(error).toUiText()
+        }
+    }
+
+    /** Uploads a selected local folder into the directory currently being browsed. */
+    fun uploadDirectoryToRemoteBrowser(sourceTree: Uri, displayName: String) {
+        val current = _remoteBrowser.value ?: return
+        runCatching {
+            sessionController.uploadRemoteDirectory(current.sessionId, sourceTree, displayName, current.path)
+        }.onFailure { error ->
+            _userMessage.value = sessionController.remoteFileMessage(error).toUiText()
+        }
+    }
+
+    fun pauseTransfer(transferId: String) = sessionController.pauseTransfer(transferId)
+
+    fun resumeTransfer(transferId: String) = sessionController.resumeTransfer(transferId)
+
+    fun cancelTransfer(transferId: String) = sessionController.cancelTransfer(transferId)
+
+    fun retryTransfer(transferId: String) = sessionController.retryTransfer(transferId)
+
+    fun clearFinishedTransfers() = sessionController.clearFinishedTransfers()
+
+    /**
+     * Reopens the remote browser on the directory a finished upload landed in.
+     *
+     * Only the connection the upload ran on is reused; a closed session cannot
+     * be reopened from here because its prompts would have nowhere to render.
+     */
+    fun openRemoteDirectoryFromTransfer(transfer: ScpTransferState) {
+        val session = sessions.value.firstOrNull { it.id == transfer.sessionId }
+        if (session == null || session.phase != TerminalSessionPhase.OPEN) {
+            _userMessage.value = uiText(R.string.remote_file_transfer_session_closed)
+            return
+        }
+        if (_remoteBrowser.value?.sessionId == transfer.sessionId) {
+            navigateRemoteBrowser(transfer.remotePath)
+            return
+        }
+        closeRemoteBrowser()
+        // A transfer-only connection stays owned by the browser, so closing it
+        // still hands that connection back.
+        _remoteBrowser.value = RemoteBrowserUiState(
+            sessionId = transfer.sessionId,
+            title = session.title,
+            path = transfer.remotePath,
+            ownsSession = session.kind == SessionKind.FILE_TRANSFER,
+            profileId = session.profileId.takeIf { session.kind == SessionKind.FILE_TRANSFER },
+        )
+        browserJob = viewModelScope.launch {
+            val home = runCatching { sessionController.resolveRemoteHome(transfer.sessionId) }
+                .getOrElse { RemoteFilePaths.ROOT }
+            _remoteBrowser.update { state ->
+                if (state?.sessionId == transfer.sessionId) state.copy(homePath = home) else state
+            }
+            loadRemoteDirectory(transfer.sessionId, transfer.remotePath)
+        }
+    }
+
+    private suspend fun loadRemoteDirectory(sessionId: String, path: String) {
+        _remoteBrowser.update { state ->
+            state?.copy(path = path, isLoading = true, errorMessage = null)
+        }
+        runCatching { sessionController.listRemoteDirectory(sessionId, path) }
+            .onSuccess { listing ->
+                _remoteBrowser.update { state ->
+                    if (state?.sessionId != sessionId) {
+                        state
+                    } else {
+                        state.copy(
+                            path = listing.path,
+                            entries = listing.entries,
+                            truncated = listing.truncated,
+                            isLoading = false,
+                            errorMessage = null,
+                        )
+                    }
+                }
+            }
+            .onFailure { error ->
+                if (error is CancellationException) throw error
+                _remoteBrowser.update { state ->
+                    if (state?.sessionId != sessionId) {
+                        state
+                    } else {
+                        state.copy(
+                            isLoading = false,
+                            errorMessage = sessionController.remoteFileMessage(error).toUiText(),
+                        )
+                    }
+                }
+            }
     }
 
     fun respondToSessionPrompt(prompt: SessionPrompt, values: List<String>?) {
@@ -320,13 +745,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             }
                 .onSuccess {
                     _userMessage.value = if (vault.upsertKey(it)) {
-                        "已生成 ${it.label}。"
+                        uiText(R.string.message_key_generated, it.label)
                     } else {
-                        "无法保存加密保险库。数据未被覆盖。"
+                        uiText(R.string.message_vault_save_failed)
                     }
                 }
                 .onFailure {
-                    _userMessage.value = "无法生成密钥。"
+                    _userMessage.value = uiText(R.string.message_key_generation_failed)
                 }
         }
     }
@@ -336,16 +761,19 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             runCatching { keyManager.importPrivateKey(label, contents, passphrase) }
                 .onSuccess {
                     _userMessage.value = if (vault.upsertKey(it)) {
-                        "已导入 ${it.label}。"
+                        uiText(R.string.message_key_imported, it.label)
                     } else {
-                        "无法保存加密保险库。数据未被覆盖。"
+                        uiText(R.string.message_vault_save_failed)
                     }
                 }
                 .onFailure { error ->
-                    _userMessage.value = when (error) {
-                        is KeyPassphraseRequiredException -> "此密钥需要口令。"
-                        else -> "无法导入私钥。请检查格式和口令。"
-                    }
+                    _userMessage.value = uiText(
+                        if (error is KeyPassphraseRequiredException) {
+                            R.string.message_key_passphrase_required
+                        } else {
+                            R.string.message_key_import_failed
+                        },
+                    )
                 }
         }
     }
@@ -362,8 +790,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             runCatching { embeddedTsnetManager.beginBrowserEnrollment() }
                 .onFailure {
-                    _userMessage.value = getApplication<Application>()
-                        .getString(R.string.embedded_tsnet_browser_start_failed)
+                    _userMessage.value = uiText(R.string.embedded_tsnet_browser_start_failed)
                 }
         }
     }
@@ -374,8 +801,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             try {
                 runCatching { embeddedTsnetManager.beginAuthKeyEnrollment(authKey) }
                     .onFailure {
-                        _userMessage.value = getApplication<Application>()
-                            .getString(R.string.embedded_tsnet_auth_key_failed)
+                        _userMessage.value = uiText(R.string.embedded_tsnet_auth_key_failed)
                     }
             } finally {
                 authKey.fill('\u0000')
@@ -387,11 +813,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             runCatching { embeddedTsnetManager.logout() }
                 .onSuccess {
-                    _userMessage.value = getApplication<Application>()
-                        .getString(R.string.embedded_tsnet_logout_complete)
+                    _userMessage.value = uiText(R.string.embedded_tsnet_logout_complete)
                 }
                 .onFailure { error ->
-                    _userMessage.value = getApplication<Application>().getString(
+                    _userMessage.value = uiText(
                         if (error is TsnetSessionsActiveException) {
                             R.string.embedded_tsnet_logout_sessions_active
                         } else {
@@ -402,8 +827,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun reportUserMessage(message: String) {
+    fun reportUserMessage(message: UiText) {
         _userMessage.value = message
+    }
+
+    /** Reports fixed application wording without resolving it before a locale change. */
+    fun reportUserMessage(@StringRes resourceId: Int, vararg arguments: Any) {
+        _userMessage.value = uiText(resourceId, *arguments)
     }
 
     fun saveWebDavConfig(
@@ -415,7 +845,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         val normalizedEndpoint = endpoint.trim().trimEnd('/')
         val normalizedFileName = remoteFileName.trim().trimStart('/')
         if (!normalizedEndpoint.startsWith("https://") || username.isBlank() || normalizedFileName.isBlank()) {
-            _userMessage.value = "请填写 HTTPS WebDAV 地址、用户名和远端文件名。"
+            _userMessage.value = uiText(R.string.message_webdav_fields_required)
             return
         }
         viewModelScope.launch {
@@ -427,7 +857,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                     remoteFileName = normalizedFileName,
                 ),
             )
-            _userMessage.value = "已保存 WebDAV 配置。"
+            _userMessage.value = uiText(R.string.message_webdav_saved)
         }
     }
 
@@ -440,10 +870,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             runCatching { vault.exportPortable(passphrase.toCharArray()) }
                 .onSuccess { blob ->
                     _portableExport.value = blob
-                    _userMessage.value = "请选择备份文件的保存位置。"
+                    _userMessage.value = uiText(R.string.message_choose_backup_destination)
                 }
                 .onFailure {
-                    _userMessage.value = "无法创建加密备份。请确认已设置同步口令。"
+                    _userMessage.value = uiText(R.string.message_backup_create_missing_passphrase)
                 }
         }
     }
@@ -455,8 +885,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun importPortable(bytes: ByteArray, passphrase: String) {
         viewModelScope.launch {
             runCatching { vault.importPortable(bytes, passphrase.toCharArray()) }
-                .onSuccess { _userMessage.value = "已导入加密备份，主机与密钥已替换。" }
-                .onFailure { _userMessage.value = "无法导入备份：口令错误或文件已损坏。" }
+                .onSuccess { _userMessage.value = uiText(R.string.message_backup_imported) }
+                .onFailure { _userMessage.value = uiText(R.string.message_backup_import_failed) }
         }
     }
 
@@ -464,16 +894,16 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val config = vault.snapshot.value.webDavConfig
             if (config == null) {
-                _userMessage.value = "请先配置 WebDAV。"
+                _userMessage.value = uiText(R.string.message_webdav_configure_first)
                 return@launch
             }
             val blob = runCatching { vault.exportPortable(passphrase.toCharArray()) }.getOrElse {
-                _userMessage.value = "无法创建加密备份。"
+                _userMessage.value = uiText(R.string.message_backup_create_failed)
                 return@launch
             }
             when (val result = webDavClient.upload(config, blob)) {
-                WebDavResult.Success -> _userMessage.value = "已上传加密备份到 WebDAV。"
-                is WebDavResult.Failure -> _userMessage.value = result.message
+                WebDavResult.Success -> _userMessage.value = uiText(R.string.message_webdav_upload_complete)
+                is WebDavResult.Failure -> _userMessage.value = result.toUiText(upload = true)
             }
         }
     }
@@ -482,15 +912,15 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val config = vault.snapshot.value.webDavConfig
             if (config == null) {
-                _userMessage.value = "请先配置 WebDAV。"
+                _userMessage.value = uiText(R.string.message_webdav_configure_first)
                 return@launch
             }
             when (val result = webDavClient.download(config)) {
-                is WebDavDownloadResult.Failure -> _userMessage.value = result.message
+                is WebDavDownloadResult.Failure -> _userMessage.value = result.toUiText()
                 is WebDavDownloadResult.Success -> {
                     runCatching { vault.importPortable(result.encryptedBlob, passphrase.toCharArray()) }
-                        .onSuccess { _userMessage.value = "已从 WebDAV 导入加密备份。" }
-                        .onFailure { _userMessage.value = "无法导入 WebDAV 备份：口令错误或文件已损坏。" }
+                        .onSuccess { _userMessage.value = uiText(R.string.message_webdav_import_complete) }
+                        .onFailure { _userMessage.value = uiText(R.string.message_webdav_import_failed) }
                 }
             }
         }
@@ -503,9 +933,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             appLockStore.setPin(chars)
             _appLockConfiguration.value = appLockStore.configuration()
             _appLocked.value = false
-            _userMessage.value = "已启用应用 PIN 解锁。"
+            _userMessage.value = uiText(R.string.message_app_lock_enabled)
         } catch (_: IllegalArgumentException) {
-            _userMessage.value = "PIN 必须为 4 到 12 位数字。"
+            _userMessage.value = uiText(
+                R.string.message_pin_invalid,
+                AppLockStore.MIN_PIN_LENGTH,
+                AppLockStore.MAX_PIN_LENGTH,
+            )
         } finally {
             chars.fill('\u0000')
         }
@@ -515,13 +949,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         appLockStore.clear()
         _appLockConfiguration.value = appLockStore.configuration()
         _appLocked.value = false
-        _userMessage.value = "已关闭应用锁。"
+        _userMessage.value = uiText(R.string.message_app_lock_disabled)
     }
 
     fun setBiometricUnlockEnabled(enabled: Boolean) {
         runCatching { appLockStore.setBiometricEnabled(enabled) }
             .onSuccess { _appLockConfiguration.value = appLockStore.configuration() }
-            .onFailure { _userMessage.value = "请先设置应用 PIN。" }
+            .onFailure { _userMessage.value = uiText(R.string.message_app_pin_required) }
     }
 
     fun lockForBackground() {
@@ -534,7 +968,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             if (appLockStore.verifyPin(chars)) {
                 _appLocked.value = false
             } else {
-                _userMessage.value = "PIN 不正确。"
+                _userMessage.value = uiText(R.string.message_pin_incorrect)
             }
         } finally {
             chars.fill('\u0000')
@@ -545,4 +979,149 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         if (_appLockConfiguration.value.biometricEnabled) _appLocked.value = false
     }
 
+    /** Checks GitHub now, always reporting a result even if the same version was previously dismissed. */
+    fun checkForUpdates() {
+        updateJob?.cancel()
+        updatePreferencesStore.clearDismissal()
+        updateJob = viewModelScope.launch { runUpdateCheck() }
+    }
+
+    private suspend fun maybeRunAutomaticUpdateCheck() {
+        if (!updatePreferencesStore.current().shouldAutoCheck(System.currentTimeMillis())) return
+        runUpdateCheck()
+    }
+
+    private suspend fun runUpdateCheck() {
+        _updatePhase.value = UpdatePhase.Checking
+        val result = releaseClient.latestRelease()
+        // Recorded even on failure, including a rate-limited response, so a
+        // persistently failing check cannot repeat within the throttle window.
+        updatePreferencesStore.recordCheck(System.currentTimeMillis())
+        _updatePhase.value = when (result) {
+            is AppUpdateCheckResult.Success -> {
+                val release = result.release
+                val installedVersionCode = runtime.installedAppInfo?.versionCode ?: 0L
+                when {
+                    release.version.versionCode <= installedVersionCode -> UpdatePhase.UpToDate
+                    updatePreferencesStore.current().isDismissed(release.version.versionCode) -> UpdatePhase.Idle
+                    else -> UpdatePhase.Available(release)
+                }
+            }
+
+            is AppUpdateCheckResult.Failure ->
+                UpdatePhase.Failed(result.reason.toUiText(result.statusCode), release = null)
+        }
+    }
+
+    /** Downloads and digest-verifies the release offered by the current [UpdatePhase]. */
+    fun downloadUpdate() {
+        val release = when (val phase = _updatePhase.value) {
+            is UpdatePhase.Available -> phase.release
+            is UpdatePhase.Failed -> phase.release
+            else -> null
+        } ?: return
+        updateJob?.cancel()
+        updateJob = viewModelScope.launch {
+            _updatePhase.value = UpdatePhase.Downloading(release, 0L, release.apkAsset.sizeBytes)
+            try {
+                downloadVerifyAndPromote(release)
+            } catch (error: CancellationException) {
+                // Cancellation is user- or lifecycle-driven, not a download
+                // failure; return to the pre-download phase instead of
+                // leaving a stale progress bar on screen.
+                _updatePhase.value = UpdatePhase.Available(release)
+                throw error
+            }
+        }
+    }
+
+    private suspend fun downloadVerifyAndPromote(release: AppRelease) {
+        val partFile = updateFiles.partFile(release.tag)
+        val result = releaseClient.downloadApk(release, partFile) { downloaded, total ->
+            _updatePhase.update { current ->
+                if (current is UpdatePhase.Downloading) current.copy(downloadedBytes = downloaded, totalBytes = total)
+                else current
+            }
+        }
+        when (result) {
+            is AppUpdateDownloadResult.Failure ->
+                _updatePhase.value = UpdatePhase.Failed(result.reason.toUiText(result.statusCode), release)
+
+            is AppUpdateDownloadResult.Success -> {
+                _updatePhase.value = UpdatePhase.Verifying(release)
+                val verifiedFile = withContext(Dispatchers.IO) {
+                    val promoted = updateFiles.promote(result.file, release.tag) ?: return@withContext null
+                    // Defence in depth beyond the SHA-256 check: confirms the
+                    // archive is signed with this exact install's key before
+                    // the system installer is invoked, most commonly relevant
+                    // when a differently-signed debug build tries to update.
+                    promoted.takeIf { getApplication<Application>().archiveMatchesInstalledSigner(it) }
+                }
+                _updatePhase.value = if (verifiedFile != null) {
+                    UpdatePhase.ReadyToInstall(release)
+                } else {
+                    withContext(Dispatchers.IO) { updateFiles.purgeExcept(null) }
+                    UpdatePhase.Failed(uiText(R.string.app_update_failed_signature_mismatch), release)
+                }
+            }
+        }
+    }
+
+    fun cancelUpdateDownload() {
+        updateJob?.cancel()
+    }
+
+    /**
+     * Resolves a short-lived content URI for the verified update archive.
+     *
+     * Returns `null` and drops back to [UpdatePhase.Available] if the cache
+     * was evicted between verification and this call, since [UpdateSettingsCard]
+     * has no other way to detect that the file it was about to install is gone.
+     */
+    fun readyInstallUri(): Uri? {
+        val release = (_updatePhase.value as? UpdatePhase.ReadyToInstall)?.release ?: return null
+        val file = updateFiles.verifiedFile(release.tag)
+        if (!file.exists()) {
+            _updatePhase.value = UpdatePhase.Available(release)
+            return null
+        }
+        MangoLog.info(MangoLogEvent.APP_UPDATE_INSTALL_HANDOFF)
+        return updateFiles.contentUri(file)
+    }
+
+    /** Records that handing the verified archive to the system installer failed. */
+    fun reportInstallHandoffFailed() {
+        MangoLog.warn(MangoLogEvent.APP_UPDATE_INSTALL_HANDOFF_FAILED)
+        _userMessage.value = uiText(R.string.app_update_installer_unavailable)
+    }
+
+    /** Surfaces a failure to open the validated GitHub release page in a browser. */
+    fun reportReleasePageOpenFailed() {
+        _userMessage.value = uiText(R.string.app_update_release_page_unavailable)
+    }
+
+    fun setAutomaticUpdateCheckEnabled(enabled: Boolean) {
+        updatePreferencesStore.setAutomaticCheckEnabled(enabled)
+    }
+
+    /** Dismisses the current offer until a newer release is published. */
+    fun dismissUpdateNotice() {
+        val release = (_updatePhase.value as? UpdatePhase.Available)?.release ?: return
+        updatePreferencesStore.dismissVersion(release.version.versionCode)
+        _updatePhase.value = UpdatePhase.Idle
+    }
+
+    /** The validated release page for the release currently offered or in flight, if any. */
+    fun releasePageUrl(): String? = when (val phase = _updatePhase.value) {
+        is UpdatePhase.Available -> phase.release.htmlUrl
+        is UpdatePhase.Downloading -> phase.release.htmlUrl
+        is UpdatePhase.Verifying -> phase.release.htmlUrl
+        is UpdatePhase.ReadyToInstall -> phase.release.htmlUrl
+        is UpdatePhase.Failed -> phase.release?.htmlUrl
+        UpdatePhase.Idle, UpdatePhase.Checking, UpdatePhase.UpToDate -> null
+    }
+
+    override fun onCleared() {
+        updateJob?.cancel()
+    }
 }

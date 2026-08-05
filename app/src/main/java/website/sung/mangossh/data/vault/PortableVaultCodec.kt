@@ -26,7 +26,7 @@ internal object PortableVaultCodec {
     private val magic = byteArrayOf('M'.code.toByte(), 'S'.code.toByte(), 'S'.code.toByte(), 'H'.code.toByte(), 'X'.code.toByte())
 
     fun encrypt(snapshot: VaultSnapshot, passphrase: CharArray): ByteArray {
-        require(passphrase.isNotEmpty()) { "同步口令不能为空。" }
+        require(passphrase.isNotEmpty()) { "The sync passphrase is empty." }
         val salt = ByteArray(SALT_BYTES).also(SecureRandom()::nextBytes)
         val nonce = ByteArray(NONCE_BYTES).also(SecureRandom()::nextBytes)
         val plaintext = VaultPayloadCodec.encode(snapshot)
@@ -39,7 +39,7 @@ internal object PortableVaultCodec {
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(keyBytes, "AES"), GCMParameterSpec(128, nonce))
             cipher.updateAAD(header)
             val ciphertext = cipher.doFinal(plaintext)
-            require(ciphertext.size <= MAX_CIPHERTEXT_BYTES) { "保险库过大，无法导出。" }
+            require(ciphertext.size <= MAX_CIPHERTEXT_BYTES) { "The encrypted vault exceeds the export limit." }
             check(ciphertext.size == expectedCiphertextLength) { "Unexpected AES-GCM output length" }
             return header + ciphertext
         } finally {
@@ -49,7 +49,7 @@ internal object PortableVaultCodec {
     }
 
     fun decrypt(blob: ByteArray, passphrase: CharArray): VaultSnapshot {
-        require(passphrase.isNotEmpty()) { "同步口令不能为空。" }
+        require(passphrase.isNotEmpty()) { "The sync passphrase is empty." }
         val parsed = parse(blob)
         val keyBytes = deriveKey(passphrase, parsed.salt)
         try {
@@ -60,7 +60,7 @@ internal object PortableVaultCodec {
             val plaintext = try {
                 cipher.doFinal(parsed.ciphertext)
             } catch (error: GeneralSecurityException) {
-                throw IllegalArgumentException("同步口令错误或备份文件已损坏。", error)
+                throw IllegalArgumentException("The sync passphrase is incorrect or the backup is corrupted.", error)
             }
             return try {
                 VaultPayloadCodec.decode(plaintext)
@@ -99,21 +99,21 @@ internal object PortableVaultCodec {
 
     private fun parse(blob: ByteArray): ParsedVault {
         val minimumSize = magic.size + 1 + 1 + SALT_BYTES + 1 + NONCE_BYTES + Int.SIZE_BYTES + 16
-        require(blob.size >= minimumSize) { "不是有效的 MangoSSH 加密备份。" }
+        require(blob.size >= minimumSize) { "The blob is not a valid MangoSSH encrypted backup." }
         val buffer = ByteBuffer.wrap(blob)
         val parsedMagic = ByteArray(magic.size).also(buffer::get)
-        require(parsedMagic.contentEquals(magic)) { "不是有效的 MangoSSH 加密备份。" }
+        require(parsedMagic.contentEquals(magic)) { "The blob is not a valid MangoSSH encrypted backup." }
         val version = buffer.get()
         require(version == VERSION || version == LEGACY_VERSION) { "Unsupported backup version" }
         val saltLength = buffer.get().toInt() and 0xFF
-        require(saltLength == SALT_BYTES) { "备份文件头无效。" }
+        require(saltLength == SALT_BYTES) { "The backup header is invalid." }
         val salt = ByteArray(saltLength).also(buffer::get)
         val nonceLength = buffer.get().toInt() and 0xFF
-        require(nonceLength == NONCE_BYTES) { "备份文件头无效。" }
+        require(nonceLength == NONCE_BYTES) { "The backup header is invalid." }
         val nonce = ByteArray(nonceLength).also(buffer::get)
         val ciphertextLength = buffer.int
         require(ciphertextLength in 16..MAX_CIPHERTEXT_BYTES && ciphertextLength == buffer.remaining()) {
-            "备份文件长度无效。"
+            "The backup length is invalid."
         }
         return ParsedVault(version, salt, nonce, ByteArray(ciphertextLength).also(buffer::get))
     }

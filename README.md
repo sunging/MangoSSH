@@ -1,9 +1,32 @@
 # MangoSSH
 
 MangoSSH is a Jetpack Compose Android SSH and Mosh client with encrypted local
-profiles, reusable keys, encrypted WebDAV backups, port forwarding, SCP,
-keyboard shortcuts, app lock, system-Tailscale routing, and an outbound-only
-embedded tsnet node for explicitly selected SSH/Mosh profiles.
+profiles, reusable keys, encrypted WebDAV backups, port forwarding, SFTP file
+and folder transfer, keyboard shortcuts, app lock, system-Tailscale routing,
+and an outbound-only embedded tsnet node for explicitly selected SSH/Mosh
+profiles.
+
+## Port forwarding
+
+Local, remote, and SOCKS5 rules live on the **Forwarding** page. Starting a rule
+reuses an open terminal session for the same host when there is one, and
+otherwise opens a connection dedicated to that forward, so a tunnel does not
+require keeping a shell open. A dedicated connection closes as soon as its last
+forward stops, and its host-key or password prompt appears over the page that
+started it.
+
+## File transfers
+
+Open a host's **Files** action to browse it over SFTP; a connection dedicated to
+transfers is opened when no terminal session is running. Single files and whole
+folders can be downloaded and uploaded.
+
+Running transfers appear behind the transfer icon in the host list top bar, with
+combined progress. That sheet can pause, resume, cancel, and retry a transfer,
+open a finished download in another app, and clear finished records. Pausing
+stops at a chunk boundary and keeps the byte offset, so resuming continues from
+there over the same connection. Resuming and retrying need that connection: once
+it closes, the transfer has to be started again from the file browser.
 
 ## License
 
@@ -15,6 +38,13 @@ building:
 ```text
 git submodule update --init --recursive
 ```
+
+## Language
+
+MangoSSH includes English and Simplified Chinese. The language card at the top
+of **Settings** can follow the Android system/app-language preference (the
+default), or explicitly select **English** or **简体中文**. Changing it recreates
+the UI but keeps application-scoped SSH/Mosh sessions and transfers running.
 
 ## Terminal appearance
 
@@ -131,6 +161,31 @@ Validate the current version, localized notes, and an optional tag locally:
 ```text
 gradlew.bat :app:verifyReleaseVersion -PreleaseTag=v0.0.1
 ```
+
+## In-app updates
+
+A sideloaded install can check `Settings` for a newer signed release from
+`https://github.com/sunging/MangoSSH/releases/latest`, download its APK to
+app-private cache storage, verify the download's SHA-256 against the
+release's published `SHA256SUMS` asset, and hand the verified file to the
+system package installer. A release with no `SHA256SUMS` cannot be installed
+in-app; MangoSSH links to the release page instead. Checking is manual
+("Check now") plus an opt-in, throttled automatic check (at most once every
+24 hours) on app start.
+
+The feature depends on the same asset names the release workflow produces
+(`MangoSSH-<tag>.apk`, `SHA256SUMS`) and is entirely absent from the request
+made to GitHub's API rate limit budget until the user opens Settings or an
+automatic check is due; it never sends a GitHub token.
+
+The whole feature is hidden at runtime — not just disabled — whenever
+`PackageManager` reports the app was installed by a store that already owns
+its own updates (F-Droid, Google Play, and common OEM app stores). This keeps
+a single build and manifest for every distribution channel, including the
+network-isolated F-Droid build, so the `REQUEST_INSTALL_PACKAGES` permission
+declared in the manifest is present but its code path is unreachable on
+F-Droid installs. See `data/update/InstallSource.kt` for the exact channel
+list.
 
 ## F-Droid source build
 

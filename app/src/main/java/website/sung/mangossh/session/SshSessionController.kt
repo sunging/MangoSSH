@@ -13,8 +13,6 @@ import com.trilead.ssh2.Session
 import com.trilead.ssh2.UserAuthBannerCallback
 import com.trilead.ssh2.crypto.PublicKeyUtils
 import java.io.InputStream
-import java.io.File
-import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.security.KeyPair
 import java.security.MessageDigest
@@ -32,11 +30,15 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
@@ -75,6 +77,7 @@ class SshSessionController internal constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessionsById = ConcurrentHashMap<String, ManagedSession>()
     private val promptWaiters = ConcurrentHashMap<String, CompletableDeferred<List<String>?>>()
+    private val remoteFiles = RemoteFileClient()
     private val terminalStore = SessionTerminalStore(
         onKeyboardInput = { sessionId, bytes -> send(sessionId, bytes) },
         onResize = { sessionId, columns, rows -> resize(sessionId, columns, rows) },
@@ -87,8 +90,19 @@ class SshSessionController internal constructor(
     private val _portForwards = MutableStateFlow<List<PortForwardRuntimeState>>(emptyList())
     val portForwards = _portForwards.asStateFlow()
 
-    private val _scpTransfers = MutableStateFlow<List<ScpTransferState>>(emptyList())
-    val scpTransfers = _scpTransfers.asStateFlow()
+    /**
+     * File transfers run beside sessions rather than inside them: they can be
+     * paused, resumed, and retried after the browser screen that started them
+     * is gone, so the engine is kept separate from session lifetime.
+     */
+    private val fileTransfers = FileTransferManager(
+        context = context,
+        scope = scope,
+        remoteFiles = remoteFiles,
+        connectionOf = ::requireSshConnection,
+        onSessionIdle = ::closeFileTransferIfIdle,
+    )
+    val scpTransfers: StateFlow<List<ScpTransferState>> = fileTransfers.transfers
 
     private val _resourceSnapshots = MutableStateFlow<Map<String, ServerResourceSnapshot>>(emptyMap())
     val resourceSnapshots = _resourceSnapshots.asStateFlow()
@@ -124,7 +138,7 @@ class SshSessionController internal constructor(
                 endpoint = profile.endpoint,
                 protocol = profile.protocol,
                 phase = TerminalSessionPhase.CONNECTING,
-                detail = context.getString(R.string.session_connecting),
+                detail = context.appString(R.string.session_connecting),
             ),
         )
         SessionForegroundService.start(context)
@@ -136,6 +150,85 @@ class SshSessionController internal constructor(
             }
         }
         return sessionId
+    }
+
+    /**
+     * Opens an SSH connection used only for browsing and transferring files.
+     *
+     * It is released through [releaseFileTransferSession] rather than by the
+     * terminal UI.
+     */
+    fun connectForFileTransfer(profile: ConnectionProfile): String =
+        connectWithoutShell(profile, SessionKind.FILE_TRANSFER)
+
+    /**
+     * Opens an SSH connection used only to carry port forwards.
+     *
+     * It closes as soon as the last forward on it stops, so a tunnel no longer
+     * requires keeping a terminal open for the same host.
+     */
+    fun connectForPortForward(profile: ConnectionProfile): String =
+        connectWithoutShell(profile, SessionKind.PORT_FORWARD)
+
+    /**
+     * Authenticates a connection that carries no shell.
+     *
+     * Host-key verification and authentication are identical to [connect], but
+     * no shell channel, PTY, or terminal emulator is created, so the session
+     * must never be presented as an interactive terminal.
+     */
+    private fun connectWithoutShell(profile: ConnectionProfile, kind: SessionKind): String {
+        check(profile.protocol == ConnectionProtocol.SSH) {
+            context.appString(R.string.mosh_not_supported_for_ssh_feature)
+        }
+        val sessionId = UUID.randomUUID().toString()
+        val managed = ManagedSession(
+            connection = Connection(profile.hostname, profile.port),
+            protocol = ConnectionProtocol.SSH,
+            kind = kind,
+        )
+        sessionsById[sessionId] = managed
+        MangoLog.info(MangoLogEvent.SSH_CONNECT_STARTED)
+        updateSession(
+            TerminalSessionState(
+                id = sessionId,
+                profileId = profile.id,
+                title = profile.label,
+                endpoint = profile.endpoint,
+                protocol = ConnectionProtocol.SSH,
+                phase = TerminalSessionPhase.CONNECTING,
+                detail = context.appString(R.string.session_connecting),
+                kind = kind,
+            ),
+        )
+        SessionForegroundService.start(context)
+
+        managed.connectionJob = scope.launch {
+            runShellessSession(sessionId, profile, managed)
+        }
+        return sessionId
+    }
+
+    /**
+     * Marks a file-transfer connection as no longer needed.
+     *
+     * Unfinished transfers keep it alive so closing the browser cannot abort a
+     * transfer the user already started, or strand one they paused on purpose;
+     * it closes as soon as the queue for that session drains.
+     */
+    fun releaseFileTransferSession(sessionId: String) {
+        val managed = sessionsById[sessionId] ?: return
+        if (managed.kind != SessionKind.FILE_TRANSFER) return
+        managed.releaseRequested = true
+        closeFileTransferIfIdle(sessionId)
+    }
+
+    private fun closeFileTransferIfIdle(sessionId: String) {
+        val managed = sessionsById[sessionId] ?: return
+        if (managed.kind != SessionKind.FILE_TRANSFER || !managed.releaseRequested) return
+        if (!fileTransfers.hasBusyTransfers(sessionId)) {
+            finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
+        }
     }
 
     fun respondToPrompt(requestId: String, values: List<String>?) {
@@ -188,15 +281,35 @@ class SshSessionController internal constructor(
         if (existing?.phase == PortForwardRuntimePhase.ACTIVE || existing?.phase == PortForwardRuntimePhase.STARTING) {
             return
         }
+        markPortForwardStarting(runtimeId, sessionId, rule, "Starting tunnel")
+        activatePortForward(sessionId, rule, runtimeId)
+    }
+
+    private fun markPortForwardStarting(
+        runtimeId: String,
+        sessionId: String,
+        rule: PortForwardRule,
+        detail: String,
+    ) {
         updatePortForward(
             PortForwardRuntimeState(
                 runtimeId = runtimeId,
                 sessionId = sessionId,
                 rule = rule,
                 phase = PortForwardRuntimePhase.STARTING,
-                detail = "Starting tunnel",
+                detail = detail,
             ),
         )
+    }
+
+    /**
+     * Opens the tunnel for a rule already published as starting.
+     *
+     * This is separate from [startPortForward] because a rule on its own
+     * connection is marked starting while that connection authenticates, and
+     * the duplicate-start guard would otherwise reject its own placeholder.
+     */
+    private fun activatePortForward(sessionId: String, rule: PortForwardRule, runtimeId: String) {
         scope.launch {
             val managed = sessionsById[sessionId]
             if (managed == null) {
@@ -207,8 +320,9 @@ class SshSessionController internal constructor(
                 updatePortForward(
                     runtimeId,
                     PortForwardRuntimePhase.FAILED,
-                    context.getString(R.string.mosh_not_supported_for_ssh_feature),
+                    context.appString(R.string.mosh_not_supported_for_ssh_feature),
                 )
+                closePortForwardSessionIfIdle(sessionId)
                 return@launch
             }
             try {
@@ -217,85 +331,170 @@ class SshSessionController internal constructor(
                 updatePortForward(runtimeId, PortForwardRuntimePhase.ACTIVE, "Listening")
             } catch (error: Exception) {
                 updatePortForward(runtimeId, PortForwardRuntimePhase.FAILED, error.toSafeMessage())
+                // A connection opened only for this forward has nothing left to do.
+                closePortForwardSessionIfIdle(sessionId)
             }
         }
     }
+
+    /**
+     * Starts [rule] on a connection opened just for it.
+     *
+     * A forward no longer depends on an open terminal for the same host. The
+     * runtime state is published before the connection exists so the rule shows
+     * as starting while authentication runs, and the connection closes again as
+     * soon as the forward stops.
+     */
+    fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
+        val sessionId = connectForPortForward(profile)
+        val runtimeId = portForwardRuntimeId(sessionId, rule.id)
+        markPortForwardStarting(runtimeId, sessionId, rule, context.appString(R.string.session_connecting))
+        scope.launch {
+            val open = awaitSessionOpen(sessionId)
+            // Stopping the rule while it authenticates already closed the
+            // connection, and that is not a failure to report.
+            val stillStarting = _portForwards.value
+                .firstOrNull { it.runtimeId == runtimeId }
+                ?.phase == PortForwardRuntimePhase.STARTING
+            if (!stillStarting) return@launch
+            if (open) {
+                activatePortForward(sessionId, rule, runtimeId)
+            } else {
+                // The session-ended collector reports why the connection failed.
+                updatePortForward(
+                    runtimeId,
+                    PortForwardRuntimePhase.FAILED,
+                    context.appString(R.string.session_ended_connection_failed),
+                )
+            }
+        }
+    }
+
+    /** Suspends until [sessionId] authenticates, returning false when it ended first. */
+    private suspend fun awaitSessionOpen(sessionId: String): Boolean = _sessions
+        .map { list -> list.firstOrNull { it.id == sessionId } }
+        .first { it == null || it.phase == TerminalSessionPhase.OPEN }
+        ?.phase == TerminalSessionPhase.OPEN
 
     fun stopPortForward(sessionId: String, ruleId: String) {
         val runtimeId = portForwardRuntimeId(sessionId, ruleId)
         val managed = sessionsById[sessionId]
         runCatching { managed?.forwards?.remove(runtimeId)?.close() }
         updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPED, "Stopped")
+        closePortForwardSessionIfIdle(sessionId)
     }
 
-    fun uploadScp(sessionId: String, sourceUri: Uri, displayName: String, remoteDirectory: String) {
-        val safeRemoteDirectory = requireSafeScpRemotePath(remoteDirectory)
-        val remoteFileName = sanitizeScpFileName(displayName)
-        val transferId = UUID.randomUUID().toString()
-        updateScpTransfer(
-            ScpTransferState(
-                id = transferId,
-                sessionId = sessionId,
-                direction = ScpTransferDirection.UPLOAD,
-                displayName = remoteFileName,
-                remotePath = safeRemoteDirectory,
-                phase = ScpTransferPhase.QUEUED,
-            ),
-        )
-        scope.launch {
-            var stagingFile: File? = null
-            try {
-                val connection = requireSshConnection(sessionId)
-                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Preparing file")
-                stagingFile = File.createTempFile("mangossh-scp-", ".upload", context.cacheDir)
-                requireNotNull(context.contentResolver.openInputStream(sourceUri)) { "Cannot open selected file" }.use { input ->
-                    stagingFile.outputStream().use { output -> copyWithLimit(input, output) }
-                }
-                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Uploading")
-                connection.createSCPClient().put(
-                    stagingFile.absolutePath,
-                    remoteFileName,
-                    safeRemoteDirectory,
-                    "0600",
-                )
-                updateScpTransfer(transferId, ScpTransferPhase.COMPLETED, "Completed")
-            } catch (error: Exception) {
-                updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toSafeMessage())
-            } finally {
-                stagingFile?.delete()
-            }
+    /**
+     * Closes a forwarding-only connection once nothing is listening on it.
+     *
+     * Such a session exists only to carry forwards, so unlike a browser
+     * connection it needs no explicit release from the UI.
+     */
+    private fun closePortForwardSessionIfIdle(sessionId: String) {
+        val managed = sessionsById[sessionId] ?: return
+        if (managed.kind != SessionKind.PORT_FORWARD) return
+        val busy = _portForwards.value.any { state ->
+            state.sessionId == sessionId &&
+                (
+                    state.phase == PortForwardRuntimePhase.ACTIVE ||
+                        state.phase == PortForwardRuntimePhase.STARTING
+                    )
         }
+        if (!busy) finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
     }
 
-    fun downloadScp(sessionId: String, remotePath: String, destinationUri: Uri) {
-        val safeRemotePath = requireSafeScpRemotePath(remotePath)
-        val transferId = UUID.randomUUID().toString()
-        val displayName = safeRemotePath.substringAfterLast('/').ifBlank { "download" }
-        updateScpTransfer(
-            ScpTransferState(
-                id = transferId,
-                sessionId = sessionId,
-                direction = ScpTransferDirection.DOWNLOAD,
-                displayName = displayName,
-                remotePath = safeRemotePath,
-                phase = ScpTransferPhase.QUEUED,
-            ),
-        )
-        scope.launch {
-            try {
-                val connection = requireSshConnection(sessionId)
-                updateScpTransfer(transferId, ScpTransferPhase.RUNNING, "Downloading")
-                requireNotNull(context.contentResolver.openOutputStream(destinationUri, "w")) {
-                    "Cannot create destination file"
-                }.use { output ->
-                    connection.createSCPClient().get(safeRemotePath, output)
-                }
-                updateScpTransfer(transferId, ScpTransferPhase.COMPLETED, "Completed")
-            } catch (error: Exception) {
-                updateScpTransfer(transferId, ScpTransferPhase.FAILED, error.toSafeMessage())
-            }
-        }
+    /** Resolves the directory the session's account starts in, for the file browser. */
+    suspend fun resolveRemoteHome(sessionId: String): String = withContext(Dispatchers.IO) {
+        remoteFiles.resolveHome(requireSshConnection(sessionId))
     }
+
+    /** Lists one remote directory for the file browser. */
+    suspend fun listRemoteDirectory(sessionId: String, path: String): RemoteDirectoryListing =
+        withContext(Dispatchers.IO) {
+            remoteFiles.list(
+                connection = requireSshConnection(sessionId),
+                sessionId = sessionId,
+                path = path,
+                maxEntries = MAX_REMOTE_DIRECTORY_ENTRIES,
+            )
+        }
+
+    /** Resolves what a remote path actually is after following symlinks. */
+    suspend fun resolveRemoteKind(sessionId: String, path: String): RemoteFileKind =
+        withContext(Dispatchers.IO) {
+            remoteFiles.statKind(requireSshConnection(sessionId), path)
+        }
+
+    /**
+     * Reads the leading bytes of a remote file for a read-only preview.
+     *
+     * Returns null when the content is not valid UTF-8 text.
+     */
+    suspend fun readRemoteTextPreview(sessionId: String, path: String): RemoteTextPreview? =
+        withContext(Dispatchers.IO) {
+            remoteFiles.readTextPreview(
+                connection = requireSshConnection(sessionId),
+                path = path,
+                maxBytes = MAX_REMOTE_PREVIEW_BYTES,
+            )
+        }
+
+    /**
+     * Downloads a browsed remote file over SFTP into a caller-selected document.
+     *
+     * The path never reaches a remote shell, so spaces and other punctuation
+     * are supported, and the read loop reports byte progress.
+     */
+    fun downloadRemoteFile(sessionId: String, remotePath: String, destinationUri: Uri) {
+        fileTransfers.downloadFile(sessionId, remotePath, destinationUri)
+    }
+
+    /** Downloads a browsed remote directory into a caller-selected folder. */
+    fun downloadRemoteDirectory(sessionId: String, remotePath: String, destinationTreeUri: Uri) {
+        fileTransfers.downloadDirectory(sessionId, remotePath, destinationTreeUri)
+    }
+
+    /**
+     * Uploads a caller-selected document into a browsed remote directory over
+     * SFTP. The stream is written straight through, so no copy is staged in
+     * the application cache first.
+     */
+    fun uploadRemoteFile(
+        sessionId: String,
+        sourceUri: Uri,
+        displayName: String,
+        remoteDirectory: String,
+    ) {
+        fileTransfers.uploadFile(sessionId, sourceUri, displayName, remoteDirectory)
+    }
+
+    /** Uploads a caller-selected local folder into a browsed remote directory. */
+    fun uploadRemoteDirectory(
+        sessionId: String,
+        sourceTreeUri: Uri,
+        displayName: String,
+        remoteDirectory: String,
+    ) {
+        fileTransfers.uploadDirectory(sessionId, sourceTreeUri, remoteDirectory, displayName)
+    }
+
+    /** Stops a running transfer at the next chunk boundary, keeping its offset. */
+    fun pauseTransfer(transferId: String) = fileTransfers.pause(transferId)
+
+    /** Continues a paused transfer on the connection it started on. */
+    fun resumeTransfer(transferId: String) = fileTransfers.resume(transferId)
+
+    /** Stops a queued, running, or paused transfer for good. */
+    fun cancelTransfer(transferId: String) = fileTransfers.cancel(transferId)
+
+    /** Re-runs a failed or cancelled transfer from the beginning. */
+    fun retryTransfer(transferId: String) = fileTransfers.retry(transferId)
+
+    /** Drops finished transfer records; unfinished transfers are kept. */
+    fun clearFinishedTransfers() = fileTransfers.clearFinished()
+
+    /** Fixed application wording for a failure raised by a remote file operation. */
+    fun remoteFileMessage(error: Throwable): RemoteFileMessage = error.toRemoteFileMessage()
 
     fun requestServerResources(sessionId: String) {
         scope.launch {
@@ -308,7 +507,7 @@ class SshSessionController internal constructor(
             } catch (error: Exception) {
                 publishLocalizableNotice(
                     sessionId,
-                    "\r\n[MangoSSH] ${context.getString(R.string.terminal_resource_query_failed)}\r\n",
+                    "\r\n[MangoSSH] ${context.appString(R.string.terminal_resource_query_failed)}\r\n",
                 )
             }
         }
@@ -351,7 +550,7 @@ class SshSessionController internal constructor(
         managed: ManagedSession,
         reason: SessionEndReason,
         failure: Throwable? = null,
-        userMessage: String? = null,
+        messageKind: SessionEndMessageKind? = null,
         deferTsnetMoshRelease: Boolean = true,
     ) {
         if (!sessionsById.remove(sessionId, managed)) return
@@ -394,28 +593,14 @@ class SshSessionController internal constructor(
         }
 
         _resourceSnapshots.update { snapshots -> snapshots - sessionId }
-        _scpTransfers.update { transfers ->
-            transfers.map { transfer ->
-                if (
-                    transfer.sessionId == sessionId &&
-                    (transfer.phase == ScpTransferPhase.QUEUED || transfer.phase == ScpTransferPhase.RUNNING)
-                ) {
-                    transfer.copy(
-                        phase = ScpTransferPhase.FAILED,
-                        detail = context.getString(R.string.scp_transfer_session_closed),
-                    )
-                } else {
-                    transfer
-                }
-            }
-        }
+        fileTransfers.onSessionEnded(sessionId)
         terminalStore.remove(sessionId)
         _sessions.update { sessions -> sessions.filterNot { it.id == sessionId } }
         _sessionEndedEvents.tryEmit(
             SessionEndedEvent(
                 sessionId = sessionId,
                 reason = reason,
-                userMessage = userMessage,
+                messageKind = messageKind,
             ),
         )
 
@@ -457,7 +642,7 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
-                context.getString(R.string.session_verifying_host_key),
+                context.appString(R.string.session_verifying_host_key),
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
@@ -468,11 +653,11 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.AUTHENTICATING,
-                context.getString(R.string.session_authenticating),
+                context.appString(R.string.session_authenticating),
             )
             if (!authenticate(connection, sessionId, profile, snapshot)) {
                 MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
-                throw SshAuthenticationException("服务器拒绝了此身份验证方式。")
+                throw SshAuthenticationException()
             }
             MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
@@ -484,13 +669,13 @@ class SshSessionController internal constructor(
                 if (!enabled) {
                     publishLocalizableNotice(
                         sessionId,
-                        "\r\n[MangoSSH] ${context.getString(R.string.terminal_agent_forwarding_rejected)}\r\n",
+                        "\r\n[MangoSSH] ${context.appString(R.string.terminal_agent_forwarding_rejected)}\r\n",
                     )
                 }
             }
             session.startShell()
 
-            updateSession(sessionId, TerminalSessionPhase.OPEN, context.getString(R.string.session_open))
+            updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             startSshReaders(sessionId, managed)
             startSshKeepalive(sessionId, managed)
@@ -506,7 +691,63 @@ class SshSessionController internal constructor(
                 managed = managed,
                 reason = SessionEndReason.CONNECTION_FAILED,
                 failure = error,
-                userMessage = connectionFailureMessage(error),
+                messageKind = connectionFailureMessage(error),
+            )
+        }
+    }
+
+    /**
+     * Authenticates a transfer-only connection and stops before any shell work.
+     *
+     * No authentication banner callback is registered because this session has
+     * no terminal to display one in, and no startup snippet or auto-start port
+     * forward runs: those belong to interactive terminal sessions.
+     */
+    /** Connects and authenticates without opening a shell, for file transfer and port forwarding. */
+    private suspend fun runShellessSession(
+        sessionId: String,
+        profile: ConnectionProfile,
+        managed: ManagedSession,
+    ) {
+        if (sessionsById[sessionId] !== managed) return
+        val snapshot = vault.snapshot.value
+        val connection = managed.connection
+        try {
+            prepareConnectionRoute(profile, managed)
+            updateSession(
+                sessionId,
+                TerminalSessionPhase.VERIFYING_HOST_KEY,
+                context.appString(R.string.session_verifying_host_key),
+            )
+            connection.connect(
+                HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
+                CONNECT_TIMEOUT_MILLIS,
+                KEY_EXCHANGE_TIMEOUT_MILLIS,
+            )
+
+            updateSession(
+                sessionId,
+                TerminalSessionPhase.AUTHENTICATING,
+                context.appString(R.string.session_authenticating),
+            )
+            if (!authenticate(connection, sessionId, profile, snapshot)) {
+                MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
+                throw SshAuthenticationException()
+            }
+            MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
+
+            updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
+            MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
+            startSshKeepalive(sessionId, managed)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            finishSession(
+                sessionId = sessionId,
+                managed = managed,
+                reason = SessionEndReason.CONNECTION_FAILED,
+                failure = error,
+                messageKind = connectionFailureMessage(error),
             )
         }
     }
@@ -534,7 +775,7 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
-                context.getString(R.string.session_verifying_host_key),
+                context.appString(R.string.session_verifying_host_key),
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
@@ -544,18 +785,18 @@ class SshSessionController internal constructor(
             updateSession(
                 sessionId,
                 TerminalSessionPhase.AUTHENTICATING,
-                context.getString(R.string.session_authenticating),
+                context.appString(R.string.session_authenticating),
             )
             if (!authenticate(connection, sessionId, profile, snapshot)) {
                 MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED)
-                throw SshAuthenticationException("服务器拒绝了此身份验证方式。")
+                throw SshAuthenticationException()
             }
             MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
             updateSession(
                 sessionId,
                 TerminalSessionPhase.CONNECTING,
-                context.getString(R.string.mosh_connecting),
+                context.appString(R.string.mosh_connecting),
             )
             MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_STARTED)
             val bootstrap = runCatching { bootstrapMosh(connection) }.getOrElse { error ->
@@ -594,7 +835,7 @@ class SshSessionController internal constructor(
             managed.moshProcess = moshProcess
             MangoLog.info(MangoLogEvent.MOSH_PROCESS_STARTED)
 
-            updateSession(sessionId, TerminalSessionPhase.OPEN, context.getString(R.string.mosh_open))
+            updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.mosh_open))
             startMoshReader(sessionId, managed, moshProcess)
             runStartupSnippet(sessionId, profile, snapshot)
         } catch (cancelled: CancellationException) {
@@ -605,18 +846,17 @@ class SshSessionController internal constructor(
                 managed = managed,
                 reason = SessionEndReason.CONNECTION_FAILED,
                 failure = error,
-                userMessage = connectionFailureMessage(error),
+                messageKind = connectionFailureMessage(error),
             )
         }
     }
 
     /** Returns only fixed localized wording for failure categories that need clarification. */
-    private fun connectionFailureMessage(error: Exception): String? = when (error) {
-        is SshAuthenticationException -> context.getString(R.string.session_ended_authentication_failed)
-        is MoshBootstrapException -> context.getString(R.string.mosh_bootstrap_failed)
-        is MoshRuntimeException -> context.getString(R.string.mosh_runtime_missing)
-        is TsnetEnrollmentRequiredException ->
-            context.getString(R.string.embedded_tsnet_enrollment_required)
+    private fun connectionFailureMessage(error: Exception): SessionEndMessageKind? = when (error) {
+        is SshAuthenticationException -> SessionEndMessageKind.AUTHENTICATION_FAILED
+        is MoshBootstrapException -> SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED
+        is MoshRuntimeException -> SessionEndMessageKind.MOSH_RUNTIME_MISSING
+        is TsnetEnrollmentRequiredException -> SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED
         else -> null
     }
 
@@ -648,22 +888,32 @@ class SshSessionController internal constructor(
         AuthenticationMethod.PASSWORD -> {
             val password = requestAuthentication(
                 sessionId = sessionId,
-                title = "${profile.label} 的密码",
-                instruction = "密码仅用于本次连接，不会保存。",
-                fields = listOf(AuthenticationField("密码", echo = false)),
+                title = SessionPromptText.App(SessionPromptTextKind.PASSWORD_TITLE, profile.label),
+                instruction = SessionPromptText.App(SessionPromptTextKind.PASSWORD_INSTRUCTION),
+                fields = listOf(
+                    AuthenticationField(
+                        SessionPromptText.App(SessionPromptTextKind.PASSWORD_FIELD),
+                        echo = false,
+                    ),
+                ),
             )?.firstOrNull() ?: return false
             connection.authenticateWithPassword(profile.username, password)
         }
 
         AuthenticationMethod.PRIVATE_KEY -> {
             val key = profile.keyId?.let { keyId -> snapshot.keys.firstOrNull { it.id == keyId } }
-                ?: throw SshAuthenticationException("此主机尚未选择私钥。")
+                ?: throw SshAuthenticationException()
             val passphrase = if (key.requiresPassphrase) {
                 requestAuthentication(
                     sessionId = sessionId,
-                    title = "解锁 ${key.label}",
-                    instruction = "私钥口令仅用于本次连接。",
-                    fields = listOf(AuthenticationField("私钥口令", echo = false)),
+                    title = SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, key.label),
+                    instruction = SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
+                    fields = listOf(
+                        AuthenticationField(
+                            SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD),
+                            echo = false,
+                        ),
+                    ),
                 )?.firstOrNull() ?: return false
             } else {
                 null
@@ -680,18 +930,21 @@ class SshSessionController internal constructor(
             profile.username,
             InteractiveCallback { name, instruction, numberOfPrompts, prompts, echo ->
                 val fields = (0 until numberOfPrompts).map { index ->
-                    AuthenticationField(prompts[index], echo[index])
+                    AuthenticationField(SessionPromptText.Verbatim(prompts[index]), echo[index])
                 }
                 requestAuthentication(
                     sessionId = sessionId,
-                    title = name.ifBlank {
-                        if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH) {
-                            "Tailscale SSH 登录"
-                        } else {
-                            "交互式 SSH 登录"
-                        }
-                    },
-                    instruction = instruction.takeIf(String::isNotBlank),
+                    title = name.takeIf(String::isNotBlank)
+                        ?.let(SessionPromptText::Verbatim)
+                        ?: SessionPromptText.App(
+                            if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH) {
+                                SessionPromptTextKind.TAILSCALE_LOGIN_TITLE
+                            } else {
+                                SessionPromptTextKind.INTERACTIVE_LOGIN_TITLE
+                            },
+                        ),
+                    instruction = instruction.takeIf(String::isNotBlank)
+                        ?.let(SessionPromptText::Verbatim),
                     fields = fields,
                 )?.takeIf { it.size == numberOfPrompts }?.toTypedArray() ?: emptyArray()
             },
@@ -872,36 +1125,6 @@ class SshSessionController internal constructor(
         }
     }
 
-    private fun copyWithLimit(input: InputStream, output: OutputStream) {
-        val buffer = ByteArray(64 * 1024)
-        var copied = 0L
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            copied += count
-            require(copied <= MAX_SCP_STAGING_BYTES) { "Selected file is too large for SCP staging" }
-            output.write(buffer, 0, count)
-        }
-    }
-
-    private fun requireSafeScpRemotePath(value: String): String {
-        val normalized = value.trim()
-        require(normalized.isNotEmpty() && !normalized.startsWith('-')) { "Remote SCP path is invalid" }
-        require(normalized.all { character ->
-            character.isLetterOrDigit() || character in SAFE_SCP_PATH_CHARACTERS
-        }) { "Remote SCP path contains unsupported shell characters" }
-        return normalized
-    }
-
-    private fun sanitizeScpFileName(value: String): String {
-        val normalized = value.substringAfterLast('/').trim()
-        require(normalized.isNotEmpty() && normalized.length <= MAX_SCP_FILENAME_CHARS) { "SCP file name is invalid" }
-        require(normalized.none { character -> character == '\r' || character == '\n' || character == '\u0000' }) {
-            "SCP file name contains control characters"
-        }
-        return normalized
-    }
-
     /**
      * Starts the remote Mosh server through a fixed command and extracts the
      * generated UDP port/key pair. The command supplies an explicit UTF-8
@@ -929,7 +1152,7 @@ class SshSessionController internal constructor(
     private fun requireSshConnection(sessionId: String): Connection {
         val managed = requireNotNull(sessionsById[sessionId]) { "The SSH session is not open" }
         check(managed.protocol == ConnectionProtocol.SSH) {
-            context.getString(R.string.mosh_not_supported_for_ssh_feature)
+            context.appString(R.string.mosh_not_supported_for_ssh_feature)
         }
         return managed.connection
     }
@@ -948,8 +1171,8 @@ class SshSessionController internal constructor(
 
     private fun requestAuthentication(
         sessionId: String,
-        title: String,
-        instruction: String?,
+        title: SessionPromptText,
+        instruction: SessionPromptText?,
         fields: List<AuthenticationField>,
     ): List<String>? = requestPrompt(
         SessionPrompt.Authentication(
@@ -1011,18 +1234,6 @@ class SshSessionController internal constructor(
         }
     }
 
-    private fun updateScpTransfer(state: ScpTransferState) {
-        _scpTransfers.update { current -> current.filterNot { it.id == state.id } + state }
-    }
-
-    private fun updateScpTransfer(transferId: String, phase: ScpTransferPhase, detail: String?) {
-        _scpTransfers.update { current ->
-            current.map { state ->
-                if (state.id == transferId) state.copy(phase = phase, detail = detail) else state
-            }
-        }
-    }
-
     private inner class HostKeyVerifier(
         private val sessionId: String,
         private val profile: ConnectionProfile,
@@ -1074,7 +1285,12 @@ class SshSessionController internal constructor(
     private class ManagedSession(
         val connection: Connection,
         val protocol: ConnectionProtocol,
+        val kind: SessionKind = SessionKind.TERMINAL,
     ) {
+        /** Set once the browser is done; the connection closes when its queue drains. */
+        @Volatile
+        var releaseRequested: Boolean = false
+
         @Volatile
         var connectionJob: Job? = null
 
@@ -1167,10 +1383,9 @@ class SshSessionController internal constructor(
         Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(hostKey))
 
     private fun Throwable.toSafeMessage(): String = when (this) {
-        is SshAuthenticationException -> message ?: "身份验证失败。"
-        is KeyPassphraseRequiredException -> "此私钥需要口令。"
-        else -> message?.takeIf { it.isNotBlank() }?.take(MAX_ERROR_LENGTH)
-            ?: "连接已中断。请检查网络、主机地址和服务器日志。"
+        is SshAuthenticationException -> context.appString(R.string.session_ended_authentication_failed)
+        is KeyPassphraseRequiredException -> context.appString(R.string.message_key_passphrase_required)
+        else -> context.appString(R.string.session_ended_connection_lost)
     }
 
     private fun String.sanitizeRemoteBanner(): String =
@@ -1180,10 +1395,12 @@ class SshSessionController internal constructor(
                     append(character)
                 }
             }
-        }.trim().take(MAX_REMOTE_BANNER_CHARS).ifBlank { "Authentication banner received" }
+        }.trim().take(MAX_REMOTE_BANNER_CHARS).ifBlank {
+            context.appString(R.string.authentication_banner_received)
+        }
 
     /** Authentication rejection intentionally carries a user-safe message only. */
-    private class SshAuthenticationException(message: String) : Exception(message)
+    private class SshAuthenticationException : Exception()
 
     /** Signals that the remote command did not return a valid Mosh bootstrap record. */
     private class MoshBootstrapException(cause: Throwable? = null) : Exception(cause)
@@ -1203,9 +1420,6 @@ class SshSessionController internal constructor(
         const val TRUST_APPROVAL = "trust"
         const val MAX_ERROR_LENGTH = 240
         const val MAX_REMOTE_BANNER_CHARS = 2_048
-        const val MAX_SCP_STAGING_BYTES = 1024L * 1024L * 1024L
-        const val MAX_SCP_FILENAME_CHARS = 255
-        const val SAFE_SCP_PATH_CHARACTERS = "._/@%+=:,~-"
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
         const val TSNET_LOOPBACK_HOST = "127.0.0.1"

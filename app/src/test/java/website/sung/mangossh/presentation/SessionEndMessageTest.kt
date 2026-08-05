@@ -5,46 +5,36 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import website.sung.mangossh.R
 import website.sung.mangossh.session.SessionEndReason
+import website.sung.mangossh.session.SessionEndMessageKind
 import website.sung.mangossh.session.SessionEndedEvent
 
 class SessionEndMessageTest {
     @Test
     fun keepsOrderlySessionEndsSilent() {
-        val getString: (Int) -> String = { "unexpected message" }
-
         assertNull(
             resolveSessionEndMessage(
                 SessionEndedEvent("user-request", SessionEndReason.USER_REQUEST),
-                getString,
             ),
         )
         assertNull(
             resolveSessionEndMessage(
                 SessionEndedEvent("remote-exit", SessionEndReason.REMOTE_EXIT),
-                getString,
             ),
         )
     }
 
     @Test
     fun retainsFailureMessages() {
-        val messages = mapOf(
-            R.string.session_ended_connection_lost to "connection lost",
-            R.string.session_ended_connection_failed to "connection failed",
-        )
-
         assertEquals(
-            "connection lost",
+            uiText(R.string.session_ended_connection_lost),
             resolveSessionEndMessage(
                 SessionEndedEvent("lost", SessionEndReason.CONNECTION_LOST),
-                messages::getValue,
             ),
         )
         assertEquals(
-            "connection failed",
+            uiText(R.string.session_ended_connection_failed),
             resolveSessionEndMessage(
                 SessionEndedEvent("failed", SessionEndReason.CONNECTION_FAILED),
-                messages::getValue,
             ),
         )
     }
@@ -52,14 +42,13 @@ class SessionEndMessageTest {
     @Test
     fun preservesSpecificSanitizedFailureMessage() {
         assertEquals(
-            "Authentication failed.",
+            uiText(R.string.session_ended_authentication_failed),
             resolveSessionEndMessage(
                 SessionEndedEvent(
                     sessionId = "authentication",
                     reason = SessionEndReason.CONNECTION_FAILED,
-                    userMessage = "Authentication failed.",
+                    messageKind = SessionEndMessageKind.AUTHENTICATION_FAILED,
                 ),
-                getString = { "generic failure" },
             ),
         )
     }

@@ -2,9 +2,11 @@
 
 package website.sung.mangossh.presentation
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.provider.OpenableColumns
+import androidx.annotation.StringRes
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,13 +32,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -50,7 +54,6 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,6 +65,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,6 +90,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.core.net.toUri
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -106,6 +112,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.data.vault.VaultStatus
+import website.sung.mangossh.data.vault.VaultFailureReason
 import website.sung.mangossh.R
 import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.vault.CommandSnippet
@@ -123,65 +130,16 @@ import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
+import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
+import website.sung.mangossh.session.SessionPromptText
+import website.sung.mangossh.session.SessionPromptTextKind
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
-import website.sung.mangossh.session.ScpTransferDirection
-import website.sung.mangossh.session.ScpTransferPhase
-import website.sung.mangossh.session.ScpTransferState
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetPhase
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
 import website.sung.mangossh.security.AppLockConfiguration
-
-/**
- * Localizes established Compose screen chrome. Callers pass [localize] as
- * `false` for user-created labels, host data, fingerprints, and server-owned
- * text so those values are never translated or altered. The app advertises
- * English and Simplified Chinese in `locales_config.xml`; all other device
- * languages fall back to English.
- */
-@Composable
-private fun Text(
-    text: String,
-    modifier: Modifier = Modifier,
-    color: Color = Color.Unspecified,
-    fontSize: TextUnit = TextUnit.Unspecified,
-    fontStyle: FontStyle? = null,
-    fontWeight: FontWeight? = null,
-    fontFamily: FontFamily? = null,
-    letterSpacing: TextUnit = TextUnit.Unspecified,
-    textDecoration: TextDecoration? = null,
-    textAlign: TextAlign? = null,
-    lineHeight: TextUnit = TextUnit.Unspecified,
-    overflow: TextOverflow = TextOverflow.Clip,
-    softWrap: Boolean = true,
-    maxLines: Int = Int.MAX_VALUE,
-    minLines: Int = 1,
-    onTextLayout: (TextLayoutResult) -> Unit = {},
-    style: TextStyle = LocalTextStyle.current,
-    localize: Boolean = true,
-) {
-    androidx.compose.material3.Text(
-        text = if (localize) localizedUiLiteral(text) else text,
-        modifier = modifier,
-        color = color,
-        fontSize = fontSize,
-        fontStyle = fontStyle,
-        fontWeight = fontWeight,
-        fontFamily = fontFamily,
-        letterSpacing = letterSpacing,
-        textDecoration = textDecoration,
-        textAlign = textAlign,
-        lineHeight = lineHeight,
-        overflow = overflow,
-        softWrap = softWrap,
-        maxLines = maxLines,
-        minLines = minLines,
-        onTextLayout = onTextLayout,
-        style = style,
-    )
-}
 
 private sealed interface PendingRemovalRequest {
     val id: String
@@ -197,6 +155,8 @@ fun MangoSshApp(
     viewModel: MangoSshViewModel,
     onRequestBiometricUnlock: (() -> Unit)? = null,
     onRequestNotificationPermission: ((() -> Unit) -> Unit)? = null,
+    selectedAppLanguage: AppLanguage,
+    onSetAppLanguage: (AppLanguage) -> Unit,
 ) {
     val appLocked by viewModel.appLocked.collectAsStateWithLifecycle()
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
@@ -210,21 +170,17 @@ fun MangoSshApp(
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     val currentActiveSessionId by rememberUpdatedState(activeSessionId)
-    val notificationTargetUnavailableMessage = stringResource(R.string.session_notification_target_unavailable)
-    val invalidAuthorizationUrlMessage = stringResource(R.string.embedded_tsnet_invalid_authorization_url)
-    val browserStartFailedMessage = stringResource(R.string.embedded_tsnet_browser_start_failed)
-
     LaunchedEffect(viewModel) {
         viewModel.embeddedTsnetAuthorizationUrls.collect { value ->
             val uri = runCatching { value.toUri() }.getOrNull()
             if (uri?.scheme != "https" || uri.host != "login.tailscale.com") {
-                viewModel.reportUserMessage(invalidAuthorizationUrlMessage)
+                viewModel.reportUserMessage(R.string.embedded_tsnet_invalid_authorization_url)
                 return@collect
             }
             runCatching {
                 context.startActivity(Intent(Intent.ACTION_VIEW, uri))
             }.onFailure {
-                viewModel.reportUserMessage(browserStartFailedMessage)
+                viewModel.reportUserMessage(R.string.embedded_tsnet_browser_start_failed)
             }
         }
     }
@@ -250,11 +206,26 @@ fun MangoSshApp(
             }
 
             is SessionNavigationRequest.OpenSession -> {
-                if (sessions.any { it.id == request.sessionId }) {
-                    activeSessionId = request.sessionId
-                    leaveSessionId = null
-                } else {
-                    viewModel.reportUserMessage(notificationTargetUnavailableMessage)
+                val session = sessions.firstOrNull { it.id == request.sessionId }
+                when {
+                    session == null -> viewModel.reportUserMessage(R.string.session_notification_target_unavailable)
+                    session.kind == SessionKind.TERMINAL -> {
+                        activeSessionId = request.sessionId
+                        leaveSessionId = null
+                    }
+                    // A shell-less connection has no terminal to open, so its
+                    // notification leads to the page that owns it instead.
+                    else -> {
+                        activeSessionId = null
+                        leaveSessionId = null
+                        viewModel.selectSection(
+                            if (session.kind == SessionKind.PORT_FORWARD) {
+                                AppSection.FORWARDS
+                            } else {
+                                AppSection.HOSTS
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -283,13 +254,75 @@ fun MangoSshApp(
     val resourceSnapshots by viewModel.resourceSnapshots.collectAsStateWithLifecycle()
     val webDavConfig by viewModel.webDavConfig.collectAsStateWithLifecycle()
     val portableExport by viewModel.portableExport.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val updateCallbacks = remember(viewModel) {
+        UpdateCardCallbacks(
+            onCheckNow = viewModel::checkForUpdates,
+            onDownload = viewModel::downloadUpdate,
+            onCancelDownload = viewModel::cancelUpdateDownload,
+            onInstall = {
+                val uri = viewModel.readyInstallUri()
+                if (uri != null) {
+                    val intent = Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, "application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: ActivityNotFoundException) {
+                        viewModel.reportInstallHandoffFailed()
+                    }
+                }
+            },
+            onDismissNotice = viewModel::dismissUpdateNotice,
+            onSetAutomaticCheck = viewModel::setAutomaticUpdateCheckEnabled,
+            onOpenReleasePage = {
+                val uri = runCatching { viewModel.releasePageUrl()?.toUri() }.getOrNull()
+                if (uri?.scheme != "https" || uri.host != "github.com") {
+                    viewModel.reportReleasePageOpenFailed()
+                } else {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                    }.onFailure { viewModel.reportReleasePageOpenFailed() }
+                }
+            },
+        )
+    }
     var editingHost by remember { mutableStateOf<ConnectionProfile?>(null) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
+    var showTransfers by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
 
     fun openHostEditor(host: ConnectionProfile? = null) {
         editingHost = host
         showHostEditor = true
+    }
+
+    // The remote browser is layered in front of the terminal so leaving it
+    // returns to whichever screen opened it. A browser-owned connection has no
+    // shell, so its host-key and authentication prompts are rendered here.
+    val remoteBrowserState by viewModel.remoteBrowser.collectAsStateWithLifecycle()
+    remoteBrowserState?.let { browserState ->
+        RemoteFileBrowserScreen(
+            state = browserState,
+            onNavigate = viewModel::navigateRemoteBrowser,
+            onHome = viewModel::remoteBrowserHome,
+            onUp = viewModel::remoteBrowserUp,
+            onRefresh = viewModel::refreshRemoteBrowser,
+            onOpenEntry = viewModel::openRemoteEntry,
+            onDownload = viewModel::downloadRemoteFile,
+            onDownloadDirectory = viewModel::downloadRemoteDirectory,
+            onUpload = viewModel::uploadToRemoteBrowser,
+            onUploadDirectory = viewModel::uploadDirectoryToRemoteBrowser,
+            onDismissPreview = viewModel::dismissRemotePreview,
+            onClose = viewModel::closeRemoteBrowser,
+        )
+        sessionPrompts.firstOrNull { it.sessionId == browserState.sessionId }?.let { prompt ->
+            SessionPromptDialog(
+                prompt = prompt,
+                onRespond = { values -> viewModel.respondToSessionPrompt(prompt, values) },
+            )
+        }
+        return
     }
 
     val activeSession = activeSessionId?.let { id -> sessions.firstOrNull { it.id == id } }
@@ -312,12 +345,8 @@ fun MangoSshApp(
             onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
             resourceSnapshot = resourceSnapshots[activeSession.id],
             onRequestResources = { viewModel.requestServerResources(activeSession.id) },
+            onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
             onRequestLeave = { leaveSessionId = activeSession.id },
-            onClose = {
-                viewModel.disconnect(activeSession.id)
-                activeSessionId = null
-                leaveSessionId = null
-            },
         )
         activePrompt?.let { prompt ->
             SessionPromptDialog(
@@ -361,11 +390,20 @@ fun MangoSshApp(
         return
     }
 
+    // A forwarding-only connection has no screen of its own, so its host-key and
+    // authentication prompts are rendered over whichever tab is showing.
+    val backgroundPrompt = sessionPrompts.firstOrNull { prompt ->
+        sessions.firstOrNull { it.id == prompt.sessionId }?.kind == SessionKind.PORT_FORWARD
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .focusProperties {
-                canFocus = !showHostEditor && pendingRemoval == null && userMessage == null
+                canFocus = !showHostEditor &&
+                    pendingRemoval == null &&
+                    userMessage == null &&
+                    backgroundPrompt == null
             },
     ) {
         Scaffold(
@@ -373,11 +411,28 @@ fun MangoSshApp(
                 CenterAlignedTopAppBar(
                     title = {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("MangoSSH", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "MangoSSH",
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Text(
                                 text = sectionSubtitle(selectedSection),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    },
+                    actions = {
+                        // Transfers are started from the host list, so their
+                        // status lives here rather than on a tab of its own.
+                        if (selectedSection == AppSection.HOSTS && scpTransfers.isNotEmpty()) {
+                            FileTransferStatusAction(
+                                transfers = scpTransfers,
+                                onClick = { showTransfers = true },
                             )
                         }
                     },
@@ -389,7 +444,7 @@ fun MangoSshApp(
                         modifier = Modifier.testTag("home-add-host-action"),
                         onClick = { openHostEditor() },
                         icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                        text = { Text("新建主机配置") },
+                        text = { Text(stringResource(R.string.ui_new_host_profile)) },
                     )
                 }
             },
@@ -397,6 +452,7 @@ fun MangoSshApp(
                 MangoNavigationBar(
                     selectedSection = selectedSection,
                     onSelectSection = viewModel::selectSection,
+                    showUpdateBadge = updateState.hasPendingUpdate,
                 )
             },
         ) { contentPadding ->
@@ -412,6 +468,7 @@ fun MangoSshApp(
                 ) {
                     when (selectedSection) {
                         AppSection.HOSTS -> HostsScreen(
+                            onBrowseHostFiles = viewModel::openRemoteBrowserForProfile,
                             hosts = hosts,
                             sessions = sessions,
                             vaultStatus = vaultStatus,
@@ -432,18 +489,16 @@ fun MangoSshApp(
                             onImport = viewModel::importPrivateKey,
                             onRemove = { pendingRemoval = PendingRemovalRequest.Key(it) },
                         )
-                        AppSection.TRANSFERS -> TransfersScreen(
+                        AppSection.FORWARDS -> PortForwardsScreen(
                             hosts = hosts,
                             rules = portForwardRules,
                             activeForwards = activePortForwards,
-                            scpTransfers = scpTransfers,
                             sessions = sessions,
                             onSaveRule = viewModel::savePortForward,
                             onRemoveRule = { pendingRemoval = PendingRemovalRequest.PortForward(it) },
                             onStartRule = viewModel::startPortForward,
+                            onStartOnNewConnection = viewModel::startPortForwardOnNewConnection,
                             onStopRule = viewModel::stopPortForward,
-                            onUploadScp = viewModel::uploadScp,
-                            onDownloadScp = viewModel::downloadScp,
                         )
                         AppSection.SETTINGS -> SettingsScreen(
                             vaultStatus = vaultStatus,
@@ -476,11 +531,39 @@ fun MangoSshApp(
                             onSetTerminalCustomColors = viewModel::setTerminalCustomColors,
                             onResetTerminalAppearance = viewModel::resetTerminalAppearance,
                             onSaveTerminalShortcuts = viewModel::saveTerminalShortcuts,
+                            selectedAppLanguage = selectedAppLanguage,
+                            onSetAppLanguage = onSetAppLanguage,
+                            updateState = updateState,
+                            updateCallbacks = updateCallbacks,
                         )
                     }
                 }
             }
         }
+    }
+
+    backgroundPrompt?.let { prompt ->
+        SessionPromptDialog(
+            prompt = prompt,
+            onRespond = { values -> viewModel.respondToSessionPrompt(prompt, values) },
+        )
+    }
+
+    // Clearing the last record closes the sheet with the top bar action.
+    if (showTransfers && scpTransfers.isNotEmpty()) {
+        FileTransfersSheet(
+            transfers = scpTransfers,
+            onPause = viewModel::pauseTransfer,
+            onResume = viewModel::resumeTransfer,
+            onCancel = viewModel::cancelTransfer,
+            onRetry = viewModel::retryTransfer,
+            onOpenRemoteDirectory = { transfer ->
+                showTransfers = false
+                viewModel.openRemoteDirectoryFromTransfer(transfer)
+            },
+            onClearFinished = viewModel::clearFinishedTransfers,
+            onDismiss = { showTransfers = false },
+        )
     }
 
     if (showHostEditor) {
@@ -520,9 +603,9 @@ fun MangoSshApp(
         AlertDialog(
             onDismissRequest = viewModel::dismissUserMessage,
             title = { Text("MangoSSH") },
-            text = { Text(message) },
+            text = { Text(message.asString()) },
             confirmButton = {
-                TextButton(onClick = viewModel::dismissUserMessage) { Text("确定") }
+                TextButton(onClick = viewModel::dismissUserMessage) { Text(stringResource(R.string.common_ok)) }
             },
         )
     }
@@ -532,19 +615,30 @@ fun MangoSshApp(
 private fun MangoNavigationBar(
     selectedSection: AppSection,
     onSelectSection: (AppSection) -> Unit,
+    showUpdateBadge: Boolean,
 ) {
+    val updateBadgeDescription = stringResource(R.string.app_update_badge_description)
     NavigationBar {
         AppSection.entries.forEach { section ->
             NavigationBarItem(
                 selected = section == selectedSection,
                 onClick = { onSelectSection(section) },
                 icon = {
-                    Icon(
-                        imageVector = section.icon(),
-                        contentDescription = localizedUiLiteral(section.label),
-                    )
+                    val badged = showUpdateBadge && section == AppSection.SETTINGS
+                    BadgedBox(
+                        badge = {
+                            if (badged) {
+                                Badge(modifier = Modifier.semantics { contentDescription = updateBadgeDescription })
+                            }
+                        },
+                    ) {
+                        Icon(
+                            imageVector = section.icon(),
+                            contentDescription = section.label(),
+                        )
+                    }
                 },
-                label = { Text(section.label) },
+                label = { Text(section.label()) },
             )
         }
     }
@@ -557,17 +651,17 @@ private fun RemovalConfirmationDialog(
     onConfirm: () -> Unit,
 ) {
     val (title, message) = when (request) {
-        is PendingRemovalRequest.Host -> "移除主机？" to
-            "主机及其关联的端口转发规则将被永久移除。此操作无法撤销。"
+        is PendingRemovalRequest.Host -> stringResource(R.string.ui_remove_host) to
+            stringResource(R.string.ui_the_host_and_its_port_forwarding_rules_will_be_permanently_removed_this)
 
-        is PendingRemovalRequest.Key -> "移除私钥？" to
-            "私钥将被永久移除，使用它的主机配置会解除密钥绑定。此操作无法撤销。"
+        is PendingRemovalRequest.Key -> stringResource(R.string.ui_remove_private_key) to
+            stringResource(R.string.ui_the_private_key_will_be_permanently_removed_and_unlinked_from_its_host_p)
 
-        is PendingRemovalRequest.PortForward -> "移除端口转发？" to
-            "此端口转发规则将被永久移除。此操作无法撤销。"
+        is PendingRemovalRequest.PortForward -> stringResource(R.string.ui_remove_port_forward) to
+            stringResource(R.string.ui_this_port_forwarding_rule_will_be_permanently_removed_this_cannot_be_und)
 
-        is PendingRemovalRequest.Snippet -> "移除代码片段？" to
-            "此代码片段将被永久移除，引用它的主机配置会停止自动执行。此操作无法撤销。"
+        is PendingRemovalRequest.Snippet -> stringResource(R.string.ui_remove_snippet) to
+            stringResource(R.string.ui_this_snippet_will_be_permanently_removed_and_linked_host_profiles_will_s)
     }
     DestructiveConfirmationDialog(
         title = title,
@@ -600,12 +694,12 @@ internal fun DestructiveConfirmationDialog(
                 modifier = Modifier.testTag("confirm-removal"),
                 onClick = onConfirm,
             ) {
-                Text("永久移除")
+                Text(stringResource(R.string.ui_remove_permanently))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("保留")
+                Text(stringResource(R.string.ui_keep))
             }
         },
     )
@@ -614,7 +708,7 @@ internal fun DestructiveConfirmationDialog(
 @Composable
 private fun AppLockScreen(
     configuration: AppLockConfiguration,
-    message: String?,
+    message: UiText?,
     onUnlockWithPin: (String) -> Unit,
     onRequestBiometric: (() -> Unit)?,
     onDismissMessage: () -> Unit,
@@ -635,17 +729,17 @@ private fun AppLockScreen(
                 tint = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.height(20.dp))
-            Text("MangoSSH 已锁定", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.ui_mangossh_is_locked), style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(8.dp))
             Text(
-                "使用应用 PIN 解锁。",
+                stringResource(R.string.ui_unlock_with_your_app_pin),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(20.dp))
             OutlinedTextField(
                 value = pin,
                 onValueChange = { pin = it.filter(Char::isDigit).take(12) },
-                label = { Text("应用 PIN") },
+                label = { Text(stringResource(R.string.ui_app_pin)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 visualTransformation = PasswordVisualTransformation(),
@@ -660,17 +754,17 @@ private fun AppLockScreen(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = pin.isNotEmpty(),
             ) {
-                Text("使用 PIN 解锁")
+                Text(stringResource(R.string.ui_unlock_with_pin))
             }
             if (configuration.biometricEnabled && onRequestBiometric != null) {
                 Spacer(Modifier.height(8.dp))
                 FilledTonalButton(onClick = onRequestBiometric, modifier = Modifier.fillMaxWidth()) {
-                    Text("使用生物识别")
+                    Text(stringResource(R.string.ui_use_biometrics))
                 }
             }
             message?.let {
                 Spacer(Modifier.height(16.dp))
-                TextButton(onClick = onDismissMessage) { Text(it) }
+                TextButton(onClick = onDismissMessage) { Text(it.asString()) }
             }
         }
     }
@@ -684,6 +778,7 @@ private fun HostsScreen(
     onEditHost: (ConnectionProfile) -> Unit,
     onRemoveHost: (String) -> Unit,
     onConnectHost: (ConnectionProfile) -> Unit,
+    onBrowseHostFiles: (ConnectionProfile) -> Unit,
     onOpenSession: (String) -> Unit,
     onDisconnectSession: (String) -> Unit,
 ) {
@@ -702,12 +797,17 @@ private fun HostsScreen(
         ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item {
-            SecurityBanner(vaultStatus)
+        if (vaultStatus !is VaultStatus.Ready) {
+            item { SecurityBanner(vaultStatus) }
         }
-        val visibleSessions = sessions.filter { it.phase != TerminalSessionPhase.CLOSED }
+        // Transfer-only and forwarding-only connections have no shell to open,
+        // so they are owned by the file browser and the forwarding rules rather
+        // than listed as sessions the user can enter.
+        val visibleSessions = sessions.filter {
+            it.phase != TerminalSessionPhase.CLOSED && it.kind == SessionKind.TERMINAL
+        }
         if (visibleSessions.isNotEmpty()) {
-            item { Text("活动会话", style = MaterialTheme.typography.titleMedium) }
+            item { Text(stringResource(R.string.ui_active_sessions), style = MaterialTheme.typography.titleMedium) }
             items(visibleSessions, key = { it.id }) { session ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -715,16 +815,15 @@ private fun HostsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(session.title, fontWeight = FontWeight.SemiBold, localize = false)
+                            Text(session.title, fontWeight = FontWeight.SemiBold)
                             Text(
                                 session.endpoint + " · " + session.phase.label(),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                localize = false,
                             )
                         }
-                        OutlinedButton(onClick = { onOpenSession(session.id) }) { Text("打开") }
-                        TextButton(onClick = { onDisconnectSession(session.id) }) { Text("关闭") }
+                        OutlinedButton(onClick = { onOpenSession(session.id) }) { Text(stringResource(R.string.common_open)) }
+                        TextButton(onClick = { onDisconnectSession(session.id) }) { Text(stringResource(R.string.common_close)) }
                     }
                 }
             }
@@ -735,6 +834,7 @@ private fun HostsScreen(
                 onEdit = { onEditHost(host) },
                 onRemove = { onRemoveHost(host.id) },
                 onConnect = { onConnectHost(host) },
+                onBrowseFiles = { onBrowseHostFiles(host) },
             )
         }
     }
@@ -756,17 +856,17 @@ private fun EmptyHosts(vaultStatus: VaultStatus) {
             tint = MaterialTheme.colorScheme.primary,
         )
         Spacer(Modifier.height(18.dp))
-        Text("还没有服务器", style = MaterialTheme.typography.titleLarge)
+        Text(stringResource(R.string.ui_no_servers_yet), style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "添加 SSH、Mosh 或 Tailnet 主机配置。密钥会在安全保险库启用后独立管理和共享。",
+            text = stringResource(R.string.ui_add_an_ssh_mosh_or_tailnet_host_profile_keys_are_managed_and_shared_sepa),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (vaultStatus is VaultStatus.Failed) {
             Spacer(Modifier.height(12.dp))
             Text(
-                text = vaultStatus.userMessage,
+                text = vaultStatus.failureMessage(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -778,7 +878,7 @@ private fun EmptyHosts(vaultStatus: VaultStatus) {
 private fun SecurityBanner(vaultStatus: VaultStatus) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
         Column(Modifier.padding(16.dp)) {
-            Text("安全优先", fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.ui_security_first), fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
             Text(
                 text = vaultStatus.description(),
@@ -795,6 +895,7 @@ private fun HostCard(
     onEdit: () -> Unit,
     onRemove: () -> Unit,
     onConnect: () -> Unit,
+    onBrowseFiles: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -814,7 +915,6 @@ private fun HostCard(
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        localize = false,
                     )
                     Text(
                         text = "${host.username}@${host.endpoint}",
@@ -822,13 +922,12 @@ private fun HostCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        localize = false,
                     )
                 }
                 IconButton(onClick = onEdit) {
                     Icon(
                         Icons.Outlined.MoreVert,
-                        contentDescription = localizedUiLiteral("编辑") + " " + host.label,
+                        contentDescription = stringResource(R.string.common_edit) + " " + host.label,
                     )
                 }
             }
@@ -841,18 +940,25 @@ private fun HostCard(
                         labelColor = MaterialTheme.colorScheme.primary,
                     ),
                 )
-                AssistChip(onClick = {}, label = { Text(host.route.label) })
+                AssistChip(onClick = {}, label = { Text(host.route.label()) })
             }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onConnect) {
-                    Text("连接")
+                    Text(stringResource(R.string.common_connect))
+                }
+                // Mosh replaces its SSH bootstrap with a UDP terminal and has no
+                // channel left for SFTP.
+                if (host.protocol == ConnectionProtocol.SSH) {
+                    OutlinedButton(onClick = onBrowseFiles) {
+                        Text(stringResource(R.string.ui_files))
+                    }
                 }
                 OutlinedButton(onClick = onEdit) {
-                    Text("编辑")
+                    Text(stringResource(R.string.common_edit))
                 }
                 TextButton(onClick = onRemove) {
-                    Text("移除")
+                    Text(stringResource(R.string.common_remove))
                 }
             }
         }
@@ -905,30 +1011,30 @@ private fun KeysScreen(
             item { SecurityBanner(vaultStatus) }
         }
         item {
-            Text("密钥保险库", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.ui_key_vault), style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
             Text(
-                "生成或导入的私钥仅保存在加密保险库内，可复用到多个主机。",
+                stringResource(R.string.ui_generated_or_imported_private_keys_stay_only_in_the_encrypted_vault_and),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { showGenerator = true }, enabled = vaultStatus !is VaultStatus.Failed) {
-                    Text("生成密钥")
+                    Text(stringResource(R.string.ui_generate_key))
                 }
                 OutlinedButton(
                     onClick = { importLauncher.launch(arrayOf("application/x-pem-file", "text/plain", "application/octet-stream")) },
                     enabled = vaultStatus !is VaultStatus.Failed,
                 ) {
-                    Text("导入私钥")
+                    Text(stringResource(R.string.ui_import_private_key))
                 }
             }
         }
         if (keys.isEmpty()) {
             item {
                 Text(
-                    "还没有密钥。请选择适合服务器的算法生成密钥，或导入 OpenSSH/PEM 私钥。",
+                    stringResource(R.string.ui_no_keys_yet_generate_one_with_an_algorithm_supported_by_your_server_or_i),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -936,16 +1042,15 @@ private fun KeysScreen(
         items(keys, key = { it.id }) { key ->
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(key.label, fontWeight = FontWeight.SemiBold, localize = false)
+                    Text(key.label, fontWeight = FontWeight.SemiBold)
                     Text(
                         "${key.algorithm} · ${key.fingerprint}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        localize = false,
                     )
                     if (key.requiresPassphrase) {
                         Text(
-                            "此私钥还需要口令",
+                            stringResource(R.string.ui_this_private_key_also_requires_its_passphrase),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.tertiary,
                         )
@@ -961,7 +1066,7 @@ private fun KeysScreen(
                                 }
                             },
                         ) {
-                            Text("复制公钥")
+                            Text(stringResource(R.string.ui_copy_public_key))
                         }
                         TextButton(
                             onClick = {
@@ -969,10 +1074,10 @@ private fun KeysScreen(
                                 exportLauncher.launch("${key.label.replace(' ', '_')}.pem")
                             },
                         ) {
-                            Text("导出私钥")
+                            Text(stringResource(R.string.ui_export_private_key))
                         }
                         TextButton(onClick = { onRemove(key.id) }) {
-                            Text("移除")
+                            Text(stringResource(R.string.common_remove))
                         }
                     }
                 }
@@ -1012,14 +1117,14 @@ private fun GenerateKeyDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("生成 SSH 密钥") },
+        title = { Text(stringResource(R.string.ui_generate_ssh_key)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 KeyGenerationDropdown(
-                    label = "密钥算法",
+                    label = stringResource(R.string.ui_key_algorithm),
                     selected = algorithm,
                     options = KeyGenerationAlgorithm.entries,
                     displayText = KeyGenerationAlgorithm::uiLabel,
@@ -1033,7 +1138,7 @@ private fun GenerateKeyDialog(
                     },
                 )
                 KeyGenerationDropdown(
-                    label = "密钥长度",
+                    label = stringResource(R.string.ui_key_length),
                     selected = keyLength,
                     options = algorithm.availableLengths,
                     displayText = Int::toString,
@@ -1048,7 +1153,7 @@ private fun GenerateKeyDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("密钥名称") },
+                    label = { Text(stringResource(R.string.ui_key_name)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
@@ -1058,10 +1163,10 @@ private fun GenerateKeyDialog(
             TextButton(
                 onClick = { onConfirm(algorithm.toGenerationType(keyLength), label.trim()) },
             ) {
-                Text("生成")
+                Text(stringResource(R.string.ui_generate))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -1094,7 +1199,7 @@ private fun <T> KeyGenerationDropdown(
         ) {
             options.forEach { option ->
                 DropdownMenuItem(
-                    text = { Text(displayText(option), localize = false) },
+                    text = { Text(displayText(option)) },
                     onClick = {
                         onSelected(option)
                         expanded = false
@@ -1148,92 +1253,60 @@ private fun ImportKeyDialog(
     onDismiss: () -> Unit,
     onConfirm: (label: String, passphrase: String) -> Unit,
 ) {
-    val defaultLabel = localizedUiLiteral("导入的私钥")
+    val defaultLabel = stringResource(R.string.ui_imported_private_key)
     var label by rememberSaveable { mutableStateOf(defaultLabel) }
     var passphrase by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("导入私钥") },
+        title = { Text(stringResource(R.string.ui_import_private_key)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "支持 OpenSSH 和 PEM 私钥。若密钥未加密，口令留空即可。",
+                    stringResource(R.string.ui_openssh_and_pem_private_keys_are_supported_leave_the_passphrase_blank_fo),
                     style = MaterialTheme.typography.bodySmall,
                 )
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("密钥名称") },
+                    label = { Text(stringResource(R.string.ui_key_name)) },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = passphrase,
                     onValueChange = { passphrase = it },
-                    label = { Text("私钥口令（可选）") },
+                    label = { Text(stringResource(R.string.ui_private_key_passphrase_optional)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(label.trim(), passphrase) }) { Text("导入") }
+            TextButton(onClick = { onConfirm(label.trim(), passphrase) }) { Text(stringResource(R.string.ui_import)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
 @Composable
-private fun TransfersScreen() {
-    FeatureScreen(
-        icon = Icons.Outlined.FolderOpen,
-        title = "文件与转发",
-        description = "SFTP、SCP、本地/远程/SOCKS 转发和传输进度会集中显示在这里。",
-        states = listOf(
-            "活动传输：0",
-            "活动端口转发：0",
-            "仅在用户启动会话后运行前台服务",
-        ),
-    )
-}
-
-@Composable
-private fun TransfersScreen(
+private fun PortForwardsScreen(
     hosts: List<ConnectionProfile>,
     rules: List<PortForwardRule>,
     activeForwards: List<PortForwardRuntimeState>,
-    scpTransfers: List<ScpTransferState>,
     sessions: List<website.sung.mangossh.session.TerminalSessionState>,
     onSaveRule: (PortForwardRule) -> Unit,
     onRemoveRule: (String) -> Unit,
     onStartRule: (String, PortForwardRule) -> Unit,
+    onStartOnNewConnection: (ConnectionProfile, PortForwardRule) -> Unit,
     onStopRule: (String, String) -> Unit,
-    onUploadScp: (String, android.net.Uri, String, String) -> Unit,
-    onDownloadScp: (String, String, android.net.Uri) -> Unit,
 ) {
-    val context = LocalContext.current
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
     var showRuleEditor by rememberSaveable { mutableStateOf(false) }
-    var showScpDialog by rememberSaveable { mutableStateOf(false) }
-    var pendingUpload by remember { mutableStateOf<ScpUploadRequest?>(null) }
-    var pendingDownload by remember { mutableStateOf<ScpDownloadRequest?>(null) }
     // Mosh uses a UDP terminal after its bootstrap and has no SSH channels for
-    // SCP or forwarding, so these actions list SSH sessions only.
+    // forwarding, so these actions list SSH sessions only.
     val openSshSessions = sessions.filter {
-        it.phase == TerminalSessionPhase.OPEN && it.protocol == ConnectionProtocol.SSH
-    }
-    val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val request = pendingUpload
-        pendingUpload = null
-        if (uri != null && request != null) {
-            onUploadScp(request.sessionId, uri, uri.displayName(context), request.remoteDirectory)
-        }
-    }
-    val downloadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        val request = pendingDownload
-        pendingDownload = null
-        if (uri != null && request != null) {
-            onDownloadScp(request.sessionId, request.remotePath, uri)
-        }
+        it.phase == TerminalSessionPhase.OPEN &&
+            it.protocol == ConnectionProtocol.SSH &&
+            it.kind == SessionKind.TERMINAL
     }
 
     LazyColumn(
@@ -1242,10 +1315,10 @@ private fun TransfersScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("端口转发", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.ui_port_forwarding), style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
             Text(
-                "本地、远程和 SOCKS5 转发均绑定到已打开的 SSH 会话；会话关闭后转发会自动停止。",
+                stringResource(R.string.ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -1259,60 +1332,14 @@ private fun TransfersScreen(
             ) {
                 Icon(Icons.Outlined.Add, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("新建转发")
-            }
-        }
-        item {
-            OutlinedButton(
-                onClick = { showScpDialog = true },
-                enabled = openSshSessions.isNotEmpty(),
-            ) { Text("SCP 上传 / 下载") }
-        }
-        if (scpTransfers.isNotEmpty()) {
-            item { Text("SCP 传输", style = MaterialTheme.typography.titleMedium) }
-            items(scpTransfers.reversed(), key = { it.id }) { transfer ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        val direction = if (transfer.direction == ScpTransferDirection.UPLOAD) "上传" else "下载"
-                        Text(
-                            "${localizedUiLiteral(direction)} · ${transfer.displayName}",
-                            fontWeight = FontWeight.SemiBold,
-                            localize = false,
-                        )
-                        Text(
-                            transfer.remotePath,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            localize = false,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        val phase = when (transfer.phase) {
-                            ScpTransferPhase.QUEUED -> "排队中"
-                            ScpTransferPhase.RUNNING -> "传输中"
-                            ScpTransferPhase.COMPLETED -> "已完成"
-                            ScpTransferPhase.FAILED -> "失败"
-                        }
-                        Text(
-                            listOfNotNull(localizedUiLiteral(phase), transfer.detail).joinToString(" · "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (transfer.phase == ScpTransferPhase.FAILED) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
-                            localize = false,
-                        )
-                    }
-                }
+                Text(stringResource(R.string.ui_new_forward))
             }
         }
         if (hosts.isEmpty()) {
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        "请先创建主机配置，再为其添加端口转发。",
+                        stringResource(R.string.ui_create_a_host_profile_before_adding_a_port_forward),
                         modifier = Modifier.padding(16.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1322,7 +1349,7 @@ private fun TransfersScreen(
         if (rules.isEmpty() && hosts.isNotEmpty()) {
             item {
                 Text(
-                    "还没有端口转发规则。可以设置连接后自动启动。",
+                    stringResource(R.string.ui_no_port_forwarding_rules_yet_a_rule_can_start_automatically_after_connec),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -1337,48 +1364,77 @@ private fun TransfersScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(
-                        "${localizedUiLiteral(rule.type.label)} · ${profile?.label ?: localizedUiLiteral("已删除的主机")}",
+                        stringResource(
+                            R.string.port_forward_title,
+                            rule.type.label(),
+                            profile?.label ?: stringResource(R.string.port_forward_deleted_host),
+                        ),
                         fontWeight = FontWeight.SemiBold,
-                        localize = false,
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
                         rule.displayDescription(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        localize = false,
                     )
+                    // A forward without a terminal session runs on a connection
+                    // opened only for it, which is worth showing: it explains why
+                    // the host is connected while no terminal is open.
+                    val ownConnection = active != null &&
+                        sessions.firstOrNull { it.id == active.sessionId }?.kind == SessionKind.PORT_FORWARD
                     val status = active?.let { runtime ->
                         when (runtime.phase) {
-                            PortForwardRuntimePhase.ACTIVE -> "运行中"
-                            PortForwardRuntimePhase.STARTING -> "正在启动"
+                            PortForwardRuntimePhase.ACTIVE -> stringResource(R.string.ui_running)
+                            PortForwardRuntimePhase.STARTING -> stringResource(R.string.ui_starting)
                             else -> ""
                         }
-                    } ?: if (rule.startOnConnect) "连接后自动启动" else "未启动"
+                    } ?: if (rule.startOnConnect) stringResource(R.string.ui_start_on_connection) else stringResource(R.string.ui_not_started)
                     Spacer(Modifier.height(4.dp))
-                    Text(status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    val statusText = status
+                    val ownConnectionText = stringResource(R.string.ui_own_connection)
+                    Text(
+                        if (ownConnection) "$statusText · $ownConnectionText" else statusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                     Spacer(Modifier.height(12.dp))
+                    val canStart = profile != null && profile.protocol == ConnectionProtocol.SSH
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (active != null) {
-                            Button(onClick = { onStopRule(active.sessionId, rule.id) }) { Text("停止") }
+                            Button(onClick = { onStopRule(active.sessionId, rule.id) }) { Text(stringResource(R.string.common_stop)) }
                         } else {
                             Button(
-                                onClick = { eligibleSession?.let { onStartRule(it.id, rule) } },
-                                enabled = eligibleSession != null,
-                            ) { Text("启动") }
+                                onClick = {
+                                    val session = eligibleSession
+                                    if (session != null) {
+                                        onStartRule(session.id, rule)
+                                    } else if (profile != null) {
+                                        onStartOnNewConnection(profile, rule)
+                                    }
+                                },
+                                enabled = canStart,
+                            ) { Text(stringResource(R.string.common_start)) }
                         }
                         OutlinedButton(
                             onClick = {
                                 editingRule = rule
                                 showRuleEditor = true
                             },
-                        ) { Text("编辑") }
-                        TextButton(onClick = { onRemoveRule(rule.id) }) { Text("移除") }
+                        ) { Text(stringResource(R.string.common_edit)) }
+                        TextButton(onClick = { onRemoveRule(rule.id) }) { Text(stringResource(R.string.common_remove)) }
                     }
-                    if (active == null && eligibleSession == null) {
+                    if (active == null && canStart && eligibleSession == null) {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "连接对应主机后即可手动启动。",
+                            stringResource(R.string.ui_starting_opens_a_connection_dedicated_to_this_forward_so_no_terminal_is),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (profile != null && profile.protocol != ConnectionProtocol.SSH) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.mosh_not_supported_for_ssh_feature),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1400,22 +1456,6 @@ private fun TransfersScreen(
                 onSaveRule(rule)
                 showRuleEditor = false
                 editingRule = null
-            },
-        )
-    }
-    if (showScpDialog) {
-        ScpTransferDialog(
-            sessions = openSshSessions,
-            onDismiss = { showScpDialog = false },
-            onUpload = { request ->
-                pendingUpload = request
-                uploadLauncher.launch(arrayOf("*/*"))
-                showScpDialog = false
-            },
-            onDownload = { request ->
-                pendingDownload = request
-                downloadLauncher.launch(request.suggestedName)
-                showScpDialog = false
             },
         )
     }
@@ -1443,41 +1483,41 @@ private fun PortForwardRuleDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "新建端口转发" else "编辑端口转发") },
+        title = { Text(if (initial == null) stringResource(R.string.ui_new_port_forward) else stringResource(R.string.ui_edit_port_forward)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("所属主机", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.ui_host), style = MaterialTheme.typography.titleSmall)
                 hosts.forEach { host ->
                     FilterChip(
                         selected = profileId == host.id,
                         onClick = { profileId = host.id },
-                        label = { Text(host.label, localize = false) },
+                        label = { Text(host.label) },
                     )
                 }
-                Text("类型", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.ui_type), style = MaterialTheme.typography.titleSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PortForwardType.entries.forEach { option ->
                         FilterChip(
                             selected = type == option,
                             onClick = { type = option },
-                            label = { Text(option.label) },
+                            label = { Text(option.label()) },
                         )
                     }
                 }
                 OutlinedTextField(
                     value = bindHost,
                     onValueChange = { bindHost = it },
-                    label = { Text(if (type == PortForwardType.REMOTE) "远端绑定地址" else "本地绑定地址") },
+                    label = { Text(if (type == PortForwardType.REMOTE) stringResource(R.string.ui_remote_bind_address) else stringResource(R.string.ui_local_bind_address)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = bindPort,
                     onValueChange = { bindPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text(if (type == PortForwardType.REMOTE) "远端监听端口" else "本地监听端口") },
+                    label = { Text(if (type == PortForwardType.REMOTE) stringResource(R.string.ui_remote_listen_port) else stringResource(R.string.ui_local_listen_port)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     isError = bindPort.isNotEmpty() && bindPortValue !in 1..65535,
@@ -1487,25 +1527,25 @@ private fun PortForwardRuleDialog(
                     OutlinedTextField(
                         value = destinationHost,
                         onValueChange = { destinationHost = it },
-                        label = { Text("目标主机") },
+                        label = { Text(stringResource(R.string.ui_destination_host)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = destinationPort,
                         onValueChange = { destinationPort = it.filter(Char::isDigit).take(5) },
-                        label = { Text("目标端口") },
+                        label = { Text(stringResource(R.string.ui_destination_port)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         isError = destinationPort.isNotEmpty() && destinationPortValue !in 1..65535,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
-                    Text("SOCKS5 代理不需要目标主机和端口。", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.ui_a_socks5_proxy_does_not_need_a_destination_host_or_port), style = MaterialTheme.typography.bodySmall)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = startOnConnect, onCheckedChange = { startOnConnect = it })
-                    Text("连接后自动启动")
+                    Text(stringResource(R.string.ui_start_on_connection))
                 }
             }
         },
@@ -1526,84 +1566,13 @@ private fun PortForwardRuleDialog(
                     )
                 },
                 enabled = canSave,
-            ) { Text("保存") }
+            ) { Text(stringResource(R.string.common_save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
-private data class ScpUploadRequest(
-    val sessionId: String,
-    val remoteDirectory: String,
-)
-
-private data class ScpDownloadRequest(
-    val sessionId: String,
-    val remotePath: String,
-) {
-    val suggestedName: String = remotePath.substringAfterLast('/').ifBlank { "download" }
-}
-
-@Composable
-private fun ScpTransferDialog(
-    sessions: List<website.sung.mangossh.session.TerminalSessionState>,
-    onDismiss: () -> Unit,
-    onUpload: (ScpUploadRequest) -> Unit,
-    onDownload: (ScpDownloadRequest) -> Unit,
-) {
-    var sessionId by rememberSaveable { mutableStateOf(sessions.firstOrNull()?.id.orEmpty()) }
-    var upload by rememberSaveable { mutableStateOf(true) }
-    var remotePath by rememberSaveable { mutableStateOf("") }
-    val canContinue = sessionId.isNotBlank() && remotePath.isNotBlank()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("SCP 文件传输") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text("会话", style = MaterialTheme.typography.titleSmall)
-                sessions.forEach { session ->
-                    FilterChip(
-                        selected = sessionId == session.id,
-                        onClick = { sessionId = session.id },
-                        label = { Text(session.title + " · " + session.endpoint, localize = false) },
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = upload, onClick = { upload = true }, label = { Text("上传") })
-                    FilterChip(selected = !upload, onClick = { upload = false }, label = { Text("下载") })
-                }
-                OutlinedTextField(
-                    value = remotePath,
-                    onValueChange = { remotePath = it },
-                    label = { Text(if (upload) "远端目录" else "远端文件路径") },
-                    supportingText = {
-                        Text(if (upload) "选择本地文件后将上传到此远端目录。路径不能含空格或 shell 特殊字符。" else "选择保存位置后将下载此远端文件。路径不能含空格或 shell 特殊字符。")
-                    },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    if (upload) {
-                        onUpload(ScpUploadRequest(sessionId, remotePath.trim()))
-                    } else {
-                        onDownload(ScpDownloadRequest(sessionId, remotePath.trim()))
-                    }
-                },
-                enabled = canContinue,
-            ) { Text(if (upload) "选择本地文件" else "选择保存位置") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-private fun android.net.Uri.displayName(context: android.content.Context): String {
+internal fun android.net.Uri.displayName(context: android.content.Context): String {
     val fromProvider = context.contentResolver
         .query(this, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
         ?.use { cursor ->
@@ -1822,6 +1791,10 @@ private fun SettingsScreen(
     onSetTerminalCustomColors: (TerminalCustomColors) -> Unit,
     onResetTerminalAppearance: () -> Unit,
     onSaveTerminalShortcuts: (TerminalShortcutConfig) -> Unit,
+    selectedAppLanguage: AppLanguage,
+    onSetAppLanguage: (AppLanguage) -> Unit,
+    updateState: UpdateUiState,
+    updateCallbacks: UpdateCardCallbacks,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1861,6 +1834,15 @@ private fun SettingsScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        item {
+            LanguageSettingsCard(
+                selected = selectedAppLanguage,
+                onSelect = onSetAppLanguage,
+            )
+        }
+        if (updateState.supported) {
+            item { UpdateSettingsCard(state = updateState, callbacks = updateCallbacks) }
+        }
         if (vaultStatus !is VaultStatus.Ready) {
             item { SecurityBanner(vaultStatus) }
         }
@@ -1889,27 +1871,27 @@ private fun SettingsScreen(
             )
         }
         item {
-            Text("安全与同步", style = MaterialTheme.typography.headlineSmall)
+            Text(stringResource(R.string.ui_security_and_sync), style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(4.dp))
             Text(
-                "导出和 WebDAV 上传均使用独立同步口令再次加密；不会上传设备绑定的本地保险库密钥。",
+                stringResource(R.string.ui_exports_and_webdav_uploads_are_encrypted_again_with_a_separate_sync_pass),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("加密备份", fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.ui_encrypted_backup), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = { syncAction = SyncAction.MANUAL_EXPORT },
                             enabled = vaultStatus !is VaultStatus.Failed,
-                        ) { Text("导出") }
+                        ) { Text(stringResource(R.string.ui_export)) }
                         OutlinedButton(
                             onClick = { importLauncher.launch(arrayOf("application/octet-stream", "application/json", "text/plain")) },
                             enabled = vaultStatus !is VaultStatus.Failed,
-                        ) { Text("导入") }
+                        ) { Text(stringResource(R.string.ui_import)) }
                     }
                 }
             }
@@ -1917,23 +1899,22 @@ private fun SettingsScreen(
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("自定义 WebDAV", fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.ui_custom_webdav), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        webDavConfig?.let { "${it.endpoint}/${it.remoteFileName}" } ?: localizedUiLiteral("尚未配置"),
+                        webDavConfig?.let { "${it.endpoint}/${it.remoteFileName}" } ?: stringResource(R.string.ui_not_configured),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        localize = false,
                     )
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { showWebDavEditor = true }) {
-                            Text(if (webDavConfig == null) "配置" else "编辑")
+                            Text(if (webDavConfig == null) stringResource(R.string.ui_configure) else stringResource(R.string.common_edit))
                         }
                         if (webDavConfig != null) {
-                            Button(onClick = { syncAction = SyncAction.WEBDAV_UPLOAD }) { Text("上传") }
-                            Button(onClick = { syncAction = SyncAction.WEBDAV_DOWNLOAD }) { Text("下载并导入") }
-                            TextButton(onClick = onClearWebDav) { Text("移除") }
+                            Button(onClick = { syncAction = SyncAction.WEBDAV_UPLOAD }) { Text(stringResource(R.string.common_upload)) }
+                            Button(onClick = { syncAction = SyncAction.WEBDAV_DOWNLOAD }) { Text(stringResource(R.string.ui_download_and_import)) }
+                            TextButton(onClick = onClearWebDav) { Text(stringResource(R.string.common_remove)) }
                         }
                     }
                 }
@@ -1942,13 +1923,13 @@ private fun SettingsScreen(
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("应用保护", fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.ui_app_protection), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         if (appLockConfiguration.pinConfigured) {
-                            "应用 PIN 已启用。返回前台时需要解锁；本地保险库仍由 Android Keystore 加密。"
+                            stringResource(R.string.ui_app_pin_is_enabled_unlocking_is_required_when_returning_to_the_foregroun)
                         } else {
-                            "尚未设置应用 PIN。启用后，应用回到前台需要 PIN 或生物识别解锁。"
+                            stringResource(R.string.ui_no_app_pin_is_set_once_enabled_returning_to_the_foreground_requires_pin)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1956,11 +1937,11 @@ private fun SettingsScreen(
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { showPinEditor = true }) {
-                            Text(if (appLockConfiguration.pinConfigured) "修改 PIN" else "设置 PIN")
+                            Text(if (appLockConfiguration.pinConfigured) stringResource(R.string.ui_change_pin) else stringResource(R.string.ui_set_pin))
                         }
                         if (appLockConfiguration.pinConfigured) {
-                            Button(onClick = onLockNow) { Text("立即锁定") }
-                            TextButton(onClick = onClearAppLock) { Text("关闭") }
+                            Button(onClick = onLockNow) { Text(stringResource(R.string.ui_lock_now)) }
+                            TextButton(onClick = onClearAppLock) { Text(stringResource(R.string.common_close)) }
                         }
                     }
                     if (appLockConfiguration.pinConfigured) {
@@ -1970,7 +1951,7 @@ private fun SettingsScreen(
                                 checked = appLockConfiguration.biometricEnabled,
                                 onCheckedChange = onSetBiometricEnabled,
                             )
-                            Text("允许生物识别解锁", style = MaterialTheme.typography.bodyMedium)
+                            Text(stringResource(R.string.ui_allow_biometric_unlock), style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
@@ -1979,10 +1960,10 @@ private fun SettingsScreen(
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("连接后代码片段", fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.ui_post_connect_snippets), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "在主机编辑页选择片段后，会在 shell 打开时自动发送。",
+                        stringResource(R.string.ui_a_snippet_selected_in_the_host_editor_is_sent_automatically_when_the_she),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1992,25 +1973,24 @@ private fun SettingsScreen(
                             editingSnippet = null
                             showSnippetEditor = true
                         },
-                    ) { Text("新建片段") }
+                    ) { Text(stringResource(R.string.ui_new_snippet_2)) }
                 }
             }
         }
         if (snippets.isEmpty()) {
             item {
-                Text("还没有代码片段。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.ui_no_snippets_yet), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             items(snippets, key = { it.id }) { snippet ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
-                        Text(snippet.label, fontWeight = FontWeight.SemiBold, localize = false)
+                        Text(snippet.label, fontWeight = FontWeight.SemiBold)
                         Text(
                             snippet.script,
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            localize = false,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(8.dp))
@@ -2020,8 +2000,8 @@ private fun SettingsScreen(
                                     editingSnippet = snippet
                                     showSnippetEditor = true
                                 },
-                            ) { Text("编辑") }
-                            TextButton(onClick = { onRemoveSnippet(snippet.id) }) { Text("移除") }
+                            ) { Text(stringResource(R.string.common_edit)) }
+                            TextButton(onClick = { onRemoveSnippet(snippet.id) }) { Text(stringResource(R.string.common_remove)) }
                         }
                     }
                 }
@@ -2080,11 +2060,83 @@ private fun SettingsScreen(
     }
 }
 
-private enum class SyncAction(val title: String, val warning: String) {
-    MANUAL_EXPORT("导出加密备份", "该口令用于保护导出的备份文件。"),
-    MANUAL_IMPORT("导入加密备份", "导入会替换当前主机、密钥、片段和同步配置。"),
-    WEBDAV_UPLOAD("上传到 WebDAV", "将使用此口令加密后上传。"),
-    WEBDAV_DOWNLOAD("从 WebDAV 导入", "下载后会使用口令解密，并替换当前保险库。"),
+@Composable
+internal fun LanguageSettingsCard(
+    selected: AppLanguage,
+    onSelect: (AppLanguage) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Card(modifier = Modifier.fillMaxWidth().testTag("app-language-card")) {
+        Column(Modifier.padding(16.dp)) {
+            Text(stringResource(R.string.app_language_title), fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(R.string.app_language_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it },
+            ) {
+                OutlinedButton(
+                    modifier = Modifier
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                        .testTag("app-language-selector"),
+                    onClick = { expanded = true },
+                ) {
+                    Text(selected.label())
+                }
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false },
+                ) {
+                    AppLanguage.entries.forEach { option ->
+                        DropdownMenuItem(
+                            modifier = Modifier.testTag("app-language-option_${option.name}"),
+                            text = { Text(option.label()) },
+                            onClick = {
+                                expanded = false
+                                if (option != selected) onSelect(option)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppLanguage.label(): String = stringResource(
+    when (this) {
+        AppLanguage.SYSTEM -> R.string.app_language_system
+        AppLanguage.ENGLISH -> R.string.app_language_english
+        AppLanguage.SIMPLIFIED_CHINESE -> R.string.app_language_simplified_chinese
+    },
+)
+
+private enum class SyncAction(
+    @StringRes val titleResource: Int,
+    @StringRes val warningResource: Int,
+) {
+    MANUAL_EXPORT(
+        R.string.ui_export_encrypted_backup,
+        R.string.ui_this_passphrase_protects_the_exported_backup_file,
+    ),
+    MANUAL_IMPORT(
+        R.string.ui_import_encrypted_backup,
+        R.string.ui_importing_replaces_the_current_hosts_keys_snippets_and_sync_configuratio,
+    ),
+    WEBDAV_UPLOAD(
+        R.string.ui_upload_to_webdav,
+        R.string.ui_the_backup_will_be_encrypted_with_this_passphrase_before_upload,
+    ),
+    WEBDAV_DOWNLOAD(
+        R.string.ui_import_from_webdav,
+        R.string.ui_after_download_the_backup_will_be_decrypted_with_this_passphrase_and_rep,
+    ),
 }
 
 @Composable
@@ -2101,44 +2153,44 @@ private fun WebDavConfigDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("配置 WebDAV") },
+        title = { Text(stringResource(R.string.ui_configure_webdav)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("只接受 HTTPS WebDAV 地址。地址应指向要保存备份的目录。", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.ui_only_https_webdav_urls_are_accepted_the_url_should_point_to_the_director), style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = endpoint,
                     onValueChange = { endpoint = it },
-                    label = { Text("WebDAV 目录 URL") },
+                    label = { Text(stringResource(R.string.ui_webdav_directory_url)) },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("用户名") },
+                    label = { Text(stringResource(R.string.ui_username)) },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
-                    label = { Text("密码 / 应用专用密码") },
+                    label = { Text(stringResource(R.string.ui_password_app_password)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                 )
                 OutlinedTextField(
                     value = remoteFileName,
                     onValueChange = { remoteFileName = it },
-                    label = { Text("远端文件名") },
+                    label = { Text(stringResource(R.string.ui_remote_file_name)) },
                     singleLine = true,
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(endpoint, username, password, remoteFileName) }) { Text("保存") }
+            TextButton(onClick = { onSave(endpoint, username, password, remoteFileName) }) { Text(stringResource(R.string.common_save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -2151,23 +2203,23 @@ private fun SyncPassphraseDialog(
     var passphrase by rememberSaveable(action) { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(action.title) },
+        title = { Text(stringResource(action.titleResource)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(action.warning, style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(action.warningResource), style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = passphrase,
                     onValueChange = { passphrase = it },
-                    label = { Text("同步口令") },
+                    label = { Text(stringResource(R.string.ui_sync_passphrase)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(passphrase) }, enabled = passphrase.isNotEmpty()) { Text("继续") }
+            TextButton(onClick = { onConfirm(passphrase) }, enabled = passphrase.isNotEmpty()) { Text(stringResource(R.string.common_continue)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -2182,7 +2234,7 @@ private fun CommandSnippetDialog(
     var appendNewline by rememberSaveable(initial?.id) { mutableStateOf(initial?.appendNewline ?: true) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "新建代码片段" else "编辑代码片段") },
+        title = { Text(if (initial == null) stringResource(R.string.ui_new_snippet) else stringResource(R.string.ui_edit_snippet)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -2191,20 +2243,20 @@ private fun CommandSnippetDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("名称") },
+                    label = { Text(stringResource(R.string.ui_name)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = script,
                     onValueChange = { script = it },
-                    label = { Text("Shell 命令或脚本") },
+                    label = { Text(stringResource(R.string.ui_shell_command_or_script)) },
                     minLines = 4,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = appendNewline, onCheckedChange = { appendNewline = it })
-                    Text("自动附加换行")
+                    Text(stringResource(R.string.ui_append_newline_automatically))
                 }
             }
         },
@@ -2212,9 +2264,9 @@ private fun CommandSnippetDialog(
             TextButton(
                 onClick = { onSave(label.trim(), script, appendNewline) },
                 enabled = label.isNotBlank() && script.isNotBlank(),
-            ) { Text("保存") }
+            ) { Text(stringResource(R.string.common_save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -2228,14 +2280,14 @@ private fun AppPinDialog(
     val valid = pin.length in 4..12 && pin.all(Char::isDigit) && pin == confirmation
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("设置应用 PIN") },
+        title = { Text(stringResource(R.string.ui_set_app_pin)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("PIN 只在本机保存为加盐验证值，不能恢复。", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.ui_the_pin_is_stored_only_on_this_device_as_a_salted_verifier_and_cannot_be), style = MaterialTheme.typography.bodySmall)
                 OutlinedTextField(
                     value = pin,
                     onValueChange = { pin = it.filter(Char::isDigit).take(12) },
-                    label = { Text("4–12 位 PIN") },
+                    label = { Text(stringResource(R.string.ui_4_12_digit_pin)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     visualTransformation = PasswordVisualTransformation(),
@@ -2243,7 +2295,7 @@ private fun AppPinDialog(
                 OutlinedTextField(
                     value = confirmation,
                     onValueChange = { confirmation = it.filter(Char::isDigit).take(12) },
-                    label = { Text("再次输入 PIN") },
+                    label = { Text(stringResource(R.string.ui_confirm_pin)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     visualTransformation = PasswordVisualTransformation(),
@@ -2252,49 +2304,10 @@ private fun AppPinDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(pin) }, enabled = valid) { Text("保存") }
+            TextButton(onClick = { onConfirm(pin) }, enabled = valid) { Text(stringResource(R.string.common_save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
-}
-
-@Composable
-private fun FeatureScreen(
-    icon: ImageVector,
-    title: String,
-    description: String,
-    states: List<String>,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(16.dp))
-        Text(title, style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = description,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(20.dp))
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                states.forEachIndexed { index, state ->
-                    Text(state, style = MaterialTheme.typography.bodyMedium)
-                    if (index != states.lastIndex) {
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider()
-                        Spacer(Modifier.height(12.dp))
-                    }
-                }
-            }
-        }
-    }
 }
 
 @Composable
@@ -2345,14 +2358,14 @@ private fun HostEditorSheet(
                 .padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
         ) {
             Text(
-                text = if (initialHost == null) "新建服务器" else "编辑服务器",
+                text = if (initialHost == null) stringResource(R.string.ui_new_server) else stringResource(R.string.ui_edit_server),
                 style = MaterialTheme.typography.headlineSmall,
             )
             Spacer(Modifier.height(16.dp))
             OutlinedTextField(
                 value = label,
                 onValueChange = { label = it },
-                label = { Text("名称（可选）") },
+                label = { Text(stringResource(R.string.ui_name_optional)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(firstFieldFocusRequester),
@@ -2362,7 +2375,7 @@ private fun HostEditorSheet(
             OutlinedTextField(
                 value = hostname,
                 onValueChange = { hostname = it },
-                label = { Text("主机名或 IP 地址") },
+                label = { Text(stringResource(R.string.ui_hostname_or_ip_address)) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 isError = hostname.isBlank(),
@@ -2372,7 +2385,7 @@ private fun HostEditorSheet(
                 OutlinedTextField(
                     value = username,
                     onValueChange = { username = it },
-                    label = { Text("用户名") },
+                    label = { Text(stringResource(R.string.ui_username)) },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
                     isError = username.isBlank(),
@@ -2380,7 +2393,7 @@ private fun HostEditorSheet(
                 OutlinedTextField(
                     value = portText,
                     onValueChange = { portText = it.filter(Char::isDigit) },
-                    label = { Text("端口") },
+                    label = { Text(stringResource(R.string.ui_port)) },
                     modifier = Modifier.width(112.dp),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -2388,7 +2401,7 @@ private fun HostEditorSheet(
                 )
             }
             Spacer(Modifier.height(20.dp))
-            Text("协议", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.ui_protocol), style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ConnectionProtocol.entries.forEach { option ->
@@ -2400,7 +2413,7 @@ private fun HostEditorSheet(
                 }
             }
             Spacer(Modifier.height(20.dp))
-            Text("网络路由", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.ui_network_route), style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             ConnectionRouteSelector(
                 selected = route,
@@ -2414,13 +2427,13 @@ private fun HostEditorSheet(
             if (usesSystemTailscale) {
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = "Tailnet 路由通过设备已启用的 Tailscale VPN 访问目标；认证方式会设为 Tailscale SSH。",
+                    text = stringResource(R.string.ui_tailnet_routing_reaches_the_target_through_the_device_s_enabled_tailscal),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
                 Spacer(Modifier.height(20.dp))
-                Text("认证方式", style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.ui_authentication), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     AuthenticationMethod.entries
@@ -2432,25 +2445,25 @@ private fun HostEditorSheet(
                             FilterChip(
                                 selected = authentication == option,
                                 onClick = { authentication = option },
-                                label = { Text(option.label) },
+                                label = { Text(option.label()) },
                             )
                         }
                 }
                 if (route == ConnectionRoute.TSNET) {
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        text = "内嵌 Tailscale 仅代理此配置的 SSH 和 Mosh 流量；默认使用 Tailscale SSH，也可以改用常规 SSH 认证。",
+                        text = stringResource(R.string.ui_embedded_tailscale_proxies_only_this_profile_s_ssh_and_mosh_traffic_tail),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (authentication == AuthenticationMethod.PRIVATE_KEY) {
                     Spacer(Modifier.height(16.dp))
-                    Text("共享私钥", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.ui_shared_private_key), style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(8.dp))
                     if (keys.isEmpty()) {
                         Text(
-                            "请先在“密钥”页生成或导入一把私钥。",
+                            stringResource(R.string.ui_generate_or_import_a_private_key_on_the_keys_page_first),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
@@ -2460,7 +2473,7 @@ private fun HostEditorSheet(
                                 FilterChip(
                                     selected = keyId == key.id,
                                     onClick = { keyId = key.id },
-                                    label = { Text(key.label, localize = false) },
+                                    label = { Text(key.label) },
                                 )
                             }
                         }
@@ -2470,25 +2483,25 @@ private fun HostEditorSheet(
             if (protocol == ConnectionProtocol.MOSH) {
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = "Mosh 使用 GPL-3.0-or-later 原生客户端；源代码和许可证见项目随附材料。它需要远端 mosh-server 和可达的 UDP 端口（默认 60000–61000），且不支持 SSH 的 SCP、端口转发、代理转发或资源查询。",
+                    text = stringResource(R.string.ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Spacer(Modifier.height(20.dp))
-            Text("连接后自动执行", style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.ui_run_after_connection), style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = startupSnippetId == null,
                     onClick = { startupSnippetId = null },
-                    label = { Text("不执行") },
+                    label = { Text(stringResource(R.string.ui_do_not_run)) },
                 )
                 snippets.forEach { snippet ->
                     FilterChip(
                         selected = startupSnippetId == snippet.id,
                         onClick = { startupSnippetId = snippet.id },
-                        label = { Text(snippet.label, localize = false) },
+                        label = { Text(snippet.label) },
                     )
                 }
             }
@@ -2496,7 +2509,7 @@ private fun HostEditorSheet(
             if (protocol == ConnectionProtocol.SSH) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = agentForwarding, onCheckedChange = { agentForwarding = it })
-                    Text("启用 SSH 代理转发", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.ui_enable_ssh_agent_forwarding), style = MaterialTheme.typography.bodyMedium)
                 }
             }
             Spacer(Modifier.height(28.dp))
@@ -2521,11 +2534,11 @@ private fun HostEditorSheet(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = canSave,
             ) {
-                Text("保存配置")
+                Text(stringResource(R.string.ui_save_profile))
             }
             Spacer(Modifier.height(8.dp))
             FilledTonalButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text("取消")
+                Text(stringResource(R.string.common_cancel))
             }
         }
     }
@@ -2543,7 +2556,7 @@ internal fun ConnectionRouteSelector(
                 selected = selected == option,
                 onClick = { onSelected(option) },
                 modifier = Modifier.testTag("connection_route_${option.name}"),
-                label = { Text(option.label) },
+                label = { Text(option.label()) },
             )
         }
     }
@@ -2570,37 +2583,36 @@ private fun SessionPromptDialog(
             AlertDialog(
                 onDismissRequest = { onRespond(null) },
                 title = {
-                    Text(if (prompt.isChanged) "服务器指纹已变更" else "验证服务器指纹")
+                    Text(if (prompt.isChanged) stringResource(R.string.ui_server_fingerprint_changed) else stringResource(R.string.ui_verify_server_fingerprint))
                 },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
                             if (prompt.isChanged) {
-                                "保存的服务器密钥与本次连接不一致。仅在确认服务器确实重装或更换密钥后才继续。"
+                                stringResource(R.string.ui_the_saved_server_key_differs_from_this_connection_continue_only_after_co)
                             } else {
-                                "这是首次连接到此服务器。请与管理员提供的指纹核对后再信任。"
+                                stringResource(R.string.ui_this_is_the_first_connection_to_this_server_verify_the_fingerprint_with)
                             },
                         )
-                        Text("${prompt.hostname}:${prompt.port} · ${prompt.algorithm}", localize = false)
+                        Text("${prompt.hostname}:${prompt.port} · ${prompt.algorithm}")
                         SelectionContainer {
-                            Text(prompt.fingerprint, style = MaterialTheme.typography.bodySmall, localize = false)
+                            Text(prompt.fingerprint, style = MaterialTheme.typography.bodySmall)
                         }
                         prompt.previousFingerprint?.let { previous ->
                             Text(
-                                localizedUiLiteral("原指纹：") + previous,
+                                stringResource(R.string.ui_previous_fingerprint) + previous,
                                 style = MaterialTheme.typography.bodySmall,
-                                localize = false,
                             )
                         }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = { onRespond(listOf("trust")) }) {
-                        Text(if (prompt.isChanged) "替换并信任" else "信任并连接")
+                        Text(if (prompt.isChanged) stringResource(R.string.ui_replace_and_trust) else stringResource(R.string.ui_trust_and_connect))
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { onRespond(null) }) { Text("取消") }
+                    TextButton(onClick = { onRespond(null) }) { Text(stringResource(R.string.common_cancel)) }
                 },
             )
         }
@@ -2611,11 +2623,11 @@ private fun SessionPromptDialog(
             }
             AlertDialog(
                 onDismissRequest = { onRespond(null) },
-                title = { Text(prompt.title) },
+                title = { Text(prompt.title.asString()) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         prompt.instruction?.let { instruction ->
-                            SelectionContainer { Text(instruction, localize = false) }
+                            SelectionContainer { Text(instruction.asString()) }
                         }
                         prompt.fields.forEachIndexed { index, field ->
                             OutlinedTextField(
@@ -2623,8 +2635,9 @@ private fun SessionPromptDialog(
                                 onValueChange = { answers[index] = it },
                                 label = {
                                     Text(
-                                        field.label.ifBlank { localizedUiLiteral("输入") },
-                                        localize = false,
+                                        field.label.asString().ifBlank {
+                                            stringResource(R.string.ui_enter_value)
+                                        },
                                     )
                                 },
                                 singleLine = true,
@@ -2639,11 +2652,11 @@ private fun SessionPromptDialog(
                 },
                 confirmButton = {
                     TextButton(onClick = { onRespond(answers.toList()) }) {
-                        Text(if (prompt.fields.isEmpty()) "继续" else "提交")
+                        Text(if (prompt.fields.isEmpty()) stringResource(R.string.common_continue) else stringResource(R.string.common_submit))
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { onRespond(null) }) { Text("取消") }
+                    TextButton(onClick = { onRespond(null) }) { Text(stringResource(R.string.common_cancel)) }
                 },
             )
         }
@@ -2653,25 +2666,97 @@ private fun SessionPromptDialog(
 private fun AppSection.icon(): ImageVector = when (this) {
     AppSection.HOSTS -> Icons.Outlined.Dns
     AppSection.KEYS -> Icons.Outlined.Key
-    AppSection.TRANSFERS -> Icons.Outlined.FolderOpen
+    AppSection.FORWARDS -> Icons.Outlined.SwapHoriz
     AppSection.SETTINGS -> Icons.Outlined.Settings
 }
 
+@Composable
 private fun sectionSubtitle(section: AppSection): String = when (section) {
-    AppSection.HOSTS -> "连接工作区"
-    AppSection.KEYS -> "共享密钥与代理"
-    AppSection.TRANSFERS -> "SFTP、SCP 与端口转发"
-    AppSection.SETTINGS -> "应用锁、同步与 Tailnet"
+    AppSection.HOSTS -> stringResource(R.string.ui_connection_workspace)
+    AppSection.KEYS -> stringResource(R.string.ui_shared_keys_and_agent)
+    AppSection.FORWARDS -> stringResource(R.string.ui_ssh_port_forwarding)
+    AppSection.SETTINGS -> stringResource(R.string.ui_app_lock_sync_and_tailnet)
 }
 
+@Composable
 private fun VaultStatus.summary(): String = when (this) {
-    VaultStatus.Loading -> "安全保险库：正在打开"
-    VaultStatus.Ready -> "安全保险库：已由 Android Keystore 加密"
-    is VaultStatus.Failed -> "安全保险库：不可用"
+    VaultStatus.Loading -> stringResource(R.string.ui_secure_vault_opening)
+    VaultStatus.Ready -> stringResource(R.string.ui_secure_vault_encrypted_by_android_keystore)
+    is VaultStatus.Failed -> stringResource(R.string.ui_secure_vault_unavailable)
 }
 
+@Composable
 private fun VaultStatus.description(): String = when (this) {
-    VaultStatus.Loading -> "正在打开本地加密保险库。首次连接仍会验证主机指纹。"
-    VaultStatus.Ready -> "本地配置已使用 Android Keystore 和 AES-GCM 加密保存；首次连接仍会验证主机指纹。"
-    is VaultStatus.Failed -> userMessage
+    VaultStatus.Loading -> stringResource(R.string.ui_opening_the_local_encrypted_vault_server_fingerprints_are_still_verified)
+    VaultStatus.Ready -> stringResource(R.string.ui_local_configuration_is_encrypted_with_android_keystore_and_aes_gcm_serve)
+    is VaultStatus.Failed -> failureMessage()
+}
+
+@Composable
+private fun VaultStatus.Failed.failureMessage(): String = stringResource(
+    when (reason) {
+        VaultFailureReason.OPEN -> R.string.message_vault_open_failed
+        VaultFailureReason.WRITE -> R.string.message_vault_save_failed
+    },
+)
+
+@Composable
+private fun AppSection.label(): String = stringResource(
+    when (this) {
+        AppSection.HOSTS -> R.string.nav_hosts
+        AppSection.KEYS -> R.string.nav_keys
+        AppSection.FORWARDS -> R.string.nav_forwards
+        AppSection.SETTINGS -> R.string.nav_settings
+    },
+)
+
+@Composable
+private fun ConnectionRoute.label(): String = stringResource(
+    when (this) {
+        ConnectionRoute.DIRECT -> R.string.connection_route_direct
+        ConnectionRoute.TAILNET -> R.string.connection_route_system_tailscale
+        ConnectionRoute.TSNET -> R.string.connection_route_embedded_tailscale
+    },
+)
+
+@Composable
+private fun AuthenticationMethod.label(): String = stringResource(
+    when (this) {
+        AuthenticationMethod.PRIVATE_KEY -> R.string.authentication_private_key
+        AuthenticationMethod.PASSWORD -> R.string.authentication_password
+        AuthenticationMethod.KEYBOARD_INTERACTIVE -> R.string.authentication_interactive
+        AuthenticationMethod.TAILSCALE_SSH -> R.string.authentication_tailscale_ssh
+    },
+)
+
+@Composable
+private fun PortForwardType.label(): String = stringResource(
+    when (this) {
+        PortForwardType.LOCAL -> R.string.port_forward_type_local
+        PortForwardType.REMOTE -> R.string.port_forward_type_remote
+        PortForwardType.DYNAMIC -> R.string.port_forward_type_dynamic
+    },
+)
+
+@Composable
+private fun SessionPromptText.asString(): String = when (this) {
+    is SessionPromptText.Verbatim -> value
+    is SessionPromptText.App -> when (kind) {
+        SessionPromptTextKind.PASSWORD_TITLE ->
+            stringResource(R.string.authentication_password_title, requireNotNull(argument))
+        SessionPromptTextKind.PASSWORD_INSTRUCTION ->
+            stringResource(R.string.authentication_password_instruction)
+        SessionPromptTextKind.PASSWORD_FIELD ->
+            stringResource(R.string.authentication_password_field)
+        SessionPromptTextKind.UNLOCK_KEY_TITLE ->
+            stringResource(R.string.authentication_unlock_key_title, requireNotNull(argument))
+        SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION ->
+            stringResource(R.string.authentication_key_passphrase_instruction)
+        SessionPromptTextKind.KEY_PASSPHRASE_FIELD ->
+            stringResource(R.string.authentication_key_passphrase_field)
+        SessionPromptTextKind.TAILSCALE_LOGIN_TITLE ->
+            stringResource(R.string.authentication_tailscale_login_title)
+        SessionPromptTextKind.INTERACTIVE_LOGIN_TITLE ->
+            stringResource(R.string.authentication_interactive_login_title)
+    }
 }

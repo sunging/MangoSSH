@@ -17,13 +17,17 @@ class WebDavClient {
     suspend fun upload(config: WebDavConfig, encryptedBlob: ByteArray): WebDavResult =
         withContext(Dispatchers.IO) {
             runCatching {
-                require(encryptedBlob.size in 1..MAX_TRANSFER_BYTES) { "Encrypted backup size is invalid" }
+                if (encryptedBlob.size !in 1..MAX_TRANSFER_BYTES) {
+                    throw WebDavClientException(WebDavFailureReason.INVALID_BACKUP_SIZE)
+                }
                 withConnection(config, "PUT") { connection ->
                     connection.doOutput = true
                     connection.setFixedLengthStreamingMode(encryptedBlob.size)
                     connection.outputStream.use { it.write(encryptedBlob) }
                     val code = connection.responseCode
-                    require(code in 200..299) { "WebDAV upload failed (HTTP $code)" }
+                    if (code !in 200..299) {
+                        throw WebDavClientException(WebDavFailureReason.HTTP_STATUS, code)
+                    }
                 }
             }.fold(
                 onSuccess = {
@@ -32,7 +36,7 @@ class WebDavClient {
                 },
                 onFailure = { error ->
                     MangoLog.warn(MangoLogEvent.WEBDAV_UPLOAD_FAILED, error)
-                    WebDavResult.Failure(error.message ?: "Unable to upload encrypted backup")
+                    error.toWebDavFailure()
                 },
             )
         }
@@ -42,11 +46,15 @@ class WebDavClient {
         runCatching {
             withConnection(config, "GET") { connection ->
                 val code = connection.responseCode
-                require(code == HttpURLConnection.HTTP_OK) { "WebDAV download failed (HTTP $code)" }
+                if (code != HttpURLConnection.HTTP_OK) {
+                    throw WebDavClientException(WebDavFailureReason.HTTP_STATUS, code)
+                }
                 val length = connection.contentLengthLong
                 // Chunked WebDAV responses legitimately report an unknown (-1) length.
                 // The stream is still bounded by readLimited below.
-                require(length <= MAX_TRANSFER_BYTES.toLong()) { "Remote backup is too large" }
+                if (length > MAX_TRANSFER_BYTES.toLong()) {
+                    throw WebDavClientException(WebDavFailureReason.RESPONSE_TOO_LARGE)
+                }
                 connection.inputStream.use(::readLimited)
             }
         }.fold(
@@ -56,7 +64,7 @@ class WebDavClient {
             },
             onFailure = { error ->
                 MangoLog.warn(MangoLogEvent.WEBDAV_DOWNLOAD_FAILED, error)
-                WebDavDownloadResult.Failure(error.message ?: "Unable to download encrypted backup")
+                error.toWebDavDownloadFailure()
             },
         )
     }
@@ -90,13 +98,17 @@ class WebDavClient {
 
     private fun remoteUrl(config: WebDavConfig): URL {
         val endpoint = config.endpoint.trim().trimEnd('/')
-        require(endpoint.startsWith("https://")) { "WebDAV endpoint must use HTTPS" }
+        if (!endpoint.startsWith("https://")) {
+            throw WebDavClientException(WebDavFailureReason.INVALID_CONFIGURATION)
+        }
         val remoteName = config.remoteFileName.trim().trimStart('/')
-        require(
-            remoteName.isNotEmpty() &&
-                !remoteName.contains("..") &&
-                remoteName.none { it == '?' || it == '#' || it == '\\' || it.isISOControl() },
-        ) { "WebDAV remote file name is invalid" }
+        if (
+            remoteName.isEmpty() ||
+            remoteName.contains("..") ||
+            remoteName.any { it == '?' || it == '#' || it == '\\' || it.isISOControl() }
+        ) {
+            throw WebDavClientException(WebDavFailureReason.INVALID_CONFIGURATION)
+        }
         return URL("$endpoint/$remoteName")
     }
 
@@ -113,7 +125,9 @@ class WebDavClient {
         while (true) {
             val count = input.read(buffer)
             if (count < 0) break
-            require(output.size() + count <= MAX_TRANSFER_BYTES) { "Remote backup is too large" }
+            if (output.size() + count > MAX_TRANSFER_BYTES) {
+                throw WebDavClientException(WebDavFailureReason.RESPONSE_TOO_LARGE)
+            }
             output.write(buffer, 0, count)
         }
         return output.toByteArray()
@@ -126,14 +140,48 @@ class WebDavClient {
     }
 }
 
+/** Sanitized WebDAV failure category safe to expose without credentials or remote response bodies. */
+enum class WebDavFailureReason {
+    INVALID_CONFIGURATION,
+    INVALID_BACKUP_SIZE,
+    HTTP_STATUS,
+    RESPONSE_TOO_LARGE,
+    NETWORK,
+}
+
+private class WebDavClientException(
+    val reason: WebDavFailureReason,
+    val statusCode: Int? = null,
+) : Exception()
+
+private fun Throwable.failureParts(): Pair<WebDavFailureReason, Int?> =
+    (this as? WebDavClientException)?.let { it.reason to it.statusCode }
+        ?: (WebDavFailureReason.NETWORK to null)
+
+private fun Throwable.toWebDavFailure(): WebDavResult.Failure {
+    val (reason, statusCode) = failureParts()
+    return WebDavResult.Failure(reason, statusCode)
+}
+
+private fun Throwable.toWebDavDownloadFailure(): WebDavDownloadResult.Failure {
+    val (reason, statusCode) = failureParts()
+    return WebDavDownloadResult.Failure(reason, statusCode)
+}
+
 sealed interface WebDavResult {
     data object Success : WebDavResult
 
-    data class Failure(val message: String) : WebDavResult
+    data class Failure(
+        val reason: WebDavFailureReason,
+        val statusCode: Int? = null,
+    ) : WebDavResult
 }
 
 sealed interface WebDavDownloadResult {
     data class Success(val encryptedBlob: ByteArray) : WebDavDownloadResult
 
-    data class Failure(val message: String) : WebDavDownloadResult
+    data class Failure(
+        val reason: WebDavFailureReason,
+        val statusCode: Int? = null,
+    ) : WebDavDownloadResult
 }

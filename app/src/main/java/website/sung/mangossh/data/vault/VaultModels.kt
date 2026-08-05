@@ -52,10 +52,10 @@ data class CommandSnippet(
     val appendNewline: Boolean = true,
 )
 
-enum class PortForwardType(val label: String) {
-    LOCAL("本地"),
-    REMOTE("远程"),
-    DYNAMIC("SOCKS5"),
+enum class PortForwardType {
+    LOCAL,
+    REMOTE,
+    DYNAMIC,
 }
 
 @Immutable
@@ -87,5 +87,11 @@ sealed interface VaultStatus {
 
     data object Ready : VaultStatus
 
-    data class Failed(val userMessage: String) : VaultStatus
+    data class Failed(val reason: VaultFailureReason) : VaultStatus
+}
+
+/** Sanitized operation category for a vault failure exposed to presentation. */
+enum class VaultFailureReason {
+    OPEN,
+    WRITE,
 }

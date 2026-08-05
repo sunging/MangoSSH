@@ -136,9 +136,9 @@ class SessionForegroundService : Service() {
 
     private fun buildSummaryNotification(tsnetOnly: Boolean): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.mipmap.ic_launcher)
-        .setContentTitle(getString(R.string.active_sessions_notification_title))
+        .setContentTitle(appString(R.string.active_sessions_notification_title))
         .setContentText(
-            getString(
+            appString(
                 if (tsnetOnly) {
                     R.string.embedded_tsnet_notification_text
                 } else {
@@ -161,7 +161,7 @@ class SessionForegroundService : Service() {
     private fun buildSessionNotification(session: TerminalSessionState): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(getString(R.string.active_session_notification_title, session.title))
+            .setContentTitle(appString(R.string.active_session_notification_title, session.title))
             .setContentText(phaseText(session.phase))
             .setContentIntent(sessionPendingIntent(session.id))
             .setOngoing(true)
@@ -177,20 +177,20 @@ class SessionForegroundService : Service() {
     /** Produces a lock-screen-safe version that never includes profile or endpoint data. */
     private fun buildPublicNotification(): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.mipmap.ic_launcher)
-        .setContentTitle(getString(R.string.active_sessions_notification_public_title))
-        .setContentText(getString(R.string.active_sessions_notification_public_text))
+        .setContentTitle(appString(R.string.active_sessions_notification_public_title))
+        .setContentText(appString(R.string.active_sessions_notification_public_text))
         .setContentIntent(summaryPendingIntent())
         .setOngoing(true)
         .setCategory(NotificationCompat.CATEGORY_SERVICE)
         .build()
 
     private fun phaseText(phase: TerminalSessionPhase): String = when (phase) {
-        TerminalSessionPhase.CONNECTING -> getString(R.string.active_session_notification_connecting)
-        TerminalSessionPhase.VERIFYING_HOST_KEY -> getString(R.string.active_session_notification_verifying)
-        TerminalSessionPhase.AUTHENTICATING -> getString(R.string.active_session_notification_authenticating)
-        TerminalSessionPhase.OPEN -> getString(R.string.active_session_notification_open)
+        TerminalSessionPhase.CONNECTING -> appString(R.string.active_session_notification_connecting)
+        TerminalSessionPhase.VERIFYING_HOST_KEY -> appString(R.string.active_session_notification_verifying)
+        TerminalSessionPhase.AUTHENTICATING -> appString(R.string.active_session_notification_authenticating)
+        TerminalSessionPhase.OPEN -> appString(R.string.active_session_notification_open)
         TerminalSessionPhase.FAILED,
-        TerminalSessionPhase.CLOSED -> getString(R.string.active_sessions_notification_text)
+        TerminalSessionPhase.CLOSED -> appString(R.string.active_sessions_notification_text)
     }
 
     private fun summaryPendingIntent(): PendingIntent = PendingIntent.getActivity(
@@ -226,10 +226,10 @@ class SessionForegroundService : Service() {
         manager.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_ID,
-                getString(R.string.active_sessions_channel),
+                appString(R.string.active_sessions_channel),
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = getString(R.string.active_sessions_channel_description)
+                description = appString(R.string.active_sessions_channel_description)
                 setShowBadge(false)
             },
         )
