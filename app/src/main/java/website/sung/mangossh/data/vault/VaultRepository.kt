@@ -8,6 +8,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.domain.ConnectionProfile
+import website.sung.mangossh.domain.normalizedPositions
+import website.sung.mangossh.domain.reorderedBy
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 
@@ -38,15 +40,48 @@ class VaultRepository(context: Context) {
         }
     }
 
+    /**
+     * Inserts a new profile or replaces an existing one by id. An edit carries only the fields
+     * the editor form owns; the list position, favorite flag, and last-connected timestamp of an
+     * existing profile are preserved from the stored record rather than the incoming draft, so
+     * editing a host no longer resets those out-of-form fields or moves it in the list.
+     */
     suspend fun upsertProfile(profile: ConnectionProfile) = mutate { snapshot ->
-        val profiles = snapshot.profiles.filterNot { it.id == profile.id }.plus(profile)
+        val existingIndex = snapshot.profiles.indexOfFirst { it.id == profile.id }
+        val profiles = if (existingIndex >= 0) {
+            val existing = snapshot.profiles[existingIndex]
+            snapshot.profiles.toMutableList().also {
+                it[existingIndex] = profile.copy(
+                    position = existing.position,
+                    favorite = existing.favorite,
+                    lastConnectedAtEpochMillis = existing.lastConnectedAtEpochMillis,
+                )
+            }
+        } else {
+            val nextPosition = (snapshot.profiles.maxOfOrNull { it.position } ?: -1) + 1
+            snapshot.profiles.plus(profile.copy(position = nextPosition))
+        }
         snapshot.copy(profiles = profiles)
     }
 
     suspend fun removeProfile(id: String) = mutate { snapshot ->
         snapshot.copy(
-            profiles = snapshot.profiles.filterNot { it.id == id },
+            profiles = snapshot.profiles.filterNot { it.id == id }.normalizedPositions(),
             portForwards = snapshot.portForwards.filterNot { it.profileId == id },
+        )
+    }
+
+    /** Persists a manual drag/menu reorder; [orderedIds] need not include every profile. */
+    suspend fun reorderProfiles(orderedIds: List<String>) = mutate { snapshot ->
+        snapshot.copy(profiles = snapshot.profiles.reorderedBy(orderedIds))
+    }
+
+    /** Records when a profile was last connected to, for the "recent" host sort order. */
+    suspend fun recordProfileConnection(id: String, nowEpochMillis: Long) = mutate { snapshot ->
+        snapshot.copy(
+            profiles = snapshot.profiles.map { profile ->
+                if (profile.id == id) profile.copy(lastConnectedAtEpochMillis = nowEpochMillis) else profile
+            },
         )
     }
 

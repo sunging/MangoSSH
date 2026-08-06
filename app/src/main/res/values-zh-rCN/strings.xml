@@ -252,12 +252,16 @@
     <string name="transfer_resume">继续</string>
     <string name="common_download">下载</string>
     <string name="common_edit">编辑</string>
+    <string name="common_move_down">下移</string>
+    <string name="common_move_to_top">置顶</string>
+    <string name="common_move_up">上移</string>
     <string name="common_ok">确定</string>
     <string name="common_open">打开</string>
     <string name="common_refresh">刷新</string>
     <string name="common_remove">移除</string>
     <string name="common_retry">重试</string>
     <string name="common_save">保存</string>
+    <string name="common_search">搜索</string>
     <string name="common_start">启动</string>
     <string name="common_stop">停止</string>
     <string name="common_submit">提交</string>
@@ -281,6 +285,7 @@
     <string name="ui_cancelled">已取消</string>
     <string name="ui_change_pin">修改 PIN</string>
     <string name="ui_clear_finished">清除已完成</string>
+    <string name="ui_clear_search">清除搜索</string>
     <string name="ui_close_preview">关闭预览</string>
     <string name="ui_close_the_file_browser">关闭文件浏览器</string>
     <string name="ui_closed">已关闭</string>
@@ -323,6 +328,7 @@
     <string name="ui_generated_or_imported_private_keys_stay_only_in_the_encrypted_vault_and">生成或导入的私钥仅保存在加密保险库内，可复用到多个主机。</string>
     <string name="ui_home_directory">主目录</string>
     <string name="ui_host">所属主机</string>
+    <string name="ui_host_actions">%1$s 的操作</string>
     <string name="ui_hostname_or_ip_address">主机名或 IP 地址</string>
     <string name="ui_import">导入</string>
     <string name="ui_import_encrypted_backup">导入加密备份</string>
@@ -353,6 +359,8 @@
     <string name="ui_new_snippet_2">新建片段</string>
     <string name="ui_no_app_pin_is_set_once_enabled_returning_to_the_foreground_requires_pin">尚未设置应用 PIN。启用后，应用回到前台需要 PIN 或生物识别解锁。</string>
     <string name="ui_no_keys_yet_generate_one_with_an_algorithm_supported_by_your_server_or_i">还没有密钥。请选择适合服务器的算法生成密钥，或导入 OpenSSH/PEM 私钥。</string>
+    <string name="ui_no_hosts_match_search">没有匹配的主机</string>
+    <string name="ui_no_hosts_match_search_hint">换个名称、主机名或用户名试试。</string>
     <string name="ui_no_port_forwarding_rules_yet_a_rule_can_start_automatically_after_connec">还没有端口转发规则。可以设置连接后自动启动。</string>
     <string name="ui_no_servers_yet">还没有服务器</string>
     <string name="ui_no_snippets_yet">还没有代码片段。</string>
@@ -389,6 +397,7 @@
     <string name="ui_run_after_connection">连接后自动执行</string>
     <string name="ui_running">运行中</string>
     <string name="ui_save_profile">保存配置</string>
+    <string name="ui_search_hosts">搜索主机</string>
     <string name="ui_secure_vault_encrypted_by_android_keystore">安全保险库：已由 Android Keystore 加密</string>
     <string name="ui_secure_vault_opening">安全保险库：正在打开</string>
     <string name="ui_secure_vault_unavailable">安全保险库：不可用</string>
@@ -401,6 +410,10 @@
     <string name="ui_shared_keys_and_agent">共享密钥与代理</string>
     <string name="ui_shared_private_key">共享私钥</string>
     <string name="ui_shell_command_or_script">Shell 命令或脚本</string>
+    <string name="ui_sort_hosts">主机排序</string>
+    <string name="ui_sort_mode_label">按名称</string>
+    <string name="ui_sort_mode_manual">手动排序</string>
+    <string name="ui_sort_mode_recent">最近使用</string>
     <string name="ui_ssh_port_forwarding">SSH 端口转发</string>
     <string name="ui_start_on_connection">连接后自动启动</string>
     <string name="ui_starting">正在启动</string>

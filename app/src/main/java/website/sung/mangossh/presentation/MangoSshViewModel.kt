@@ -44,6 +44,8 @@ import website.sung.mangossh.domain.AppRelease
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.domain.ConnectionProtocol
+import website.sung.mangossh.domain.HostSortMode
+import website.sung.mangossh.domain.matchesHostQuery
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
@@ -165,14 +167,34 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val updateFiles = AppUpdateFileStore(application)
     private val releaseClient = GitHubReleaseClient(appVersionName = runtime.installedAppInfo?.versionName ?: "unknown")
     private var updateJob: Job? = null
+    private val hostListPreferencesStore = runtime.hostListPreferences
 
-    val hosts = vault.snapshot
-        .map { snapshot ->
-            snapshot.profiles.sortedWith(
-                compareByDescending<ConnectionProfile> { it.favorite }.thenBy { it.label.lowercase() },
-            )
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val _hostQuery = MutableStateFlow("")
+
+    /** Free-text filter applied only to the host list screen, never to other pickers of it. */
+    val hostQuery = _hostQuery.asStateFlow()
+
+    /** Device-local host list sort preference, shared with the top bar sort menu. */
+    val hostSortMode = hostListPreferencesStore.sortMode
+
+    /**
+     * Every profile in the selected sort order, unfiltered by search. Other screens such as the
+     * port-forward host picker read this list and must keep seeing every host regardless of what
+     * is typed into the host list's search field.
+     */
+    val hosts = combine(vault.snapshot, hostSortMode) { snapshot, mode ->
+        snapshot.profiles.sortedWith(mode.comparator())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Hosts shown on the host list screen after the search filter is applied. */
+    val visibleHosts = combine(hosts, _hostQuery) { list, query ->
+        list.filter { it.matchesHostQuery(query) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Drag-to-reorder and the move/move-to-top menu items only make sense in manual, unfiltered order. */
+    val hostsReorderable = combine(hostSortMode, _hostQuery) { mode, query ->
+        mode == HostSortMode.MANUAL && query.isBlank()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     val vaultStatus = vault.status
 
@@ -298,8 +320,45 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { vault.open() }
     }
 
+    fun setHostQuery(query: String) {
+        _hostQuery.value = query
+    }
+
+    fun clearHostQuery() {
+        _hostQuery.value = ""
+    }
+
+    fun setHostSortMode(mode: HostSortMode) {
+        hostListPreferencesStore.setSortMode(mode)
+    }
+
+    /** Persists a manual drag or menu reorder; [orderedIds] need not include every host. */
+    fun reorderHosts(orderedIds: List<String>) {
+        viewModelScope.launch { vault.reorderProfiles(orderedIds) }
+    }
+
+    /** Moves one host [delta] places within the current manual order; a no-op past either end. */
+    fun moveHost(id: String, delta: Int) {
+        val currentOrder = hosts.value.map { it.id }
+        val from = currentOrder.indexOf(id)
+        if (from < 0) return
+        val to = (from + delta).coerceIn(0, currentOrder.lastIndex)
+        if (to == from) return
+        reorderHosts(currentOrder.toMutableList().apply { add(to, removeAt(from)) })
+    }
+
+    fun moveHostToTop(id: String) {
+        val currentOrder = hosts.value.map { it.id }
+        val from = currentOrder.indexOf(id)
+        if (from <= 0) return
+        reorderHosts(currentOrder.toMutableList().apply { add(0, removeAt(from)) })
+    }
+
     /** Starts the selected SSH or Mosh profile and returns its ephemeral session identifier. */
-    fun connect(profile: ConnectionProfile): String = sessionController.connect(profile)
+    fun connect(profile: ConnectionProfile): String {
+        viewModelScope.launch { vault.recordProfileConnection(profile.id, System.currentTimeMillis()) }
+        return sessionController.connect(profile)
+    }
 
     fun disconnect(sessionId: String) {
         sessionController.close(sessionId)

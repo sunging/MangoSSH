@@ -30,14 +30,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Key
-import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SwapHoriz
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -46,6 +48,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -67,6 +70,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -125,6 +131,7 @@ import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
+import website.sung.mangossh.domain.HostSortMode
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
@@ -243,6 +250,10 @@ fun MangoSshApp(
     }
 
     val hosts by viewModel.hosts.collectAsStateWithLifecycle()
+    val visibleHosts by viewModel.visibleHosts.collectAsStateWithLifecycle()
+    val hostQuery by viewModel.hostQuery.collectAsStateWithLifecycle()
+    val hostSortMode by viewModel.hostSortMode.collectAsStateWithLifecycle()
+    val hostsReorderable by viewModel.hostsReorderable.collectAsStateWithLifecycle()
     val keys by viewModel.keys.collectAsStateWithLifecycle()
     val snippets by viewModel.snippets.collectAsStateWithLifecycle()
     val selectedSection by viewModel.selectedSection.collectAsStateWithLifecycle()
@@ -291,6 +302,19 @@ fun MangoSshApp(
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
     var showTransfers by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
+    var hostSearchActive by rememberSaveable { mutableStateOf(false) }
+    val hostSearchFocusRequester = remember { FocusRequester() }
+
+    fun closeHostSearch() {
+        hostSearchActive = false
+        viewModel.clearHostQuery()
+    }
+
+    // Leaving the host list mid-search should not leave a stale filter behind
+    // for the next visit, since the search field itself is HOSTS-only chrome.
+    LaunchedEffect(selectedSection) {
+        if (selectedSection != AppSection.HOSTS && hostSearchActive) closeHostSearch()
+    }
 
     fun openHostEditor(host: ConnectionProfile? = null) {
         editingHost = host
@@ -396,6 +420,8 @@ fun MangoSshApp(
         sessions.firstOrNull { it.id == prompt.sessionId }?.kind == SessionKind.PORT_FORWARD
     }
 
+    BackHandler(enabled = hostSearchActive) { closeHostSearch() }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -408,35 +434,50 @@ fun MangoSshApp(
     ) {
         Scaffold(
             topBar = {
-                CenterAlignedTopAppBar(
-                    title = {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                "MangoSSH",
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = sectionSubtitle(selectedSection),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    },
-                    actions = {
-                        // Transfers are started from the host list, so their
-                        // status lives here rather than on a tab of its own.
-                        if (selectedSection == AppSection.HOSTS && scpTransfers.isNotEmpty()) {
-                            FileTransferStatusAction(
-                                transfers = scpTransfers,
-                                onClick = { showTransfers = true },
-                            )
-                        }
-                    },
-                )
+                if (selectedSection == AppSection.HOSTS && hostSearchActive) {
+                    HostSearchTopBar(
+                        query = hostQuery,
+                        onQueryChange = viewModel::setHostQuery,
+                        onClose = ::closeHostSearch,
+                        focusRequester = hostSearchFocusRequester,
+                    )
+                } else {
+                    CenterAlignedTopAppBar(
+                        title = {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "MangoSSH",
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = sectionSubtitle(selectedSection),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        },
+                        actions = {
+                            // Transfers are started from the host list, so their
+                            // status lives here rather than on a tab of its own.
+                            if (selectedSection == AppSection.HOSTS && scpTransfers.isNotEmpty()) {
+                                FileTransferStatusAction(
+                                    transfers = scpTransfers,
+                                    onClick = { showTransfers = true },
+                                )
+                            }
+                            if (selectedSection == AppSection.HOSTS) {
+                                IconButton(onClick = { hostSearchActive = true }) {
+                                    Icon(Icons.Outlined.Search, contentDescription = stringResource(R.string.common_search))
+                                }
+                                HostSortMenu(sortMode = hostSortMode, onSelect = viewModel::setHostSortMode)
+                            }
+                        },
+                    )
+                }
             },
             floatingActionButton = {
                 if (selectedSection == AppSection.HOSTS && vaultStatus !is VaultStatus.Failed) {
@@ -469,7 +510,9 @@ fun MangoSshApp(
                     when (selectedSection) {
                         AppSection.HOSTS -> HostsScreen(
                             onBrowseHostFiles = viewModel::openRemoteBrowserForProfile,
-                            hosts = hosts,
+                            hosts = visibleHosts,
+                            hasAnyHost = hosts.isNotEmpty(),
+                            reorderable = hostsReorderable,
                             sessions = sessions,
                             vaultStatus = vaultStatus,
                             onEditHost = { openHostEditor(it) },
@@ -480,6 +523,9 @@ fun MangoSshApp(
                             },
                             onOpenSession = { sessionId -> activeSessionId = sessionId },
                             onDisconnectSession = viewModel::disconnect,
+                            onReorderHosts = viewModel::reorderHosts,
+                            onMoveHost = viewModel::moveHost,
+                            onMoveHostToTop = viewModel::moveHostToTop,
                         )
 
                         AppSection.KEYS -> KeysScreen(
@@ -644,6 +690,80 @@ private fun MangoNavigationBar(
     }
 }
 
+/** Replaces the host list's top bar while search is active; a back arrow restores it. */
+@Composable
+private fun HostSearchTopBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    focusRequester: FocusRequester,
+) {
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    TopAppBar(
+        title = {
+            TextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester),
+                placeholder = { Text(stringResource(R.string.ui_search_hosts)) },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+            )
+        },
+        navigationIcon = {
+            IconButton(onClick = onClose) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.common_close))
+            }
+        },
+        actions = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.ui_clear_search))
+                }
+            }
+        },
+    )
+}
+
+/** Top bar overflow menu that switches the host list between manual, name, and recency order. */
+@Composable
+private fun HostSortMenu(sortMode: HostSortMode, onSelect: (HostSortMode) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = stringResource(R.string.ui_sort_hosts))
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            val options = listOf(
+                HostSortMode.MANUAL to R.string.ui_sort_mode_manual,
+                HostSortMode.LABEL to R.string.ui_sort_mode_label,
+                HostSortMode.RECENT to R.string.ui_sort_mode_recent,
+            )
+            options.forEach { (mode, labelRes) ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(labelRes)) },
+                    leadingIcon = {
+                        if (mode == sortMode) {
+                            Icon(Icons.Outlined.Check, contentDescription = null)
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(mode)
+                    },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun RemovalConfirmationDialog(
     request: PendingRemovalRequest,
@@ -765,201 +885,6 @@ private fun AppLockScreen(
             message?.let {
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = onDismissMessage) { Text(it.asString()) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HostsScreen(
-    hosts: List<ConnectionProfile>,
-    sessions: List<website.sung.mangossh.session.TerminalSessionState>,
-    vaultStatus: VaultStatus,
-    onEditHost: (ConnectionProfile) -> Unit,
-    onRemoveHost: (String) -> Unit,
-    onConnectHost: (ConnectionProfile) -> Unit,
-    onBrowseHostFiles: (ConnectionProfile) -> Unit,
-    onOpenSession: (String) -> Unit,
-    onDisconnectSession: (String) -> Unit,
-) {
-    if (hosts.isEmpty() && sessions.isEmpty()) {
-        EmptyHosts(vaultStatus = vaultStatus)
-        return
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 16.dp,
-            top = 16.dp,
-            end = 16.dp,
-            bottom = 96.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        if (vaultStatus !is VaultStatus.Ready) {
-            item { SecurityBanner(vaultStatus) }
-        }
-        // Transfer-only and forwarding-only connections have no shell to open,
-        // so they are owned by the file browser and the forwarding rules rather
-        // than listed as sessions the user can enter.
-        val visibleSessions = sessions.filter {
-            it.phase != TerminalSessionPhase.CLOSED && it.kind == SessionKind.TERMINAL
-        }
-        if (visibleSessions.isNotEmpty()) {
-            item { Text(stringResource(R.string.ui_active_sessions), style = MaterialTheme.typography.titleMedium) }
-            items(visibleSessions, key = { it.id }) { session ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(session.title, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                session.endpoint + " · " + session.phase.label(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        OutlinedButton(onClick = { onOpenSession(session.id) }) { Text(stringResource(R.string.common_open)) }
-                        TextButton(onClick = { onDisconnectSession(session.id) }) { Text(stringResource(R.string.common_close)) }
-                    }
-                }
-            }
-        }
-        items(items = hosts, key = { it.id }) { host ->
-            HostCard(
-                host = host,
-                onEdit = { onEditHost(host) },
-                onRemove = { onRemoveHost(host.id) },
-                onConnect = { onConnectHost(host) },
-                onBrowseFiles = { onBrowseHostFiles(host) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun EmptyHosts(vaultStatus: VaultStatus) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Dns,
-            contentDescription = null,
-            modifier = Modifier.size(56.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(Modifier.height(18.dp))
-        Text(stringResource(R.string.ui_no_servers_yet), style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = stringResource(R.string.ui_add_an_ssh_mosh_or_tailnet_host_profile_keys_are_managed_and_shared_sepa),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (vaultStatus is VaultStatus.Failed) {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = vaultStatus.failureMessage(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SecurityBanner(vaultStatus: VaultStatus) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Column(Modifier.padding(16.dp)) {
-            Text(stringResource(R.string.ui_security_first), fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = vaultStatus.description(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-        }
-    }
-}
-
-@Composable
-private fun HostCard(
-    host: ConnectionProfile,
-    onEdit: () -> Unit,
-    onRemove: () -> Unit,
-    onConnect: () -> Unit,
-    onBrowseFiles: () -> Unit,
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Outlined.Dns,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        host.label,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "${host.username}@${host.endpoint}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                IconButton(onClick = onEdit) {
-                    Icon(
-                        Icons.Outlined.MoreVert,
-                        contentDescription = stringResource(R.string.common_edit) + " " + host.label,
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(
-                    onClick = {},
-                    label = { Text(host.protocol.label) },
-                    colors = AssistChipDefaults.assistChipColors(
-                        labelColor = MaterialTheme.colorScheme.primary,
-                    ),
-                )
-                AssistChip(onClick = {}, label = { Text(host.route.label()) })
-            }
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onConnect) {
-                    Text(stringResource(R.string.common_connect))
-                }
-                // Mosh replaces its SSH bootstrap with a UDP terminal and has no
-                // channel left for SFTP.
-                if (host.protocol == ConnectionProtocol.SSH) {
-                    OutlinedButton(onClick = onBrowseFiles) {
-                        Text(stringResource(R.string.ui_files))
-                    }
-                }
-                OutlinedButton(onClick = onEdit) {
-                    Text(stringResource(R.string.common_edit))
-                }
-                TextButton(onClick = onRemove) {
-                    Text(stringResource(R.string.common_remove))
-                }
             }
         }
     }
@@ -2686,14 +2611,14 @@ private fun VaultStatus.summary(): String = when (this) {
 }
 
 @Composable
-private fun VaultStatus.description(): String = when (this) {
+internal fun VaultStatus.description(): String = when (this) {
     VaultStatus.Loading -> stringResource(R.string.ui_opening_the_local_encrypted_vault_server_fingerprints_are_still_verified)
     VaultStatus.Ready -> stringResource(R.string.ui_local_configuration_is_encrypted_with_android_keystore_and_aes_gcm_serve)
     is VaultStatus.Failed -> failureMessage()
 }
 
 @Composable
-private fun VaultStatus.Failed.failureMessage(): String = stringResource(
+internal fun VaultStatus.Failed.failureMessage(): String = stringResource(
     when (reason) {
         VaultFailureReason.OPEN -> R.string.message_vault_open_failed
         VaultFailureReason.WRITE -> R.string.message_vault_save_failed
@@ -2711,7 +2636,7 @@ private fun AppSection.label(): String = stringResource(
 )
 
 @Composable
-private fun ConnectionRoute.label(): String = stringResource(
+internal fun ConnectionRoute.label(): String = stringResource(
     when (this) {
         ConnectionRoute.DIRECT -> R.string.connection_route_direct
         ConnectionRoute.TAILNET -> R.string.connection_route_system_tailscale

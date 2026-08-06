@@ -16,8 +16,78 @@ class VaultPayloadCodecTest {
 
         val decoded = VaultPayloadCodec.decode(VaultPayloadCodec.encode(snapshot))
 
-        assertEquals(4, decoded.schemaVersion)
+        assertEquals(VaultSnapshot.CURRENT_SCHEMA_VERSION, decoded.schemaVersion)
         assertEquals(ConnectionRoute.TSNET, decoded.profiles.single().route)
+    }
+
+    @Test
+    fun positionAndLastConnectedRoundTrip() {
+        val snapshot = VaultSnapshot(
+            profiles = listOf(
+                profile(ConnectionRoute.DIRECT).copy(position = 3, lastConnectedAtEpochMillis = 1_700_000_000_000L),
+            ),
+        )
+
+        val decoded = VaultPayloadCodec.decode(VaultPayloadCodec.encode(snapshot)).profiles.single()
+
+        assertEquals(3, decoded.position)
+        assertEquals(1_700_000_000_000L, decoded.lastConnectedAtEpochMillis)
+    }
+
+    @Test
+    fun schemaFivePreservesStoredPosition() {
+        val payload = payloadObject(ConnectionRoute.DIRECT).apply {
+            getJSONArray("profiles").getJSONObject(0).put("position", 7)
+        }
+
+        val decoded = VaultPayloadCodec.decode(payload.toString().encodeToByteArray()).profiles.single()
+
+        assertEquals(7, decoded.position)
+    }
+
+    @Test
+    fun schemaFourUpgradeReordersByLegacyFavoriteThenLabelDisplayOrder() {
+        // Schema 4 had no persisted position; the host list was always shown favorite-first,
+        // then alphabetically by label. Upgrading must reproduce that same visible order as the
+        // new manual position, so a just-upgraded list looks unchanged to the user.
+        val legacyProfiles = JSONObject().apply {
+            put("schemaVersion", 4)
+            put(
+                "profiles",
+                org.json.JSONArray().apply {
+                    put(legacyProfileJson(id = "b", label = "Bravo", favorite = false))
+                    put(legacyProfileJson(id = "a", label = "Alpha", favorite = true))
+                    put(legacyProfileJson(id = "c", label = "Charlie", favorite = false))
+                },
+            )
+            put("keys", org.json.JSONArray())
+            put("knownHosts", org.json.JSONArray())
+            put("snippets", org.json.JSONArray())
+            put("portForwards", org.json.JSONArray())
+            put("webDavConfig", JSONObject.NULL)
+        }
+
+        val decoded = VaultPayloadCodec.decode(legacyProfiles.toString().encodeToByteArray()).profiles
+            .sortedBy { it.position }
+
+        // Alpha is the favorite so it leads; Bravo/Charlie follow in label order.
+        assertEquals(listOf("a", "b", "c"), decoded.map { it.id })
+        assertEquals(listOf(0, 1, 2), decoded.map { it.position })
+    }
+
+    private fun legacyProfileJson(id: String, label: String, favorite: Boolean) = JSONObject().apply {
+        put("id", id)
+        put("label", label)
+        put("hostname", "$id.invalid")
+        put("port", 22)
+        put("username", "user")
+        put("protocol", "SSH")
+        put("route", "DIRECT")
+        put("authentication", "PRIVATE_KEY")
+        put("keyId", JSONObject.NULL)
+        put("startupSnippetId", JSONObject.NULL)
+        put("agentForwarding", false)
+        put("favorite", favorite)
     }
 
     @Test
