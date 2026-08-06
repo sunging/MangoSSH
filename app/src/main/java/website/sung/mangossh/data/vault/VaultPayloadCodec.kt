@@ -28,6 +28,7 @@ internal object VaultPayloadCodec {
                         put("favorite", profile.favorite)
                         put("position", profile.position)
                         put("lastConnectedAtEpochMillis", profile.lastConnectedAtEpochMillis)
+                        put("connectionCount", profile.connectionCount)
                     },
                 )
             }
@@ -159,6 +160,7 @@ internal object VaultPayloadCodec {
                     favorite = value.optBoolean("favorite", false),
                     position = value.optInt("position", index),
                     lastConnectedAtEpochMillis = value.optLong("lastConnectedAtEpochMillis", 0L),
+                    connectionCount = value.optInt("connectionCount", 0),
                 ),
             )
         }

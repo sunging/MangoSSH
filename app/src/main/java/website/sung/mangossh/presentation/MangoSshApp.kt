@@ -732,7 +732,7 @@ private fun HostSearchTopBar(
     )
 }
 
-/** Top bar overflow menu that switches the host list between manual, name, and recency order. */
+/** Top bar overflow menu that switches the host list between manual, name, recency, and usage order. */
 @Composable
 private fun HostSortMenu(sortMode: HostSortMode, onSelect: (HostSortMode) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
@@ -745,6 +745,7 @@ private fun HostSortMenu(sortMode: HostSortMode, onSelect: (HostSortMode) -> Uni
                 HostSortMode.MANUAL to R.string.ui_sort_mode_manual,
                 HostSortMode.LABEL to R.string.ui_sort_mode_label,
                 HostSortMode.RECENT to R.string.ui_sort_mode_recent,
+                HostSortMode.MOST_USED to R.string.ui_sort_mode_most_used,
             )
             options.forEach { (mode, labelRes) ->
                 DropdownMenuItem(

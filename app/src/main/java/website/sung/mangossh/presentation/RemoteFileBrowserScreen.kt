@@ -67,8 +67,6 @@ import website.sung.mangossh.session.MAX_REMOTE_DIRECTORY_ENTRIES
 import website.sung.mangossh.session.RemoteFileEntry
 import website.sung.mangossh.session.RemoteFileKind
 import website.sung.mangossh.session.RemoteFilePaths
-import java.text.DateFormat
-import java.util.Date
 import android.text.format.Formatter
 import androidx.compose.ui.res.stringResource
 
@@ -541,11 +539,8 @@ private fun RemoteFilePreviewLayer(
 internal fun formatByteSize(context: android.content.Context, bytes: Long): String =
     Formatter.formatShortFileSize(context, bytes)
 
-private fun formatModifiedTime(context: android.content.Context, epochSeconds: Long): String {
-    val locale = context.resources.configuration.locales[0]
-    return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale)
-        .format(Date(epochSeconds * 1000L))
-}
+private fun formatModifiedTime(context: android.content.Context, epochSeconds: Long): String =
+    formatShortDateTime(context, epochSeconds * 1000L)
 
 @Composable
 private fun formatPreviewSize(totalSizeBytes: Long?): String =

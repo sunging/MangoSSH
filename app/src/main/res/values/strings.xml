@@ -311,6 +311,10 @@
     <string name="ui_connected">Connected</string>
     <string name="ui_connecting">Connecting…</string>
     <string name="ui_connecting_2">Connecting</string>
+    <plurals name="ui_connection_count">
+        <item quantity="one">%1$d connection</item>
+        <item quantity="other">%1$d connections</item>
+    </plurals>
     <string name="ui_connection_workspace">Connection workspace</string>
     <string name="ui_copy_public_key">Copy public key</string>
     <string name="ui_create_a_host_profile_before_adding_a_port_forward">Create a host profile before adding a port forward.</string>
@@ -366,6 +370,7 @@
     <string name="ui_name">Name</string>
     <string name="ui_name_optional">Name (optional)</string>
     <string name="ui_network_route">Network route</string>
+    <string name="ui_never_connected">Never connected</string>
     <string name="ui_new_forward">New forward</string>
     <string name="ui_new_host_profile">New host profile</string>
     <string name="ui_new_port_forward">New port forward</string>
@@ -428,6 +433,7 @@
     <string name="ui_sort_hosts">Sort hosts</string>
     <string name="ui_sort_mode_label">Name</string>
     <string name="ui_sort_mode_manual">Manual order</string>
+    <string name="ui_sort_mode_most_used">Most used</string>
     <string name="ui_sort_mode_recent">Recently used</string>
     <string name="ui_ssh_port_forwarding">SSH port forwarding</string>
     <string name="ui_start_on_connection">Start on connection</string>

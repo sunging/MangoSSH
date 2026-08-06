@@ -39,6 +39,21 @@ class HostListOrderingTest {
     }
 
     @Test
+    fun mostUsedComparatorOrdersByConnectionCountDescendingThenRecentThenLabel() {
+        val profiles = listOf(
+            profile("rare", label = "zulu", connectionCount = 1, lastConnectedAtEpochMillis = 500L),
+            profile("frequent", label = "alpha", connectionCount = 5, lastConnectedAtEpochMillis = 100L),
+            profile("tie-stale", label = "bravo", connectionCount = 2, lastConnectedAtEpochMillis = 100L),
+            profile("tie-fresh", label = "charlie", connectionCount = 2, lastConnectedAtEpochMillis = 200L),
+            profile("never", label = "delta", connectionCount = 0, lastConnectedAtEpochMillis = 0L),
+        )
+
+        val ordered = profiles.sortedWith(HostSortMode.MOST_USED.comparator())
+
+        assertEquals(listOf("frequent", "tie-fresh", "tie-stale", "rare", "never"), ordered.map { it.id })
+    }
+
+    @Test
     fun matchesHostQueryMatchesLabelHostnameAndUsernameCaseInsensitively() {
         val host = profile("a", label = "Prod Web", hostname = "web01.example.test", username = "deploy")
 
@@ -85,6 +100,7 @@ class HostListOrderingTest {
         username: String = "user",
         position: Int = 0,
         lastConnectedAtEpochMillis: Long = 0L,
+        connectionCount: Int = 0,
     ) = ConnectionProfile(
         id = id,
         label = label,
@@ -92,5 +108,6 @@ class HostListOrderingTest {
         username = username,
         position = position,
         lastConnectedAtEpochMillis = lastConnectedAtEpochMillis,
+        connectionCount = connectionCount,
     )
 }

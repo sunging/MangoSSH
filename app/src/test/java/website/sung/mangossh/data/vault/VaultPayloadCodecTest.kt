@@ -35,6 +35,28 @@ class VaultPayloadCodecTest {
     }
 
     @Test
+    fun connectionCountRoundTrips() {
+        val snapshot = VaultSnapshot(
+            profiles = listOf(profile(ConnectionRoute.DIRECT).copy(connectionCount = 42)),
+        )
+
+        val decoded = VaultPayloadCodec.decode(VaultPayloadCodec.encode(snapshot)).profiles.single()
+
+        assertEquals(42, decoded.connectionCount)
+    }
+
+    @Test
+    fun payloadMissingConnectionCountDecodesToZero() {
+        val payload = payloadObject(ConnectionRoute.DIRECT).apply {
+            getJSONArray("profiles").getJSONObject(0).remove("connectionCount")
+        }
+
+        val decoded = VaultPayloadCodec.decode(payload.toString().encodeToByteArray()).profiles.single()
+
+        assertEquals(0, decoded.connectionCount)
+    }
+
+    @Test
     fun schemaFivePreservesStoredPosition() {
         val payload = payloadObject(ConnectionRoute.DIRECT).apply {
             getJSONArray("profiles").getJSONObject(0).put("position", 7)

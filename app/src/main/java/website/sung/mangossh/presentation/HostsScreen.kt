@@ -334,6 +334,13 @@ private fun HostCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                Text(
+                    text = hostUsageSummary(host),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Box {
                 IconButton(onClick = { menuExpanded = true }) {

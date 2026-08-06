@@ -42,9 +42,10 @@ class VaultRepository(context: Context) {
 
     /**
      * Inserts a new profile or replaces an existing one by id. An edit carries only the fields
-     * the editor form owns; the list position, favorite flag, and last-connected timestamp of an
-     * existing profile are preserved from the stored record rather than the incoming draft, so
-     * editing a host no longer resets those out-of-form fields or moves it in the list.
+     * the editor form owns; the list position, favorite flag, last-connected timestamp, and
+     * connection count of an existing profile are preserved from the stored record rather than
+     * the incoming draft, so editing a host no longer resets those out-of-form fields, moves it
+     * in the list, or zeroes its usage history.
      */
     suspend fun upsertProfile(profile: ConnectionProfile) = mutate { snapshot ->
         val existingIndex = snapshot.profiles.indexOfFirst { it.id == profile.id }
@@ -55,6 +56,7 @@ class VaultRepository(context: Context) {
                     position = existing.position,
                     favorite = existing.favorite,
                     lastConnectedAtEpochMillis = existing.lastConnectedAtEpochMillis,
+                    connectionCount = existing.connectionCount,
                 )
             }
         } else {
@@ -76,11 +78,22 @@ class VaultRepository(context: Context) {
         snapshot.copy(profiles = snapshot.profiles.reorderedBy(orderedIds))
     }
 
-    /** Records when a profile was last connected to, for the "recent" host sort order. */
+    /**
+     * Records a connection attempt: bumps [ConnectionProfile.connectionCount] and stamps
+     * [ConnectionProfile.lastConnectedAtEpochMillis], backing the "recent" and "most used" host
+     * sort orders and the usage line shown on the host list.
+     */
     suspend fun recordProfileConnection(id: String, nowEpochMillis: Long) = mutate { snapshot ->
         snapshot.copy(
             profiles = snapshot.profiles.map { profile ->
-                if (profile.id == id) profile.copy(lastConnectedAtEpochMillis = nowEpochMillis) else profile
+                if (profile.id == id) {
+                    profile.copy(
+                        lastConnectedAtEpochMillis = nowEpochMillis,
+                        connectionCount = profile.connectionCount + 1,
+                    )
+                } else {
+                    profile
+                }
             },
         )
     }

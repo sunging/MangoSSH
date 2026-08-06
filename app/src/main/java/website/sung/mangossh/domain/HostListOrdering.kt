@@ -5,6 +5,7 @@ enum class HostSortMode {
     MANUAL,
     LABEL,
     RECENT,
+    MOST_USED,
     ;
 
     /** Comparator matching this mode's ordering rule. */
@@ -12,6 +13,9 @@ enum class HostSortMode {
         MANUAL -> compareBy { it.position }
         LABEL -> compareBy { it.label.lowercase() }
         RECENT -> compareByDescending<ConnectionProfile> { it.lastConnectedAtEpochMillis }
+            .thenBy { it.label.lowercase() }
+        MOST_USED -> compareByDescending<ConnectionProfile> { it.connectionCount }
+            .thenByDescending { it.lastConnectedAtEpochMillis }
             .thenBy { it.label.lowercase() }
     }
 }

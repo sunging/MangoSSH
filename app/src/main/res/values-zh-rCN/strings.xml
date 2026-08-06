@@ -296,6 +296,9 @@
     <string name="ui_connected">已连接</string>
     <string name="ui_connecting">正在连接…</string>
     <string name="ui_connecting_2">连接中</string>
+    <plurals name="ui_connection_count">
+        <item quantity="other">%1$d 次连接</item>
+    </plurals>
     <string name="ui_connection_workspace">连接工作区</string>
     <string name="ui_copy_public_key">复制公钥</string>
     <string name="ui_create_a_host_profile_before_adding_a_port_forward">请先创建主机配置，再为其添加端口转发。</string>
@@ -351,6 +354,7 @@
     <string name="ui_name">名称</string>
     <string name="ui_name_optional">名称（可选）</string>
     <string name="ui_network_route">网络路由</string>
+    <string name="ui_never_connected">从未连接</string>
     <string name="ui_new_forward">新建转发</string>
     <string name="ui_new_host_profile">新建主机配置</string>
     <string name="ui_new_port_forward">新建端口转发</string>
@@ -413,6 +417,7 @@
     <string name="ui_sort_hosts">主机排序</string>
     <string name="ui_sort_mode_label">按名称</string>
     <string name="ui_sort_mode_manual">手动排序</string>
+    <string name="ui_sort_mode_most_used">最常使用</string>
     <string name="ui_sort_mode_recent">最近使用</string>
     <string name="ui_ssh_port_forwarding">SSH 端口转发</string>
     <string name="ui_start_on_connection">连接后自动启动</string>
