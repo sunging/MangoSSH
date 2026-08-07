@@ -1,0 +1,6 @@
+New in 0.3.0:
+
+- Redesigned the host list: tap a card to connect, use the overflow menu for files, edit, move, and remove, drag to manually reorder, and search hosts by name, hostname, or username.
+- Sort hosts by manual order, name, recently used, or most used.
+- Host cards now show each host's connection count and last-connected time.
+- Hardened biometric app unlock and background notification handling following a security review.

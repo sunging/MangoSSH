@@ -26,6 +26,9 @@ internal object VaultPayloadCodec {
                         put("startupSnippetId", profile.startupSnippetId ?: JSONObject.NULL)
                         put("agentForwarding", profile.agentForwarding)
                         put("favorite", profile.favorite)
+                        put("position", profile.position)
+                        put("lastConnectedAtEpochMillis", profile.lastConnectedAtEpochMillis)
+                        put("connectionCount", profile.connectionCount)
                     },
                 )
             }
@@ -116,7 +119,9 @@ internal object VaultPayloadCodec {
         require(schemaVersion in 1..VaultSnapshot.CURRENT_SCHEMA_VERSION) {
             "Unsupported vault schema version: $schemaVersion"
         }
-        val profiles = root.optJSONArray("profiles")?.toProfiles(schemaVersion).orEmpty()
+        val profiles = root.optJSONArray("profiles")?.toProfiles(schemaVersion).orEmpty().let {
+            if (schemaVersion < 5) it.assignLegacyDisplayOrder() else it
+        }
         val keys = root.optJSONArray("keys")?.toKeys().orEmpty()
         val knownHosts = root.optJSONArray("knownHosts")?.toKnownHosts().orEmpty()
         val snippets = root.optJSONArray("snippets")?.toSnippets().orEmpty()
@@ -153,10 +158,22 @@ internal object VaultPayloadCodec {
                     startupSnippetId = value.optionalString("startupSnippetId"),
                     agentForwarding = value.optBoolean("agentForwarding", false),
                     favorite = value.optBoolean("favorite", false),
+                    position = value.optInt("position", index),
+                    lastConnectedAtEpochMillis = value.optLong("lastConnectedAtEpochMillis", 0L),
+                    connectionCount = value.optInt("connectionCount", 0),
                 ),
             )
         }
     }
+
+    /**
+     * Vault schema 4 and earlier had no persisted manual order; the host list was always shown
+     * sorted by favorite-first then label. Assigning [ConnectionProfile.position] from that same
+     * order keeps a just-upgraded manual list looking exactly as it did before the upgrade.
+     */
+    private fun List<ConnectionProfile>.assignLegacyDisplayOrder(): List<ConnectionProfile> =
+        sortedWith(compareByDescending<ConnectionProfile> { it.favorite }.thenBy { it.label.lowercase() })
+            .mapIndexed { index, profile -> profile.copy(position = index) }
 
     private fun JSONArray.toKeys(): List<StoredSshKey> = buildList {
         repeat(length()) { index ->

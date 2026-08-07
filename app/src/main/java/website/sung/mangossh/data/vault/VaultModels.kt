@@ -14,7 +14,7 @@ data class VaultSnapshot(
     val webDavConfig: WebDavConfig? = null,
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 4
+        const val CURRENT_SCHEMA_VERSION = 5
     }
 }
 

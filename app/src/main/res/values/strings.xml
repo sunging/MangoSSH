@@ -267,12 +267,16 @@
     <string name="transfer_resume">Resume</string>
     <string name="common_download">Download</string>
     <string name="common_edit">Edit</string>
+    <string name="common_move_down">Move down</string>
+    <string name="common_move_to_top">Move to top</string>
+    <string name="common_move_up">Move up</string>
     <string name="common_ok">OK</string>
     <string name="common_open">Open</string>
     <string name="common_refresh">Refresh</string>
     <string name="common_remove">Remove</string>
     <string name="common_retry">Retry</string>
     <string name="common_save">Save</string>
+    <string name="common_search">Search</string>
     <string name="common_start">Start</string>
     <string name="common_stop">Stop</string>
     <string name="common_submit">Submit</string>
@@ -296,6 +300,7 @@
     <string name="ui_cancelled">Cancelled</string>
     <string name="ui_change_pin">Change PIN</string>
     <string name="ui_clear_finished">Clear finished</string>
+    <string name="ui_clear_search">Clear search</string>
     <string name="ui_close_preview">Close preview</string>
     <string name="ui_close_the_file_browser">Close the file browser</string>
     <string name="ui_closed">Closed</string>
@@ -306,6 +311,10 @@
     <string name="ui_connected">Connected</string>
     <string name="ui_connecting">Connecting…</string>
     <string name="ui_connecting_2">Connecting</string>
+    <plurals name="ui_connection_count">
+        <item quantity="one">%1$d connection</item>
+        <item quantity="other">%1$d connections</item>
+    </plurals>
     <string name="ui_connection_workspace">Connection workspace</string>
     <string name="ui_copy_public_key">Copy public key</string>
     <string name="ui_create_a_host_profile_before_adding_a_port_forward">Create a host profile before adding a port forward.</string>
@@ -338,6 +347,7 @@
     <string name="ui_generated_or_imported_private_keys_stay_only_in_the_encrypted_vault_and">Generated or imported private keys stay only in the encrypted vault and can be reused by multiple hosts.</string>
     <string name="ui_home_directory">Home directory</string>
     <string name="ui_host">Host</string>
+    <string name="ui_host_actions">%1$s actions</string>
     <string name="ui_hostname_or_ip_address">Hostname or IP address</string>
     <string name="ui_import">Import</string>
     <string name="ui_import_encrypted_backup">Import encrypted backup</string>
@@ -360,6 +370,7 @@
     <string name="ui_name">Name</string>
     <string name="ui_name_optional">Name (optional)</string>
     <string name="ui_network_route">Network route</string>
+    <string name="ui_never_connected">Never connected</string>
     <string name="ui_new_forward">New forward</string>
     <string name="ui_new_host_profile">New host profile</string>
     <string name="ui_new_port_forward">New port forward</string>
@@ -368,6 +379,8 @@
     <string name="ui_new_snippet_2">New snippet</string>
     <string name="ui_no_app_pin_is_set_once_enabled_returning_to_the_foreground_requires_pin">No app PIN is set. Once enabled, returning to the foreground requires PIN or biometric unlock.</string>
     <string name="ui_no_keys_yet_generate_one_with_an_algorithm_supported_by_your_server_or_i">No keys yet. Generate one with an algorithm supported by your server, or import an OpenSSH/PEM private key.</string>
+    <string name="ui_no_hosts_match_search">No hosts match your search</string>
+    <string name="ui_no_hosts_match_search_hint">Try a different name, hostname, or username.</string>
     <string name="ui_no_port_forwarding_rules_yet_a_rule_can_start_automatically_after_connec">No port-forwarding rules yet. A rule can start automatically after connection.</string>
     <string name="ui_no_servers_yet">No servers yet</string>
     <string name="ui_no_snippets_yet">No snippets yet.</string>
@@ -404,6 +417,7 @@
     <string name="ui_run_after_connection">Run after connection</string>
     <string name="ui_running">Running</string>
     <string name="ui_save_profile">Save profile</string>
+    <string name="ui_search_hosts">Search hosts</string>
     <string name="ui_secure_vault_encrypted_by_android_keystore">Secure vault: encrypted by Android Keystore</string>
     <string name="ui_secure_vault_opening">Secure vault: opening</string>
     <string name="ui_secure_vault_unavailable">Secure vault: unavailable</string>
@@ -416,6 +430,11 @@
     <string name="ui_shared_keys_and_agent">Shared keys and agent</string>
     <string name="ui_shared_private_key">Shared private key</string>
     <string name="ui_shell_command_or_script">Shell command or script</string>
+    <string name="ui_sort_hosts">Sort hosts</string>
+    <string name="ui_sort_mode_label">Name</string>
+    <string name="ui_sort_mode_manual">Manual order</string>
+    <string name="ui_sort_mode_most_used">Most used</string>
+    <string name="ui_sort_mode_recent">Recently used</string>
     <string name="ui_ssh_port_forwarding">SSH port forwarding</string>
     <string name="ui_start_on_connection">Start on connection</string>
     <string name="ui_starting">Starting</string>

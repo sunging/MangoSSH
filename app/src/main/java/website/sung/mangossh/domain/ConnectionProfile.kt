@@ -39,6 +39,9 @@ data class ConnectionProfile(
     val startupSnippetId: String? = null,
     val agentForwarding: Boolean = false,
     val favorite: Boolean = false,
+    val position: Int = 0,
+    val lastConnectedAtEpochMillis: Long = 0L,
+    val connectionCount: Int = 0,
 ) {
     val endpoint: String
         get() = if (port == 22) hostname else "$hostname:$port"
@@ -59,6 +62,9 @@ data class ConnectionProfileDraft(
     val startupSnippetId: String? = null,
     val agentForwarding: Boolean = false,
     val favorite: Boolean = false,
+    val position: Int = 0,
+    val lastConnectedAtEpochMillis: Long = 0L,
+    val connectionCount: Int = 0,
 ) {
     /** Verifies only local form constraints; network reachability is checked at connection time. */
     fun isValid(): Boolean = hostname.isNotBlank() && username.isNotBlank() && port in 1..65535
@@ -85,5 +91,8 @@ data class ConnectionProfileDraft(
         startupSnippetId = startupSnippetId,
         agentForwarding = agentForwarding,
         favorite = favorite,
+        position = position,
+        lastConnectedAtEpochMillis = lastConnectedAtEpochMillis,
+        connectionCount = connectionCount,
     )
 }

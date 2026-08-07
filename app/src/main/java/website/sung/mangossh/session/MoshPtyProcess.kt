@@ -180,26 +180,29 @@ private class MoshRuntimeInstaller(private val context: Context) {
         val staging = File(context.noBackupFilesDir, "$DIRECTORY_NAME.staging")
         staging.deleteRecursively()
         check(staging.mkdirs()) { "Cannot create Mosh runtime directory" }
-        val stagingPath = staging.canonicalFile
+        val stagingRoot = staging.toPath().normalize()
         try {
             context.assets.open(TERMINF0_ASSET).use { asset ->
                 java.util.zip.ZipInputStream(asset).use { zip ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     while (true) {
                         val entry = zip.nextEntry ?: break
+                        // Zip Slip guard: reject any entry name (e.g. "../../evil") that would
+                        // resolve outside stagingRoot. The same `output` reference must be reused
+                        // by both this check and the file operations below, inline in this
+                        // function, or static analysis can no longer see that they only ever run
+                        // on a path it already proved is inside stagingRoot.
                         val output = File(staging, entry.name)
-                        val canonicalOutput = output.canonicalFile
-                        check(
-                            canonicalOutput.path == stagingPath.path ||
-                                canonicalOutput.path.startsWith(stagingPath.path + File.separator),
-                        ) { "Invalid Mosh terminfo archive" }
+                        if (!output.toPath().normalize().startsWith(stagingRoot)) {
+                            throw IllegalStateException("Invalid Mosh terminfo archive")
+                        }
                         if (entry.isDirectory) {
-                            check(canonicalOutput.mkdirs() || canonicalOutput.isDirectory) {
+                            check(output.mkdirs() || output.isDirectory) {
                                 "Cannot create Mosh terminfo directory"
                             }
                         } else {
-                            canonicalOutput.parentFile?.mkdirs()
-                            canonicalOutput.outputStream().use { stream ->
+                            output.parentFile?.mkdirs()
+                            output.outputStream().use { stream ->
                                 while (true) {
                                     val count = zip.read(buffer)
                                     if (count < 0) break

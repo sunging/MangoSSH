@@ -87,4 +87,6 @@ enum class MangoLogEvent(val code: String) {
     APP_UPDATE_VERIFY_FAILED("app_update.verify.failed"),
     APP_UPDATE_INSTALL_HANDOFF("app_update.install.handoff"),
     APP_UPDATE_INSTALL_HANDOFF_FAILED("app_update.install.handoff.failed"),
+    BIOMETRIC_UNLOCK_FAILED("biometric_unlock.failed"),
+    BIOMETRIC_UNLOCK_KEY_INVALIDATED("biometric_unlock.key_invalidated"),
 }

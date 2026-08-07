@@ -3,6 +3,7 @@ package website.sung.mangossh
 import android.app.Application
 import android.content.Context
 import website.sung.mangossh.data.keys.SshKeyManager
+import website.sung.mangossh.data.settings.HostListPreferencesStore
 import website.sung.mangossh.data.settings.TerminalAppearanceStore
 import website.sung.mangossh.data.settings.TerminalShortcutStore
 import website.sung.mangossh.data.settings.UpdatePreferencesStore
@@ -50,6 +51,9 @@ class MangoSessionRuntime(context: Context) {
 
     /** Device-local self-update preferences shared by settings and the update flow. */
     val updatePreferences = UpdatePreferencesStore(context.applicationContext)
+
+    /** Device-local host list sort preference shared by the host list and its top bar. */
+    val hostListPreferences = HostListPreferencesStore(context.applicationContext)
 
     /**
      * True when this install manages its own updates. Resolved lazily because
