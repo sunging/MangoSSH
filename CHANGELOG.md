@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/sunging/MangoSSH/compare/v0.2.0...v0.3.0) (2026-08-07)
+
+
+### Features
+
+* redesign host list and add connection usage stats ([bcf835e](https://github.com/sunging/MangoSSH/commit/bcf835e5ff4ff55a046086cf818a115f0be7b6a8))
+* redesign host list with overflow menu, manual reorder, and search ([4a8419c](https://github.com/sunging/MangoSSH/commit/4a8419c0a5a5d265183a386974ca876bc2a5b393))
+* show connection count and last-connected time on host cards ([6228fbe](https://github.com/sunging/MangoSSH/commit/6228fbe9fde4c782464f5ed6034101b7d07048b6))
+
+
+### Bug Fixes
+
+* address CodeQL findings for biometric auth, PendingIntents, and Zip Slip ([7a3b2a9](https://github.com/sunging/MangoSSH/commit/7a3b2a9fe41807f2cd0d5354d9e14c7c811e939c))
+
 ## [0.2.0](https://github.com/sunging/MangoSSH/compare/v0.1.0...v0.2.0) (2026-08-05)
 
 
