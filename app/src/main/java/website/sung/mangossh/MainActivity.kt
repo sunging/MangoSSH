@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Build
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,6 +15,8 @@ import androidx.biometric.BiometricPrompt
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.presentation.AppLanguage
 import website.sung.mangossh.presentation.MangoSshApp
 import website.sung.mangossh.presentation.MangoSshViewModel
@@ -63,11 +66,26 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
     }
 
-    /** Requests a strong biometric only after the user explicitly chooses biometric app unlock. */
+    /**
+     * Requests a strong biometric only after the user explicitly chooses biometric app unlock.
+     *
+     * The prompt is bound to [BiometricGateKey], a Keystore key that Android will only let the
+     * app use immediately after a fresh biometric match. [onAuthenticationSucceeded] only calls
+     * [MangoSshViewModel.unlockWithBiometrics] once that key is actually exercised, so the
+     * callback cannot be forged by instrumentation tooling without a genuine sensor match.
+     */
     private fun requestBiometricUnlock() {
         val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
         val availability = BiometricManager.from(this).canAuthenticate(authenticators)
         if (availability != BiometricManager.BIOMETRIC_SUCCESS) {
+            mangoViewModel.reportUserMessage(R.string.biometric_unavailable)
+            return
+        }
+        val cipher = try {
+            BiometricGateKey.encryptCipher()
+        } catch (error: KeyPermanentlyInvalidatedException) {
+            BiometricGateKey.reset()
+            MangoLog.warn(MangoLogEvent.BIOMETRIC_UNLOCK_KEY_INVALIDATED, error)
             mangoViewModel.reportUserMessage(R.string.biometric_unavailable)
             return
         }
@@ -77,7 +95,14 @@ class MainActivity : AppCompatActivity() {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    mangoViewModel.unlockWithBiometrics()
+                    val authenticatedCipher = result.cryptoObject?.cipher
+                    val verified = authenticatedCipher != null && runCatching { authenticatedCipher.doFinal() }.isSuccess
+                    if (verified) {
+                        mangoViewModel.unlockWithBiometrics()
+                    } else {
+                        MangoLog.warn(MangoLogEvent.BIOMETRIC_UNLOCK_FAILED)
+                        mangoViewModel.reportUserMessage(R.string.biometric_unavailable)
+                    }
                 }
             },
         )
@@ -88,6 +113,7 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButtonText(getString(R.string.biometric_prompt_use_pin))
                 .setAllowedAuthenticators(authenticators)
                 .build(),
+            BiometricPrompt.CryptoObject(cipher),
         )
     }
 
@@ -139,11 +165,13 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_SESSION_ID = "website.sung.mangossh.extra.SESSION_ID"
 
         /** Creates an explicit, reusable intent for one live session notification. */
-        fun sessionIntent(context: android.content.Context, sessionId: String): Intent =
-            Intent(context, MainActivity::class.java).apply {
-                action = ACTION_OPEN_SESSION
-                putExtra(EXTRA_SESSION_ID, sessionId)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
+        fun sessionIntent(context: android.content.Context, sessionId: String): Intent {
+            val intent = Intent(context, MainActivity::class.java)
+            intent.setPackage(context.packageName)
+            intent.action = ACTION_OPEN_SESSION
+            intent.putExtra(EXTRA_SESSION_ID, sessionId)
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            return intent
+        }
     }
 }

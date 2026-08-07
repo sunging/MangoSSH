@@ -193,22 +193,18 @@ class SessionForegroundService : Service() {
         TerminalSessionPhase.CLOSED -> appString(R.string.active_sessions_notification_text)
     }
 
-    private fun summaryPendingIntent(): PendingIntent = PendingIntent.getActivity(
-        this,
-        SUMMARY_PENDING_INTENT_REQUEST_CODE,
-        Intent(this, MainActivity::class.java).apply {
-            action = MainActivity.ACTION_OPEN_SESSIONS
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        },
-        pendingIntentFlags(),
-    )
+    private fun summaryPendingIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java)
+        intent.setPackage(packageName)
+        intent.action = MainActivity.ACTION_OPEN_SESSIONS
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(this, SUMMARY_PENDING_INTENT_REQUEST_CODE, intent, pendingIntentFlags())
+    }
 
-    private fun sessionPendingIntent(sessionId: String): PendingIntent = PendingIntent.getActivity(
-        this,
-        notificationIdFor(sessionId),
-        MainActivity.sessionIntent(this, sessionId),
-        pendingIntentFlags(),
-    )
+    private fun sessionPendingIntent(sessionId: String): PendingIntent {
+        val intent = MainActivity.sessionIntent(this, sessionId)
+        return PendingIntent.getActivity(this, notificationIdFor(sessionId), intent, pendingIntentFlags())
+    }
 
     private fun pendingIntentFlags(): Int = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
