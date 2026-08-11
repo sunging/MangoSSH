@@ -2,6 +2,7 @@ package website.sung.mangossh.presentation
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.annotation.StringRes
 import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
@@ -51,6 +52,8 @@ import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
+import website.sung.mangossh.domain.AppLockDelay
+import website.sung.mangossh.domain.shouldLockOnResume
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
 import website.sung.mangossh.session.RemoteFileEntry
@@ -254,6 +257,9 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val appLockConfiguration = _appLockConfiguration.asStateFlow()
     private val _appLocked = MutableStateFlow(_appLockConfiguration.value.pinConfigured)
     val appLocked = _appLocked.asStateFlow()
+
+    /** Elapsed-realtime timestamp set by [noteBackgrounded] and consumed by [evaluateAutoLock]. */
+    private var backgroundedAtElapsedMillis: Long? = null
 
     private val _selectedSection = kotlinx.coroutines.flow.MutableStateFlow(AppSection.HOSTS)
     val selectedSection = _selectedSection.asStateFlow()
@@ -1045,8 +1051,48 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             .onFailure { _userMessage.value = uiText(R.string.message_app_pin_required) }
     }
 
+    fun setAutoLockDelay(delay: AppLockDelay) {
+        runCatching { appLockStore.setAutoLockDelay(delay) }
+            .onSuccess { _appLockConfiguration.value = appLockStore.configuration() }
+            .onFailure { _userMessage.value = uiText(R.string.message_app_pin_required) }
+    }
+
+    /** Locks immediately, regardless of the configured auto-lock delay. Used by the explicit "Lock now" action. */
     fun lockForBackground() {
         if (_appLockConfiguration.value.pinConfigured) _appLocked.value = true
+    }
+
+    /**
+     * Records the moment the app left the foreground; call from `Activity.onStop()`.
+     *
+     * Uses [SystemClock.elapsedRealtime] by default so a wall-clock change
+     * between backgrounding and resuming cannot extend the grace window (see
+     * [shouldLockOnResume]).
+     */
+    fun noteBackgrounded(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) {
+        backgroundedAtElapsedMillis = nowElapsedMillis
+    }
+
+    /**
+     * Locks if the configured auto-lock delay has elapsed since [noteBackgrounded]; call from
+     * `Activity.onStart()`.
+     *
+     * A missing timestamp means no real backgrounding was recorded since the
+     * last evaluation — either a cold start (where [_appLocked]'s initial
+     * value already reflects [AppLockConfiguration.pinConfigured]) or a
+     * resume from a configuration change, which `MainActivity.onStop()`
+     * deliberately does not report to [noteBackgrounded]. Either way there is
+     * nothing to evaluate, so this is a no-op rather than a lock.
+     */
+    fun evaluateAutoLock(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) {
+        val backgroundedAt = backgroundedAtElapsedMillis ?: return
+        val configuration = _appLockConfiguration.value
+        if (configuration.pinConfigured &&
+            shouldLockOnResume(configuration.autoLockDelay, backgroundedAt, nowElapsedMillis)
+        ) {
+            _appLocked.value = true
+        }
+        backgroundedAtElapsedMillis = null
     }
 
     fun unlockWithPin(pin: String) {

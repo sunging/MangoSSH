@@ -19,20 +19,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
+import website.sung.mangossh.domain.AppLockDelay
 import website.sung.mangossh.ui.components.MangoSettingsCard
+import website.sung.mangossh.ui.components.SettingsDropdownRow
 import website.sung.mangossh.ui.components.SettingsSwitchRow
 
-/**
- * Security & lock detail page.
- *
- * App PIN, lock-now, and biometric unlock today; an auto-lock delay joins it
- * once that store lands.
- */
+/** Security & lock detail page: app PIN, lock-now, biometric unlock, and auto-lock delay. */
 @Composable
 internal fun SecuritySettingsPage(
     state: SecuritySettingsState,
@@ -74,6 +72,16 @@ internal fun SecuritySettingsPage(
                         checked = lock.biometricEnabled,
                         onCheckedChange = callbacks.onSetBiometricEnabled,
                     )
+                    SettingsDropdownRow(
+                        label = stringResource(R.string.settings_security_auto_lock_title),
+                        options = AppLockDelay.entries,
+                        selected = lock.autoLockDelay,
+                        optionLabel = { it.label() },
+                        onSelect = callbacks.onSetAutoLockDelay,
+                        supportingText = stringResource(R.string.settings_security_auto_lock_summary),
+                        optionTestTag = { "settings_auto_lock_${it.preferenceValue}" },
+                        modifier = Modifier.testTag("settings_auto_lock_dropdown"),
+                    )
                 }
             }
         }
@@ -89,6 +97,16 @@ internal fun SecuritySettingsPage(
         )
     }
 }
+
+@Composable
+private fun AppLockDelay.label(): String = stringResource(
+    when (this) {
+        AppLockDelay.IMMEDIATELY -> R.string.settings_security_auto_lock_immediately
+        AppLockDelay.THIRTY_SECONDS -> R.string.settings_security_auto_lock_30_seconds
+        AppLockDelay.ONE_MINUTE -> R.string.settings_security_auto_lock_1_minute
+        AppLockDelay.FIVE_MINUTES -> R.string.settings_security_auto_lock_5_minutes
+    },
+)
 
 @Composable
 private fun AppPinDialog(

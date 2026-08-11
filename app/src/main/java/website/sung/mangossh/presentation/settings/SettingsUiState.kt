@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.data.vault.WebDavConfig
+import website.sung.mangossh.domain.AppLockDelay
 import website.sung.mangossh.domain.AppThemeMode
 import website.sung.mangossh.domain.AppThemePreferences
 import website.sung.mangossh.domain.TerminalAppearance
@@ -106,6 +107,7 @@ internal data class SecuritySettingsCallbacks(
     val onClearAppLock: () -> Unit,
     val onSetBiometricEnabled: (Boolean) -> Unit,
     val onLockNow: () -> Unit,
+    val onSetAutoLockDelay: (AppLockDelay) -> Unit,
 )
 
 @Immutable

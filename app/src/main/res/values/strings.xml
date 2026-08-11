@@ -492,4 +492,10 @@
     <string name="settings_appearance_dynamic_color_title">Dynamic color</string>
     <string name="settings_appearance_dynamic_color_summary">Uses colors from your wallpaper instead of the MangoSSH palette.</string>
     <string name="settings_appearance_dynamic_color_unavailable">Requires Android 12 or later.</string>
+    <string name="settings_security_auto_lock_title">Auto-lock delay</string>
+    <string name="settings_security_auto_lock_summary">How long the app may stay in the background before it locks again. A delay leaves content visible in the recents view during the grace period.</string>
+    <string name="settings_security_auto_lock_immediately">Immediately</string>
+    <string name="settings_security_auto_lock_30_seconds">After 30 seconds</string>
+    <string name="settings_security_auto_lock_1_minute">After 1 minute</string>
+    <string name="settings_security_auto_lock_5_minutes">After 5 minutes</string>
 </resources>

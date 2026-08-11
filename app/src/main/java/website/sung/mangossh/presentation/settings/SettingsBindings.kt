@@ -49,6 +49,7 @@ internal fun rememberSettingsCallbacks(
                 onClearAppLock = viewModel::clearAppLock,
                 onSetBiometricEnabled = viewModel::setBiometricUnlockEnabled,
                 onLockNow = viewModel::lockForBackground,
+                onSetAutoLockDelay = viewModel::setAutoLockDelay,
             ),
             backup = BackupSettingsCallbacks(
                 onSaveWebDav = viewModel::saveWebDavConfig,

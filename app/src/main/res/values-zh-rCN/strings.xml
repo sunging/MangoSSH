@@ -476,4 +476,10 @@
     <string name="settings_appearance_dynamic_color_title">动态取色</string>
     <string name="settings_appearance_dynamic_color_summary">使用壁纸取色，而非 MangoSSH 配色方案。</string>
     <string name="settings_appearance_dynamic_color_unavailable">需要 Android 12 或更高版本。</string>
+    <string name="settings_security_auto_lock_title">自动锁定延迟</string>
+    <string name="settings_security_auto_lock_summary">应用在后台可停留多久后才需要再次锁定。延迟期间内容仍会显示在最近任务列表中。</string>
+    <string name="settings_security_auto_lock_immediately">立即锁定</string>
+    <string name="settings_security_auto_lock_30_seconds">30 秒后</string>
+    <string name="settings_security_auto_lock_1_minute">1 分钟后</string>
+    <string name="settings_security_auto_lock_5_minutes">5 分钟后</string>
 </resources>

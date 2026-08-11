@@ -79,8 +79,13 @@ class MainActivity : AppCompatActivity() {
         handleSessionIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        mangoViewModel.evaluateAutoLock()
+    }
+
     override fun onStop() {
-        if (!isChangingConfigurations) mangoViewModel.lockForBackground()
+        if (!isChangingConfigurations) mangoViewModel.noteBackgrounded()
         super.onStop()
     }
 
