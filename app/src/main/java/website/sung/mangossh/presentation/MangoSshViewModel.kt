@@ -63,6 +63,7 @@ import website.sung.mangossh.session.SessionEndReason
 import website.sung.mangossh.session.SessionEndMessageKind
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
+import website.sung.mangossh.presentation.settings.SettingsDestination
 
 /** Top-level areas exposed by the Compose navigation bar. */
 enum class AppSection {
@@ -254,6 +255,28 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val _selectedSection = kotlinx.coroutines.flow.MutableStateFlow(AppSection.HOSTS)
     val selectedSection = _selectedSection.asStateFlow()
 
+    private val _settingsDestination = MutableStateFlow<SettingsDestination?>(null)
+
+    /**
+     * Open Settings detail page, or `null` for the category hub.
+     *
+     * Held here rather than in Compose state because the shared top app bar
+     * in `MangoSshApp` renders the detail title and back affordance from
+     * outside `SettingsScreen`'s own composition, and because leaving the
+     * Settings tab must return to the hub. This view model has no
+     * `SavedStateHandle`, so a process death restores Settings to the hub —
+     * acceptable, and safer than resuming into a security-sensitive page.
+     */
+    val settingsDestination = _settingsDestination.asStateFlow()
+
+    fun openSettingsDestination(destination: SettingsDestination) {
+        _settingsDestination.value = destination
+    }
+
+    fun closeSettingsDestination() {
+        _settingsDestination.value = null
+    }
+
     private val _remoteBrowser = MutableStateFlow<RemoteBrowserUiState?>(null)
     /** Null whenever the remote file browser is closed. */
     val remoteBrowser = _remoteBrowser.asStateFlow()
@@ -304,6 +327,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun selectSection(section: AppSection) {
         _selectedSection.value = section
+        // Re-entering Settings from another tab should always land on the hub.
+        _settingsDestination.value = null
     }
 
     fun saveHost(draft: ConnectionProfileDraft) {

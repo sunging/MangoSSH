@@ -273,7 +273,7 @@
     <string name="ui_add_an_ssh_mosh_or_tailnet_host_profile_keys_are_managed_and_shared_sepa">添加 SSH、Mosh 或 Tailnet 主机配置。密钥会在安全保险库启用后独立管理和共享。</string>
     <string name="ui_after_download_the_backup_will_be_decrypted_with_this_passphrase_and_rep">下载后会使用口令解密，并替换当前保险库。</string>
     <string name="ui_allow_biometric_unlock">允许生物识别解锁</string>
-    <string name="ui_app_lock_sync_and_tailnet">应用锁、同步与 Tailnet</string>
+    <string name="ui_app_lock_sync_and_tailnet">外观、终端、安全性等</string>
     <string name="ui_app_pin">应用 PIN</string>
     <string name="ui_app_pin_is_enabled_unlocking_is_required_when_returning_to_the_foregroun">应用 PIN 已启用。返回前台时需要解锁；本地保险库仍由 Android Keystore 加密。</string>
     <string name="ui_app_protection">应用保护</string>
@@ -451,4 +451,21 @@
     <string name="ui_verify_server_fingerprint">验证服务器指纹</string>
     <string name="ui_verifying_fingerprint">验证指纹</string>
     <string name="ui_webdav_directory_url">WebDAV 目录 URL</string>
+    <string name="settings_back">返回</string>
+    <string name="settings_category_appearance_title">外观</string>
+    <string name="settings_category_appearance_summary">语言和显示</string>
+    <string name="settings_category_terminal_title">终端</string>
+    <string name="settings_category_terminal_summary">字体、颜色和大小</string>
+    <string name="settings_category_shortcuts_title">按键与快捷方式</string>
+    <string name="settings_category_shortcuts_summary">快捷栏和按键模式</string>
+    <string name="settings_category_security_title">安全性与锁定</string>
+    <string name="settings_category_security_summary">应用 PIN、生物识别和锁定</string>
+    <string name="settings_category_backup_title">备份与同步</string>
+    <string name="settings_category_backup_summary">加密导出、导入和 WebDAV</string>
+    <string name="settings_category_snippets_title">代码片段</string>
+    <string name="settings_category_snippets_summary">连接后自动执行的命令</string>
+    <string name="settings_category_tsnet_title">内嵌 Tailscale</string>
+    <string name="settings_category_tsnet_summary">用户态 tsnet 节点注册</string>
+    <string name="settings_category_updates_title">应用更新</string>
+    <string name="settings_category_updates_summary">检查并安装新版本</string>
 </resources>

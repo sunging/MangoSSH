@@ -288,7 +288,7 @@
     <string name="ui_add_an_ssh_mosh_or_tailnet_host_profile_keys_are_managed_and_shared_sepa">Add an SSH, Mosh, or Tailnet host profile. Keys are managed and shared separately once the secure vault is available.</string>
     <string name="ui_after_download_the_backup_will_be_decrypted_with_this_passphrase_and_rep">After download, the backup will be decrypted with this passphrase and replace the current vault.</string>
     <string name="ui_allow_biometric_unlock">Allow biometric unlock</string>
-    <string name="ui_app_lock_sync_and_tailnet">App lock, sync, and Tailnet</string>
+    <string name="ui_app_lock_sync_and_tailnet">Appearance, terminal, security, and more</string>
     <string name="ui_app_pin">App PIN</string>
     <string name="ui_app_pin_is_enabled_unlocking_is_required_when_returning_to_the_foregroun">App PIN is enabled. Unlocking is required when returning to the foreground; the local vault remains encrypted by Android Keystore.</string>
     <string name="ui_app_protection">App protection</string>
@@ -467,4 +467,21 @@
     <string name="ui_verify_server_fingerprint">Verify server fingerprint</string>
     <string name="ui_verifying_fingerprint">Verifying fingerprint</string>
     <string name="ui_webdav_directory_url">WebDAV directory URL</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_category_appearance_title">Appearance</string>
+    <string name="settings_category_appearance_summary">Language and display</string>
+    <string name="settings_category_terminal_title">Terminal</string>
+    <string name="settings_category_terminal_summary">Font, colors, and size</string>
+    <string name="settings_category_shortcuts_title">Keys &amp; shortcuts</string>
+    <string name="settings_category_shortcuts_summary">Shortcut bar and key modes</string>
+    <string name="settings_category_security_title">Security &amp; lock</string>
+    <string name="settings_category_security_summary">App PIN, biometrics, and lock</string>
+    <string name="settings_category_backup_title">Backup &amp; sync</string>
+    <string name="settings_category_backup_summary">Encrypted export, import, and WebDAV</string>
+    <string name="settings_category_snippets_title">Snippets</string>
+    <string name="settings_category_snippets_summary">Post-connect commands</string>
+    <string name="settings_category_tsnet_title">Embedded Tailscale</string>
+    <string name="settings_category_tsnet_summary">Userspace tsnet node enrollment</string>
+    <string name="settings_category_updates_title">Updates</string>
+    <string name="settings_category_updates_summary">Check for and install new versions</string>
 </resources>

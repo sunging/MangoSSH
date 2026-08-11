@@ -6,7 +6,6 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.provider.OpenableColumns
-import androidx.annotation.StringRes
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,7 +44,6 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -60,7 +58,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -94,23 +91,15 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.core.net.toUri
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
@@ -125,18 +114,12 @@ import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.PortForwardType
 import website.sung.mangossh.data.vault.StoredSshKey
-import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.domain.HostSortMode
-import website.sung.mangossh.domain.TerminalAppearance
-import website.sung.mangossh.domain.TerminalCustomColors
-import website.sung.mangossh.domain.TerminalFont
-import website.sung.mangossh.domain.TerminalShortcutConfig
-import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionPromptText
@@ -144,9 +127,17 @@ import website.sung.mangossh.session.SessionPromptTextKind
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
 import website.sung.mangossh.session.TerminalSessionPhase
-import website.sung.mangossh.session.tsnet.EmbeddedTsnetPhase
-import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
 import website.sung.mangossh.security.AppLockConfiguration
+import website.sung.mangossh.presentation.settings.AppearanceSettingsState
+import website.sung.mangossh.presentation.settings.BackupSettingsState
+import website.sung.mangossh.presentation.settings.SecuritySettingsState
+import website.sung.mangossh.presentation.settings.SettingsScreen
+import website.sung.mangossh.presentation.settings.SettingsScreenState
+import website.sung.mangossh.presentation.settings.title
+import website.sung.mangossh.presentation.settings.ShortcutSettingsState
+import website.sung.mangossh.presentation.settings.SnippetSettingsState
+import website.sung.mangossh.presentation.settings.TerminalSettingsState
+import website.sung.mangossh.presentation.settings.rememberSettingsCallbacks
 
 private sealed interface PendingRemovalRequest {
     val id: String
@@ -257,6 +248,7 @@ fun MangoSshApp(
     val keys by viewModel.keys.collectAsStateWithLifecycle()
     val snippets by viewModel.snippets.collectAsStateWithLifecycle()
     val selectedSection by viewModel.selectedSection.collectAsStateWithLifecycle()
+    val settingsDestination by viewModel.settingsDestination.collectAsStateWithLifecycle()
     val vaultStatus by viewModel.vaultStatus.collectAsStateWithLifecycle()
     val sessionPrompts by viewModel.sessionPrompts.collectAsStateWithLifecycle()
     val portForwardRules by viewModel.portForwardRules.collectAsStateWithLifecycle()
@@ -443,7 +435,20 @@ fun MangoSshApp(
                         focusRequester = hostSearchFocusRequester,
                     )
                 } else {
+                    // Only Settings has a detail level below its tab: hosts, keys, and
+                    // forwards are each already a single screen.
+                    val openSettingsDetail = settingsDestination.takeIf { selectedSection == AppSection.SETTINGS }
                     CenterAlignedTopAppBar(
+                        navigationIcon = {
+                            if (openSettingsDetail != null) {
+                                IconButton(onClick = viewModel::closeSettingsDestination) {
+                                    Icon(
+                                        Icons.AutoMirrored.Outlined.ArrowBack,
+                                        contentDescription = stringResource(R.string.settings_back),
+                                    )
+                                }
+                            }
+                        },
                         title = {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
@@ -453,7 +458,11 @@ fun MangoSshApp(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = sectionSubtitle(selectedSection),
+                                    text = if (openSettingsDetail != null) {
+                                        openSettingsDetail.title()
+                                    } else {
+                                        sectionSubtitle(selectedSection)
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -547,42 +556,29 @@ fun MangoSshApp(
                             onStartOnNewConnection = viewModel::startPortForwardOnNewConnection,
                             onStopRule = viewModel::stopPortForward,
                         )
-                        AppSection.SETTINGS -> SettingsScreen(
-                            vaultStatus = vaultStatus,
-                            webDavConfig = webDavConfig,
-                            snippets = snippets,
-                            portableExport = portableExport,
-                            onSaveWebDav = viewModel::saveWebDavConfig,
-                            onClearWebDav = viewModel::clearWebDavConfig,
-                            onPrepareExport = viewModel::preparePortableExport,
-                            onConsumeExport = viewModel::consumePortableExport,
-                            onImport = viewModel::importPortable,
-                            onUpload = viewModel::uploadWebDav,
-                            onDownloadAndImport = viewModel::downloadWebDavAndImport,
-                            appLockConfiguration = appLockConfiguration,
-                            onConfigureAppPin = viewModel::configureAppPin,
-                            onClearAppLock = viewModel::clearAppLock,
-                            onSetBiometricEnabled = viewModel::setBiometricUnlockEnabled,
-                            onLockNow = viewModel::lockForBackground,
-                            onSaveSnippet = viewModel::saveSnippet,
-                            onRemoveSnippet = { pendingRemoval = PendingRemovalRequest.Snippet(it) },
-                            embeddedTsnetStatus = embeddedTsnetStatus,
-                            onBeginTsnetBrowserEnrollment = viewModel::beginEmbeddedTsnetBrowserEnrollment,
-                            onBeginTsnetAuthKeyEnrollment = viewModel::beginEmbeddedTsnetAuthKeyEnrollment,
-                            onLogoutTsnet = viewModel::logoutEmbeddedTsnet,
-                            terminalAppearance = terminalAppearance,
-                            terminalShortcutConfig = terminalShortcutConfig,
-                            onSetTerminalFont = viewModel::setTerminalFont,
-                            onSetTerminalFontSize = viewModel::setTerminalFontSize,
-                            onSetTerminalTheme = viewModel::setTerminalTheme,
-                            onSetTerminalCustomColors = viewModel::setTerminalCustomColors,
-                            onResetTerminalAppearance = viewModel::resetTerminalAppearance,
-                            onSaveTerminalShortcuts = viewModel::saveTerminalShortcuts,
-                            selectedAppLanguage = selectedAppLanguage,
-                            onSetAppLanguage = onSetAppLanguage,
-                            updateState = updateState,
-                            updateCallbacks = updateCallbacks,
-                        )
+                        AppSection.SETTINGS -> {
+                            val settingsCallbacks = rememberSettingsCallbacks(
+                                viewModel = viewModel,
+                                onSetAppLanguage = onSetAppLanguage,
+                                onRemoveSnippet = { pendingRemoval = PendingRemovalRequest.Snippet(it) },
+                            )
+                            SettingsScreen(
+                                viewModel = viewModel,
+                                state = SettingsScreenState(
+                                    vaultStatus = vaultStatus,
+                                    appearance = AppearanceSettingsState(language = selectedAppLanguage),
+                                    terminal = TerminalSettingsState(appearance = terminalAppearance),
+                                    shortcuts = ShortcutSettingsState(config = terminalShortcutConfig),
+                                    security = SecuritySettingsState(lock = appLockConfiguration),
+                                    backup = BackupSettingsState(vaultStatus = vaultStatus, webDavConfig = webDavConfig),
+                                    snippets = SnippetSettingsState(snippets = snippets),
+                                    tsnet = embeddedTsnetStatus,
+                                    update = updateState,
+                                ),
+                                portableExport = portableExport,
+                                callbacks = settingsCallbacks,
+                            )
+                        }
                     }
                 }
             }
@@ -1530,726 +1526,6 @@ private fun PortForwardRule.displayDescription(): String = when (type) {
     PortForwardType.LOCAL -> "$bindHost:$bindPort → ${destinationHost.orEmpty()}:${destinationPort ?: "?"}"
     PortForwardType.REMOTE -> "$bindHost:$bindPort ← ${destinationHost.orEmpty()}:${destinationPort ?: "?"}"
     PortForwardType.DYNAMIC -> "$bindHost:$bindPort · SOCKS5"
-}
-
-@Composable
-internal fun EmbeddedTsnetCard(
-    status: EmbeddedTsnetStatus,
-    onBeginBrowserEnrollment: () -> Unit,
-    onBeginAuthKeyEnrollment: (CharArray) -> Unit,
-    onLogout: () -> Unit,
-) {
-    var showAuthKeyDialog by remember { mutableStateOf(false) }
-    var showLogoutDialog by remember { mutableStateOf(false) }
-    val statusText = when (status.phase) {
-        EmbeddedTsnetPhase.UNENROLLED -> stringResource(R.string.embedded_tsnet_status_unenrolled)
-        EmbeddedTsnetPhase.STARTING -> stringResource(R.string.embedded_tsnet_status_starting)
-        EmbeddedTsnetPhase.WAITING_FOR_LOGIN ->
-            stringResource(R.string.embedded_tsnet_status_waiting_login)
-        EmbeddedTsnetPhase.WAITING_FOR_APPROVAL ->
-            stringResource(R.string.embedded_tsnet_status_waiting_approval)
-        EmbeddedTsnetPhase.READY_IDLE -> stringResource(R.string.embedded_tsnet_status_ready_idle)
-        EmbeddedTsnetPhase.ACTIVE ->
-            pluralStringResource(
-                R.plurals.embedded_tsnet_status_active,
-                status.activeSessions,
-                status.activeSessions,
-            )
-        EmbeddedTsnetPhase.FAILED -> stringResource(R.string.embedded_tsnet_status_failed)
-    }
-    val canStartEnrollment = status.phase == EmbeddedTsnetPhase.UNENROLLED ||
-        status.phase == EmbeddedTsnetPhase.FAILED ||
-        status.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN
-    val canLogout = status.phase == EmbeddedTsnetPhase.READY_IDLE ||
-        status.phase == EmbeddedTsnetPhase.ACTIVE
-
-    Card(modifier = Modifier.fillMaxWidth().testTag("embedded_tsnet_card")) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(stringResource(R.string.embedded_tsnet_title), fontWeight = FontWeight.SemiBold)
-            Text(
-                stringResource(R.string.embedded_tsnet_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                statusText,
-                modifier = Modifier.testTag("embedded_tsnet_status"),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            if (canStartEnrollment) {
-                Button(
-                    onClick = onBeginBrowserEnrollment,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("embedded_tsnet_browser_login"),
-                ) {
-                    Text(stringResource(R.string.embedded_tsnet_browser_login))
-                }
-                if (status.authKeyAllowed) {
-                    OutlinedButton(
-                        onClick = { showAuthKeyDialog = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("embedded_tsnet_auth_key_login"),
-                    ) {
-                        Text(stringResource(R.string.embedded_tsnet_auth_key_login))
-                    }
-                }
-            }
-            if (canLogout) {
-                OutlinedButton(
-                    onClick = { showLogoutDialog = true },
-                    enabled = status.activeSessions == 0,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("embedded_tsnet_logout"),
-                ) {
-                    Text(stringResource(R.string.embedded_tsnet_logout))
-                }
-            }
-        }
-    }
-
-    if (showAuthKeyDialog) {
-        EmbeddedTsnetAuthKeyDialog(
-            onDismiss = { showAuthKeyDialog = false },
-            onConfirm = { key ->
-                showAuthKeyDialog = false
-                onBeginAuthKeyEnrollment(key)
-            },
-        )
-    }
-    if (showLogoutDialog) {
-        AlertDialog(
-            onDismissRequest = { showLogoutDialog = false },
-            title = { Text(stringResource(R.string.embedded_tsnet_logout_title)) },
-            text = { Text(stringResource(R.string.embedded_tsnet_logout_message)) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showLogoutDialog = false
-                        onLogout()
-                    },
-                ) {
-                    Text(stringResource(R.string.embedded_tsnet_logout_confirm))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showLogoutDialog = false }) {
-                    Text(stringResource(R.string.embedded_tsnet_cancel))
-                }
-            },
-        )
-    }
-}
-
-@Composable
-private fun EmbeddedTsnetAuthKeyDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (CharArray) -> Unit,
-) {
-    // Deliberately not rememberSaveable: activity recreation must discard the
-    // one-shot credential rather than place it in SavedState.
-    var authKey by remember { mutableStateOf("") }
-
-    fun clearAndDismiss() {
-        authKey = ""
-        onDismiss()
-    }
-
-    AlertDialog(
-        onDismissRequest = ::clearAndDismiss,
-        title = { Text(stringResource(R.string.embedded_tsnet_auth_key_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    stringResource(R.string.embedded_tsnet_auth_key_explanation),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                OutlinedTextField(
-                    value = authKey,
-                    onValueChange = { authKey = it },
-                    modifier = Modifier.testTag("embedded_tsnet_auth_key_input"),
-                    label = { Text(stringResource(R.string.embedded_tsnet_auth_key_label)) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                enabled = authKey.isNotBlank(),
-                modifier = Modifier.testTag("embedded_tsnet_auth_key_confirm"),
-                onClick = {
-                    val transient = authKey.toCharArray()
-                    authKey = ""
-                    onConfirm(transient)
-                },
-            ) {
-                Text(stringResource(R.string.embedded_tsnet_auth_key_confirm))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = ::clearAndDismiss) {
-                Text(stringResource(R.string.embedded_tsnet_cancel))
-            }
-        },
-    )
-}
-
-@Composable
-private fun SettingsScreen(
-    vaultStatus: VaultStatus,
-    webDavConfig: WebDavConfig?,
-    snippets: List<CommandSnippet>,
-    portableExport: ByteArray?,
-    onSaveWebDav: (endpoint: String, username: String, password: String, remoteFileName: String) -> Unit,
-    onClearWebDav: () -> Unit,
-    onPrepareExport: (String) -> Unit,
-    onConsumeExport: () -> Unit,
-    onImport: (ByteArray, String) -> Unit,
-    onUpload: (String) -> Unit,
-    onDownloadAndImport: (String) -> Unit,
-    appLockConfiguration: AppLockConfiguration,
-    onConfigureAppPin: (String) -> Unit,
-    onClearAppLock: () -> Unit,
-    onSetBiometricEnabled: (Boolean) -> Unit,
-    onLockNow: () -> Unit,
-    onSaveSnippet: (String?, String, String, Boolean) -> Unit,
-    onRemoveSnippet: (String) -> Unit,
-    embeddedTsnetStatus: EmbeddedTsnetStatus,
-    onBeginTsnetBrowserEnrollment: () -> Unit,
-    onBeginTsnetAuthKeyEnrollment: (CharArray) -> Unit,
-    onLogoutTsnet: () -> Unit,
-    terminalAppearance: TerminalAppearance,
-    terminalShortcutConfig: TerminalShortcutConfig,
-    onSetTerminalFont: (TerminalFont) -> Unit,
-    onSetTerminalFontSize: (Int) -> Unit,
-    onSetTerminalTheme: (TerminalThemeId) -> Unit,
-    onSetTerminalCustomColors: (TerminalCustomColors) -> Unit,
-    onResetTerminalAppearance: () -> Unit,
-    onSaveTerminalShortcuts: (TerminalShortcutConfig) -> Unit,
-    selectedAppLanguage: AppLanguage,
-    onSetAppLanguage: (AppLanguage) -> Unit,
-    updateState: UpdateUiState,
-    updateCallbacks: UpdateCardCallbacks,
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var showWebDavEditor by rememberSaveable { mutableStateOf(false) }
-    var showPinEditor by rememberSaveable { mutableStateOf(false) }
-    var editingSnippet by remember { mutableStateOf<CommandSnippet?>(null) }
-    var showSnippetEditor by rememberSaveable { mutableStateOf(false) }
-    var syncAction by remember { mutableStateOf<SyncAction?>(null) }
-    var pendingImport by remember { mutableStateOf<ByteArray?>(null) }
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            scope.launch {
-                pendingImport = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { stream -> stream.readBytes() }
-                }
-                if (pendingImport != null) syncAction = SyncAction.MANUAL_IMPORT
-            }
-        }
-    }
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        val data = portableExport
-        onConsumeExport()
-        if (uri != null && data != null) {
-            scope.launch {
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri)?.use { stream -> stream.write(data) }
-                }
-            }
-        }
-    }
-    LaunchedEffect(portableExport) {
-        if (portableExport != null) exportLauncher.launch("mangossh-vault.mssh")
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            LanguageSettingsCard(
-                selected = selectedAppLanguage,
-                onSelect = onSetAppLanguage,
-            )
-        }
-        if (updateState.supported) {
-            item { UpdateSettingsCard(state = updateState, callbacks = updateCallbacks) }
-        }
-        if (vaultStatus !is VaultStatus.Ready) {
-            item { SecurityBanner(vaultStatus) }
-        }
-        item {
-            TerminalAppearanceCard(
-                appearance = terminalAppearance,
-                onSetFont = onSetTerminalFont,
-                onSetFontSize = onSetTerminalFontSize,
-                onSetTheme = onSetTerminalTheme,
-                onSetCustomColors = onSetTerminalCustomColors,
-                onReset = onResetTerminalAppearance,
-            )
-        }
-        item {
-            TerminalShortcutSettingsCard(
-                config = terminalShortcutConfig,
-                onSave = onSaveTerminalShortcuts,
-            )
-        }
-        item {
-            EmbeddedTsnetCard(
-                status = embeddedTsnetStatus,
-                onBeginBrowserEnrollment = onBeginTsnetBrowserEnrollment,
-                onBeginAuthKeyEnrollment = onBeginTsnetAuthKeyEnrollment,
-                onLogout = onLogoutTsnet,
-            )
-        }
-        item {
-            Text(stringResource(R.string.ui_security_and_sync), style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                stringResource(R.string.ui_exports_and_webdav_uploads_are_encrypted_again_with_a_separate_sync_pass),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.ui_encrypted_backup), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { syncAction = SyncAction.MANUAL_EXPORT },
-                            enabled = vaultStatus !is VaultStatus.Failed,
-                        ) { Text(stringResource(R.string.ui_export)) }
-                        OutlinedButton(
-                            onClick = { importLauncher.launch(arrayOf("application/octet-stream", "application/json", "text/plain")) },
-                            enabled = vaultStatus !is VaultStatus.Failed,
-                        ) { Text(stringResource(R.string.ui_import)) }
-                    }
-                }
-            }
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.ui_custom_webdav), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        webDavConfig?.let { "${it.endpoint}/${it.remoteFileName}" } ?: stringResource(R.string.ui_not_configured),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { showWebDavEditor = true }) {
-                            Text(if (webDavConfig == null) stringResource(R.string.ui_configure) else stringResource(R.string.common_edit))
-                        }
-                        if (webDavConfig != null) {
-                            Button(onClick = { syncAction = SyncAction.WEBDAV_UPLOAD }) { Text(stringResource(R.string.common_upload)) }
-                            Button(onClick = { syncAction = SyncAction.WEBDAV_DOWNLOAD }) { Text(stringResource(R.string.ui_download_and_import)) }
-                            TextButton(onClick = onClearWebDav) { Text(stringResource(R.string.common_remove)) }
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.ui_app_protection), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        if (appLockConfiguration.pinConfigured) {
-                            stringResource(R.string.ui_app_pin_is_enabled_unlocking_is_required_when_returning_to_the_foregroun)
-                        } else {
-                            stringResource(R.string.ui_no_app_pin_is_set_once_enabled_returning_to_the_foreground_requires_pin)
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { showPinEditor = true }) {
-                            Text(if (appLockConfiguration.pinConfigured) stringResource(R.string.ui_change_pin) else stringResource(R.string.ui_set_pin))
-                        }
-                        if (appLockConfiguration.pinConfigured) {
-                            Button(onClick = onLockNow) { Text(stringResource(R.string.ui_lock_now)) }
-                            TextButton(onClick = onClearAppLock) { Text(stringResource(R.string.common_close)) }
-                        }
-                    }
-                    if (appLockConfiguration.pinConfigured) {
-                        Spacer(Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(
-                                checked = appLockConfiguration.biometricEnabled,
-                                onCheckedChange = onSetBiometricEnabled,
-                            )
-                            Text(stringResource(R.string.ui_allow_biometric_unlock), style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.ui_post_connect_snippets), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        stringResource(R.string.ui_a_snippet_selected_in_the_host_editor_is_sent_automatically_when_the_she),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = {
-                            editingSnippet = null
-                            showSnippetEditor = true
-                        },
-                    ) { Text(stringResource(R.string.ui_new_snippet_2)) }
-                }
-            }
-        }
-        if (snippets.isEmpty()) {
-            item {
-                Text(stringResource(R.string.ui_no_snippets_yet), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            items(snippets, key = { it.id }) { snippet ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(snippet.label, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            snippet.script,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    editingSnippet = snippet
-                                    showSnippetEditor = true
-                                },
-                            ) { Text(stringResource(R.string.common_edit)) }
-                            TextButton(onClick = { onRemoveSnippet(snippet.id) }) { Text(stringResource(R.string.common_remove)) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showWebDavEditor) {
-        WebDavConfigDialog(
-            initial = webDavConfig,
-            onDismiss = { showWebDavEditor = false },
-            onSave = { endpoint, username, password, remoteFileName ->
-                onSaveWebDav(endpoint, username, password, remoteFileName)
-                showWebDavEditor = false
-            },
-        )
-    }
-    if (showPinEditor) {
-        AppPinDialog(
-            onDismiss = { showPinEditor = false },
-            onConfirm = { pin ->
-                onConfigureAppPin(pin)
-                showPinEditor = false
-            },
-        )
-    }
-    if (showSnippetEditor) {
-        CommandSnippetDialog(
-            initial = editingSnippet,
-            onDismiss = {
-                showSnippetEditor = false
-                editingSnippet = null
-            },
-            onSave = { label, script, appendNewline ->
-                onSaveSnippet(editingSnippet?.id, label, script, appendNewline)
-                showSnippetEditor = false
-                editingSnippet = null
-            },
-        )
-    }
-    syncAction?.let { action ->
-        SyncPassphraseDialog(
-            action = action,
-            onDismiss = { syncAction = null },
-            onConfirm = { passphrase ->
-                when (action) {
-                    SyncAction.MANUAL_EXPORT -> onPrepareExport(passphrase)
-                    SyncAction.MANUAL_IMPORT -> pendingImport?.let { bytes -> onImport(bytes, passphrase) }
-                    SyncAction.WEBDAV_UPLOAD -> onUpload(passphrase)
-                    SyncAction.WEBDAV_DOWNLOAD -> onDownloadAndImport(passphrase)
-                }
-                pendingImport = null
-                syncAction = null
-            },
-        )
-    }
-}
-
-@Composable
-internal fun LanguageSettingsCard(
-    selected: AppLanguage,
-    onSelect: (AppLanguage) -> Unit,
-) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    Card(modifier = Modifier.fillMaxWidth().testTag("app-language-card")) {
-        Column(Modifier.padding(16.dp)) {
-            Text(stringResource(R.string.app_language_title), fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                stringResource(R.string.app_language_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { expanded = it },
-            ) {
-                OutlinedButton(
-                    modifier = Modifier
-                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                        .testTag("app-language-selector"),
-                    onClick = { expanded = true },
-                ) {
-                    Text(selected.label())
-                }
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                ) {
-                    AppLanguage.entries.forEach { option ->
-                        DropdownMenuItem(
-                            modifier = Modifier.testTag("app-language-option_${option.name}"),
-                            text = { Text(option.label()) },
-                            onClick = {
-                                expanded = false
-                                if (option != selected) onSelect(option)
-                            },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AppLanguage.label(): String = stringResource(
-    when (this) {
-        AppLanguage.SYSTEM -> R.string.app_language_system
-        AppLanguage.ENGLISH -> R.string.app_language_english
-        AppLanguage.SIMPLIFIED_CHINESE -> R.string.app_language_simplified_chinese
-    },
-)
-
-private enum class SyncAction(
-    @StringRes val titleResource: Int,
-    @StringRes val warningResource: Int,
-) {
-    MANUAL_EXPORT(
-        R.string.ui_export_encrypted_backup,
-        R.string.ui_this_passphrase_protects_the_exported_backup_file,
-    ),
-    MANUAL_IMPORT(
-        R.string.ui_import_encrypted_backup,
-        R.string.ui_importing_replaces_the_current_hosts_keys_snippets_and_sync_configuratio,
-    ),
-    WEBDAV_UPLOAD(
-        R.string.ui_upload_to_webdav,
-        R.string.ui_the_backup_will_be_encrypted_with_this_passphrase_before_upload,
-    ),
-    WEBDAV_DOWNLOAD(
-        R.string.ui_import_from_webdav,
-        R.string.ui_after_download_the_backup_will_be_decrypted_with_this_passphrase_and_rep,
-    ),
-}
-
-@Composable
-private fun WebDavConfigDialog(
-    initial: WebDavConfig?,
-    onDismiss: () -> Unit,
-    onSave: (endpoint: String, username: String, password: String, remoteFileName: String) -> Unit,
-) {
-    var endpoint by rememberSaveable(initial?.endpoint) { mutableStateOf(initial?.endpoint.orEmpty()) }
-    var username by rememberSaveable(initial?.endpoint) { mutableStateOf(initial?.username.orEmpty()) }
-    var password by rememberSaveable(initial?.endpoint) { mutableStateOf(initial?.password.orEmpty()) }
-    var remoteFileName by rememberSaveable(initial?.endpoint) {
-        mutableStateOf(initial?.remoteFileName ?: "mangossh-vault.mssh")
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.ui_configure_webdav)) },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(stringResource(R.string.ui_only_https_webdav_urls_are_accepted_the_url_should_point_to_the_director), style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = endpoint,
-                    onValueChange = { endpoint = it },
-                    label = { Text(stringResource(R.string.ui_webdav_directory_url)) },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text(stringResource(R.string.ui_username)) },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text(stringResource(R.string.ui_password_app_password)) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-                OutlinedTextField(
-                    value = remoteFileName,
-                    onValueChange = { remoteFileName = it },
-                    label = { Text(stringResource(R.string.ui_remote_file_name)) },
-                    singleLine = true,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(endpoint, username, password, remoteFileName) }) { Text(stringResource(R.string.common_save)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
-    )
-}
-
-@Composable
-private fun SyncPassphraseDialog(
-    action: SyncAction,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var passphrase by rememberSaveable(action) { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(action.titleResource)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(action.warningResource), style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = passphrase,
-                    onValueChange = { passphrase = it },
-                    label = { Text(stringResource(R.string.ui_sync_passphrase)) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(passphrase) }, enabled = passphrase.isNotEmpty()) { Text(stringResource(R.string.common_continue)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
-    )
-}
-
-@Composable
-private fun CommandSnippetDialog(
-    initial: CommandSnippet?,
-    onDismiss: () -> Unit,
-    onSave: (label: String, script: String, appendNewline: Boolean) -> Unit,
-) {
-    var label by rememberSaveable(initial?.id) { mutableStateOf(initial?.label.orEmpty()) }
-    var script by rememberSaveable(initial?.id) { mutableStateOf(initial?.script.orEmpty()) }
-    var appendNewline by rememberSaveable(initial?.id) { mutableStateOf(initial?.appendNewline ?: true) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) stringResource(R.string.ui_new_snippet) else stringResource(R.string.ui_edit_snippet)) },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                OutlinedTextField(
-                    value = label,
-                    onValueChange = { label = it },
-                    label = { Text(stringResource(R.string.ui_name)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = script,
-                    onValueChange = { script = it },
-                    label = { Text(stringResource(R.string.ui_shell_command_or_script)) },
-                    minLines = 4,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = appendNewline, onCheckedChange = { appendNewline = it })
-                    Text(stringResource(R.string.ui_append_newline_automatically))
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onSave(label.trim(), script, appendNewline) },
-                enabled = label.isNotBlank() && script.isNotBlank(),
-            ) { Text(stringResource(R.string.common_save)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
-    )
-}
-
-@Composable
-private fun AppPinDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var pin by rememberSaveable { mutableStateOf("") }
-    var confirmation by rememberSaveable { mutableStateOf("") }
-    val valid = pin.length in 4..12 && pin.all(Char::isDigit) && pin == confirmation
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.ui_set_app_pin)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(R.string.ui_the_pin_is_stored_only_on_this_device_as_a_salted_verifier_and_cannot_be), style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = { pin = it.filter(Char::isDigit).take(12) },
-                    label = { Text(stringResource(R.string.ui_4_12_digit_pin)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-                OutlinedTextField(
-                    value = confirmation,
-                    onValueChange = { confirmation = it.filter(Char::isDigit).take(12) },
-                    label = { Text(stringResource(R.string.ui_confirm_pin)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    visualTransformation = PasswordVisualTransformation(),
-                    isError = confirmation.isNotEmpty() && confirmation != pin,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(pin) }, enabled = valid) { Text(stringResource(R.string.common_save)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
-    )
 }
 
 @Composable
