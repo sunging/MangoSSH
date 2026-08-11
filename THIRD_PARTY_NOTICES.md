@@ -25,6 +25,24 @@ never downloads compiler binaries or dependency source. Do not replace the
 packaged binary with an unverifiable build or remove the source submodule,
 license text, build patch, or this notice.
 
+## ConnectBot terminal library
+
+MangoSSH's terminal rendering is [ConnectBot termlib
+0.1.0](https://github.com/connectbot/termlib), vendored as Kotlin source at
+`third_party/termlib`, pinned to upstream commit
+`e3f4bdc3b3b5563fee54b0eca4b50d0e611bfd07`.
+
+- License: Apache License, Version 2.0.
+- License text: `third_party/termlib/LICENSE` and the copy included in every
+  APK at `assets/licenses/Apache-2.0-ConnectBot-Terminal.txt`.
+- Native artifact: the four ABI `libjni_cb_term.so` files are extracted at
+  build time from the pinned Maven Central AAR (`org.connectbot:termlib:0.1.0`)
+  and are not committed to this repository.
+- Local modifications are documented in `third_party/termlib/README.md` and
+  kept additive to the upstream defaults, currently a terminal-resize damage
+  fix, a configurable scrollback line limit, and a configurable pinch-to-zoom
+  magnification range.
+
 ## Tailscale tsnet
 
 MangoSSH builds an outbound-only gomobile bridge against

@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 // Modified by MangoSSH in 2026 to rebuild visible rows after terminal resize.
+// Modified by MangoSSH in 2026 to make the scrollback line limit configurable.
 package org.connectbot.terminal
 
 import android.icu.lang.UCharacter
@@ -221,6 +222,7 @@ class TerminalEmulatorFactory {
          * @param boldAsBright Whether bold text using low-intensity ANSI colors (0–7) promotes to
          *                     the corresponding bright palette color (8–15), matching xterm's
          *                     default boldColors behavior. Defaults to true.
+         * @param maxScrollbackLines Maximum number of off-screen lines retained per session. Defaults to 1000.
          */
         fun create(
             looper: Looper = Looper.getMainLooper(),
@@ -235,6 +237,7 @@ class TerminalEmulatorFactory {
             onProgressChange: ((ProgressState, Int) -> Unit)? = null,
             autoDetectUrls: Boolean = false,
             boldAsBright: Boolean = true,
+            maxScrollbackLines: Int = 1000,
         ): TerminalEmulator = TerminalEmulatorImpl(
             looper = looper,
             initialRows = initialRows,
@@ -248,6 +251,7 @@ class TerminalEmulatorFactory {
             onProgressChange = onProgressChange,
             autoDetectUrls = autoDetectUrls,
             boldAsBright = boldAsBright,
+            maxScrollbackLines = maxScrollbackLines,
         )
     }
 }
@@ -281,6 +285,7 @@ class TerminalEmulatorFactory {
  * @param onResize Optional callback for terminal resize
  * @param onClipboardCopy Optional callback for OSC 52 clipboard copy operations
  * @param onProgressChange Optional callback for OSC 9;4 progress reporting
+ * @param maxScrollbackLines Maximum number of off-screen lines retained per session. Defaults to 1000.
  */
 internal class TerminalEmulatorImpl(
     private val looper: Looper = Looper.getMainLooper(),
@@ -295,8 +300,13 @@ internal class TerminalEmulatorImpl(
     private val onProgressChange: ((ProgressState, Int) -> Unit)? = null,
     override val autoDetectUrls: Boolean = false,
     override val boldAsBright: Boolean = true,
+    private val maxScrollbackLines: Int = 1000,
 ) : TerminalEmulator,
     TerminalCallbacks {
+
+    init {
+        require(maxScrollbackLines >= 1) { "maxScrollbackLines must be at least 1." }
+    }
 
     // Handler for escaping native mutex
     private val handler = Handler(looper)
@@ -346,7 +356,6 @@ internal class TerminalEmulatorImpl(
 
     // Scrollback buffer
     private val scrollback = mutableListOf<TerminalLine>()
-    private val maxScrollbackLines = 1000
 
     // Cached immutable copy of scrollback - only recreate when scrollback changes
     private var scrollbackSnapshot: List<TerminalLine> = emptyList()
