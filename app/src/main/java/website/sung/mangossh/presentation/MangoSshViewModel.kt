@@ -43,7 +43,6 @@ import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.domain.AppRelease
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
-import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.HostSortMode
 import website.sung.mangossh.domain.matchesHostQuery
 import website.sung.mangossh.domain.TerminalAppearance
@@ -479,11 +478,6 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
      * require a terminal session for the same host.
      */
     fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
-        val application = getApplication<Application>()
-        if (profile.protocol != ConnectionProtocol.SSH) {
-            _userMessage.value = uiText(R.string.mosh_not_supported_for_ssh_feature)
-            return
-        }
         runCatching { sessionController.startPortForwardOnNewConnection(profile, rule) }
             .onFailure {
                 _userMessage.value = uiText(R.string.session_ended_connection_failed)
@@ -528,10 +522,6 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun openRemoteBrowserForProfile(profile: ConnectionProfile) {
         val existing = _remoteBrowser.value
         if (existing != null && existing.ownsSession && existing.profileId == profile.id) return
-        if (profile.protocol != ConnectionProtocol.SSH) {
-            _userMessage.value = uiText(R.string.mosh_not_supported_for_ssh_feature)
-            return
-        }
         closeRemoteBrowser()
         val sessionId = runCatching { sessionController.connectForFileTransfer(profile) }
             .getOrElse { error ->

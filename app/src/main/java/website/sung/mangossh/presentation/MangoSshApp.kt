@@ -414,11 +414,12 @@ fun MangoSshApp(
         return
     }
 
-    // A forwarding-only connection has no screen of its own, so its host-key and
-    // authentication prompts are rendered over whichever tab is showing.
-    val backgroundPrompt = sessionPrompts.firstOrNull { prompt ->
-        sessions.firstOrNull { it.id == prompt.sessionId }?.kind == SessionKind.PORT_FORWARD
-    }
+    // Neither a terminal nor the file browser is showing, so nothing else can
+    // render a prompt: a forwarding-only connection has no screen of its own,
+    // and a backgrounded Mosh terminal re-authenticating its companion SSH for
+    // a forward or a transfer would otherwise wait out its timeout unanswered.
+    // Whichever tab is showing hosts the dialog.
+    val backgroundPrompt = sessionPrompts.firstOrNull()
 
     BackHandler(enabled = hostSearchActive) { closeHostSearch() }
 
@@ -1227,11 +1228,9 @@ private fun PortForwardsScreen(
 ) {
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
     var showRuleEditor by rememberSaveable { mutableStateOf(false) }
-    // Mosh uses a UDP terminal after its bootstrap and has no SSH channels for
-    // forwarding, so these actions list SSH sessions only.
-    val openSshSessions = sessions.filter {
+    // SSH and Mosh terminals both expose an authenticated SSH feature carrier.
+    val openFeatureSessions = sessions.filter {
         it.phase == TerminalSessionPhase.OPEN &&
-            it.protocol == ConnectionProtocol.SSH &&
             it.kind == SessionKind.TERMINAL
     }
 
@@ -1282,11 +1281,15 @@ private fun PortForwardsScreen(
         }
         items(rules, key = { it.id }) { rule ->
             val profile = hosts.firstOrNull { it.id == rule.profileId }
-            val active = activeForwards.firstOrNull {
+            val running = activeForwards.firstOrNull {
                 it.rule.id == rule.id &&
                     (it.phase == PortForwardRuntimePhase.ACTIVE || it.phase == PortForwardRuntimePhase.STARTING)
             }
-            val eligibleSession = openSshSessions.firstOrNull { it.profileId == rule.profileId }
+            val failed = activeForwards.lastOrNull {
+                it.rule.id == rule.id && it.phase == PortForwardRuntimePhase.FAILED
+            }
+            val visibleRuntime = running ?: failed
+            val eligibleSession = openFeatureSessions.firstOrNull { it.profileId == rule.profileId }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text(
@@ -1306,13 +1309,14 @@ private fun PortForwardsScreen(
                     // A forward without a terminal session runs on a connection
                     // opened only for it, which is worth showing: it explains why
                     // the host is connected while no terminal is open.
-                    val ownConnection = active != null &&
-                        sessions.firstOrNull { it.id == active.sessionId }?.kind == SessionKind.PORT_FORWARD
-                    val status = active?.let { runtime ->
+                    val ownConnection = running != null &&
+                        sessions.firstOrNull { it.id == running.sessionId }?.kind == SessionKind.PORT_FORWARD
+                    val status = visibleRuntime?.let { runtime ->
                         when (runtime.phase) {
                             PortForwardRuntimePhase.ACTIVE -> stringResource(R.string.ui_running)
                             PortForwardRuntimePhase.STARTING -> stringResource(R.string.ui_starting)
-                            else -> ""
+                            PortForwardRuntimePhase.FAILED -> stringResource(R.string.ui_failed)
+                            PortForwardRuntimePhase.STOPPED -> ""
                         }
                     } ?: if (rule.startOnConnect) stringResource(R.string.ui_start_on_connection) else stringResource(R.string.ui_not_started)
                     Spacer(Modifier.height(4.dp))
@@ -1323,24 +1327,42 @@ private fun PortForwardsScreen(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
+                    // A dedicated connection publishes its session and forward state back-to-back.
+                    // Keep these dynamic slots in the lazy item instead of removing several child
+                    // groups in one frame, which can corrupt Compose's pending node removals.
+                    val failureDetail = visibleRuntime
+                        ?.takeIf { it.phase == PortForwardRuntimePhase.FAILED }
+                        ?.detail
+                        ?.takeIf(String::isNotBlank)
+                        .orEmpty()
+                    Spacer(Modifier.height(if (failureDetail.isEmpty()) 0.dp else 4.dp))
+                    Text(
+                        text = failureDetail,
+                        modifier = if (failureDetail.isEmpty()) Modifier.height(0.dp) else Modifier,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                     Spacer(Modifier.height(12.dp))
-                    val canStart = profile != null && profile.protocol == ConnectionProtocol.SSH
+                    val canStart = profile != null
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (active != null) {
-                            Button(onClick = { onStopRule(active.sessionId, rule.id) }) { Text(stringResource(R.string.common_stop)) }
-                        } else {
-                            Button(
-                                onClick = {
+                        val startText = stringResource(R.string.common_start)
+                        val stopText = stringResource(R.string.common_stop)
+                        Button(
+                            onClick = {
+                                val runtime = running
+                                if (runtime != null) {
+                                    onStopRule(runtime.sessionId, rule.id)
+                                } else {
                                     val session = eligibleSession
                                     if (session != null) {
                                         onStartRule(session.id, rule)
                                     } else if (profile != null) {
                                         onStartOnNewConnection(profile, rule)
                                     }
-                                },
-                                enabled = canStart,
-                            ) { Text(stringResource(R.string.common_start)) }
-                        }
+                                }
+                            },
+                            enabled = running != null || canStart,
+                        ) { Text(if (running == null) startText else stopText) }
                         OutlinedButton(
                             onClick = {
                                 editingRule = rule
@@ -1349,22 +1371,16 @@ private fun PortForwardsScreen(
                         ) { Text(stringResource(R.string.common_edit)) }
                         TextButton(onClick = { onRemoveRule(rule.id) }) { Text(stringResource(R.string.common_remove)) }
                     }
-                    if (active == null && canStart && eligibleSession == null) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            stringResource(R.string.ui_starting_opens_a_connection_dedicated_to_this_forward_so_no_terminal_is),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (profile != null && profile.protocol != ConnectionProtocol.SSH) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            stringResource(R.string.mosh_not_supported_for_ssh_feature),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    val showDedicatedConnectionHint = running == null && canStart && eligibleSession == null
+                    val dedicatedConnectionHint =
+                        stringResource(R.string.ui_starting_opens_a_connection_dedicated_to_this_forward_so_no_terminal_is)
+                    Spacer(Modifier.height(if (showDedicatedConnectionHint) 8.dp else 0.dp))
+                    Text(
+                        text = if (showDedicatedConnectionHint) dedicatedConnectionHint else "",
+                        modifier = if (showDedicatedConnectionHint) Modifier else Modifier.height(0.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

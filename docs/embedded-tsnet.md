@@ -7,8 +7,9 @@ MangoSSH has three explicit profile routes:
 - `DIRECT` uses the Android network selected by the system.
 - `TAILNET` preserves the existing system Tailscale VPN behavior and forces
   Tailscale SSH authentication.
-- `TSNET` uses the app's independent userspace Tailnet node. SSH bootstrap
-  traffic uses tsnet's authenticated loopback SOCKS5 listener. Mosh then uses a
+- `TSNET` uses the app's independent userspace Tailnet node. SSH bootstrap and
+  the authenticated companion used by Mosh files, resource queries, and port
+  forwards use tsnet's loopback SOCKS5 listener. Mosh terminal traffic uses a
   loopback UDP relay backed by the same node.
 
 The embedded node handles only profiles that select `TSNET`. It does not
@@ -128,8 +129,9 @@ configuration:
 2. Create `TSNET` SSH profiles for both the lab MagicDNS name and Tailnet IP.
    Verify Tailscale SSH, first-use host-key confirmation, terminal I/O, and
    ordinary password/key/interactive authentication where configured.
-3. Verify Mosh bootstrap, UDP input/output, terminal resize, network switching,
-   reconnection, background/foreground transitions, and explicit disconnect.
+3. Verify Mosh bootstrap, UDP input/output, terminal resize, SFTP browsing,
+   resource queries, all three port-forward types, network switching, companion
+   SSH reconnection, background/foreground transitions, and explicit disconnect.
 4. Force-stop and restart MangoSSH. Confirm the same app node reconnects
    without another Auth Key.
 5. Disconnect all `TSNET` sessions, sign out, then enroll through the system

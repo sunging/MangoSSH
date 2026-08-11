@@ -75,7 +75,6 @@ import website.sung.mangossh.session.TerminalClipboardCopy
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
 import website.sung.mangossh.session.ServerResourceSnapshot
-import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalShortcutAction
@@ -110,7 +109,6 @@ fun TerminalSessionScreen(
     val terminalModifierState = remember(session.id) { TerminalModifierState() }
     val isOpen = session.phase == TerminalSessionPhase.OPEN
     val isImeVisible = WindowInsets.isImeVisible
-    val supportsSshChannels = session.protocol == ConnectionProtocol.SSH
     val colorScheme = appearance.colorScheme
     val terminalTypeface = remember(appearance.font) {
         ResourcesCompat.getFont(context, appearance.font.fontResourceId()) ?: Typeface.MONOSPACE
@@ -205,7 +203,7 @@ fun TerminalSessionScreen(
                     }
                     IconButton(
                         onClick = onOpenFileBrowser,
-                        enabled = isOpen && supportsSshChannels,
+                        enabled = isOpen,
                     ) {
                         Icon(
                             Icons.Outlined.FolderOpen,
@@ -217,7 +215,7 @@ fun TerminalSessionScreen(
                             showResourceReport = true
                             onRequestResources()
                         },
-                        enabled = isOpen && supportsSshChannels,
+                        enabled = isOpen,
                     ) {
                         Icon(Icons.Outlined.Storage, contentDescription = stringResource(R.string.ui_server_resources))
                     }

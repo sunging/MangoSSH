@@ -56,7 +56,6 @@ import androidx.compose.ui.zIndex
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.domain.ConnectionProfile
-import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
@@ -350,15 +349,11 @@ private fun HostCard(
                     )
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    // Mosh replaces its SSH bootstrap with a UDP terminal and has no
-                    // channel left for SFTP.
-                    if (host.protocol == ConnectionProtocol.SSH) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.ui_files)) },
-                            leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
-                            onClick = { menuExpanded = false; onBrowseFiles() },
-                        )
-                    }
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.ui_files)) },
+                        leadingIcon = { Icon(Icons.Outlined.Folder, contentDescription = null) },
+                        onClick = { menuExpanded = false; onBrowseFiles() },
+                    )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.common_edit)) },
                         leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },

@@ -75,7 +75,6 @@
     <string name="session_notification_target_unavailable">This session is no longer active.</string>
     <string name="mosh_client_missing">The bundled native Mosh client is unavailable. Reinstall a complete MangoSSH build.</string>
     <string name="mosh_runtime_missing">The bundled Mosh terminal database is unavailable. Reinstall a complete MangoSSH build.</string>
-    <string name="mosh_not_supported_for_ssh_feature">This action is available only for SSH sessions. Mosh uses its own UDP terminal transport.</string>
     <string name="mosh_connecting">Starting Mosh over an authenticated SSH bootstrap…</string>
     <string name="mosh_open">Mosh connected</string>
     <string name="mosh_bootstrap_failed">Mosh bootstrap failed. Ensure mosh-server is installed and UDP is reachable on the remote host.</string>
@@ -227,6 +226,7 @@
     <string name="preview_full_size">Full size %1$s</string>
     <string name="message_port_forward_incomplete">Port-forward configuration is incomplete.</string>
     <string name="message_port_forward_saved">Port forwarding saved.</string>
+    <string name="port_forward_mosh_companion_disconnected">The SSH connection carrying this Mosh port forward disconnected. Start the forward again to reconnect.</string>
     <string name="message_snippet_required">Snippet name and contents cannot be empty.</string>
     <string name="message_snippet_saved">Snippet saved.</string>
     <string name="message_key_generated">Generated %1$s.</string>
@@ -363,10 +363,10 @@
     <string name="ui_local_bind_address">Local bind address</string>
     <string name="ui_local_configuration_is_encrypted_with_android_keystore_and_aes_gcm_serve">Local configuration is encrypted with Android Keystore and AES-GCM; server fingerprints are still verified on first connection.</string>
     <string name="ui_local_listen_port">Local listen port</string>
-    <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">Local, remote, and SOCKS5 forwards attach to an open SSH session and stop when it closes.</string>
+    <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">Local, remote, and SOCKS5 forwards attach to an open SSH or Mosh session and stop when it closes.</string>
     <string name="ui_lock_now">Lock now</string>
     <string name="ui_mangossh_is_locked">MangoSSH is locked</string>
-    <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh uses a GPL-3.0-or-later native client; its source and license are included with the project. It requires mosh-server on the remote host and reachable UDP (default ports 60000–61000), and does not support SSH SCP, port forwarding, agent forwarding, or resource queries.</string>
+    <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh uses a GPL-3.0-or-later native client; its source and license are included with the project. It requires mosh-server and reachable UDP (default ports 60000–61000). MangoSSH keeps an authenticated SSH companion for files, resource queries, and port forwarding; agent forwarding remains unavailable.</string>
     <string name="ui_name">Name</string>
     <string name="ui_name_optional">Name (optional)</string>
     <string name="ui_network_route">Network route</string>

@@ -32,11 +32,12 @@ import java.util.concurrent.ConcurrentHashMap
  * channel; resuming reopens it and continues from that offset, so no IO thread
  * or channel is held while a transfer sits paused.
  *
- * Resuming and retrying reuse the connection the transfer was started on and
- * never open a new one: authentication and host-key prompts are only rendered
- * by the remote file browser, so a transfer list that could reconnect would
- * have nowhere to ask. [onSessionEnded] marks those transfers uncontrollable
- * instead.
+ * Resuming and retrying go back to the session the transfer was started on
+ * rather than opening one of their own. That session decides whether its
+ * carrier is still usable, so a Mosh companion lost underneath a paused
+ * transfer is re-authenticated on resume, and any prompt it raises is rendered
+ * over whichever screen is showing. A session that has ended has nothing to go
+ * back to; [onSessionEnded] marks those transfers uncontrollable instead.
  *
  * Local documents are addressed through Storage Access Framework grants held by
  * the activity task. They are not taken persistably: a transfer does not
@@ -50,7 +51,7 @@ internal class FileTransferManager(
     private val context: Context,
     private val scope: CoroutineScope,
     private val remoteFiles: RemoteFileClient,
-    private val connectionOf: (String) -> Connection,
+    private val connectionOf: suspend (String) -> Connection,
     private val onSessionIdle: (String) -> Unit,
 ) {
     private val _transfers = MutableStateFlow<List<ScpTransferState>>(emptyList())
@@ -265,7 +266,7 @@ internal class FileTransferManager(
         }
     }
 
-    private fun runFileDownload(
+    private suspend fun runFileDownload(
         transferId: String,
         handle: TransferHandle,
         request: TransferRequest.FileDownload,
@@ -291,7 +292,7 @@ internal class FileTransferManager(
         settleAfterRun(transferId, handle, reached, completedItems = 0)
     }
 
-    private fun runFileUpload(
+    private suspend fun runFileUpload(
         transferId: String,
         handle: TransferHandle,
         request: TransferRequest.FileUpload,
@@ -327,7 +328,7 @@ internal class FileTransferManager(
      * that was interrupted is transferred again from its start, which avoids
      * tracking a separate offset for every entry of the tree.
      */
-    private fun runDirectoryDownload(
+    private suspend fun runDirectoryDownload(
         transferId: String,
         handle: TransferHandle,
         request: TransferRequest.DirectoryDownload,
@@ -417,7 +418,7 @@ internal class FileTransferManager(
     }
 
     /** Uploads a picked local folder, mirroring [runDirectoryDownload]. */
-    private fun runDirectoryUpload(
+    private suspend fun runDirectoryUpload(
         transferId: String,
         handle: TransferHandle,
         request: TransferRequest.DirectoryUpload,

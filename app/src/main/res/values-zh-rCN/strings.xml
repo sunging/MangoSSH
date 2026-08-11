@@ -73,7 +73,6 @@
     <string name="session_notification_target_unavailable">此会话已不再活动。</string>
     <string name="mosh_client_missing">内置原生 Mosh 客户端不可用。请重新安装完整的 MangoSSH 构建。</string>
     <string name="mosh_runtime_missing">内置 Mosh 终端数据库不可用。请重新安装完整的 MangoSSH 构建。</string>
-    <string name="mosh_not_supported_for_ssh_feature">此操作仅适用于 SSH 会话。Mosh 使用独立的 UDP 终端传输。</string>
     <string name="mosh_connecting">正在通过已验证的 SSH 引导启动 Mosh…</string>
     <string name="mosh_open">Mosh 已连接</string>
     <string name="mosh_bootstrap_failed">Mosh 引导失败。请确认远端已安装 mosh-server，且 UDP 通信可达。</string>
@@ -212,6 +211,7 @@
     <string name="preview_full_size">完整大小 %1$s</string>
     <string name="message_port_forward_incomplete">端口转发配置不完整。</string>
     <string name="message_port_forward_saved">已保存端口转发。</string>
+    <string name="port_forward_mosh_companion_disconnected">承载此 Mosh 端口转发的 SSH 连接已断开。请重新启动该转发以重连。</string>
     <string name="message_snippet_required">代码片段名称和内容不能为空。</string>
     <string name="message_snippet_saved">已保存代码片段。</string>
     <string name="message_key_generated">已生成 %1$s。</string>
@@ -347,10 +347,10 @@
     <string name="ui_local_bind_address">本地绑定地址</string>
     <string name="ui_local_configuration_is_encrypted_with_android_keystore_and_aes_gcm_serve">本地配置已使用 Android Keystore 和 AES-GCM 加密保存；首次连接仍会验证主机指纹。</string>
     <string name="ui_local_listen_port">本地监听端口</string>
-    <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">本地、远程和 SOCKS5 转发均绑定到已打开的 SSH 会话；会话关闭后转发会自动停止。</string>
+    <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">本地、远程和 SOCKS5 转发均可绑定到已打开的 SSH 或 Mosh 会话；会话关闭后转发会自动停止。</string>
     <string name="ui_lock_now">立即锁定</string>
     <string name="ui_mangossh_is_locked">MangoSSH 已锁定</string>
-    <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh 使用 GPL-3.0-or-later 原生客户端；源代码和许可证见项目随附材料。它需要远端 mosh-server 和可达的 UDP 端口（默认 60000–61000），且不支持 SSH 的 SCP、端口转发、代理转发或资源查询。</string>
+    <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh 使用 GPL-3.0-or-later 原生客户端；源代码和许可证见项目随附材料。它需要远端 mosh-server 和可达的 UDP 端口（默认 60000–61000）。MangoSSH 会保留经过认证的 SSH 伴随连接，用于文件、资源查询和端口转发；代理转发仍不可用。</string>
     <string name="ui_name">名称</string>
     <string name="ui_name_optional">名称（可选）</string>
     <string name="ui_network_route">网络路由</string>

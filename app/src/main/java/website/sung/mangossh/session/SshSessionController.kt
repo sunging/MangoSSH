@@ -38,6 +38,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.connectbot.terminal.TerminalEmulator
@@ -99,7 +101,7 @@ class SshSessionController internal constructor(
         context = context,
         scope = scope,
         remoteFiles = remoteFiles,
-        connectionOf = ::requireSshConnection,
+        connectionOf = ::requireSshFeatureConnection,
         onSessionIdle = ::closeFileTransferIfIdle,
     )
     val scpTransfers: StateFlow<List<ScpTransferState>> = fileTransfers.transfers
@@ -125,6 +127,7 @@ class SshSessionController internal constructor(
         val sessionId = UUID.randomUUID().toString()
         val managed = ManagedSession(
             connection = Connection(profile.hostname, profile.port),
+            profile = profile,
             protocol = profile.protocol,
         )
         sessionsById[sessionId] = managed
@@ -178,12 +181,10 @@ class SshSessionController internal constructor(
      * must never be presented as an interactive terminal.
      */
     private fun connectWithoutShell(profile: ConnectionProfile, kind: SessionKind): String {
-        check(profile.protocol == ConnectionProtocol.SSH) {
-            context.appString(R.string.mosh_not_supported_for_ssh_feature)
-        }
         val sessionId = UUID.randomUUID().toString()
         val managed = ManagedSession(
             connection = Connection(profile.hostname, profile.port),
+            profile = profile,
             protocol = ConnectionProtocol.SSH,
             kind = kind,
         )
@@ -291,15 +292,19 @@ class SshSessionController internal constructor(
         rule: PortForwardRule,
         detail: String,
     ) {
-        updatePortForward(
-            PortForwardRuntimeState(
-                runtimeId = runtimeId,
-                sessionId = sessionId,
-                rule = rule,
-                phase = PortForwardRuntimePhase.STARTING,
-                detail = detail,
-            ),
+        val state = PortForwardRuntimeState(
+            runtimeId = runtimeId,
+            sessionId = sessionId,
+            rule = rule,
+            phase = PortForwardRuntimePhase.STARTING,
+            detail = detail,
         )
+        _portForwards.update { current ->
+            current.filterNot { existing ->
+                existing.runtimeId == runtimeId ||
+                    (existing.rule.id == rule.id && existing.phase == PortForwardRuntimePhase.FAILED)
+            } + state
+        }
     }
 
     /**
@@ -316,19 +321,35 @@ class SshSessionController internal constructor(
                 updatePortForward(runtimeId, PortForwardRuntimePhase.FAILED, "The SSH session is not open")
                 return@launch
             }
-            if (managed.protocol != ConnectionProtocol.SSH) {
-                updatePortForward(
-                    runtimeId,
-                    PortForwardRuntimePhase.FAILED,
-                    context.appString(R.string.mosh_not_supported_for_ssh_feature),
-                )
-                closePortForwardSessionIfIdle(sessionId)
-                return@launch
-            }
             try {
-                val forward = createPortForward(managed.connection, rule)
-                managed.forwards[runtimeId] = forward
-                updatePortForward(runtimeId, PortForwardRuntimePhase.ACTIVE, "Listening")
+                val connection = requireSshFeatureConnection(sessionId)
+                val forward = createPortForward(connection, rule)
+                val installed = synchronized(managed.sshFeatureLock) {
+                    val stillStarting = _portForwards.value
+                        .firstOrNull { state -> state.runtimeId == runtimeId }
+                        ?.phase == PortForwardRuntimePhase.STARTING
+                    if (
+                        sessionsById[sessionId] === managed &&
+                        stillStarting &&
+                        (managed.protocol != ConnectionProtocol.MOSH || managed.sshFeatureConnection === connection)
+                    ) {
+                        managed.forwards[runtimeId] = forward
+                        // Publishing the phase in the same critical section that
+                        // decided the install keeps a concurrent invalidation or
+                        // stop from being overwritten by an ACTIVE the rule no
+                        // longer deserves.
+                        updatePortForward(runtimeId, PortForwardRuntimePhase.ACTIVE, "Listening")
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (!installed) {
+                    runCatching { forward.close() }
+                    throw CancellationException()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 updatePortForward(runtimeId, PortForwardRuntimePhase.FAILED, error.toSafeMessage())
                 // A connection opened only for this forward has nothing left to do.
@@ -379,8 +400,19 @@ class SshSessionController internal constructor(
     fun stopPortForward(sessionId: String, ruleId: String) {
         val runtimeId = portForwardRuntimeId(sessionId, ruleId)
         val managed = sessionsById[sessionId]
-        runCatching { managed?.forwards?.remove(runtimeId)?.close() }
-        updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPED, "Stopped")
+        // Detaching and publishing under the lock an activation also takes stops
+        // a forward that is still opening from resurrecting the rule as running.
+        val forward = if (managed == null) {
+            updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPED, "Stopped")
+            null
+        } else {
+            synchronized(managed.sshFeatureLock) {
+                managed.forwards.remove(runtimeId).also {
+                    updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPED, "Stopped")
+                }
+            }
+        }
+        runCatching { forward?.close() }
         closePortForwardSessionIfIdle(sessionId)
     }
 
@@ -405,14 +437,14 @@ class SshSessionController internal constructor(
 
     /** Resolves the directory the session's account starts in, for the file browser. */
     suspend fun resolveRemoteHome(sessionId: String): String = withContext(Dispatchers.IO) {
-        remoteFiles.resolveHome(requireSshConnection(sessionId))
+        remoteFiles.resolveHome(requireSshFeatureConnection(sessionId))
     }
 
     /** Lists one remote directory for the file browser. */
     suspend fun listRemoteDirectory(sessionId: String, path: String): RemoteDirectoryListing =
         withContext(Dispatchers.IO) {
             remoteFiles.list(
-                connection = requireSshConnection(sessionId),
+                connection = requireSshFeatureConnection(sessionId),
                 sessionId = sessionId,
                 path = path,
                 maxEntries = MAX_REMOTE_DIRECTORY_ENTRIES,
@@ -422,7 +454,7 @@ class SshSessionController internal constructor(
     /** Resolves what a remote path actually is after following symlinks. */
     suspend fun resolveRemoteKind(sessionId: String, path: String): RemoteFileKind =
         withContext(Dispatchers.IO) {
-            remoteFiles.statKind(requireSshConnection(sessionId), path)
+            remoteFiles.statKind(requireSshFeatureConnection(sessionId), path)
         }
 
     /**
@@ -433,7 +465,7 @@ class SshSessionController internal constructor(
     suspend fun readRemoteTextPreview(sessionId: String, path: String): RemoteTextPreview? =
         withContext(Dispatchers.IO) {
             remoteFiles.readTextPreview(
-                connection = requireSshConnection(sessionId),
+                connection = requireSshFeatureConnection(sessionId),
                 path = path,
                 maxBytes = MAX_REMOTE_PREVIEW_BYTES,
             )
@@ -498,16 +530,26 @@ class SshSessionController internal constructor(
 
     fun requestServerResources(sessionId: String) {
         scope.launch {
+            _resourceSnapshots.update { snapshots -> snapshots - sessionId }
             try {
-                val connection = requireSshConnection(sessionId)
+                val connection = requireSshFeatureConnection(sessionId)
                 val report = collectServerResourceReport(connection)
-                _resourceSnapshots.update { snapshots ->
-                    snapshots + (sessionId to ServerResourceSnapshot(sessionId = sessionId, report = report))
+                if (sessionsById.containsKey(sessionId)) {
+                    _resourceSnapshots.update { snapshots ->
+                        snapshots + (sessionId to ServerResourceSnapshot(sessionId = sessionId, report = report))
+                    }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
+                if (!sessionsById.containsKey(sessionId)) return@launch
+                val message = context.appString(R.string.terminal_resource_query_failed)
+                _resourceSnapshots.update { snapshots ->
+                    snapshots + (sessionId to ServerResourceSnapshot(sessionId = sessionId, report = message))
+                }
                 publishLocalizableNotice(
                     sessionId,
-                    "\r\n[MangoSSH] ${context.appString(R.string.terminal_resource_query_failed)}\r\n",
+                    "\r\n[MangoSSH] $message\r\n",
                 )
             }
         }
@@ -557,6 +599,7 @@ class SshSessionController internal constructor(
 
         managed.connectionJob?.cancel()
         managed.keepaliveJob?.cancel()
+        managed.sshFeatureKeepaliveJob?.cancel()
         managed.readerJobs.toList().forEach(Job::cancel)
         cancelPromptsForSession(sessionId)
         closePortForwards(sessionId, managed)
@@ -575,7 +618,13 @@ class SshSessionController internal constructor(
             runCatching { managed.tsnetUdpRelay?.close() }
             runCatching { managed.tsnetLease?.close() }
         }
-        runCatching { managed.connection.close() }
+        val sshFeatureConnection = synchronized(managed.sshFeatureLock) {
+            managed.sshFeatureConnection.also { managed.sshFeatureConnection = null }
+        }
+        runCatching { sshFeatureConnection?.close() }
+        if (sshFeatureConnection !== managed.connection) {
+            runCatching { managed.connection.close() }
+        }
         if (
             managed.protocol == ConnectionProtocol.MOSH &&
             reason == SessionEndReason.USER_REQUEST &&
@@ -804,7 +853,6 @@ class SshSessionController internal constructor(
                 throw MoshBootstrapException(error)
             }
             MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_SUCCEEDED)
-            runCatching { connection.close() }
 
             val relay = if (profile.route == ConnectionRoute.TSNET) {
                 requireNotNull(managed.tsnetLease)
@@ -837,7 +885,11 @@ class SshSessionController internal constructor(
 
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.mosh_open))
             startMoshReader(sessionId, managed, moshProcess)
+            attachMoshSshFeatureConnection(sessionId, managed, connection)
             runStartupSnippet(sessionId, profile, snapshot)
+            snapshot.portForwards
+                .filter { it.profileId == profile.id && it.startOnConnect }
+                .forEach { rule -> startPortForward(sessionId, rule) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -998,6 +1050,51 @@ class SshSessionController internal constructor(
     }
 
     /**
+     * Watches Mosh's authenticated companion SSH without coupling its failure
+     * to the UDP terminal. Only SSH-backed features are invalidated; the native
+     * Mosh process remains the terminal lifecycle owner.
+     *
+     * The transport monitor is what actually notices a dead peer: a keepalive
+     * write lands in the socket buffer and succeeds long after the far end is
+     * gone, so waiting for one to throw would leave a corpse installed until
+     * the operation using it timed out. The keepalive stays as the prod that
+     * makes the transport discover the loss.
+     */
+    private fun attachMoshSshFeatureConnection(
+        sessionId: String,
+        managed: ManagedSession,
+        connection: Connection,
+    ) {
+        connection.addConnectionMonitor { reason ->
+            // The transport thread must not run teardown that closes channels
+            // and sockets, so hand the invalidation to the session scope.
+            scope.launch {
+                if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
+                    MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, reason)
+                }
+            }
+        }
+        managed.sshFeatureKeepaliveJob?.cancel()
+        managed.sshFeatureKeepaliveJob = scope.launch {
+            runSshKeepaliveLoop(
+                intervalMillis = SSH_KEEPALIVE_INTERVAL_MILLIS,
+                isSessionActive = {
+                    sessionsById[sessionId] === managed &&
+                        synchronized(managed.sshFeatureLock) {
+                            managed.sshFeatureConnection === connection
+                        }
+                },
+                sendKeepalive = { connection.sendIgnorePacket() },
+                onFailure = { error ->
+                    if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
+                        MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)
+                    }
+                },
+            )
+        }
+    }
+
+    /**
      * Reads the single PTY stream used by Mosh and reaps the native child after
      * EOF. A process that exits on its own is represented as a closed terminal
      * rather than leaving a stale foreground notification behind.
@@ -1112,17 +1209,21 @@ class SshSessionController internal constructor(
     }
 
     private fun closePortForwards(sessionId: String, managed: ManagedSession) {
-        managed.forwards.values.toList().forEach { forward -> runCatching { forward.close() } }
-        managed.forwards.clear()
-        _portForwards.update { states ->
-            states.map { state ->
-                if (state.sessionId == sessionId && state.phase != PortForwardRuntimePhase.STOPPED) {
-                    state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = "SSH session closed")
-                } else {
-                    state
+        val forwards = synchronized(managed.sshFeatureLock) {
+            managed.forwards.values.toList().also {
+                managed.forwards.clear()
+                _portForwards.update { states ->
+                    states.map { state ->
+                        if (state.sessionId == sessionId && state.phase != PortForwardRuntimePhase.STOPPED) {
+                            state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = "SSH session closed")
+                        } else {
+                            state
+                        }
+                    }
                 }
             }
         }
+        forwards.forEach { forward -> runCatching { forward.close() } }
     }
 
     /**
@@ -1148,13 +1249,143 @@ class SshSessionController internal constructor(
         }
     }
 
-    /** Rejects SSH-channel-only actions once the SSH Mosh bootstrap has closed. */
-    private fun requireSshConnection(sessionId: String): Connection {
+    /**
+     * Returns the authenticated connection that carries SSH-only features.
+     *
+     * SSH terminals and shell-less sessions use their primary connection.
+     * Mosh reuses its bootstrap connection while it is healthy and serializes
+     * a fresh authentication when that companion was lost. The reconnect does
+     * not alter the Mosh terminal phase or launch another remote Mosh server.
+     */
+    private suspend fun requireSshFeatureConnection(sessionId: String): Connection {
         val managed = requireNotNull(sessionsById[sessionId]) { "The SSH session is not open" }
-        check(managed.protocol == ConnectionProtocol.SSH) {
-            context.appString(R.string.mosh_not_supported_for_ssh_feature)
+        if (managed.protocol != ConnectionProtocol.MOSH) return managed.connection
+
+        currentHealthyMoshSshFeatureConnection(sessionId, managed)?.let { return it }
+        return managed.sshFeatureReconnectMutex.withLock {
+            currentHealthyMoshSshFeatureConnection(sessionId, managed)?.let { return@withLock it }
+            reconnectMoshSshFeatureConnection(sessionId, managed)
         }
-        return managed.connection
+    }
+
+    /**
+     * Returns the installed companion when it is still usable.
+     *
+     * A successful write proves only that the local transport has not already
+     * failed, not that the peer is reachable, so liveness is really carried by
+     * the connection monitor registered in [attachMoshSshFeatureConnection]:
+     * whichever of the two notices first detaches the companion, and the next
+     * caller re-authenticates.
+     */
+    private fun currentHealthyMoshSshFeatureConnection(
+        sessionId: String,
+        managed: ManagedSession,
+    ): Connection? {
+        val connection = synchronized(managed.sshFeatureLock) { managed.sshFeatureConnection } ?: return null
+        return try {
+            connection.sendIgnorePacket()
+            connection
+        } catch (error: Exception) {
+            if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
+                MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)
+            }
+            null
+        }
+    }
+
+    /**
+     * Picks the profile a companion reconnect authenticates with.
+     *
+     * The vault entry is preferred so a credential edited while the terminal
+     * was open is the one used, but only when it still names the endpoint this
+     * session reached: the Mosh terminal is talking UDP to the original host,
+     * and a re-pointed profile must not send its companion somewhere else.
+     */
+    private fun companionProfile(managed: ManagedSession, snapshot: VaultSnapshot): ConnectionProfile {
+        val stored = snapshot.profiles.firstOrNull { it.id == managed.profile.id } ?: return managed.profile
+        val sameEndpoint = stored.hostname == managed.profile.hostname &&
+            stored.port == managed.profile.port &&
+            stored.route == managed.profile.route
+        return if (sameEndpoint) stored else managed.profile
+    }
+
+    /** Re-authenticates a lost Mosh companion through the route held by the terminal session. */
+    private fun reconnectMoshSshFeatureConnection(
+        sessionId: String,
+        managed: ManagedSession,
+    ): Connection {
+        check(sessionsById[sessionId] === managed) { "The Mosh session is not open" }
+        val snapshot = vault.snapshot.value
+        val profile = companionProfile(managed, snapshot)
+        val connection = Connection(profile.hostname, profile.port)
+        MangoLog.info(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_STARTED)
+        try {
+            if (profile.route == ConnectionRoute.TSNET) {
+                connection.setProxyData(requireNotNull(managed.tsnetLease).proxyData)
+            }
+            connection.connect(
+                HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
+                CONNECT_TIMEOUT_MILLIS,
+                KEY_EXCHANGE_TIMEOUT_MILLIS,
+            )
+            if (!authenticate(connection, sessionId, profile, snapshot)) {
+                throw SshAuthenticationException()
+            }
+            check(sessionsById[sessionId] === managed) { "The Mosh session is not open" }
+
+            val installed = synchronized(managed.sshFeatureLock) {
+                if (managed.sshFeatureConnection == null && sessionsById[sessionId] === managed) {
+                    managed.sshFeatureConnection = connection
+                    true
+                } else {
+                    false
+                }
+            }
+            check(installed) { "The Mosh SSH companion changed during reconnect" }
+            attachMoshSshFeatureConnection(sessionId, managed, connection)
+            MangoLog.info(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_SUCCEEDED)
+            return connection
+        } catch (error: Exception) {
+            runCatching { connection.close() }
+            MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_FAILED, error)
+            throw error
+        }
+    }
+
+    /**
+     * Detaches one exact companion and fails only the forwards it carried.
+     * Returns whether this call was the one that detached it, so a caller that
+     * races another detector does not report the loss twice.
+     */
+    private fun invalidateMoshSshFeatureConnection(
+        sessionId: String,
+        managed: ManagedSession,
+        connection: Connection,
+    ): Boolean {
+        if (managed.protocol != ConnectionProtocol.MOSH) return false
+        val detail = context.appString(R.string.port_forward_mosh_companion_disconnected)
+        var forwardsToClose: List<ManagedPortForward> = emptyList()
+        val detached = synchronized(managed.sshFeatureLock) {
+            if (managed.sshFeatureConnection !== connection) {
+                false
+            } else {
+                managed.sshFeatureConnection = null
+                forwardsToClose = managed.forwards.values.toList()
+                managed.forwards.clear()
+                // Failing the rules while the map is cleared, under the lock an
+                // activation also holds, leaves no window where a forward this
+                // companion carried still reads as running.
+                _portForwards.update { states ->
+                    failPortForwardsForSession(states, sessionId, detail)
+                }
+                true
+            }
+        }
+        if (!detached) return false
+
+        forwardsToClose.forEach { forward -> runCatching { forward.close() } }
+        runCatching { connection.close() }
+        return true
     }
 
     private fun collectServerResourceReport(connection: Connection): String {
@@ -1284,9 +1515,23 @@ class SshSessionController internal constructor(
     /** Holds one terminal transport and resources that must close together. */
     private class ManagedSession(
         val connection: Connection,
+        val profile: ConnectionProfile,
         val protocol: ConnectionProtocol,
         val kind: SessionKind = SessionKind.TERMINAL,
     ) {
+        /** Guards companion replacement and forward attachment as one lifecycle boundary. */
+        val sshFeatureLock = Any()
+
+        /** Serializes Mosh companion authentication so callers share one reconnect. */
+        val sshFeatureReconnectMutex = Mutex()
+
+        /**
+         * The authenticated carrier for SFTP, resource queries, and forwards.
+         * For Mosh this may be detached and replaced without ending the PTY.
+         */
+        @Volatile
+        var sshFeatureConnection: Connection? = connection
+
         /** Set once the browser is done; the connection closes when its queue drains. */
         @Volatile
         var releaseRequested: Boolean = false
@@ -1296,6 +1541,9 @@ class SshSessionController internal constructor(
 
         @Volatile
         var keepaliveJob: Job? = null
+
+        @Volatile
+        var sshFeatureKeepaliveJob: Job? = null
 
         @Volatile
         var session: Session? = null

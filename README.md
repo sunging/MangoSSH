@@ -9,17 +9,22 @@ profiles.
 ## Port forwarding
 
 Local, remote, and SOCKS5 rules live on the **Forwarding** page. Starting a rule
-reuses an open terminal session for the same host when there is one, and
-otherwise opens a connection dedicated to that forward, so a tunnel does not
-require keeping a shell open. A dedicated connection closes as soon as its last
-forward stops, and its host-key or password prompt appears over the page that
-started it.
+reuses an open SSH terminal or a Mosh terminal's authenticated companion SSH
+connection for the same host. Otherwise it opens a connection dedicated to the
+forward, so a tunnel does not require keeping a terminal open. A dedicated
+connection closes as soon as its last forward stops, and its host-key or
+password prompt appears over the page that started it. If a Mosh companion SSH
+disconnects, its forwards are marked failed without ending the UDP terminal;
+start a failed rule again to reconnect it.
 
 ## File transfers
 
-Open a host's **Files** action to browse it over SFTP; a connection dedicated to
-transfers is opened when no terminal session is running. Single files and whole
-folders can be downloaded and uploaded.
+Browse a host over SFTP from the **Files** button inside an open SSH or Mosh
+terminal, which reuses that session's authenticated SSH connection, or from a
+host's overflow-menu **Files** action, which opens a connection dedicated to
+transfers. Single files and whole folders can be downloaded and uploaded. Mosh
+terminals use the same SSH companion for the server-resource report in their
+terminal toolbar.
 
 Running transfers appear behind the transfer icon in the host list top bar, with
 combined progress. That sheet can pause, resume, cancel, and retry a transfer,
