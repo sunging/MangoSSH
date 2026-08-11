@@ -7,16 +7,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -33,7 +28,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +36,7 @@ import kotlinx.coroutines.withContext
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.data.vault.WebDavConfig
+import website.sung.mangossh.ui.components.MangoSettingsCard
 
 /**
  * Backup & sync detail page: encrypted local export/import and custom WebDAV.
@@ -96,43 +91,36 @@ internal fun BackupSettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.ui_encrypted_backup), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { syncAction = SyncAction.MANUAL_EXPORT },
-                            enabled = vaultStatus !is VaultStatus.Failed,
-                        ) { Text(stringResource(R.string.ui_export)) }
-                        OutlinedButton(
-                            onClick = { importLauncher.launch(arrayOf("application/octet-stream", "application/json", "text/plain")) },
-                            enabled = vaultStatus !is VaultStatus.Failed,
-                        ) { Text(stringResource(R.string.ui_import)) }
-                    }
+            MangoSettingsCard {
+                Text(stringResource(R.string.ui_encrypted_backup), style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { syncAction = SyncAction.MANUAL_EXPORT },
+                        enabled = vaultStatus !is VaultStatus.Failed,
+                    ) { Text(stringResource(R.string.ui_export)) }
+                    OutlinedButton(
+                        onClick = { importLauncher.launch(arrayOf("application/octet-stream", "application/json", "text/plain")) },
+                        enabled = vaultStatus !is VaultStatus.Failed,
+                    ) { Text(stringResource(R.string.ui_import)) }
                 }
             }
         }
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.ui_custom_webdav), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        webDavConfig?.let { "${it.endpoint}/${it.remoteFileName}" } ?: stringResource(R.string.ui_not_configured),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { showWebDavEditor = true }) {
-                            Text(if (webDavConfig == null) stringResource(R.string.ui_configure) else stringResource(R.string.common_edit))
-                        }
-                        if (webDavConfig != null) {
-                            Button(onClick = { syncAction = SyncAction.WEBDAV_UPLOAD }) { Text(stringResource(R.string.common_upload)) }
-                            Button(onClick = { syncAction = SyncAction.WEBDAV_DOWNLOAD }) { Text(stringResource(R.string.ui_download_and_import)) }
-                            TextButton(onClick = callbacks.onClearWebDav) { Text(stringResource(R.string.common_remove)) }
-                        }
+            MangoSettingsCard {
+                Text(stringResource(R.string.ui_custom_webdav), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    webDavConfig?.let { "${it.endpoint}/${it.remoteFileName}" } ?: stringResource(R.string.ui_not_configured),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showWebDavEditor = true }) {
+                        Text(if (webDavConfig == null) stringResource(R.string.ui_configure) else stringResource(R.string.common_edit))
+                    }
+                    if (webDavConfig != null) {
+                        Button(onClick = { syncAction = SyncAction.WEBDAV_UPLOAD }) { Text(stringResource(R.string.common_upload)) }
+                        Button(onClick = { syncAction = SyncAction.WEBDAV_DOWNLOAD }) { Text(stringResource(R.string.ui_download_and_import)) }
+                        TextButton(onClick = callbacks.onClearWebDav) { Text(stringResource(R.string.common_remove)) }
                     }
                 }
             }

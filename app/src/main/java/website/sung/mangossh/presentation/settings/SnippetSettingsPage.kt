@@ -4,16 +4,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -29,11 +25,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.CommandSnippet
+import website.sung.mangossh.ui.components.MangoSettingsCard
 
 /** Snippets detail page: post-connect commands that a host can run automatically. */
 @Composable
@@ -52,23 +48,19 @@ internal fun SnippetSettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(stringResource(R.string.ui_post_connect_snippets), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        stringResource(R.string.ui_a_snippet_selected_in_the_host_editor_is_sent_automatically_when_the_she),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = {
-                            editingSnippet = null
-                            showSnippetEditor = true
-                        },
-                    ) { Text(stringResource(R.string.ui_new_snippet_2)) }
-                }
+            MangoSettingsCard {
+                Text(stringResource(R.string.ui_post_connect_snippets), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.ui_a_snippet_selected_in_the_host_editor_is_sent_automatically_when_the_she),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(
+                    onClick = {
+                        editingSnippet = null
+                        showSnippetEditor = true
+                    },
+                ) { Text(stringResource(R.string.ui_new_snippet_2)) }
             }
         }
         if (snippets.isEmpty()) {
@@ -77,26 +69,23 @@ internal fun SnippetSettingsPage(
             }
         } else {
             items(snippets, key = { it.id }) { snippet ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(snippet.label, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            snippet.script,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    editingSnippet = snippet
-                                    showSnippetEditor = true
-                                },
-                            ) { Text(stringResource(R.string.common_edit)) }
-                            TextButton(onClick = { callbacks.onRemoveSnippet(snippet.id) }) { Text(stringResource(R.string.common_remove)) }
-                        }
+                MangoSettingsCard {
+                    Text(snippet.label, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        snippet.script,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                editingSnippet = snippet
+                                showSnippetEditor = true
+                            },
+                        ) { Text(stringResource(R.string.common_edit)) }
+                        TextButton(onClick = { callbacks.onRemoveSnippet(snippet.id) }) { Text(stringResource(R.string.common_remove)) }
                     }
                 }
             }

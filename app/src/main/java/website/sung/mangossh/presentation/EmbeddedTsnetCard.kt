@@ -3,10 +3,8 @@ package website.sung.mangossh.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -21,12 +19,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetPhase
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
+import website.sung.mangossh.ui.components.MangoSettingsCard
 
 /** Controls enrollment into MangoSSH's embedded, process-scoped Tailscale (tsnet) node. */
 @Composable
@@ -60,53 +58,48 @@ internal fun EmbeddedTsnetCard(
     val canLogout = status.phase == EmbeddedTsnetPhase.READY_IDLE ||
         status.phase == EmbeddedTsnetPhase.ACTIVE
 
-    Card(modifier = Modifier.fillMaxWidth().testTag("embedded_tsnet_card")) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(stringResource(R.string.embedded_tsnet_title), fontWeight = FontWeight.SemiBold)
-            Text(
-                stringResource(R.string.embedded_tsnet_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                statusText,
-                modifier = Modifier.testTag("embedded_tsnet_status"),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            if (canStartEnrollment) {
-                Button(
-                    onClick = onBeginBrowserEnrollment,
+    MangoSettingsCard(modifier = Modifier.testTag("embedded_tsnet_card")) {
+        Text(stringResource(R.string.embedded_tsnet_title), style = MaterialTheme.typography.titleMedium)
+        Text(
+            stringResource(R.string.embedded_tsnet_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            statusText,
+            modifier = Modifier.testTag("embedded_tsnet_status"),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        if (canStartEnrollment) {
+            Button(
+                onClick = onBeginBrowserEnrollment,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("embedded_tsnet_browser_login"),
+            ) {
+                Text(stringResource(R.string.embedded_tsnet_browser_login))
+            }
+            if (status.authKeyAllowed) {
+                OutlinedButton(
+                    onClick = { showAuthKeyDialog = true },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("embedded_tsnet_browser_login"),
+                        .testTag("embedded_tsnet_auth_key_login"),
                 ) {
-                    Text(stringResource(R.string.embedded_tsnet_browser_login))
-                }
-                if (status.authKeyAllowed) {
-                    OutlinedButton(
-                        onClick = { showAuthKeyDialog = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("embedded_tsnet_auth_key_login"),
-                    ) {
-                        Text(stringResource(R.string.embedded_tsnet_auth_key_login))
-                    }
+                    Text(stringResource(R.string.embedded_tsnet_auth_key_login))
                 }
             }
-            if (canLogout) {
-                OutlinedButton(
-                    onClick = { showLogoutDialog = true },
-                    enabled = status.activeSessions == 0,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("embedded_tsnet_logout"),
-                ) {
-                    Text(stringResource(R.string.embedded_tsnet_logout))
-                }
+        }
+        if (canLogout) {
+            OutlinedButton(
+                onClick = { showLogoutDialog = true },
+                enabled = status.activeSessions == 0,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("embedded_tsnet_logout"),
+            ) {
+                Text(stringResource(R.string.embedded_tsnet_logout))
             }
         }
     }
