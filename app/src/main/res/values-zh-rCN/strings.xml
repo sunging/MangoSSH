@@ -468,4 +468,12 @@
     <string name="settings_category_tsnet_summary">用户态 tsnet 节点注册</string>
     <string name="settings_category_updates_title">应用更新</string>
     <string name="settings_category_updates_summary">检查并安装新版本</string>
+    <string name="settings_appearance_theme_title">应用主题</string>
+    <string name="settings_appearance_theme_summary">仅为 MangoSSH 覆盖设备的浅色/深色设置。</string>
+    <string name="settings_appearance_theme_system">跟随系统</string>
+    <string name="settings_appearance_theme_light">浅色</string>
+    <string name="settings_appearance_theme_dark">深色</string>
+    <string name="settings_appearance_dynamic_color_title">动态取色</string>
+    <string name="settings_appearance_dynamic_color_summary">使用壁纸取色，而非 MangoSSH 配色方案。</string>
+    <string name="settings_appearance_dynamic_color_unavailable">需要 Android 12 或更高版本。</string>
 </resources>

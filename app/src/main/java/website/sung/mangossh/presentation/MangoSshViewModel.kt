@@ -41,6 +41,7 @@ import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.domain.AppRelease
+import website.sung.mangossh.domain.AppThemeMode
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.domain.HostSortMode
@@ -161,6 +162,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val embeddedTsnetManager = runtime.embeddedTsnetManager
     private val terminalAppearanceStore = runtime.terminalAppearance
     private val terminalShortcutStore = runtime.terminalShortcuts
+    private val appThemeStore = runtime.appTheme
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
     private val updatePreferencesStore = runtime.updatePreferences
@@ -225,6 +227,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
     val terminalAppearance = terminalAppearanceStore.appearance
     val terminalShortcuts = terminalShortcutStore.config
+    val appTheme = appThemeStore.preferences
 
     private val _updatePhase = MutableStateFlow<UpdatePhase>(UpdatePhase.Idle)
 
@@ -394,6 +397,16 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun resizeTerminal(sessionId: String, columns: Int, rows: Int) {
         sessionController.resize(sessionId, columns, rows)
+    }
+
+    /** Persists the app-wide theme mode; the whole Compose tree recomposes with the new scheme. */
+    fun setAppThemeMode(mode: AppThemeMode) {
+        appThemeStore.setMode(mode)
+    }
+
+    /** Persists whether Material You dynamic color is used on API 31+. */
+    fun setDynamicColorEnabled(enabled: Boolean) {
+        appThemeStore.setDynamicColorEnabled(enabled)
     }
 
     /** Persists a bundled terminal font; composed terminals update without reconnecting. */

@@ -4,6 +4,8 @@ import androidx.compose.runtime.Immutable
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.data.vault.WebDavConfig
+import website.sung.mangossh.domain.AppThemeMode
+import website.sung.mangossh.domain.AppThemePreferences
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
@@ -19,6 +21,9 @@ import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
 @Immutable
 internal data class AppearanceSettingsState(
     val language: AppLanguage,
+    val themePreferences: AppThemePreferences,
+    /** False below API 31, where Material You dynamic color does not exist. */
+    val dynamicColorSupported: Boolean,
 )
 
 /** State shown on the Terminal detail page. */
@@ -77,6 +82,8 @@ internal data class SettingsScreenState(
 @Immutable
 internal data class AppearanceSettingsCallbacks(
     val onSetLanguage: (AppLanguage) -> Unit,
+    val onSetThemeMode: (AppThemeMode) -> Unit,
+    val onSetDynamicColorEnabled: (Boolean) -> Unit,
 )
 
 @Immutable

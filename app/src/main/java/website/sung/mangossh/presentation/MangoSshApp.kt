@@ -5,6 +5,7 @@ package website.sung.mangossh.presentation
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
+import android.os.Build
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -164,6 +165,7 @@ fun MangoSshApp(
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
     val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
     val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
+    val appThemePreferences by viewModel.appTheme.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -566,7 +568,11 @@ fun MangoSshApp(
                                 viewModel = viewModel,
                                 state = SettingsScreenState(
                                     vaultStatus = vaultStatus,
-                                    appearance = AppearanceSettingsState(language = selectedAppLanguage),
+                                    appearance = AppearanceSettingsState(
+                                        language = selectedAppLanguage,
+                                        themePreferences = appThemePreferences,
+                                        dynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
+                                    ),
                                     terminal = TerminalSettingsState(appearance = terminalAppearance),
                                     shortcuts = ShortcutSettingsState(config = terminalShortcutConfig),
                                     security = SecuritySettingsState(lock = appLockConfiguration),

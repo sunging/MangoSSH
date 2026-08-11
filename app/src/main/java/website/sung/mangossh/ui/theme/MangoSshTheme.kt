@@ -10,6 +10,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import website.sung.mangossh.domain.AppThemePreferences
+import website.sung.mangossh.domain.resolveDarkTheme
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF006E2E),
@@ -29,13 +31,28 @@ private val DarkColors = darkColorScheme(
     tertiary = Color(0xFFA0CED1),
 )
 
+/**
+ * Resolves the effective [MaterialTheme] color scheme for the given [preferences].
+ *
+ * Exposed separately from [MangoSshTheme] so `MainActivity` can compute the
+ * same dark/light decision for its edge-to-edge system-bar styling without
+ * duplicating [resolveDarkTheme]'s branches.
+ */
 @Composable
-fun MangoSshTheme(content: @Composable () -> Unit) {
-    val darkTheme = isSystemInDarkTheme()
+fun resolveAppDarkTheme(preferences: AppThemePreferences): Boolean =
+    resolveDarkTheme(preferences.mode, isSystemInDarkTheme())
+
+@Composable
+fun MangoSshTheme(
+    preferences: AppThemePreferences = AppThemePreferences(),
+    content: @Composable () -> Unit,
+) {
+    val darkTheme = resolveAppDarkTheme(preferences)
     val context = LocalContext.current
+    val dynamicColorAvailable = preferences.dynamicColorEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val colorScheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && darkTheme -> dynamicDarkColorScheme(context)
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
+        dynamicColorAvailable && darkTheme -> dynamicDarkColorScheme(context)
+        dynamicColorAvailable -> dynamicLightColorScheme(context)
         darkTheme -> DarkColors
         else -> LightColors
     }

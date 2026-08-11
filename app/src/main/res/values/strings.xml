@@ -484,4 +484,12 @@
     <string name="settings_category_tsnet_summary">Userspace tsnet node enrollment</string>
     <string name="settings_category_updates_title">Updates</string>
     <string name="settings_category_updates_summary">Check for and install new versions</string>
+    <string name="settings_appearance_theme_title">App theme</string>
+    <string name="settings_appearance_theme_summary">Overrides the device light/dark setting for MangoSSH only.</string>
+    <string name="settings_appearance_theme_system">System default</string>
+    <string name="settings_appearance_theme_light">Light</string>
+    <string name="settings_appearance_theme_dark">Dark</string>
+    <string name="settings_appearance_dynamic_color_title">Dynamic color</string>
+    <string name="settings_appearance_dynamic_color_summary">Uses colors from your wallpaper instead of the MangoSSH palette.</string>
+    <string name="settings_appearance_dynamic_color_unavailable">Requires Android 12 or later.</string>
 </resources>

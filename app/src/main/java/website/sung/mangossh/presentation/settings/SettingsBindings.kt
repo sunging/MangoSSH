@@ -31,6 +31,8 @@ internal fun rememberSettingsCallbacks(
         SettingsCallbacks(
             appearance = AppearanceSettingsCallbacks(
                 onSetLanguage = onSetAppLanguage,
+                onSetThemeMode = viewModel::setAppThemeMode,
+                onSetDynamicColorEnabled = viewModel::setDynamicColorEnabled,
             ),
             terminal = TerminalSettingsCallbacks(
                 onSetFont = viewModel::setTerminalFont,

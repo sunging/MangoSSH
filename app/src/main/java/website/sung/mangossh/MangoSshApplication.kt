@@ -3,6 +3,7 @@ package website.sung.mangossh
 import android.app.Application
 import android.content.Context
 import website.sung.mangossh.data.keys.SshKeyManager
+import website.sung.mangossh.data.settings.AppThemeStore
 import website.sung.mangossh.data.settings.HostListPreferencesStore
 import website.sung.mangossh.data.settings.TerminalAppearanceStore
 import website.sung.mangossh.data.settings.TerminalShortcutStore
@@ -45,6 +46,9 @@ class MangoSessionRuntime(context: Context) {
 
     /** Device-local display preferences shared by live terminals and Compose screens. */
     val terminalAppearance = TerminalAppearanceStore(context.applicationContext)
+
+    /** Device-local app-wide theme mode and dynamic color preference. */
+    val appTheme = AppThemeStore(context.applicationContext)
 
     /** Device-local floating shortcut layout shared by all terminal screens. */
     val terminalShortcuts = TerminalShortcutStore(context.applicationContext)
