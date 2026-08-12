@@ -129,6 +129,7 @@ import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.security.AppLockConfiguration
+import website.sung.mangossh.presentation.settings.AboutSettingsState
 import website.sung.mangossh.presentation.settings.AppearanceSettingsState
 import website.sung.mangossh.presentation.settings.BackupSettingsState
 import website.sung.mangossh.presentation.settings.ConnectionSettingsState
@@ -585,6 +586,10 @@ fun MangoSshApp(
                                     snippets = SnippetSettingsState(snippets = snippets),
                                     tsnet = embeddedTsnetStatus,
                                     update = updateState,
+                                    about = AboutSettingsState(
+                                        versionName = viewModel.installedVersionName,
+                                        versionCode = viewModel.installedVersionCode,
+                                    ),
                                 ),
                                 portableExport = portableExport,
                                 callbacks = settingsCallbacks,

@@ -486,6 +486,8 @@
     <string name="settings_category_connection_summary">Keepalive, timeout, and terminal type</string>
     <string name="settings_category_updates_title">Updates</string>
     <string name="settings_category_updates_summary">Check for and install new versions</string>
+    <string name="settings_category_about_title">About</string>
+    <string name="settings_category_about_summary">Version, licenses, and source</string>
     <string name="settings_appearance_theme_title">App theme</string>
     <string name="settings_appearance_theme_summary">Overrides the device light/dark setting for MangoSSH only.</string>
     <string name="settings_appearance_theme_system">System default</string>
@@ -538,4 +540,12 @@
     <string name="settings_connection_terminal_type_xterm" translatable="false">xterm</string>
     <string name="settings_connection_terminal_type_screen_256color" translatable="false">screen-256color</string>
     <string name="settings_connection_terminal_type_vt100" translatable="false">vt100</string>
+    <string name="settings_about_version">Version %1$s (%2$d)</string>
+    <string name="settings_about_release_page">View releases on GitHub</string>
+    <string name="settings_about_licenses_title">Open source licenses</string>
+    <string name="settings_about_licenses_summary">MangoSSH is offered under the GNU General Public License, version 3 or later, and bundles the third-party projects below.</string>
+    <string name="settings_about_mosh_gpl_notice">MangoSSH bundles the native mosh-client executable from ConnectBot mosh4android under the GNU General Public License, version 3 or later. The corresponding source, including any local modifications, is available from the project\'s GitHub repository alongside the full license text.</string>
+    <string name="settings_about_view_license_text">View license</string>
+    <string name="settings_about_license_unavailable">This license text could not be read from the app package.</string>
+    <string name="settings_about_license_dialog_title">%1$s (%2$s)</string>
 </resources>

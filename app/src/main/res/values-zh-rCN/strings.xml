@@ -470,6 +470,8 @@
     <string name="settings_category_connection_summary">保活、超时和终端类型</string>
     <string name="settings_category_updates_title">应用更新</string>
     <string name="settings_category_updates_summary">检查并安装新版本</string>
+    <string name="settings_category_about_title">关于</string>
+    <string name="settings_category_about_summary">版本、许可证和源代码</string>
     <string name="settings_appearance_theme_title">应用主题</string>
     <string name="settings_appearance_theme_summary">仅为 MangoSSH 覆盖设备的浅色/深色设置。</string>
     <string name="settings_appearance_theme_system">跟随系统</string>
@@ -518,4 +520,12 @@
     <string name="settings_connection_terminal_type_title">SSH 终端类型</string>
     <string name="settings_connection_terminal_type_summary">MangoSSH 通过 SSH 请求的 TERM 值。对绝大多数服务器而言 xterm-256color 都是正确的选择。</string>
     <string name="settings_connection_terminal_type_mosh_note">无论此设置为何，Mosh 始终使用 xterm-256color，因为其内置的 terminfo 只包含该条目。</string>
+    <string name="settings_about_version">版本 %1$s（%2$d）</string>
+    <string name="settings_about_release_page">在 GitHub 上查看发行版</string>
+    <string name="settings_about_licenses_title">开源许可证</string>
+    <string name="settings_about_licenses_summary">MangoSSH 依据 GNU 通用公共许可证第 3 版或更高版本提供，并捆绑了以下第三方项目。</string>
+    <string name="settings_about_mosh_gpl_notice">MangoSSH 捆绑了来自 ConnectBot mosh4android 的原生 mosh-client 可执行文件，依据 GNU 通用公共许可证第 3 版或更高版本发布。相应的源代码（包括任何本地修改）可在项目的 GitHub 仓库中获取，同时附有完整的许可证文本。</string>
+    <string name="settings_about_view_license_text">查看许可证</string>
+    <string name="settings_about_license_unavailable">无法从应用安装包中读取此许可证文本。</string>
+    <string name="settings_about_license_dialog_title">%1$s（%2$s）</string>
 </resources>

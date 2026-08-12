@@ -152,5 +152,6 @@ private fun SettingsDetail(
         SettingsDestination.SNIPPETS -> SnippetSettingsPage(state.snippets, callbacks.snippets, pageModifier)
         SettingsDestination.TSNET -> TsnetSettingsPage(state.tsnet, callbacks.tsnet, pageModifier)
         SettingsDestination.UPDATES -> UpdateSettingsPage(state.update, callbacks.update, pageModifier)
+        SettingsDestination.ABOUT -> AboutSettingsPage(state.about, callbacks.about, pageModifier)
     }
 }

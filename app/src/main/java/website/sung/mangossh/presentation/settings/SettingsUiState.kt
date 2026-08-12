@@ -71,6 +71,13 @@ internal data class SnippetSettingsState(
     val snippets: List<CommandSnippet>,
 )
 
+/** State shown on the About detail page. */
+@Immutable
+internal data class AboutSettingsState(
+    val versionName: String,
+    val versionCode: Long,
+)
+
 /**
  * Everything the Settings hub and its detail pages need to render.
  *
@@ -92,6 +99,7 @@ internal data class SettingsScreenState(
     val snippets: SnippetSettingsState,
     val tsnet: EmbeddedTsnetStatus,
     val update: UpdateUiState,
+    val about: AboutSettingsState,
 )
 
 @Immutable
@@ -162,6 +170,11 @@ internal data class TsnetSettingsCallbacks(
     val onLogout: () -> Unit,
 )
 
+@Immutable
+internal data class AboutSettingsCallbacks(
+    val onOpenReleasePage: () -> Unit,
+)
+
 /**
  * Bundles every Settings callback into one parameter.
  *
@@ -180,4 +193,5 @@ internal data class SettingsCallbacks(
     val snippets: SnippetSettingsCallbacks,
     val tsnet: TsnetSettingsCallbacks,
     val update: UpdateCardCallbacks,
+    val about: AboutSettingsCallbacks,
 )

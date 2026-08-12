@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Palette
@@ -32,6 +33,7 @@ internal enum class SettingsDestination {
     SNIPPETS,
     TSNET,
     UPDATES,
+    ABOUT,
 }
 
 @Composable
@@ -46,6 +48,7 @@ internal fun SettingsDestination.title(): String = stringResource(
         SettingsDestination.SNIPPETS -> R.string.settings_category_snippets_title
         SettingsDestination.TSNET -> R.string.settings_category_tsnet_title
         SettingsDestination.UPDATES -> R.string.settings_category_updates_title
+        SettingsDestination.ABOUT -> R.string.settings_category_about_title
     },
 )
 
@@ -61,6 +64,7 @@ internal fun SettingsDestination.summary(): String = stringResource(
         SettingsDestination.SNIPPETS -> R.string.settings_category_snippets_summary
         SettingsDestination.TSNET -> R.string.settings_category_tsnet_summary
         SettingsDestination.UPDATES -> R.string.settings_category_updates_summary
+        SettingsDestination.ABOUT -> R.string.settings_category_about_summary
     },
 )
 
@@ -74,4 +78,5 @@ internal fun SettingsDestination.icon(): ImageVector = when (this) {
     SettingsDestination.SNIPPETS -> Icons.Outlined.Code
     SettingsDestination.TSNET -> Icons.Outlined.Hub
     SettingsDestination.UPDATES -> Icons.Outlined.SystemUpdate
+    SettingsDestination.ABOUT -> Icons.Outlined.Info
 }

@@ -1,6 +1,7 @@
 package website.sung.mangossh.presentation.settings
 
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -100,17 +101,29 @@ internal fun rememberSettingsCallbacks(
                 },
                 onDismissNotice = viewModel::dismissUpdateNotice,
                 onSetAutomaticCheck = viewModel::setAutomaticUpdateCheckEnabled,
-                onOpenReleasePage = {
-                    val uri = runCatching { viewModel.releasePageUrl()?.toUri() }.getOrNull()
-                    if (uri?.scheme != "https" || uri.host != "github.com") {
-                        viewModel.reportReleasePageOpenFailed()
-                    } else {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
-                        }.onFailure { viewModel.reportReleasePageOpenFailed() }
-                    }
-                },
+                onOpenReleasePage = { openGithubUrl(context, viewModel, viewModel.releasePageUrl()) },
+            ),
+            about = AboutSettingsCallbacks(
+                onOpenReleasePage = { openGithubUrl(context, viewModel, projectReleasesUrl()) },
             ),
         )
+    }
+}
+
+/**
+ * Opens a URL in the browser, refusing anything but an `https://github.com` link.
+ *
+ * Shared by the update card's release-notes link and the About page's
+ * releases link, both of which only ever point at this project's own GitHub
+ * repository.
+ */
+private fun openGithubUrl(context: Context, viewModel: MangoSshViewModel, url: String?) {
+    val uri = runCatching { url?.toUri() }.getOrNull()
+    if (uri?.scheme != "https" || uri.host != "github.com") {
+        viewModel.reportReleasePageOpenFailed()
+    } else {
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+        }.onFailure { viewModel.reportReleasePageOpenFailed() }
     }
 }

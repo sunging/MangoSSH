@@ -239,6 +239,12 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val appTheme = appThemeStore.preferences
     val connectionPreferences = connectionPreferencesStore.preferences
 
+    /** Installed package version name, read from the platform rather than BuildConfig, for the About page. */
+    val installedVersionName: String get() = runtime.installedAppInfo?.versionName.orEmpty()
+
+    /** Installed package version code, read from the platform rather than BuildConfig, for the About page. */
+    val installedVersionCode: Long get() = runtime.installedAppInfo?.versionCode ?: 0L
+
     private val _updatePhase = MutableStateFlow<UpdatePhase>(UpdatePhase.Idle)
 
     /** Immutable self-update state for the settings card and the settings navigation badge. */
