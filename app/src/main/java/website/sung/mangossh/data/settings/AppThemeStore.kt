@@ -15,7 +15,7 @@ import website.sung.mangossh.domain.AppThemePreferences
  * local display, not a connection's behavior or credentials.
  */
 class AppThemeStore(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences(
+    private val sharedPreferences = context.applicationContext.getSharedPreferences(
         PREFERENCES_NAME,
         Context.MODE_PRIVATE,
     )
@@ -45,16 +45,16 @@ class AppThemeStore(context: Context) {
 
     /** Treats type-mismatched or otherwise damaged preference values as absent. */
     private fun readString(key: String): String? = runCatching {
-        preferences.getString(key, null)
+        sharedPreferences.getString(key, null)
     }.getOrNull()
 
     /** Treats type-mismatched or otherwise damaged preference values as the supplied default. */
     private fun readBoolean(key: String, defaultValue: Boolean): Boolean = runCatching {
-        preferences.getBoolean(key, defaultValue)
+        sharedPreferences.getBoolean(key, defaultValue)
     }.getOrDefault(defaultValue)
 
     private fun persist(value: AppThemePreferences) {
-        preferences.edit {
+        sharedPreferences.edit {
             putString(KEY_MODE, value.mode.preferenceValue)
             putBoolean(KEY_DYNAMIC_COLOR_ENABLED, value.dynamicColorEnabled)
         }
