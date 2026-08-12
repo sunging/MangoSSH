@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
 import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.domain.TerminalBehavior
 
 /**
  * Retains terminal emulators while their transports run, including when no
@@ -20,6 +21,7 @@ internal class SessionTerminalStore(
     private val onKeyboardInput: (sessionId: String, bytes: ByteArray) -> Unit,
     private val onResize: (sessionId: String, columns: Int, rows: Int) -> Unit,
     private val appearanceProvider: () -> TerminalAppearance,
+    private val behaviorProvider: () -> TerminalBehavior,
 ) {
     private val emulators = ConcurrentHashMap<String, TerminalEmulator>()
     private val _clipboardCopies = MutableSharedFlow<TerminalClipboardCopy>(extraBufferCapacity = 8)
@@ -27,10 +29,20 @@ internal class SessionTerminalStore(
     /** UI-only OSC 52 copy requests; no clipboard content is persisted or logged. */
     val clipboardCopies = _clipboardCopies.asSharedFlow()
 
-    /** Creates the terminal before the transport can start producing output. */
+    /**
+     * Creates the terminal before the transport can start producing output.
+     *
+     * [behaviorProvider] is read once here: scrollback size, bold-as-bright,
+     * and URL auto-detection are emulator construction parameters, so a
+     * change to the stored preference only takes effect for sessions created
+     * afterward, matching how [appearanceProvider] already behaves at
+     * creation time (live sessions instead pick up appearance changes via
+     * [applyAppearance]).
+     */
     fun create(sessionId: String) {
         val appearance = appearanceProvider()
         val scheme = appearance.colorScheme
+        val behavior = behaviorProvider()
         val emulator = TerminalEmulatorFactory.create(
             initialRows = INITIAL_ROWS,
             initialCols = INITIAL_COLUMNS,
@@ -41,7 +53,9 @@ internal class SessionTerminalStore(
             onClipboardCopy = { selected ->
                 _clipboardCopies.tryEmit(TerminalClipboardCopy(sessionId = sessionId, text = selected))
             },
-            autoDetectUrls = true,
+            autoDetectUrls = behavior.autoDetectUrls,
+            boldAsBright = behavior.boldAsBright,
+            maxScrollbackLines = behavior.scrollbackLines,
         )
         emulator.applyColorScheme(
             ansiColors = scheme.ansiColors.toIntArray(),

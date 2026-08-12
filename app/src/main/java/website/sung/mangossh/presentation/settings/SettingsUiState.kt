@@ -8,8 +8,11 @@ import website.sung.mangossh.domain.AppLockDelay
 import website.sung.mangossh.domain.AppThemeMode
 import website.sung.mangossh.domain.AppThemePreferences
 import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.domain.TerminalBehavior
 import website.sung.mangossh.domain.TerminalCustomColors
+import website.sung.mangossh.domain.TerminalDelKeyMode
 import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalRightAltMode
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.presentation.AppLanguage
@@ -31,12 +34,14 @@ internal data class AppearanceSettingsState(
 @Immutable
 internal data class TerminalSettingsState(
     val appearance: TerminalAppearance,
+    val behavior: TerminalBehavior,
 )
 
 /** State shown on the Keys & shortcuts detail page. */
 @Immutable
 internal data class ShortcutSettingsState(
     val config: TerminalShortcutConfig,
+    val behavior: TerminalBehavior,
 )
 
 /** State shown on the Security & lock detail page. */
@@ -94,11 +99,18 @@ internal data class TerminalSettingsCallbacks(
     val onSetTheme: (TerminalThemeId) -> Unit,
     val onSetCustomColors: (TerminalCustomColors) -> Unit,
     val onResetAppearance: () -> Unit,
+    val onSetScrollbackLines: (Int) -> Unit,
+    val onSetBoldAsBright: (Boolean) -> Unit,
+    val onSetAutoDetectUrls: (Boolean) -> Unit,
+    val onSetKeepScreenOn: (Boolean) -> Unit,
+    val onSetMaxPinchZoomScale: (Float) -> Unit,
 )
 
 @Immutable
 internal data class ShortcutSettingsCallbacks(
     val onSaveShortcuts: (TerminalShortcutConfig) -> Unit,
+    val onSetRightAltMode: (TerminalRightAltMode) -> Unit,
+    val onSetDelKeyMode: (TerminalDelKeyMode) -> Unit,
 )
 
 @Immutable

@@ -49,7 +49,9 @@ import website.sung.mangossh.domain.HostSortMode
 import website.sung.mangossh.domain.matchesHostQuery
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
+import website.sung.mangossh.domain.TerminalDelKeyMode
 import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalRightAltMode
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.domain.AppLockDelay
@@ -164,6 +166,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val sessionController = runtime.sessionController
     private val embeddedTsnetManager = runtime.embeddedTsnetManager
     private val terminalAppearanceStore = runtime.terminalAppearance
+    private val terminalBehaviorStore = runtime.terminalBehavior
     private val terminalShortcutStore = runtime.terminalShortcuts
     private val appThemeStore = runtime.appTheme
     private val webDavClient = WebDavClient()
@@ -229,6 +232,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     internal val embeddedTsnetStatus = embeddedTsnetManager.status
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
     val terminalAppearance = terminalAppearanceStore.appearance
+    val terminalBehavior = terminalBehaviorStore.behavior
     val terminalShortcuts = terminalShortcutStore.config
     val appTheme = appThemeStore.preferences
 
@@ -446,6 +450,41 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     /** Persists the complete ordered floating shortcut layout for this device. */
     fun saveTerminalShortcuts(config: TerminalShortcutConfig) {
         terminalShortcutStore.save(config)
+    }
+
+    /** Off-screen line budget applied to sessions created after this call; live sessions are unaffected. */
+    fun setTerminalScrollbackLines(lines: Int) {
+        terminalBehaviorStore.setScrollbackLines(lines)
+    }
+
+    /** Applied to sessions created after this call; live sessions are unaffected. */
+    fun setTerminalBoldAsBright(enabled: Boolean) {
+        terminalBehaviorStore.setBoldAsBright(enabled)
+    }
+
+    /** Applied to sessions created after this call; live sessions are unaffected. */
+    fun setTerminalAutoDetectUrls(enabled: Boolean) {
+        terminalBehaviorStore.setAutoDetectUrls(enabled)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalKeepScreenOn(enabled: Boolean) {
+        terminalBehaviorStore.setKeepScreenOn(enabled)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalRightAltMode(mode: TerminalRightAltMode) {
+        terminalBehaviorStore.setRightAltMode(mode)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalDelKeyMode(mode: TerminalDelKeyMode) {
+        terminalBehaviorStore.setDelKeyMode(mode)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalMaxPinchZoomScale(scale: Float) {
+        terminalBehaviorStore.setMaxPinchZoomScale(scale)
     }
 
     /** Restores the bundled shortcut layout, including all three transient modifiers. */

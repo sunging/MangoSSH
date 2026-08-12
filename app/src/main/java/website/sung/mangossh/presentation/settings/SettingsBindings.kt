@@ -40,9 +40,16 @@ internal fun rememberSettingsCallbacks(
                 onSetTheme = viewModel::setTerminalTheme,
                 onSetCustomColors = viewModel::setTerminalCustomColors,
                 onResetAppearance = viewModel::resetTerminalAppearance,
+                onSetScrollbackLines = viewModel::setTerminalScrollbackLines,
+                onSetBoldAsBright = viewModel::setTerminalBoldAsBright,
+                onSetAutoDetectUrls = viewModel::setTerminalAutoDetectUrls,
+                onSetKeepScreenOn = viewModel::setTerminalKeepScreenOn,
+                onSetMaxPinchZoomScale = viewModel::setTerminalMaxPinchZoomScale,
             ),
             shortcuts = ShortcutSettingsCallbacks(
                 onSaveShortcuts = viewModel::saveTerminalShortcuts,
+                onSetRightAltMode = viewModel::setTerminalRightAltMode,
+                onSetDelKeyMode = viewModel::setTerminalDelKeyMode,
             ),
             security = SecuritySettingsCallbacks(
                 onConfigurePin = viewModel::configureAppPin,

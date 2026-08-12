@@ -57,6 +57,7 @@ import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.data.settings.TerminalAppearanceStore
+import website.sung.mangossh.data.settings.TerminalBehaviorStore
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetLease
@@ -74,6 +75,7 @@ class SshSessionController internal constructor(
     private val keyManager: SshKeyManager = SshKeyManager(),
     private val embeddedTsnetManager: EmbeddedTsnetManager,
     private val terminalAppearanceStore: TerminalAppearanceStore,
+    private val terminalBehaviorStore: TerminalBehaviorStore,
 ) {
     private val context = appContext.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -84,6 +86,7 @@ class SshSessionController internal constructor(
         onKeyboardInput = { sessionId, bytes -> send(sessionId, bytes) },
         onResize = { sessionId, columns, rows -> resize(sessionId, columns, rows) },
         appearanceProvider = terminalAppearanceStore::current,
+        behaviorProvider = terminalBehaviorStore::current,
     )
 
     private val _sessions = MutableStateFlow<List<TerminalSessionState>>(emptyList())

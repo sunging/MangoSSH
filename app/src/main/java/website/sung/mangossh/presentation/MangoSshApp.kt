@@ -164,6 +164,7 @@ fun MangoSshApp(
     val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
     val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
+    val terminalBehavior by viewModel.terminalBehavior.collectAsStateWithLifecycle()
     val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
     val appThemePreferences by viewModel.appTheme.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -358,6 +359,7 @@ fun MangoSshApp(
             session = activeSession,
             terminalEmulator = terminalEmulator,
             appearance = terminalAppearance,
+            behavior = terminalBehavior,
             shortcutConfig = terminalShortcutConfig,
             clipboardCopies = viewModel.terminalClipboardCopies,
             onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
@@ -573,8 +575,8 @@ fun MangoSshApp(
                                         themePreferences = appThemePreferences,
                                         dynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
                                     ),
-                                    terminal = TerminalSettingsState(appearance = terminalAppearance),
-                                    shortcuts = ShortcutSettingsState(config = terminalShortcutConfig),
+                                    terminal = TerminalSettingsState(appearance = terminalAppearance, behavior = terminalBehavior),
+                                    shortcuts = ShortcutSettingsState(config = terminalShortcutConfig, behavior = terminalBehavior),
                                     security = SecuritySettingsState(lock = appLockConfiguration),
                                     backup = BackupSettingsState(vaultStatus = vaultStatus, webDavConfig = webDavConfig),
                                     snippets = SnippetSettingsState(snippets = snippets),

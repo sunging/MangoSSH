@@ -498,4 +498,27 @@
     <string name="settings_security_auto_lock_30_seconds">After 30 seconds</string>
     <string name="settings_security_auto_lock_1_minute">After 1 minute</string>
     <string name="settings_security_auto_lock_5_minutes">After 5 minutes</string>
+    <string name="settings_applies_to_new_sessions">Applies to sessions opened after this change; sessions already open are unaffected.</string>
+    <string name="settings_terminal_behavior_title">Terminal behavior</string>
+    <string name="settings_terminal_scrollback_title">Scrollback</string>
+    <string name="settings_terminal_scrollback_summary">Off-screen lines kept per session.</string>
+    <string name="settings_terminal_scrollback_value">%1$d lines</string>
+    <string name="settings_terminal_bold_as_bright_title">Bold as bright</string>
+    <string name="settings_terminal_bold_as_bright_summary">Bold text using a low-intensity color switches to its bright counterpart, matching common terminal behavior.</string>
+    <string name="settings_terminal_auto_detect_urls_title">Detect URLs in output</string>
+    <string name="settings_terminal_auto_detect_urls_summary">Scans visible text for plain-text URLs so they can be tapped, in addition to explicit terminal hyperlinks.</string>
+    <string name="settings_terminal_keep_screen_on_title">Keep screen on</string>
+    <string name="settings_terminal_keep_screen_on_summary">Prevents the screen from sleeping while a terminal is open.</string>
+    <string name="settings_terminal_pinch_zoom_title">Maximum pinch zoom</string>
+    <string name="settings_terminal_pinch_zoom_summary">Largest magnification allowed when pinch-zooming a terminal.</string>
+    <string name="settings_terminal_pinch_zoom_value">%1$sx</string>
+    <string name="settings_shortcuts_input_modes_title">Key behavior</string>
+    <string name="settings_shortcuts_right_alt_title">Right Alt key</string>
+    <string name="settings_shortcuts_right_alt_summary">How the right Alt (AltGr) key behaves.</string>
+    <string name="settings_shortcuts_right_alt_character_modifier">Character modifier (international layouts)</string>
+    <string name="settings_shortcuts_right_alt_meta">Meta, same as left Alt</string>
+    <string name="settings_shortcuts_del_key_title">Backspace key</string>
+    <string name="settings_shortcuts_del_key_summary">Which byte the backspace key sends.</string>
+    <string name="settings_shortcuts_del_key_delete">DEL (0x7f)</string>
+    <string name="settings_shortcuts_del_key_backspace">Ctrl+H (0x08)</string>
 </resources>

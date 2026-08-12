@@ -482,4 +482,27 @@
     <string name="settings_security_auto_lock_30_seconds">30 秒后</string>
     <string name="settings_security_auto_lock_1_minute">1 分钟后</string>
     <string name="settings_security_auto_lock_5_minutes">5 分钟后</string>
+    <string name="settings_applies_to_new_sessions">仅对此更改后打开的会话生效，已打开的会话不受影响。</string>
+    <string name="settings_terminal_behavior_title">终端行为</string>
+    <string name="settings_terminal_scrollback_title">回滚缓冲区</string>
+    <string name="settings_terminal_scrollback_summary">每个会话保留的屏幕外行数。</string>
+    <string name="settings_terminal_scrollback_value">%1$d 行</string>
+    <string name="settings_terminal_bold_as_bright_title">粗体显示为高亮色</string>
+    <string name="settings_terminal_bold_as_bright_summary">使用低强度颜色的粗体文本会切换为对应的高亮颜色，符合常见终端行为。</string>
+    <string name="settings_terminal_auto_detect_urls_title">检测输出中的 URL</string>
+    <string name="settings_terminal_auto_detect_urls_summary">扫描可见文本中的纯文本 URL 以便点按，作为终端超链接之外的补充。</string>
+    <string name="settings_terminal_keep_screen_on_title">保持屏幕常亮</string>
+    <string name="settings_terminal_keep_screen_on_summary">打开终端时防止屏幕休眠。</string>
+    <string name="settings_terminal_pinch_zoom_title">最大双指缩放倍数</string>
+    <string name="settings_terminal_pinch_zoom_summary">双指缩放终端时允许的最大放大倍数。</string>
+    <string name="settings_terminal_pinch_zoom_value">%1$s 倍</string>
+    <string name="settings_shortcuts_input_modes_title">按键行为</string>
+    <string name="settings_shortcuts_right_alt_title">右 Alt 键</string>
+    <string name="settings_shortcuts_right_alt_summary">右 Alt（AltGr）键的行为方式。</string>
+    <string name="settings_shortcuts_right_alt_character_modifier">字符修饰符（国际键盘布局）</string>
+    <string name="settings_shortcuts_right_alt_meta">Meta，与左 Alt 相同</string>
+    <string name="settings_shortcuts_del_key_title">退格键</string>
+    <string name="settings_shortcuts_del_key_summary">退格键发送的字节。</string>
+    <string name="settings_shortcuts_del_key_delete">DEL（0x7f）</string>
+    <string name="settings_shortcuts_del_key_backspace">Ctrl+H（0x08）</string>
 </resources>

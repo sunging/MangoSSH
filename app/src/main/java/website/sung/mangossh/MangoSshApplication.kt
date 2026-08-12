@@ -6,6 +6,7 @@ import website.sung.mangossh.data.keys.SshKeyManager
 import website.sung.mangossh.data.settings.AppThemeStore
 import website.sung.mangossh.data.settings.HostListPreferencesStore
 import website.sung.mangossh.data.settings.TerminalAppearanceStore
+import website.sung.mangossh.data.settings.TerminalBehaviorStore
 import website.sung.mangossh.data.settings.TerminalShortcutStore
 import website.sung.mangossh.data.settings.UpdatePreferencesStore
 import website.sung.mangossh.data.update.installedAppInfo
@@ -47,6 +48,9 @@ class MangoSessionRuntime(context: Context) {
     /** Device-local display preferences shared by live terminals and Compose screens. */
     val terminalAppearance = TerminalAppearanceStore(context.applicationContext)
 
+    /** Device-local terminal emulator and input behavior shared by live terminals and Compose screens. */
+    val terminalBehavior = TerminalBehaviorStore(context.applicationContext)
+
     /** Device-local app-wide theme mode and dynamic color preference. */
     val appTheme = AppThemeStore(context.applicationContext)
 
@@ -80,5 +84,6 @@ class MangoSessionRuntime(context: Context) {
         keyManager,
         embeddedTsnetManager,
         terminalAppearance,
+        terminalBehavior,
     )
 }
