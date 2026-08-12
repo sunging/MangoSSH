@@ -52,6 +52,7 @@ import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalDelKeyMode
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalRightAltMode
+import website.sung.mangossh.domain.SshTerminalType
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.domain.AppLockDelay
@@ -169,6 +170,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val terminalBehaviorStore = runtime.terminalBehavior
     private val terminalShortcutStore = runtime.terminalShortcuts
     private val appThemeStore = runtime.appTheme
+    private val connectionPreferencesStore = runtime.connectionPreferences
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
     private val updatePreferencesStore = runtime.updatePreferences
@@ -235,6 +237,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     val terminalBehavior = terminalBehaviorStore.behavior
     val terminalShortcuts = terminalShortcutStore.config
     val appTheme = appThemeStore.preferences
+    val connectionPreferences = connectionPreferencesStore.preferences
 
     private val _updatePhase = MutableStateFlow<UpdatePhase>(UpdatePhase.Idle)
 
@@ -485,6 +488,21 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     /** Applies immediately to the terminal currently on screen. */
     fun setTerminalMaxPinchZoomScale(scale: Float) {
         terminalBehaviorStore.setMaxPinchZoomScale(scale)
+    }
+
+    /** Applied to connections opened after this call; zero disables SSH transport keepalives. */
+    fun setConnectionKeepaliveSeconds(seconds: Int) {
+        connectionPreferencesStore.setKeepaliveSeconds(seconds)
+    }
+
+    /** Applied to connections opened after this call. */
+    fun setConnectionTimeoutSeconds(seconds: Int) {
+        connectionPreferencesStore.setConnectTimeoutSeconds(seconds)
+    }
+
+    /** Applied to connections opened after this call; Mosh always requests xterm-256color regardless. */
+    fun setSshTerminalType(type: SshTerminalType) {
+        connectionPreferencesStore.setSshTerminalType(type)
     }
 
     /** Restores the bundled shortcut layout, including all three transient modifiers. */

@@ -466,6 +466,8 @@
     <string name="settings_category_snippets_summary">连接后自动执行的命令</string>
     <string name="settings_category_tsnet_title">内嵌 Tailscale</string>
     <string name="settings_category_tsnet_summary">用户态 tsnet 节点注册</string>
+    <string name="settings_category_connection_title">连接</string>
+    <string name="settings_category_connection_summary">保活、超时和终端类型</string>
     <string name="settings_category_updates_title">应用更新</string>
     <string name="settings_category_updates_summary">检查并安装新版本</string>
     <string name="settings_appearance_theme_title">应用主题</string>
@@ -505,4 +507,15 @@
     <string name="settings_shortcuts_del_key_summary">退格键发送的字节。</string>
     <string name="settings_shortcuts_del_key_delete">DEL（0x7f）</string>
     <string name="settings_shortcuts_del_key_backspace">Ctrl+H（0x08）</string>
+    <string name="settings_applies_to_new_connections">仅对此更改后建立的连接生效，已建立的连接不受影响。</string>
+    <string name="settings_connection_keepalive_title">SSH 保活</string>
+    <string name="settings_connection_keepalive_summary">空闲 SSH 传输发送保活包的频率，用于在路由器和防火墙前保持可见。</string>
+    <string name="settings_connection_keepalive_value">每 %1$d 秒</string>
+    <string name="settings_connection_keepalive_off">关闭</string>
+    <string name="settings_connection_timeout_title">连接超时</string>
+    <string name="settings_connection_timeout_summary">等待新连接到达服务器的最长时间。</string>
+    <string name="settings_connection_timeout_value">%1$d 秒</string>
+    <string name="settings_connection_terminal_type_title">SSH 终端类型</string>
+    <string name="settings_connection_terminal_type_summary">MangoSSH 通过 SSH 请求的 TERM 值。对绝大多数服务器而言 xterm-256color 都是正确的选择。</string>
+    <string name="settings_connection_terminal_type_mosh_note">无论此设置为何，Mosh 始终使用 xterm-256color，因为其内置的 terminfo 只包含该条目。</string>
 </resources>

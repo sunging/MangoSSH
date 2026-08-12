@@ -482,6 +482,8 @@
     <string name="settings_category_snippets_summary">Post-connect commands</string>
     <string name="settings_category_tsnet_title">Embedded Tailscale</string>
     <string name="settings_category_tsnet_summary">Userspace tsnet node enrollment</string>
+    <string name="settings_category_connection_title">Connection</string>
+    <string name="settings_category_connection_summary">Keepalive, timeout, and terminal type</string>
     <string name="settings_category_updates_title">Updates</string>
     <string name="settings_category_updates_summary">Check for and install new versions</string>
     <string name="settings_appearance_theme_title">App theme</string>
@@ -521,4 +523,19 @@
     <string name="settings_shortcuts_del_key_summary">Which byte the backspace key sends.</string>
     <string name="settings_shortcuts_del_key_delete">DEL (0x7f)</string>
     <string name="settings_shortcuts_del_key_backspace">Ctrl+H (0x08)</string>
+    <string name="settings_applies_to_new_connections">Applies to connections opened after this change; connections already open are unaffected.</string>
+    <string name="settings_connection_keepalive_title">SSH keepalive</string>
+    <string name="settings_connection_keepalive_summary">How often an idle SSH transport sends a keepalive packet to stay visible to routers and firewalls.</string>
+    <string name="settings_connection_keepalive_value">Every %1$d seconds</string>
+    <string name="settings_connection_keepalive_off">Off</string>
+    <string name="settings_connection_timeout_title">Connect timeout</string>
+    <string name="settings_connection_timeout_summary">How long to wait for a new connection to reach the server.</string>
+    <string name="settings_connection_timeout_value">%1$d seconds</string>
+    <string name="settings_connection_terminal_type_title">SSH terminal type</string>
+    <string name="settings_connection_terminal_type_summary">The TERM value MangoSSH requests over SSH. xterm-256color is correct for nearly every server.</string>
+    <string name="settings_connection_terminal_type_mosh_note">Mosh always uses xterm-256color regardless of this setting, because its bundled terminfo only ships that entry.</string>
+    <string name="settings_connection_terminal_type_xterm_256color" translatable="false">xterm-256color</string>
+    <string name="settings_connection_terminal_type_xterm" translatable="false">xterm</string>
+    <string name="settings_connection_terminal_type_screen_256color" translatable="false">screen-256color</string>
+    <string name="settings_connection_terminal_type_vt100" translatable="false">vt100</string>
 </resources>

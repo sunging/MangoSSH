@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import website.sung.mangossh.data.keys.SshKeyManager
 import website.sung.mangossh.data.settings.AppThemeStore
+import website.sung.mangossh.data.settings.ConnectionPreferencesStore
 import website.sung.mangossh.data.settings.HostListPreferencesStore
 import website.sung.mangossh.data.settings.TerminalAppearanceStore
 import website.sung.mangossh.data.settings.TerminalBehaviorStore
@@ -63,6 +64,9 @@ class MangoSessionRuntime(context: Context) {
     /** Device-local host list sort preference shared by the host list and its top bar. */
     val hostListPreferences = HostListPreferencesStore(context.applicationContext)
 
+    /** Device-local defaults for new SSH/Mosh connections, shared by the session controller and settings. */
+    val connectionPreferences = ConnectionPreferencesStore(context.applicationContext)
+
     /**
      * True when this install manages its own updates. Resolved lazily because
      * it issues a package-manager binder call the caller may want off the main
@@ -85,5 +89,6 @@ class MangoSessionRuntime(context: Context) {
         embeddedTsnetManager,
         terminalAppearance,
         terminalBehavior,
+        connectionPreferences,
     )
 }

@@ -131,6 +131,7 @@ import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.presentation.settings.AppearanceSettingsState
 import website.sung.mangossh.presentation.settings.BackupSettingsState
+import website.sung.mangossh.presentation.settings.ConnectionSettingsState
 import website.sung.mangossh.presentation.settings.SecuritySettingsState
 import website.sung.mangossh.presentation.settings.SettingsScreen
 import website.sung.mangossh.presentation.settings.SettingsScreenState
@@ -167,6 +168,7 @@ fun MangoSshApp(
     val terminalBehavior by viewModel.terminalBehavior.collectAsStateWithLifecycle()
     val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
     val appThemePreferences by viewModel.appTheme.collectAsStateWithLifecycle()
+    val connectionPreferences by viewModel.connectionPreferences.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -577,6 +579,7 @@ fun MangoSshApp(
                                     ),
                                     terminal = TerminalSettingsState(appearance = terminalAppearance, behavior = terminalBehavior),
                                     shortcuts = ShortcutSettingsState(config = terminalShortcutConfig, behavior = terminalBehavior),
+                                    connection = ConnectionSettingsState(preferences = connectionPreferences),
                                     security = SecuritySettingsState(lock = appLockConfiguration),
                                     backup = BackupSettingsState(vaultStatus = vaultStatus, webDavConfig = webDavConfig),
                                     snippets = SnippetSettingsState(snippets = snippets),

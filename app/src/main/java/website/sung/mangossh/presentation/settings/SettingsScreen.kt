@@ -146,6 +146,7 @@ private fun SettingsDetail(
         SettingsDestination.APPEARANCE -> AppearanceSettingsPage(state.appearance, callbacks.appearance, pageModifier)
         SettingsDestination.TERMINAL -> TerminalSettingsPage(state.terminal, callbacks.terminal, pageModifier)
         SettingsDestination.SHORTCUTS -> ShortcutSettingsPage(state.shortcuts, callbacks.shortcuts, pageModifier)
+        SettingsDestination.CONNECTION -> ConnectionSettingsPage(state.connection, callbacks.connection, pageModifier)
         SettingsDestination.SECURITY -> SecuritySettingsPage(state.security, callbacks.security, pageModifier)
         SettingsDestination.BACKUP -> BackupSettingsPage(state.backup, portableExport, callbacks.backup, pageModifier)
         SettingsDestination.SNIPPETS -> SnippetSettingsPage(state.snippets, callbacks.snippets, pageModifier)

@@ -56,6 +56,7 @@ import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.data.settings.ConnectionPreferencesStore
 import website.sung.mangossh.data.settings.TerminalAppearanceStore
 import website.sung.mangossh.data.settings.TerminalBehaviorStore
 import website.sung.mangossh.core.MangoLog
@@ -76,6 +77,7 @@ class SshSessionController internal constructor(
     private val embeddedTsnetManager: EmbeddedTsnetManager,
     private val terminalAppearanceStore: TerminalAppearanceStore,
     private val terminalBehaviorStore: TerminalBehaviorStore,
+    private val connectionPreferencesStore: ConnectionPreferencesStore,
 ) {
     private val context = appContext.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -698,7 +700,7 @@ class SshSessionController internal constructor(
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                CONNECT_TIMEOUT_MILLIS,
+                connectTimeoutMillis(),
                 KEY_EXCHANGE_TIMEOUT_MILLIS,
             )
 
@@ -715,7 +717,14 @@ class SshSessionController internal constructor(
 
             val session = connection.openSession()
             managed.session = session
-            session.requestPTY("xterm-256color", INITIAL_COLUMNS, INITIAL_ROWS, 0, 0, ByteArray(0))
+            session.requestPTY(
+                connectionPreferencesStore.current().sshTerminalType.termValue,
+                INITIAL_COLUMNS,
+                INITIAL_ROWS,
+                0,
+                0,
+                ByteArray(0),
+            )
             if (profile.agentForwarding) {
                 val enabled = session.requestAuthAgentForwarding(VaultSshAgent(snapshot.keys, keyManager))
                 if (!enabled) {
@@ -773,7 +782,7 @@ class SshSessionController internal constructor(
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                CONNECT_TIMEOUT_MILLIS,
+                connectTimeoutMillis(),
                 KEY_EXCHANGE_TIMEOUT_MILLIS,
             )
 
@@ -831,7 +840,7 @@ class SshSessionController internal constructor(
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                CONNECT_TIMEOUT_MILLIS,
+                connectTimeoutMillis(),
                 KEY_EXCHANGE_TIMEOUT_MILLIS,
             )
             updateSession(
@@ -1037,11 +1046,15 @@ class SshSessionController internal constructor(
      *
      * Mosh sessions are excluded because their SSH transport closes after the
      * UDP bootstrap and the native Mosh client owns its own network lifecycle.
+     * A keepalive interval of zero means the user disabled keepalives, so no
+     * job is started; [runSshKeepaliveLoop] requires a positive interval.
      */
     private fun startSshKeepalive(sessionId: String, managed: ManagedSession) {
+        val keepaliveSeconds = connectionPreferencesStore.current().keepaliveSeconds
+        if (keepaliveSeconds <= 0) return
         managed.keepaliveJob = scope.launch {
             runSshKeepaliveLoop(
-                intervalMillis = SSH_KEEPALIVE_INTERVAL_MILLIS,
+                intervalMillis = keepaliveSeconds * 1_000L,
                 isSessionActive = { sessionsById[sessionId] === managed },
                 sendKeepalive = { managed.connection.sendIgnorePacket() },
                 onFailure = { error ->
@@ -1061,7 +1074,9 @@ class SshSessionController internal constructor(
      * write lands in the socket buffer and succeeds long after the far end is
      * gone, so waiting for one to throw would leave a corpse installed until
      * the operation using it timed out. The keepalive stays as the prod that
-     * makes the transport discover the loss.
+     * makes the transport discover the loss. If the user disabled keepalives
+     * (interval of zero), dead-peer detection falls back to the connection
+     * monitor alone, so a loss may take longer to surface.
      */
     private fun attachMoshSshFeatureConnection(
         sessionId: String,
@@ -1078,9 +1093,11 @@ class SshSessionController internal constructor(
             }
         }
         managed.sshFeatureKeepaliveJob?.cancel()
+        val keepaliveSeconds = connectionPreferencesStore.current().keepaliveSeconds
+        if (keepaliveSeconds <= 0) return
         managed.sshFeatureKeepaliveJob = scope.launch {
             runSshKeepaliveLoop(
-                intervalMillis = SSH_KEEPALIVE_INTERVAL_MILLIS,
+                intervalMillis = keepaliveSeconds * 1_000L,
                 isSessionActive = {
                     sessionsById[sessionId] === managed &&
                         synchronized(managed.sshFeatureLock) {
@@ -1328,7 +1345,7 @@ class SshSessionController internal constructor(
             }
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                CONNECT_TIMEOUT_MILLIS,
+                connectTimeoutMillis(),
                 KEY_EXCHANGE_TIMEOUT_MILLIS,
             )
             if (!authenticate(connection, sessionId, profile, snapshot)) {
@@ -1659,12 +1676,13 @@ class SshSessionController internal constructor(
     /** Hides native/asset exception details from terminal UI while preserving them for safe logging. */
     private class MoshRuntimeException(cause: Throwable) : Exception(cause)
 
+    /** Connect timeout in milliseconds, read fresh so a mid-session preference change reaches the next connection. */
+    private fun connectTimeoutMillis(): Int = connectionPreferencesStore.current().connectTimeoutSeconds * 1_000
+
     private companion object {
-        const val CONNECT_TIMEOUT_MILLIS = 10_000
         // Host-key verification runs inside key exchange, so this must outlive the full user prompt.
         const val KEY_EXCHANGE_TIMEOUT_MILLIS = 5 * 60 * 1_000 + 30_000
         const val PROMPT_TIMEOUT_MILLIS = 5 * 60 * 1_000L
-        const val SSH_KEEPALIVE_INTERVAL_MILLIS = 30_000L
         const val INITIAL_COLUMNS = 80
         const val INITIAL_ROWS = 24
         const val SSH_STREAM_COUNT = 2

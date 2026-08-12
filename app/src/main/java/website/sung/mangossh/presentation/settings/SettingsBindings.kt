@@ -51,6 +51,11 @@ internal fun rememberSettingsCallbacks(
                 onSetRightAltMode = viewModel::setTerminalRightAltMode,
                 onSetDelKeyMode = viewModel::setTerminalDelKeyMode,
             ),
+            connection = ConnectionSettingsCallbacks(
+                onSetKeepaliveSeconds = viewModel::setConnectionKeepaliveSeconds,
+                onSetConnectTimeoutSeconds = viewModel::setConnectionTimeoutSeconds,
+                onSetSshTerminalType = viewModel::setSshTerminalType,
+            ),
             security = SecuritySettingsCallbacks(
                 onConfigurePin = viewModel::configureAppPin,
                 onClearAppLock = viewModel::clearAppLock,

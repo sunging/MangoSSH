@@ -7,6 +7,8 @@ import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.domain.AppLockDelay
 import website.sung.mangossh.domain.AppThemeMode
 import website.sung.mangossh.domain.AppThemePreferences
+import website.sung.mangossh.domain.ConnectionPreferences
+import website.sung.mangossh.domain.SshTerminalType
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalBehavior
 import website.sung.mangossh.domain.TerminalCustomColors
@@ -44,6 +46,12 @@ internal data class ShortcutSettingsState(
     val behavior: TerminalBehavior,
 )
 
+/** State shown on the Connection detail page. */
+@Immutable
+internal data class ConnectionSettingsState(
+    val preferences: ConnectionPreferences,
+)
+
 /** State shown on the Security & lock detail page. */
 @Immutable
 internal data class SecuritySettingsState(
@@ -78,6 +86,7 @@ internal data class SettingsScreenState(
     val appearance: AppearanceSettingsState,
     val terminal: TerminalSettingsState,
     val shortcuts: ShortcutSettingsState,
+    val connection: ConnectionSettingsState,
     val security: SecuritySettingsState,
     val backup: BackupSettingsState,
     val snippets: SnippetSettingsState,
@@ -111,6 +120,13 @@ internal data class ShortcutSettingsCallbacks(
     val onSaveShortcuts: (TerminalShortcutConfig) -> Unit,
     val onSetRightAltMode: (TerminalRightAltMode) -> Unit,
     val onSetDelKeyMode: (TerminalDelKeyMode) -> Unit,
+)
+
+@Immutable
+internal data class ConnectionSettingsCallbacks(
+    val onSetKeepaliveSeconds: (Int) -> Unit,
+    val onSetConnectTimeoutSeconds: (Int) -> Unit,
+    val onSetSshTerminalType: (SshTerminalType) -> Unit,
 )
 
 @Immutable
@@ -158,6 +174,7 @@ internal data class SettingsCallbacks(
     val appearance: AppearanceSettingsCallbacks,
     val terminal: TerminalSettingsCallbacks,
     val shortcuts: ShortcutSettingsCallbacks,
+    val connection: ConnectionSettingsCallbacks,
     val security: SecuritySettingsCallbacks,
     val backup: BackupSettingsCallbacks,
     val snippets: SnippetSettingsCallbacks,
