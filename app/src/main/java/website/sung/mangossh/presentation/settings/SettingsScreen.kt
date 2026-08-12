@@ -29,14 +29,14 @@ import website.sung.mangossh.presentation.SecurityBanner
 import website.sung.mangossh.ui.components.SettingsCategoryRow
 
 /** Window width, in dp, at or above which Settings shows the hub and detail side by side. */
-private val TWO_PANE_MIN_WIDTH = 600.dp
+internal val SETTINGS_TWO_PANE_MIN_WIDTH = 600.dp
 
 /**
  * Settings tab: a category hub that opens one detail page at a time.
  *
  * On compact windows the detail page replaces the hub and a back arrow (see
  * `MangoSshApp`'s top bar) returns to it. On windows at least
- * [TWO_PANE_MIN_WIDTH] wide, both are shown side by side and the hub row for
+ * [SETTINGS_TWO_PANE_MIN_WIDTH] wide, both are shown side by side and the hub row for
  * the open category stays highlighted. Detail navigation is held on
  * [viewModel] (see [MangoSshViewModel.settingsDestination]) rather than local
  * Compose state, because the destination title and back affordance are
@@ -52,15 +52,16 @@ internal fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val destination by viewModel.settingsDestination.collectAsStateWithLifecycle()
-    val twoPane = LocalWindowInfo.current.containerDpSize.width >= TWO_PANE_MIN_WIDTH
+    val selectedDestination = destination
+    val twoPane = LocalWindowInfo.current.containerDpSize.width >= SETTINGS_TWO_PANE_MIN_WIDTH
 
-    BackHandler(enabled = !twoPane && destination != null) { viewModel.closeSettingsDestination() }
+    BackHandler(enabled = !twoPane && selectedDestination != null) { viewModel.closeSettingsDestination() }
 
     if (twoPane) {
         Row(modifier = modifier.fillMaxSize()) {
             SettingsHub(
                 state = state,
-                selected = destination,
+                selected = selectedDestination,
                 onOpen = viewModel::openSettingsDestination,
                 modifier = Modifier.width(320.dp).fillMaxHeight(),
             )
@@ -68,14 +69,14 @@ internal fun SettingsScreen(
             Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 val visible = visibleDestinations(state)
                 SettingsDetail(
-                    destination = destination ?: visible.first(),
+                    destination = selectedDestination ?: visible.first(),
                     state = state,
                     portableExport = portableExport,
                     callbacks = callbacks,
                 )
             }
         }
-    } else if (destination == null) {
+    } else if (selectedDestination == null) {
         SettingsHub(
             state = state,
             selected = null,
@@ -84,7 +85,7 @@ internal fun SettingsScreen(
         )
     } else {
         SettingsDetail(
-            destination = destination,
+            destination = selectedDestination,
             state = state,
             portableExport = portableExport,
             callbacks = callbacks,

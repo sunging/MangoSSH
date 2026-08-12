@@ -56,6 +56,7 @@ import website.sung.mangossh.domain.SshTerminalType
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.domain.AppLockDelay
+import website.sung.mangossh.domain.shouldLockWhenBackgrounded
 import website.sung.mangossh.domain.shouldLockOnResume
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
@@ -289,13 +290,13 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
      * `SavedStateHandle`, so a process death restores Settings to the hub —
      * acceptable, and safer than resuming into a security-sensitive page.
      */
-    val settingsDestination = _settingsDestination.asStateFlow()
+    internal val settingsDestination = _settingsDestination.asStateFlow()
 
-    fun openSettingsDestination(destination: SettingsDestination) {
+    internal fun openSettingsDestination(destination: SettingsDestination) {
         _settingsDestination.value = destination
     }
 
-    fun closeSettingsDestination() {
+    internal fun closeSettingsDestination() {
         _settingsDestination.value = null
     }
 
@@ -1134,6 +1135,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
      */
     fun noteBackgrounded(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) {
         backgroundedAtElapsedMillis = nowElapsedMillis
+        val configuration = _appLockConfiguration.value
+        if (configuration.pinConfigured && shouldLockWhenBackgrounded(configuration.autoLockDelay)) {
+            _appLocked.value = true
+        }
     }
 
     /**

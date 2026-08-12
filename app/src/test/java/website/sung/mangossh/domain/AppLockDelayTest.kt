@@ -28,6 +28,14 @@ class AppLockDelayTest {
     }
 
     @Test
+    fun onlyImmediateModeLocksAsSoonAsTheAppBackgrounds() {
+        assertTrue(shouldLockWhenBackgrounded(AppLockDelay.IMMEDIATELY))
+        assertFalse(shouldLockWhenBackgrounded(AppLockDelay.THIRTY_SECONDS))
+        assertFalse(shouldLockWhenBackgrounded(AppLockDelay.ONE_MINUTE))
+        assertFalse(shouldLockWhenBackgrounded(AppLockDelay.FIVE_MINUTES))
+    }
+
+    @Test
     fun missingTimestampAlwaysLocks() {
         assertTrue(shouldLockOnResume(AppLockDelay.FIVE_MINUTES, backgroundedAtElapsedMillis = null, nowElapsedMillis = 0L))
     }

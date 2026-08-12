@@ -91,6 +91,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -134,6 +135,7 @@ import website.sung.mangossh.presentation.settings.AppearanceSettingsState
 import website.sung.mangossh.presentation.settings.BackupSettingsState
 import website.sung.mangossh.presentation.settings.ConnectionSettingsState
 import website.sung.mangossh.presentation.settings.SecuritySettingsState
+import website.sung.mangossh.presentation.settings.SETTINGS_TWO_PANE_MIN_WIDTH
 import website.sung.mangossh.presentation.settings.SettingsScreen
 import website.sung.mangossh.presentation.settings.SettingsScreenState
 import website.sung.mangossh.presentation.settings.title
@@ -324,6 +326,8 @@ fun MangoSshApp(
     // shell, so its host-key and authentication prompts are rendered here.
     val remoteBrowserState by viewModel.remoteBrowser.collectAsStateWithLifecycle()
     remoteBrowserState?.let { browserState ->
+        val browserPrompt = sessionPrompts.firstOrNull { it.sessionId == browserState.sessionId }
+        val visiblePrompt = browserPrompt ?: sessionPrompts.firstOrNull { it.sessionId != browserState.sessionId }
         RemoteFileBrowserScreen(
             state = browserState,
             onNavigate = viewModel::navigateRemoteBrowser,
@@ -338,7 +342,7 @@ fun MangoSshApp(
             onDismissPreview = viewModel::dismissRemotePreview,
             onClose = viewModel::closeRemoteBrowser,
         )
-        sessionPrompts.firstOrNull { it.sessionId == browserState.sessionId }?.let { prompt ->
+        visiblePrompt?.let { prompt ->
             SessionPromptDialog(
                 prompt = prompt,
                 onRespond = { values -> viewModel.respondToSessionPrompt(prompt, values) },
@@ -350,12 +354,13 @@ fun MangoSshApp(
     val activeSession = activeSessionId?.let { id -> sessions.firstOrNull { it.id == id } }
     if (activeSession != null) {
         val activePrompt = sessionPrompts.firstOrNull { it.sessionId == activeSession.id }
+        val visiblePrompt = activePrompt ?: sessionPrompts.firstOrNull { it.sessionId != activeSession.id }
         val terminalEmulator = viewModel.terminalEmulator(activeSession.id)
         if (terminalEmulator == null) {
             LaunchedEffect(activeSession.id) { activeSessionId = null }
             return
         }
-        BackHandler(enabled = activePrompt == null) {
+        BackHandler(enabled = visiblePrompt == null) {
             leaveSessionId = activeSession.id
         }
         TerminalSessionScreen(
@@ -371,7 +376,7 @@ fun MangoSshApp(
             onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
             onRequestLeave = { leaveSessionId = activeSession.id },
         )
-        activePrompt?.let { prompt ->
+        visiblePrompt?.let { prompt ->
             SessionPromptDialog(
                 prompt = prompt,
                 onRespond = { values -> viewModel.respondToSessionPrompt(prompt, values) },
@@ -444,10 +449,14 @@ fun MangoSshApp(
                 } else {
                     // Only Settings has a detail level below its tab: hosts, keys, and
                     // forwards are each already a single screen.
-                    val openSettingsDetail = settingsDestination.takeIf { selectedSection == AppSection.SETTINGS }
+                    val selectedSettingsDetail = settingsDestination.takeIf {
+                        selectedSection == AppSection.SETTINGS
+                    }
+                    val showSettingsBack = selectedSettingsDetail != null &&
+                        LocalWindowInfo.current.containerDpSize.width < SETTINGS_TWO_PANE_MIN_WIDTH
                     CenterAlignedTopAppBar(
                         navigationIcon = {
-                            if (openSettingsDetail != null) {
+                            if (showSettingsBack) {
                                 IconButton(onClick = viewModel::closeSettingsDestination) {
                                     Icon(
                                         Icons.AutoMirrored.Outlined.ArrowBack,
@@ -465,8 +474,8 @@ fun MangoSshApp(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = if (openSettingsDetail != null) {
-                                        openSettingsDetail.title()
+                                    text = if (selectedSettingsDetail != null) {
+                                        selectedSettingsDetail.title()
                                     } else {
                                         sectionSubtitle(selectedSection)
                                     },

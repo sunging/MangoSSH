@@ -25,6 +25,9 @@ enum class AppLockDelay(val preferenceValue: String, val delayMillis: Long) {
     }
 }
 
+/** Returns whether leaving the foreground must lock before any recents snapshot can remain exposed. */
+fun shouldLockWhenBackgrounded(delay: AppLockDelay): Boolean = delay == AppLockDelay.IMMEDIATELY
+
 /**
  * Decides whether a returning foreground must re-authenticate.
  *

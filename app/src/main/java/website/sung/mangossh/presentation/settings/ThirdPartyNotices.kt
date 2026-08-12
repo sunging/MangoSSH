@@ -36,7 +36,13 @@ internal val thirdPartyNotices = listOf(
         name = "Tailscale tsnet",
         license = "BSD-3-Clause",
         url = "https://github.com/tailscale/tailscale",
-        licenseAsset = null,
+        licenseAsset = "licenses/tailscale-BSD-3-Clause.txt",
+    ),
+    ThirdPartyNotice(
+        name = "Tailscale tsnet dependency notices",
+        license = "Multiple",
+        url = "https://github.com/tailscale/tailscale",
+        licenseAsset = "licenses/tsnet-third-party-notices.txt",
     ),
     ThirdPartyNotice(
         name = "Cascadia Code",
