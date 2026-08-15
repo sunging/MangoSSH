@@ -452,6 +452,7 @@
     <string name="ui_verifying_fingerprint">验证指纹</string>
     <string name="ui_webdav_directory_url">WebDAV 目录 URL</string>
     <string name="settings_back">返回</string>
+    <string name="settings_choice_custom_value">%1$s（自定义）</string>
     <string name="settings_section_personalization">个性化</string>
     <string name="settings_section_connectivity">连接</string>
     <string name="settings_section_data">数据与安全</string>

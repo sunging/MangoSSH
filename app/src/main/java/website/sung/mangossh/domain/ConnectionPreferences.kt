@@ -64,5 +64,21 @@ data class ConnectionPreferences(
 
         /** Discrete choices offered by the UI; the store still accepts any in-range value. */
         val CONNECT_TIMEOUT_CHOICES = listOf(5, 10, 20, 30, 60, 120)
+
+        /**
+         * [KEEPALIVE_CHOICES] with the persisted [current] value merged in when
+         * the store holds an in-range value the list does not offer, such as 45
+         * seconds. See [choicesIncludingCurrent].
+         */
+        fun keepaliveChoices(current: Int): List<Int> =
+            choicesIncludingCurrent(KEEPALIVE_CHOICES, current) {
+                it == 0 || it in MIN_KEEPALIVE_SECONDS..MAX_KEEPALIVE_SECONDS
+            }
+
+        /** [CONNECT_TIMEOUT_CHOICES] with the persisted [current] value merged in; see [keepaliveChoices]. */
+        fun connectTimeoutChoices(current: Int): List<Int> =
+            choicesIncludingCurrent(CONNECT_TIMEOUT_CHOICES, current) {
+                it in MIN_CONNECT_TIMEOUT_SECONDS..MAX_CONNECT_TIMEOUT_SECONDS
+            }
     }
 }

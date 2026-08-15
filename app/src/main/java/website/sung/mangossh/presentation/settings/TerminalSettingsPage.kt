@@ -67,9 +67,14 @@ private fun TerminalBehaviorCard(
     MangoPreferenceGroup(modifier = Modifier.testTag("terminal_behavior_card")) {
         SettingsChoiceRow(
             label = stringResource(R.string.settings_terminal_scrollback_title),
-            options = TerminalBehavior.SCROLLBACK_CHOICES,
+            options = TerminalBehavior.scrollbackChoices(behavior.scrollbackLines),
             selected = behavior.scrollbackLines,
-            optionLabel = { stringResource(R.string.settings_terminal_scrollback_value, it) },
+            optionLabel = { lines ->
+                markCustom(
+                    stringResource(R.string.settings_terminal_scrollback_value, lines),
+                    custom = lines !in TerminalBehavior.SCROLLBACK_CHOICES,
+                )
+            },
             onSelect = callbacks.onSetScrollbackLines,
             supportingText = "${stringResource(R.string.settings_terminal_scrollback_summary)} $newSessionsNote",
             optionTestTag = { "settings_scrollback_$it" },
@@ -98,10 +103,16 @@ private fun TerminalBehaviorCard(
         )
         SettingsChoiceRow(
             label = stringResource(R.string.settings_terminal_pinch_zoom_title),
-            options = TerminalBehavior.PINCH_ZOOM_CHOICES,
+            options = TerminalBehavior.pinchZoomChoices(behavior.maxPinchZoomScale),
             selected = behavior.maxPinchZoomScale,
             optionLabel = { scale ->
-                stringResource(R.string.settings_terminal_pinch_zoom_value, String.format(Locale.US, "%.1f", scale))
+                markCustom(
+                    stringResource(
+                        R.string.settings_terminal_pinch_zoom_value,
+                        String.format(Locale.US, "%.1f", scale),
+                    ),
+                    custom = scale !in TerminalBehavior.PINCH_ZOOM_CHOICES,
+                )
             },
             onSelect = callbacks.onSetMaxPinchZoomScale,
             supportingText = stringResource(R.string.settings_terminal_pinch_zoom_summary),

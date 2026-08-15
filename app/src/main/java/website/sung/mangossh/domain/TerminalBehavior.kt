@@ -73,5 +73,21 @@ data class TerminalBehavior(
 
         /** Discrete choices offered by the UI; the store still accepts any in-range value. */
         val PINCH_ZOOM_CHOICES = listOf(1.5f, 2f, 3f, 4f, 5f)
+
+        /**
+         * [SCROLLBACK_CHOICES] with the persisted [current] value merged in when
+         * the store holds an in-range value the list does not offer, such as
+         * 1500 lines. See [choicesIncludingCurrent].
+         */
+        fun scrollbackChoices(current: Int): List<Int> =
+            choicesIncludingCurrent(SCROLLBACK_CHOICES, current) {
+                it in MIN_SCROLLBACK_LINES..MAX_SCROLLBACK_LINES
+            }
+
+        /** [PINCH_ZOOM_CHOICES] with the persisted [current] value merged in; see [scrollbackChoices]. */
+        fun pinchZoomChoices(current: Float): List<Float> =
+            choicesIncludingCurrent(PINCH_ZOOM_CHOICES, current) {
+                it in MIN_MAX_PINCH_ZOOM_SCALE..MAX_MAX_PINCH_ZOOM_SCALE
+            }
     }
 }

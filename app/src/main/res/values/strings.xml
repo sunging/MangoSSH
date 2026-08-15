@@ -468,6 +468,7 @@
     <string name="ui_verifying_fingerprint">Verifying fingerprint</string>
     <string name="ui_webdav_directory_url">WebDAV directory URL</string>
     <string name="settings_back">Back</string>
+    <string name="settings_choice_custom_value">%1$s (custom)</string>
     <string name="settings_section_personalization">Personalization</string>
     <string name="settings_section_connectivity">Connectivity</string>
     <string name="settings_section_data">Data &amp; security</string>

@@ -50,6 +50,60 @@ class TerminalBehaviorTest {
     }
 
     @Test
+    fun scrollbackChoicesOfferAPersistedInRangeValueTheListOmits() {
+        val choices = TerminalBehavior.scrollbackChoices(1_500)
+
+        assertTrue(choices.contains(1_500))
+        assertTrue(choices.containsAll(TerminalBehavior.SCROLLBACK_CHOICES))
+        assertEquals(TerminalBehavior.SCROLLBACK_CHOICES.size + 1, choices.size)
+        assertEquals(choices.sorted(), choices)
+    }
+
+    @Test
+    fun scrollbackChoicesStayUnchangedForValuesTheListAlreadyOffers() {
+        TerminalBehavior.SCROLLBACK_CHOICES.forEach { value ->
+            assertEquals(TerminalBehavior.SCROLLBACK_CHOICES, TerminalBehavior.scrollbackChoices(value))
+        }
+    }
+
+    @Test
+    fun scrollbackChoicesOmitValuesNormalizationWouldReject() {
+        val tooFew = TerminalBehavior.MIN_SCROLLBACK_LINES - 1
+        val tooMany = TerminalBehavior.MAX_SCROLLBACK_LINES + 1
+
+        assertEquals(TerminalBehavior.SCROLLBACK_CHOICES, TerminalBehavior.scrollbackChoices(tooFew))
+        assertEquals(TerminalBehavior.SCROLLBACK_CHOICES, TerminalBehavior.scrollbackChoices(tooMany))
+    }
+
+    @Test
+    fun pinchZoomChoicesOfferAPersistedInRangeValueTheListOmits() {
+        val choices = TerminalBehavior.pinchZoomChoices(2.5f)
+
+        assertTrue(choices.contains(2.5f))
+        assertEquals(TerminalBehavior.PINCH_ZOOM_CHOICES.size + 1, choices.size)
+        assertEquals(choices.sorted(), choices)
+    }
+
+    @Test
+    fun pinchZoomChoicesOmitValuesNormalizationWouldReject() {
+        val tooSmall = TerminalBehavior.MIN_MAX_PINCH_ZOOM_SCALE - 0.1f
+        val tooLarge = TerminalBehavior.MAX_MAX_PINCH_ZOOM_SCALE + 0.1f
+
+        assertEquals(TerminalBehavior.PINCH_ZOOM_CHOICES, TerminalBehavior.pinchZoomChoices(tooSmall))
+        assertEquals(TerminalBehavior.PINCH_ZOOM_CHOICES, TerminalBehavior.pinchZoomChoices(tooLarge))
+    }
+
+    @Test
+    fun everyOfferedChoiceSurvivesNormalization() {
+        TerminalBehavior.scrollbackChoices(1_500).forEach { lines ->
+            assertEquals(lines, TerminalBehavior(scrollbackLines = lines).normalized().scrollbackLines)
+        }
+        TerminalBehavior.pinchZoomChoices(2.5f).forEach { scale ->
+            assertEquals(scale, TerminalBehavior(maxPinchZoomScale = scale).normalized().maxPinchZoomScale)
+        }
+    }
+
+    @Test
     fun rightAltAndDelKeyPreferenceIdsResolveOnlyKnownValues() {
         assertEquals(TerminalRightAltMode.META, TerminalRightAltMode.fromPreference("meta"))
         assertNull(TerminalRightAltMode.fromPreference("auto"))

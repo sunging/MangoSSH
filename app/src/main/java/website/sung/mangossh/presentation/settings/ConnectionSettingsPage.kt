@@ -45,14 +45,15 @@ internal fun ConnectionSettingsPage(
             MangoPreferenceGroup(modifier = Modifier.testTag("connection_settings_card")) {
                 SettingsChoiceRow(
                     label = stringResource(R.string.settings_connection_keepalive_title),
-                    options = ConnectionPreferences.KEEPALIVE_CHOICES,
+                    options = ConnectionPreferences.keepaliveChoices(preferences.keepaliveSeconds),
                     selected = preferences.keepaliveSeconds,
                     optionLabel = { seconds ->
-                        if (seconds <= 0) {
+                        val label = if (seconds <= 0) {
                             stringResource(R.string.settings_connection_keepalive_off)
                         } else {
                             stringResource(R.string.settings_connection_keepalive_value, seconds)
                         }
+                        markCustom(label, custom = seconds !in ConnectionPreferences.KEEPALIVE_CHOICES)
                     },
                     onSelect = callbacks.onSetKeepaliveSeconds,
                     supportingText = "${stringResource(R.string.settings_connection_keepalive_summary)} $newConnectionsNote",
@@ -61,9 +62,14 @@ internal fun ConnectionSettingsPage(
                 )
                 SettingsChoiceRow(
                     label = stringResource(R.string.settings_connection_timeout_title),
-                    options = ConnectionPreferences.CONNECT_TIMEOUT_CHOICES,
+                    options = ConnectionPreferences.connectTimeoutChoices(preferences.connectTimeoutSeconds),
                     selected = preferences.connectTimeoutSeconds,
-                    optionLabel = { stringResource(R.string.settings_connection_timeout_value, it) },
+                    optionLabel = { seconds ->
+                        markCustom(
+                            stringResource(R.string.settings_connection_timeout_value, seconds),
+                            custom = seconds !in ConnectionPreferences.CONNECT_TIMEOUT_CHOICES,
+                        )
+                    },
                     onSelect = callbacks.onSetConnectTimeoutSeconds,
                     supportingText = "${stringResource(R.string.settings_connection_timeout_summary)} $newConnectionsNote",
                     optionTestTag = { "settings_connect_timeout_$it" },
