@@ -69,6 +69,12 @@ a composable or a constructor an instrumented test touches. CI compiles them
 on every event and runs them on an emulator for pull requests; without the
 compile step the `androidTest` source set silently stops building.
 
+CI runs on `main` and `develop`. Besides the debug APK it builds a
+release-signed `MangoSSH-ci-<sha>.apk` on every run and uploads it as a
+workflow artifact for testing. That artifact is not a release: only the
+`main`-only release workflow tags, publishes, and produces the reproducible
+F-Droid-compatible signature.
+
 For native code, also validate the ABI assets, ELF interpreter/dependencies,
 and a debug APK package inspection. Every packaged `PT_LOAD` segment must have
 at least 16 KiB alignment: run `tools/check-16kb-elf-wsl.sh` against the debug
