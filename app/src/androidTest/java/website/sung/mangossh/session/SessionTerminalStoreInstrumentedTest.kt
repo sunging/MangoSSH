@@ -5,6 +5,7 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
 import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.domain.TerminalBehavior
 import website.sung.mangossh.domain.TerminalThemeId
 
 @RunWith(AndroidJUnit4::class)
@@ -15,6 +16,7 @@ class SessionTerminalStoreInstrumentedTest {
             onKeyboardInput = { _, _ -> },
             onResize = { _, _, _ -> },
             appearanceProvider = { TerminalAppearance() },
+            behaviorProvider = { TerminalBehavior() },
         )
         val sessionId = "theme-test"
 
