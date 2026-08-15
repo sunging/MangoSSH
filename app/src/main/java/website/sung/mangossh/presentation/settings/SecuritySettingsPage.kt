@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -26,8 +27,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.domain.AppLockDelay
+import website.sung.mangossh.ui.components.MangoPreferenceGroup
+import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.MangoSettingsCard
-import website.sung.mangossh.ui.components.SettingsDropdownRow
+import website.sung.mangossh.ui.components.SettingsChoiceRow
 import website.sung.mangossh.ui.components.SettingsSwitchRow
 
 /** Security & lock detail page: app PIN, lock-now, biometric unlock, and auto-lock delay. */
@@ -46,8 +49,13 @@ internal fun SecuritySettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
+            MangoSectionHeader(
+                text = stringResource(R.string.ui_app_protection),
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item {
             MangoSettingsCard {
-                Text(stringResource(R.string.ui_app_protection), style = MaterialTheme.typography.titleMedium)
                 Text(
                     if (lock.pinConfigured) {
                         stringResource(R.string.ui_app_pin_is_enabled_unlocking_is_required_when_returning_to_the_foregroun)
@@ -66,13 +74,17 @@ internal fun SecuritySettingsPage(
                         TextButton(onClick = callbacks.onClearAppLock) { Text(stringResource(R.string.common_close)) }
                     }
                 }
-                if (lock.pinConfigured) {
+            }
+        }
+        if (lock.pinConfigured) {
+            item {
+                MangoPreferenceGroup {
                     SettingsSwitchRow(
                         title = stringResource(R.string.ui_allow_biometric_unlock),
                         checked = lock.biometricEnabled,
                         onCheckedChange = callbacks.onSetBiometricEnabled,
                     )
-                    SettingsDropdownRow(
+                    SettingsChoiceRow(
                         label = stringResource(R.string.settings_security_auto_lock_title),
                         options = AppLockDelay.entries,
                         selected = lock.autoLockDelay,
@@ -80,7 +92,7 @@ internal fun SecuritySettingsPage(
                         onSelect = callbacks.onSetAutoLockDelay,
                         supportingText = stringResource(R.string.settings_security_auto_lock_summary),
                         optionTestTag = { "settings_auto_lock_${it.preferenceValue}" },
-                        modifier = Modifier.testTag("settings_auto_lock_dropdown"),
+                        modifier = Modifier.testTag("settings_auto_lock_control"),
                     )
                 }
             }

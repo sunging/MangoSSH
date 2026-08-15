@@ -3,13 +3,14 @@ package website.sung.mangossh.presentation.settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Badge
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
@@ -26,6 +27,8 @@ import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.presentation.MangoSshViewModel
 import website.sung.mangossh.presentation.SecurityBanner
+import website.sung.mangossh.ui.components.MangoPreferenceGroup
+import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.SettingsCategoryRow
 
 /** Window width, in dp, at or above which Settings shows the hub and detail side by side. */
@@ -105,29 +108,53 @@ private fun SettingsHub(
     modifier: Modifier = Modifier,
 ) {
     val updateBadgeDescription = stringResource(R.string.app_update_badge_description)
+    val sections = visibleDestinations(state).groupBy { it.section }
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("settings_hub"),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (state.vaultStatus !is VaultStatus.Ready) {
             item { SecurityBanner(state.vaultStatus) }
         }
-        items(visibleDestinations(state), key = { it.name }) { destination ->
-            val badged = destination == SettingsDestination.UPDATES && state.update.hasPendingUpdate
-            SettingsCategoryRow(
-                icon = destination.icon(),
-                title = destination.title(),
-                summary = destination.summary(),
-                onClick = { onOpen(destination) },
-                modifier = Modifier.testTag("settings_category_${destination.name}"),
-                selected = destination == selected,
-                badge = if (badged) {
-                    { Badge(modifier = Modifier.semantics { contentDescription = updateBadgeDescription }) }
-                } else {
-                    null
-                },
-            )
+        SettingsSection.entries.forEach { section ->
+            val destinations = sections[section].orEmpty()
+            if (destinations.isEmpty()) return@forEach
+            item(key = section.name) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MangoSectionHeader(
+                        text = section.title(),
+                        modifier = Modifier.padding(start = 16.dp),
+                    )
+                    // One card per section: rows inside sit flush, and the gap
+                    // between cards is what separates one group from the next.
+                    MangoPreferenceGroup(verticalPadding = 0.dp) {
+                        destinations.forEach { destination ->
+                            val badged = destination == SettingsDestination.UPDATES &&
+                                state.update.hasPendingUpdate
+                            SettingsCategoryRow(
+                                icon = destination.icon(),
+                                title = destination.title(),
+                                summary = destination.summary(),
+                                onClick = { onOpen(destination) },
+                                modifier = Modifier.testTag("settings_category_${destination.name}"),
+                                selected = destination == selected,
+                                badge = if (badged) {
+                                    {
+                                        Badge(
+                                            modifier = Modifier.semantics {
+                                                contentDescription = updateBadgeDescription
+                                            },
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

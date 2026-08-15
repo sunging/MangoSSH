@@ -2,9 +2,8 @@ package website.sung.mangossh.presentation.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -13,8 +12,9 @@ import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.domain.ConnectionPreferences
 import website.sung.mangossh.domain.SshTerminalType
-import website.sung.mangossh.ui.components.MangoSettingsCard
-import website.sung.mangossh.ui.components.SettingsDropdownRow
+import website.sung.mangossh.ui.components.MangoPreferenceGroup
+import website.sung.mangossh.ui.components.MangoSectionHeader
+import website.sung.mangossh.ui.components.SettingsChoiceRow
 
 /**
  * Connection detail page: global defaults for new SSH/Mosh connections.
@@ -36,9 +36,14 @@ internal fun ConnectionSettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            MangoSettingsCard(modifier = Modifier.testTag("connection_settings_card")) {
-                Text(stringResource(R.string.settings_category_connection_title), style = MaterialTheme.typography.titleMedium)
-                SettingsDropdownRow(
+            MangoSectionHeader(
+                text = stringResource(R.string.settings_connection_defaults_header),
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item {
+            MangoPreferenceGroup(modifier = Modifier.testTag("connection_settings_card")) {
+                SettingsChoiceRow(
                     label = stringResource(R.string.settings_connection_keepalive_title),
                     options = ConnectionPreferences.KEEPALIVE_CHOICES,
                     selected = preferences.keepaliveSeconds,
@@ -52,9 +57,9 @@ internal fun ConnectionSettingsPage(
                     onSelect = callbacks.onSetKeepaliveSeconds,
                     supportingText = "${stringResource(R.string.settings_connection_keepalive_summary)} $newConnectionsNote",
                     optionTestTag = { "settings_keepalive_$it" },
-                    modifier = Modifier.testTag("settings_keepalive_dropdown"),
+                    modifier = Modifier.testTag("settings_keepalive_control"),
                 )
-                SettingsDropdownRow(
+                SettingsChoiceRow(
                     label = stringResource(R.string.settings_connection_timeout_title),
                     options = ConnectionPreferences.CONNECT_TIMEOUT_CHOICES,
                     selected = preferences.connectTimeoutSeconds,
@@ -62,9 +67,9 @@ internal fun ConnectionSettingsPage(
                     onSelect = callbacks.onSetConnectTimeoutSeconds,
                     supportingText = "${stringResource(R.string.settings_connection_timeout_summary)} $newConnectionsNote",
                     optionTestTag = { "settings_connect_timeout_$it" },
-                    modifier = Modifier.testTag("settings_connect_timeout_dropdown"),
+                    modifier = Modifier.testTag("settings_connect_timeout_control"),
                 )
-                SettingsDropdownRow(
+                SettingsChoiceRow(
                     label = stringResource(R.string.settings_connection_terminal_type_title),
                     options = SshTerminalType.entries,
                     selected = preferences.sshTerminalType,
@@ -73,7 +78,7 @@ internal fun ConnectionSettingsPage(
                     supportingText = "${stringResource(R.string.settings_connection_terminal_type_summary)} " +
                         "$newConnectionsNote ${stringResource(R.string.settings_connection_terminal_type_mosh_note)}",
                     optionTestTag = { "settings_terminal_type_${it.preferenceValue}" },
-                    modifier = Modifier.testTag("settings_terminal_type_dropdown"),
+                    modifier = Modifier.testTag("settings_terminal_type_control"),
                 )
             }
         }

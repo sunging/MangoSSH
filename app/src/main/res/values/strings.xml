@@ -468,6 +468,10 @@
     <string name="ui_verifying_fingerprint">Verifying fingerprint</string>
     <string name="ui_webdav_directory_url">WebDAV directory URL</string>
     <string name="settings_back">Back</string>
+    <string name="settings_section_personalization">Personalization</string>
+    <string name="settings_section_connectivity">Connectivity</string>
+    <string name="settings_section_data">Data &amp; security</string>
+    <string name="settings_section_system">System</string>
     <string name="settings_category_appearance_title">Appearance</string>
     <string name="settings_category_appearance_summary">Language and display</string>
     <string name="settings_category_terminal_title">Terminal</string>
@@ -484,6 +488,7 @@
     <string name="settings_category_tsnet_summary">Userspace tsnet node enrollment</string>
     <string name="settings_category_connection_title">Connection</string>
     <string name="settings_category_connection_summary">Keepalive, timeout, and terminal type</string>
+    <string name="settings_connection_defaults_header">Transport defaults</string>
     <string name="settings_category_updates_title">Updates</string>
     <string name="settings_category_updates_summary">Check for and install new versions</string>
     <string name="settings_category_about_title">About</string>

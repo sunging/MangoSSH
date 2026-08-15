@@ -3,8 +3,6 @@ package website.sung.mangossh.presentation.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -12,9 +10,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.domain.AppThemeMode
-import website.sung.mangossh.presentation.LanguageSettingsCard
-import website.sung.mangossh.ui.components.MangoSettingsCard
-import website.sung.mangossh.ui.components.SettingsDropdownRow
+import website.sung.mangossh.presentation.LanguageSettingsRow
+import website.sung.mangossh.ui.components.MangoPreferenceGroup
+import website.sung.mangossh.ui.components.SettingsChoiceRow
 import website.sung.mangossh.ui.components.SettingsSwitchRow
 
 /** Appearance detail page: display language, app theme mode, and dynamic color. */
@@ -30,27 +28,20 @@ internal fun AppearanceSettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            LanguageSettingsCard(
-                selected = state.language,
-                onSelect = callbacks.onSetLanguage,
-            )
-        }
-        item {
-            MangoSettingsCard {
-                Text(stringResource(R.string.settings_appearance_theme_title), style = MaterialTheme.typography.titleMedium)
-                Text(
-                    stringResource(R.string.settings_appearance_theme_summary),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            MangoPreferenceGroup {
+                LanguageSettingsRow(
+                    selected = state.language,
+                    onSelect = callbacks.onSetLanguage,
                 )
-                SettingsDropdownRow(
+                SettingsChoiceRow(
                     label = stringResource(R.string.settings_appearance_theme_title),
                     options = AppThemeMode.entries,
                     selected = state.themePreferences.mode,
                     optionLabel = { it.label() },
                     onSelect = callbacks.onSetThemeMode,
+                    supportingText = stringResource(R.string.settings_appearance_theme_summary),
                     optionTestTag = { "settings_theme_mode_${it.preferenceValue}" },
-                    modifier = Modifier.testTag("settings_theme_mode_dropdown"),
+                    modifier = Modifier.testTag("settings_theme_mode_control"),
                 )
                 SettingsSwitchRow(
                     title = stringResource(R.string.settings_appearance_dynamic_color_title),

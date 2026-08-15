@@ -36,6 +36,49 @@ internal enum class SettingsDestination {
     ABOUT,
 }
 
+/**
+ * The hub groups categories under these headings so ten equal-weight rows read
+ * as four short lists. Declaration order is display order, and a destination
+ * belongs to exactly one section (see [SettingsDestination.section]).
+ */
+internal enum class SettingsSection {
+    PERSONALIZATION,
+    CONNECTIVITY,
+    DATA,
+    SYSTEM,
+}
+
+internal val SettingsDestination.section: SettingsSection
+    get() = when (this) {
+        SettingsDestination.APPEARANCE,
+        SettingsDestination.TERMINAL,
+        SettingsDestination.SHORTCUTS,
+        -> SettingsSection.PERSONALIZATION
+
+        SettingsDestination.CONNECTION,
+        SettingsDestination.TSNET,
+        SettingsDestination.SNIPPETS,
+        -> SettingsSection.CONNECTIVITY
+
+        SettingsDestination.SECURITY,
+        SettingsDestination.BACKUP,
+        -> SettingsSection.DATA
+
+        SettingsDestination.UPDATES,
+        SettingsDestination.ABOUT,
+        -> SettingsSection.SYSTEM
+    }
+
+@Composable
+internal fun SettingsSection.title(): String = stringResource(
+    when (this) {
+        SettingsSection.PERSONALIZATION -> R.string.settings_section_personalization
+        SettingsSection.CONNECTIVITY -> R.string.settings_section_connectivity
+        SettingsSection.DATA -> R.string.settings_section_data
+        SettingsSection.SYSTEM -> R.string.settings_section_system
+    },
+)
+
 @Composable
 internal fun SettingsDestination.title(): String = stringResource(
     when (this) {

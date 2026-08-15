@@ -11,7 +11,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 
-class LanguageSettingsCardInstrumentedTest {
+class LanguageSettingsRowInstrumentedTest {
     @get:Rule
     val composeRule = createComposeRule()
 
@@ -20,7 +20,7 @@ class LanguageSettingsCardInstrumentedTest {
         var selected by mutableStateOf(AppLanguage.SYSTEM)
         composeRule.setContent {
             MaterialTheme {
-                LanguageSettingsCard(
+                LanguageSettingsRow(
                     selected = selected,
                     onSelect = { selected = it },
                 )

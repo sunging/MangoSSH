@@ -2,9 +2,8 @@ package website.sung.mangossh.presentation.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -14,8 +13,9 @@ import java.util.Locale
 import website.sung.mangossh.R
 import website.sung.mangossh.domain.TerminalBehavior
 import website.sung.mangossh.presentation.TerminalAppearanceCard
-import website.sung.mangossh.ui.components.MangoSettingsCard
-import website.sung.mangossh.ui.components.SettingsDropdownRow
+import website.sung.mangossh.ui.components.MangoPreferenceGroup
+import website.sung.mangossh.ui.components.MangoSectionHeader
+import website.sung.mangossh.ui.components.SettingsChoiceRow
 import website.sung.mangossh.ui.components.SettingsSwitchRow
 
 /** Terminal detail page: font, size, and color theme, plus emulator behavior. */
@@ -31,6 +31,12 @@ internal fun TerminalSettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
+            MangoSectionHeader(
+                text = stringResource(R.string.terminal_appearance_title),
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item {
             TerminalAppearanceCard(
                 appearance = state.appearance,
                 onSetFont = callbacks.onSetFont,
@@ -38,6 +44,12 @@ internal fun TerminalSettingsPage(
                 onSetTheme = callbacks.onSetTheme,
                 onSetCustomColors = callbacks.onSetCustomColors,
                 onReset = callbacks.onResetAppearance,
+            )
+        }
+        item {
+            MangoSectionHeader(
+                text = stringResource(R.string.settings_terminal_behavior_title),
+                modifier = Modifier.padding(start = 16.dp),
             )
         }
         item {
@@ -52,9 +64,8 @@ private fun TerminalBehaviorCard(
     callbacks: TerminalSettingsCallbacks,
 ) {
     val newSessionsNote = stringResource(R.string.settings_applies_to_new_sessions)
-    MangoSettingsCard(modifier = Modifier.testTag("terminal_behavior_card")) {
-        Text(stringResource(R.string.settings_terminal_behavior_title), style = MaterialTheme.typography.titleMedium)
-        SettingsDropdownRow(
+    MangoPreferenceGroup(modifier = Modifier.testTag("terminal_behavior_card")) {
+        SettingsChoiceRow(
             label = stringResource(R.string.settings_terminal_scrollback_title),
             options = TerminalBehavior.SCROLLBACK_CHOICES,
             selected = behavior.scrollbackLines,
@@ -85,7 +96,7 @@ private fun TerminalBehaviorCard(
             onCheckedChange = callbacks.onSetKeepScreenOn,
             modifier = Modifier.testTag("settings_keep_screen_on_switch"),
         )
-        SettingsDropdownRow(
+        SettingsChoiceRow(
             label = stringResource(R.string.settings_terminal_pinch_zoom_title),
             options = TerminalBehavior.PINCH_ZOOM_CHOICES,
             selected = behavior.maxPinchZoomScale,
@@ -95,7 +106,7 @@ private fun TerminalBehaviorCard(
             onSelect = callbacks.onSetMaxPinchZoomScale,
             supportingText = stringResource(R.string.settings_terminal_pinch_zoom_summary),
             optionTestTag = { "settings_pinch_zoom_${String.format(Locale.US, "%.1f", it)}" },
-            modifier = Modifier.testTag("settings_pinch_zoom_dropdown"),
+            modifier = Modifier.testTag("settings_pinch_zoom_control"),
         )
     }
 }

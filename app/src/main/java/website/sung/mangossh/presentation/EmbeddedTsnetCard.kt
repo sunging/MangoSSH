@@ -58,8 +58,9 @@ internal fun EmbeddedTsnetCard(
     val canLogout = status.phase == EmbeddedTsnetPhase.READY_IDLE ||
         status.phase == EmbeddedTsnetPhase.ACTIVE
 
+    // No in-card heading: the settings page this card fills is already titled
+    // "Embedded Tailscale" in the top bar.
     MangoSettingsCard(modifier = Modifier.testTag("embedded_tsnet_card")) {
-        Text(stringResource(R.string.embedded_tsnet_title), style = MaterialTheme.typography.titleMedium)
         Text(
             stringResource(R.string.embedded_tsnet_description),
             style = MaterialTheme.typography.bodySmall,

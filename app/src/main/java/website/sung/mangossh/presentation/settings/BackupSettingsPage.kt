@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +37,7 @@ import kotlinx.coroutines.withContext
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.data.vault.WebDavConfig
+import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.MangoSettingsCard
 
 /**
@@ -91,8 +93,13 @@ internal fun BackupSettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
+            MangoSectionHeader(
+                text = stringResource(R.string.ui_encrypted_backup),
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item {
             MangoSettingsCard {
-                Text(stringResource(R.string.ui_encrypted_backup), style = MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { syncAction = SyncAction.MANUAL_EXPORT },
@@ -106,8 +113,13 @@ internal fun BackupSettingsPage(
             }
         }
         item {
+            MangoSectionHeader(
+                text = stringResource(R.string.ui_custom_webdav),
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item {
             MangoSettingsCard {
-                Text(stringResource(R.string.ui_custom_webdav), style = MaterialTheme.typography.titleMedium)
                 Text(
                     webDavConfig?.let { "${it.endpoint}/${it.remoteFileName}" } ?: stringResource(R.string.ui_not_configured),
                     style = MaterialTheme.typography.bodySmall,

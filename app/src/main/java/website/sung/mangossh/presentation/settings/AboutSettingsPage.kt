@@ -1,7 +1,9 @@
 package website.sung.mangossh.presentation.settings
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +28,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.R
 import website.sung.mangossh.data.update.GitHubReleaseClient
+import website.sung.mangossh.ui.components.MangoPreferenceGroup
+import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.MangoSettingsCard
 import website.sung.mangossh.ui.components.SettingsActionRow
 
@@ -47,13 +51,15 @@ internal fun AboutSettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            MangoSettingsCard(modifier = Modifier.testTag("about_identity_card")) {
-                Text("MangoSSH", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    stringResource(R.string.settings_about_version, state.versionName, state.versionCode),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            MangoPreferenceGroup(modifier = Modifier.testTag("about_identity_card")) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text("MangoSSH", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        stringResource(R.string.settings_about_version, state.versionName, state.versionCode),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 SettingsActionRow(
                     title = "GitHub",
                     actionLabel = stringResource(R.string.settings_about_release_page),
@@ -68,8 +74,13 @@ internal fun AboutSettingsPage(
             }
         }
         item {
-            MangoSettingsCard {
-                Text(stringResource(R.string.settings_about_licenses_title), style = MaterialTheme.typography.titleMedium)
+            // Section intro for the per-library cards below: a header and its
+            // one-line explanation, not a card of its own.
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                MangoSectionHeader(text = stringResource(R.string.settings_about_licenses_title))
                 Text(
                     stringResource(R.string.settings_about_licenses_summary),
                     style = MaterialTheme.typography.bodySmall,
@@ -78,21 +89,24 @@ internal fun AboutSettingsPage(
             }
         }
         items(thirdPartyNotices, key = { it.name }) { notice ->
-            MangoSettingsCard(modifier = Modifier.testTag("about_license_${notice.name}")) {
-                Text(notice.name, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    notice.license,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            MangoPreferenceGroup(modifier = Modifier.testTag("about_license_${notice.name}")) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text(notice.name, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        notice.license,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (notice.licenseAsset == null) {
+                        Text(notice.url, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 if (notice.licenseAsset != null) {
                     SettingsActionRow(
                         title = notice.url,
                         actionLabel = stringResource(R.string.settings_about_view_license_text),
                         onAction = { openNotice = notice },
                     )
-                } else {
-                    Text(notice.url, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

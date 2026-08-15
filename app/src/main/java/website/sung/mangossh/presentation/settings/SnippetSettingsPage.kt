@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.CommandSnippet
+import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.MangoSettingsCard
 
 /** Snippets detail page: post-connect commands that a host can run automatically. */
@@ -48,8 +50,13 @@ internal fun SnippetSettingsPage(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
+            MangoSectionHeader(
+                text = stringResource(R.string.ui_post_connect_snippets),
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item {
             MangoSettingsCard {
-                Text(stringResource(R.string.ui_post_connect_snippets), style = MaterialTheme.typography.titleMedium)
                 Text(
                     stringResource(R.string.ui_a_snippet_selected_in_the_host_editor_is_sent_automatically_when_the_she),
                     style = MaterialTheme.typography.bodySmall,

@@ -452,6 +452,10 @@
     <string name="ui_verifying_fingerprint">验证指纹</string>
     <string name="ui_webdav_directory_url">WebDAV 目录 URL</string>
     <string name="settings_back">返回</string>
+    <string name="settings_section_personalization">个性化</string>
+    <string name="settings_section_connectivity">连接</string>
+    <string name="settings_section_data">数据与安全</string>
+    <string name="settings_section_system">系统</string>
     <string name="settings_category_appearance_title">外观</string>
     <string name="settings_category_appearance_summary">语言和显示</string>
     <string name="settings_category_terminal_title">终端</string>
@@ -468,6 +472,7 @@
     <string name="settings_category_tsnet_summary">用户态 tsnet 节点注册</string>
     <string name="settings_category_connection_title">连接</string>
     <string name="settings_category_connection_summary">保活、超时和终端类型</string>
+    <string name="settings_connection_defaults_header">传输默认值</string>
     <string name="settings_category_updates_title">应用更新</string>
     <string name="settings_category_updates_summary">检查并安装新版本</string>
     <string name="settings_category_about_title">关于</string>

@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import website.sung.mangossh.R
 import website.sung.mangossh.domain.AppRelease
+import website.sung.mangossh.ui.components.mangoCardColors
 
 /** Settings card for checking, downloading, verifying, and installing GitHub releases. */
 @Composable
@@ -87,6 +88,7 @@ internal fun UpdateSettingsCard(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("app_update_card"),
+        colors = mangoCardColors(),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -99,15 +101,14 @@ internal fun UpdateSettingsCard(
                     tint = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.app_update_title), style = MaterialTheme.typography.titleMedium)
-                    if (state.installedVersion.isNotBlank()) {
-                        Text(
-                            stringResource(R.string.app_update_installed_version, state.installedVersion),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                // No title here: the page this card fills is already titled
+                // "Updates" in the top bar.
+                if (state.installedVersion.isNotBlank()) {
+                    Text(
+                        stringResource(R.string.app_update_installed_version, state.installedVersion),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
             }
             Text(
