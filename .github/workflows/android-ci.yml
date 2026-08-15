@@ -45,8 +45,11 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      # `assembleDebugAndroidTest` compiles the instrumented tests without a
+      # device. CI has no emulator, so nothing else here would catch an
+      # androidTest source set that no longer builds against the app it tests.
       - name: Verify version, test, lint, and package debug APK
-        run: ./gradlew --no-daemon :app:verifyReleaseVersion :app:testDebugUnitTest :app:lint :app:assembleDebug
+        run: ./gradlew --no-daemon :app:verifyReleaseVersion :app:testDebugUnitTest :app:lint :app:assembleDebug :app:assembleDebugAndroidTest
 
       - name: Verify 16 KiB native alignment
         run: |
