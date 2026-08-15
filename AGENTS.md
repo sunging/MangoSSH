@@ -65,8 +65,9 @@ gradlew.bat :app:assembleDebugAndroidTest
 The instrumented tests need a device or emulator to run
 (`gradlew.bat :app:connectedDebugAndroidTest`), but
 `assembleDebugAndroidTest` compiles them anywhere, so run it after changing
-a composable or a constructor an instrumented test touches. CI runs the same
-task; without it the `androidTest` source set silently stops building.
+a composable or a constructor an instrumented test touches. CI compiles them
+on every event and runs them on an emulator for pull requests; without the
+compile step the `androidTest` source set silently stops building.
 
 For native code, also validate the ABI assets, ELF interpreter/dependencies,
 and a debug APK package inspection. Every packaged `PT_LOAD` segment must have
