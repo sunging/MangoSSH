@@ -4,7 +4,9 @@ import android.content.Context
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
@@ -59,7 +61,16 @@ internal class EmbeddedTsnetManager(
     private val stateStore: EmbeddedTsnetStateStore = AndroidTsnetStateStore(context),
     private val backendFactory: EmbeddedTsnetBackendFactory =
         GomobileTsnetBackendFactory(context.applicationContext),
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    // The Go backend reports status through a callback that hops onto this
+    // scope. `SupervisorJob` alone would still let a failure there reach the
+    // default uncaught handler and close the app, so the scope carries a
+    // reporting handler of its own.
+    private val scope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO +
+            CoroutineExceptionHandler { _, error ->
+                MangoLog.warn(MangoLogEvent.SESSION_COROUTINE_FAILED, error)
+            },
+    ),
     private val foregroundStarter: (Context) -> Unit = SessionForegroundService::start,
 ) {
     private val appContext = context.applicationContext
@@ -71,6 +82,7 @@ internal class EmbeddedTsnetManager(
     private var activeLeases = 0
     private var pendingAcquires = 0
     private var enrollmentHold = false
+    private var foregroundFailureGeneration = 0L
     private var enrolledIdentity = false
     private var registrationExists = false
 
@@ -219,6 +231,35 @@ internal class EmbeddedTsnetManager(
         }
     }
 
+    /**
+     * Abandons work that Android refused to protect with a foreground service.
+     *
+     * Active and pending session leases retain the backend reference until
+     * their normal release path decrements the counters. Enrollment-only work
+     * has no such owner, so its backend is detached and closed immediately.
+     */
+    internal fun onForegroundServiceUnavailable() {
+        // Begin undispatched so the service cannot stop before this state has
+        // withdrawn its foreground requirement. Backend close then hops back to
+        // IO and never blocks the service's main-thread failure path.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val close = mutex.withLock {
+                foregroundFailureGeneration += 1
+                runtimeStarting = false
+                enrollmentHold = false
+                backendToken = null
+                val detached = if (activeLeases == 0 && pendingAcquires == 0) {
+                    backend.also { backend = null }
+                } else {
+                    null
+                }
+                updateStatusLocked(EmbeddedTsnetPhase.FAILED)
+                detached
+            }
+            close?.let { withContext(Dispatchers.IO) { closeBackend(it) } }
+        }
+    }
+
     private suspend fun restartForEnrollment(authKey: CharArray?) {
         val previous = mutex.withLock {
             enrollmentHold = true
@@ -250,6 +291,7 @@ internal class EmbeddedTsnetManager(
 
     private suspend fun startRuntime(authKey: CharArray?) {
         val token = Any()
+        val failureGeneration = mutex.withLock { foregroundFailureGeneration }
         val listener = object : StatusListener {
             override fun onStatus(state: String, authURL: String) {
                 scope.launch { handleBackendStatus(token, state, authURL) }
@@ -267,16 +309,22 @@ internal class EmbeddedTsnetManager(
             }
         } catch (error: Exception) {
             mutex.withLock {
-                runtimeStarting = false
-                enrollmentHold = false
-                updateStatusLocked(EmbeddedTsnetPhase.FAILED)
+                if (foregroundFailureGeneration == failureGeneration) {
+                    runtimeStarting = false
+                    enrollmentHold = false
+                    updateStatusLocked(EmbeddedTsnetPhase.FAILED)
+                }
             }
             MangoLog.warn(MangoLogEvent.TSNET_FAILED, error)
             return
         }
         val accepted = mutex.withLock {
-            runtimeStarting = false
-            if (backend == null) {
+            if (
+                backend == null &&
+                runtimeStarting &&
+                foregroundFailureGeneration == failureGeneration
+            ) {
+                runtimeStarting = false
                 backend = created
                 backendToken = token
                 updateStatusLocked(EmbeddedTsnetPhase.STARTING)

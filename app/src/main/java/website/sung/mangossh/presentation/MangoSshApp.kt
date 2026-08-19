@@ -351,15 +351,23 @@ fun MangoSshApp(
         return
     }
 
-    val activeSession = activeSessionId?.let { id -> sessions.firstOrNull { it.id == id } }
-    if (activeSession != null) {
+    // The session and its emulator are resolved together, and the terminal
+    // branch is entered only when both are present. `terminalEmulator` is a plain
+    // map read that Compose does not track, so treating it as an independent
+    // condition would let a recomposition find the session still listed while its
+    // emulator had already been released, and the screen would then have to
+    // abandon the terminal, its prompt dialog, and its emulator view without
+    // emitting anything in their place.
+    val terminalTarget = activeSessionId
+        ?.let { id -> sessions.firstOrNull { it.id == id } }
+        ?.let { session -> viewModel.terminalEmulator(session.id)?.let { session to it } }
+    if (terminalTarget == null && activeSessionId != null) {
+        LaunchedEffect(activeSessionId) { activeSessionId = null }
+    }
+    if (terminalTarget != null) {
+        val (activeSession, terminalEmulator) = terminalTarget
         val activePrompt = sessionPrompts.firstOrNull { it.sessionId == activeSession.id }
         val visiblePrompt = activePrompt ?: sessionPrompts.firstOrNull { it.sessionId != activeSession.id }
-        val terminalEmulator = viewModel.terminalEmulator(activeSession.id)
-        if (terminalEmulator == null) {
-            LaunchedEffect(activeSession.id) { activeSessionId = null }
-            return
-        }
         BackHandler(enabled = visiblePrompt == null) {
             leaveSessionId = activeSession.id
         }

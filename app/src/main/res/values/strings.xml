@@ -65,6 +65,7 @@
     <string name="session_ended_remote_exit">The session ended on the remote host.</string>
     <string name="session_ended_connection_lost">The connection was interrupted.</string>
     <string name="session_ended_connection_failed">Unable to establish the connection.</string>
+    <string name="session_foreground_service_unavailable">Android did not allow MangoSSH to keep a connection running in the background. Open the app and try again.</string>
     <string name="session_ended_authentication_failed">The server rejected the selected authentication method.</string>
     <string name="session_leave_title">Keep this session connected?</string>
     <string name="session_leave_message">Leaving the terminal can keep this session running in the background.</string>
@@ -550,6 +551,12 @@
     <string name="settings_about_release_page">View releases on GitHub</string>
     <string name="settings_about_licenses_title">Open source licenses</string>
     <string name="settings_about_licenses_summary">MangoSSH is offered under the GNU General Public License, version 3 or later, and bundles the third-party projects below.</string>
+    <string name="settings_about_crash_report_title">Last crash report</string>
+    <string name="settings_about_crash_report_summary">MangoSSH closed unexpectedly and kept a record of where it happened. It contains only error types and code locations, never hostnames, paths, or credentials.</string>
+    <string name="settings_about_crash_report_action_title">Diagnostics</string>
+    <string name="settings_about_crash_report_view">View</string>
+    <string name="settings_about_crash_report_share">Share</string>
+    <string name="settings_about_crash_report_clear">Discard</string>
     <string name="settings_about_mosh_gpl_notice">MangoSSH bundles the native mosh-client executable from ConnectBot mosh4android under the GNU General Public License, version 3 or later. The corresponding source, including any local modifications, is available from the project\'s GitHub repository alongside the full license text.</string>
     <string name="settings_about_view_license_text">View license</string>
     <string name="settings_about_license_unavailable">This license text could not be read from the app package.</string>

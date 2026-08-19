@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,10 +36,34 @@ import website.sung.mangossh.core.MangoLogEvent
  * screen and provides one notification shortcut per session for restoration.
  */
 class SessionForegroundService : Service() {
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /**
+     * The collector below runs on the main thread, so anything escaping it would
+     * reach Android's default uncaught handler and close the app. Notification
+     * and foreground-service calls are exactly the kind that Android can refuse
+     * depending on process state, so they are reported instead.
+     */
+    private val coroutineFailureHandler = CoroutineExceptionHandler { _, error ->
+        MangoLog.warn(MangoLogEvent.SESSION_COROUTINE_FAILED, error)
+    }
+    private val serviceScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + coroutineFailureHandler)
     private val sessionNotificationIds = mutableMapOf<String, Int>()
     private val nextNotificationId = AtomicInteger(FIRST_SESSION_NOTIFICATION_ID)
     private var foregroundStarted = false
+
+    /**
+     * Set once this instance has decided it owns no work.
+     *
+     * `stopSelf()` does not destroy the service synchronously and does not drop
+     * an already queued start intent, so `onStartCommand` can still arrive
+     * afterwards. Promoting to the foreground again at that point asks Android
+     * for an exemption this instance has already released, which it may refuse
+     * outright.
+     */
+    private var stopping = false
+
+    /** Start id of the most recent [onStartCommand]; [NO_START_ID] until one arrives. */
+    private var latestStartId = NO_START_ID
 
     private val sessionController
         get() = (application as MangoSshApplication).sessionRuntime.sessionController
@@ -53,8 +78,9 @@ class SessionForegroundService : Service() {
         // this service reaches onStartCommand. Enter the foreground first so
         // every startForegroundService call satisfies Android's contract even
         // when the service immediately discovers that there is nothing to own.
-        ensureForeground()
-        MangoLog.info(MangoLogEvent.FOREGROUND_SERVICE_STARTED)
+        if (ensureForeground()) {
+            MangoLog.info(MangoLogEvent.FOREGROUND_SERVICE_STARTED)
+        }
         serviceScope.launch {
             combine(
                 sessionController.sessions,
@@ -65,6 +91,10 @@ class SessionForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
+        // A fresh start request is a fresh foreground grant, so an instance that
+        // had already decided to stop may own work again.
+        stopping = false
         ensureForeground()
         renderWork(
             sessions = sessionController.sessions.value,
@@ -88,33 +118,39 @@ class SessionForegroundService : Service() {
 
     private fun renderWork(sessions: List<TerminalSessionState>, tsnetRequired: Boolean) {
         if (sessions.isEmpty() && !tsnetRequired) {
+            stopping = true
             clearSessionNotifications()
             if (foregroundStarted) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 foregroundStarted = false
             }
-            stopSelf()
+            stopWhenIdle()
             return
         }
 
-        ensureForeground()
+        if (!ensureForeground()) return
 
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(
-            SUMMARY_NOTIFICATION_ID,
-            buildSummaryNotification(tsnetOnly = sessions.isEmpty() && tsnetRequired),
-        )
-        val liveIds = sessions.mapTo(mutableSetOf()) { it.id }
-        sessions.forEach { session ->
-            manager.notify(notificationIdFor(session.id), buildSessionNotification(session))
-        }
-        sessionNotificationIds
-            .filterKeys { it !in liveIds }
-            .toMap()
-            .forEach { (sessionId, notificationId) ->
-                manager.cancel(notificationId)
-                sessionNotificationIds.remove(sessionId)
+        // Posting notifications is a best-effort presentation concern: the
+        // sessions themselves stay alive either way, so a rejected post must not
+        // end the process this service exists to keep running.
+        runCatching {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(
+                SUMMARY_NOTIFICATION_ID,
+                buildSummaryNotification(tsnetOnly = sessions.isEmpty() && tsnetRequired),
+            )
+            val liveIds = sessions.mapTo(mutableSetOf()) { it.id }
+            sessions.forEach { session ->
+                manager.notify(notificationIdFor(session.id), buildSessionNotification(session))
             }
+            sessionNotificationIds
+                .filterKeys { it !in liveIds }
+                .toMap()
+                .forEach { (sessionId, notificationId) ->
+                    manager.cancel(notificationId)
+                    sessionNotificationIds.remove(sessionId)
+                }
+        }.onFailure { error -> MangoLog.warn(MangoLogEvent.SESSION_TEARDOWN_FAILED, error) }
     }
 
     /**
@@ -122,16 +158,48 @@ class SessionForegroundService : Service() {
      * mutable session state. Fast DNS or socket failures may remove the final
      * session before Android dispatches [onStartCommand], but they must never
      * leave a startForegroundService request unacknowledged.
+     *
+     * Android refuses the promotion outright when the process is not in an
+     * allowed state, and this runs on the main thread, so the refusal is
+     * reported and the service gives up its work rather than closing the app.
+     *
+     * Returns whether the service currently holds foreground ownership.
      */
-    private fun ensureForeground() {
-        if (foregroundStarted) return
-        ServiceCompat.startForeground(
-            this,
-            SUMMARY_NOTIFICATION_ID,
-            buildSummaryNotification(tsnetOnly = false),
-            foregroundServiceType(),
-        )
+    private fun ensureForeground(): Boolean {
+        if (stopping) return false
+        if (foregroundStarted) return true
+        try {
+            ServiceCompat.startForeground(
+                this,
+                SUMMARY_NOTIFICATION_ID,
+                buildSummaryNotification(tsnetOnly = false),
+                foregroundServiceType(),
+            )
+        } catch (error: RuntimeException) {
+            MangoLog.warn(MangoLogEvent.FOREGROUND_SERVICE_START_DENIED, error)
+            stopping = true
+            // A launch request can succeed before Android later rejects the
+            // actual promotion here. No connection or embedded network runtime
+            // may survive without the foreground owner it was promised.
+            sessionController.onForegroundServiceUnavailable(error)
+            embeddedTsnetManager.onForegroundServiceUnavailable()
+            stopWhenIdle()
+            return false
+        }
         foregroundStarted = true
+        return true
+    }
+
+    /**
+     * Stops this instance without discarding a start request queued behind the
+     * one it just handled.
+     *
+     * Stopping by start id is what preserves that, but Android only issues start
+     * ids from [onStartCommand]; the observer in [onCreate] can decide there is
+     * no work before the first one arrives, and `stopSelf(0)` would never match.
+     */
+    private fun stopWhenIdle() {
+        if (latestStartId == NO_START_ID) stopSelf() else stopSelf(latestStartId)
     }
 
     private fun buildSummaryNotification(tsnetOnly: Boolean): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -243,6 +311,9 @@ class SessionForegroundService : Service() {
         private const val SUMMARY_NOTIFICATION_ID = 4101
         private const val FIRST_SESSION_NOTIFICATION_ID = 4200
         private const val SUMMARY_PENDING_INTENT_REQUEST_CODE = 4101
+
+        /** Android never issues this as a start id, so it marks "no start command yet". */
+        private const val NO_START_ID = 0
 
         /** Starts service ownership only after the user begins a connection. */
         fun start(context: Context) {

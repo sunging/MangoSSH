@@ -76,6 +76,12 @@ enum class SessionEndMessageKind {
     MOSH_BOOTSTRAP_FAILED,
     MOSH_RUNTIME_MISSING,
     TSNET_ENROLLMENT_REQUIRED,
+
+    /**
+     * Android refused foreground-service ownership for the current process
+     * state, so the connection was never allowed to start.
+     */
+    FOREGROUND_SERVICE_UNAVAILABLE,
 }
 
 enum class PortForwardRuntimePhase {

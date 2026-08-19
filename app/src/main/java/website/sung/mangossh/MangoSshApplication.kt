@@ -2,6 +2,7 @@ package website.sung.mangossh
 
 import android.app.Application
 import android.content.Context
+import website.sung.mangossh.core.CrashReporter
 import website.sung.mangossh.data.keys.SshKeyManager
 import website.sung.mangossh.data.settings.AppThemeStore
 import website.sung.mangossh.data.settings.ConnectionPreferencesStore
@@ -29,6 +30,14 @@ class MangoSshApplication : Application() {
     /** Shared live-session dependencies for the lifetime of this app process. */
     val sessionRuntime: MangoSessionRuntime by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         MangoSessionRuntime(this)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Installed before anything else can run: a crash during session setup
+        // is exactly the case that is hardest to reproduce and most valuable to
+        // record.
+        CrashReporter.install(this)
     }
 }
 

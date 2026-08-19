@@ -1,5 +1,6 @@
 package website.sung.mangossh.presentation.settings
 
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,8 +27,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.R
+import website.sung.mangossh.core.CrashReporter
 import website.sung.mangossh.data.update.GitHubReleaseClient
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 import website.sung.mangossh.ui.components.MangoSectionHeader
@@ -74,6 +78,9 @@ internal fun AboutSettingsPage(
             }
         }
         item {
+            CrashReportRow()
+        }
+        item {
             // Section intro for the per-library cards below: a header and its
             // one-line explanation, not a card of its own.
             Column(
@@ -114,6 +121,89 @@ internal fun AboutSettingsPage(
 
     openNotice?.let { notice ->
         LicenseTextDialog(notice = notice, onDismiss = { openNotice = null })
+    }
+}
+
+/**
+ * Offers the sanitized record of the last crash, and nothing when there is none.
+ *
+ * A crash in the middle of connecting is hard for a user to reproduce on demand
+ * and impossible to read back from Logcat afterwards, so the stored report is
+ * made reachable without a cable. [CrashReporter] already excludes exception
+ * messages, so the text here carries type names and stack frames only.
+ */
+@Composable
+private fun CrashReportRow() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var report by remember { mutableStateOf<String?>(null) }
+    var showReport by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        report = withContext(Dispatchers.IO) { CrashReporter.lastReport(context) }
+    }
+
+    val storedReport = report ?: return
+    MangoPreferenceGroup(modifier = Modifier.testTag("about_crash_report_card")) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                stringResource(R.string.settings_about_crash_report_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                stringResource(R.string.settings_about_crash_report_summary),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        SettingsActionRow(
+            title = stringResource(R.string.settings_about_crash_report_action_title),
+            actionLabel = stringResource(R.string.settings_about_crash_report_view),
+            onAction = { showReport = true },
+            modifier = Modifier.testTag("settings_about_crash_report"),
+        )
+    }
+
+    if (showReport) {
+        AlertDialog(
+            modifier = Modifier.testTag("about_crash_report_dialog"),
+            onDismissRequest = { showReport = false },
+            title = { Text(stringResource(R.string.settings_about_crash_report_title)) },
+            text = {
+                SelectionContainer {
+                    Text(
+                        text = storedReport,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val send = Intent(Intent.ACTION_SEND)
+                            .setType("text/plain")
+                            .putExtra(Intent.EXTRA_TEXT, storedReport)
+                        runCatching { context.startActivity(Intent.createChooser(send, null)) }
+                    },
+                ) {
+                    Text(stringResource(R.string.settings_about_crash_report_share))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { CrashReporter.clear(context) }
+                            report = null
+                            showReport = false
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.settings_about_crash_report_clear))
+                }
+            },
+        )
     }
 }
 

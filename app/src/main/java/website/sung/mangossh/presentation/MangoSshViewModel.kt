@@ -152,6 +152,7 @@ private fun SessionEndMessageKind.toUiText(): UiText = uiText(
         SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED -> R.string.mosh_bootstrap_failed
         SessionEndMessageKind.MOSH_RUNTIME_MISSING -> R.string.mosh_runtime_missing
         SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED -> R.string.embedded_tsnet_enrollment_required
+        SessionEndMessageKind.FOREGROUND_SERVICE_UNAVAILABLE -> R.string.session_foreground_service_unavailable
     },
 )
 

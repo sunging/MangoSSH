@@ -21,7 +21,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -80,9 +80,22 @@ class SshSessionController internal constructor(
     private val connectionPreferencesStore: ConnectionPreferencesStore,
 ) {
     private val context = appContext.applicationContext
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Last-resort guard for the session scope.
+     *
+     * `SupervisorJob` stops a failing child from cancelling its siblings, but it
+     * does not absorb the failure: without a handler here, anything escaping one
+     * of the transport coroutines reaches Android's default uncaught handler and
+     * kills the whole process, taking every other live session with it. A single
+     * broken transport must never be able to do that.
+     */
+    private val coroutineFailureHandler = CoroutineExceptionHandler { _, error ->
+        MangoLog.warn(MangoLogEvent.SESSION_COROUTINE_FAILED, error)
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + coroutineFailureHandler)
     private val sessionsById = ConcurrentHashMap<String, ManagedSession>()
-    private val promptWaiters = ConcurrentHashMap<String, CompletableDeferred<List<String>?>>()
+    private val promptRegistry = SessionPromptRegistry()
     private val remoteFiles = RemoteFileClient()
     private val terminalStore = SessionTerminalStore(
         onKeyboardInput = { sessionId, bytes -> send(sessionId, bytes) },
@@ -149,7 +162,7 @@ class SshSessionController internal constructor(
                 detail = context.appString(R.string.session_connecting),
             ),
         )
-        SessionForegroundService.start(context)
+        if (!startForegroundOwnership(sessionId, managed)) return sessionId
 
         managed.connectionJob = scope.launch {
             when (profile.protocol) {
@@ -158,6 +171,34 @@ class SshSessionController internal constructor(
             }
         }
         return sessionId
+    }
+
+    /**
+     * Takes foreground ownership before any network negotiation begins.
+     *
+     * Android can refuse the start outright depending on the process state, and
+     * this runs on the main thread from the connect action, so an escaping
+     * `ForegroundServiceStartNotAllowedException` would close the app instead of
+     * the connection. Report it as an ordinary connection failure and let the
+     * session end with a message the user can act on.
+     *
+     * Returns whether the session may continue connecting.
+     */
+    private fun startForegroundOwnership(sessionId: String, managed: ManagedSession): Boolean {
+        try {
+            SessionForegroundService.start(context)
+        } catch (error: RuntimeException) {
+            MangoLog.warn(MangoLogEvent.FOREGROUND_SERVICE_START_DENIED, error)
+            finishSession(
+                sessionId = sessionId,
+                managed = managed,
+                reason = SessionEndReason.CONNECTION_FAILED,
+                failure = error,
+                messageKind = SessionEndMessageKind.FOREGROUND_SERVICE_UNAVAILABLE,
+            )
+            return false
+        }
+        return true
     }
 
     /**
@@ -207,7 +248,7 @@ class SshSessionController internal constructor(
                 kind = kind,
             ),
         )
-        SessionForegroundService.start(context)
+        if (!startForegroundOwnership(sessionId, managed)) return sessionId
 
         managed.connectionJob = scope.launch {
             runShellessSession(sessionId, profile, managed)
@@ -238,7 +279,7 @@ class SshSessionController internal constructor(
     }
 
     fun respondToPrompt(requestId: String, values: List<String>?) {
-        promptWaiters.remove(requestId)?.complete(values)
+        promptRegistry.complete(requestId, values)
         _prompts.update { prompts -> prompts.filterNot { it.requestId == requestId } }
     }
 
@@ -567,6 +608,22 @@ class SshSessionController internal constructor(
     }
 
     /**
+     * Ends every connection when Android refuses the foreground ownership that
+     * is required to keep it alive outside the activity.
+     */
+    internal fun onForegroundServiceUnavailable(error: RuntimeException) {
+        sessionsById.entries.toList().forEach { (sessionId, managed) ->
+            finishSession(
+                sessionId = sessionId,
+                managed = managed,
+                reason = SessionEndReason.CONNECTION_FAILED,
+                failure = error,
+                messageKind = SessionEndMessageKind.FOREGROUND_SERVICE_UNAVAILABLE,
+            )
+        }
+    }
+
+    /**
      * Tears down every session and immediately releases embedded tsnet leases.
      *
      * The controller scope is cancelled at the end, so the normal delayed
@@ -581,6 +638,11 @@ class SshSessionController internal constructor(
                 deferTsnetMoshRelease = false,
             )
         }
+        // Waiters registered but not yet published survive the per-session
+        // teardown above only in a narrow race; releasing them here keeps the
+        // shutdown from leaving a protocol thread parked in a prompt.
+        promptRegistry.cancelAll()
+        _prompts.value = emptyList()
         scope.cancel()
     }
 
@@ -591,6 +653,11 @@ class SshSessionController internal constructor(
      * coroutines, a user close action, and connection setup failures may race,
      * but only the first caller is allowed to stop forwards, remove terminal
      * state, and withdraw notifications.
+     *
+     * Every step is individually guarded. Most callers invoke this as the last
+     * statement of a coroutine or of their own `catch` block, so a throw here
+     * would have nothing left to catch it and would take the process down along
+     * with every unrelated session.
      */
     private fun finishSession(
         sessionId: String,
@@ -602,33 +669,47 @@ class SshSessionController internal constructor(
     ) {
         if (!sessionsById.remove(sessionId, managed)) return
 
-        managed.connectionJob?.cancel()
-        managed.keepaliveJob?.cancel()
-        managed.sshFeatureKeepaliveJob?.cancel()
-        managed.readerJobs.toList().forEach(Job::cancel)
-        cancelPromptsForSession(sessionId)
-        closePortForwards(sessionId, managed)
-        runCatching { managed.session?.close() }
-        managed.moshProcess?.let { process ->
-            if (reason == SessionEndReason.USER_REQUEST) {
-                runCatching { process.closeGracefully() }
-            } else {
-                runCatching { process.close() }
-                // A non-user termination cancels the reader, so reap the
-                // direct native child separately from its normal EOF path.
-                scope.launch { runCatching { process.awaitExit() } }
+        // Withdraw the session before anything else. The terminal screen is
+        // reached through this list, so a single update makes it leave, taking
+        // its emulator view and any prompt dialog with it as one coherent
+        // change. Releasing a prompt waiter first would instead retire the
+        // dialog on its own and make the screen change shape twice for one
+        // disconnect.
+        step { _sessions.update { sessions -> sessions.filterNot { it.id == sessionId } } }
+
+        // Then unblock any protocol thread parked on a host-key or
+        // authentication prompt; it can no longer answer anything useful.
+        step { releasePromptWaiters(sessionId) }
+        step { _prompts.update { prompts -> prompts.filterNot { it.sessionId == sessionId } } }
+
+        step { managed.connectionJob?.cancel() }
+        step { managed.keepaliveJob?.cancel() }
+        step { managed.sshFeatureKeepaliveJob?.cancel() }
+        step { managed.readerJobs.toList().forEach(Job::cancel) }
+        step { closePortForwards(sessionId, managed) }
+        step { managed.session?.close() }
+        step {
+            managed.moshProcess?.let { process ->
+                if (reason == SessionEndReason.USER_REQUEST) {
+                    process.closeGracefully()
+                } else {
+                    process.close()
+                    // A non-user termination cancels the reader, so reap the
+                    // direct native child separately from its normal EOF path.
+                    scope.launch { runCatching { process.awaitExit() } }
+                }
             }
         }
         val closeEmbeddedTsnet = {
-            runCatching { managed.tsnetUdpRelay?.close() }
-            runCatching { managed.tsnetLease?.close() }
+            step { managed.tsnetUdpRelay?.close() }
+            step { managed.tsnetLease?.close() }
         }
         val sshFeatureConnection = synchronized(managed.sshFeatureLock) {
             managed.sshFeatureConnection.also { managed.sshFeatureConnection = null }
         }
-        runCatching { sshFeatureConnection?.close() }
+        step { sshFeatureConnection?.close() }
         if (sshFeatureConnection !== managed.connection) {
-            runCatching { managed.connection.close() }
+            step { managed.connection.close() }
         }
         if (
             managed.protocol == ConnectionProtocol.MOSH &&
@@ -638,25 +719,30 @@ class SshSessionController internal constructor(
         ) {
             // Keep the loopback UDP relay alive through Mosh's short graceful
             // quit window, then release the final process-wide tsnet reference.
-            scope.launch {
-                delay(TSNET_MOSH_GRACEFUL_RELEASE_MILLIS)
-                closeEmbeddedTsnet()
+            step {
+                scope.launch {
+                    delay(TSNET_MOSH_GRACEFUL_RELEASE_MILLIS)
+                    closeEmbeddedTsnet()
+                }
             }
         } else {
             closeEmbeddedTsnet()
         }
 
-        _resourceSnapshots.update { snapshots -> snapshots - sessionId }
-        fileTransfers.onSessionEnded(sessionId)
-        terminalStore.remove(sessionId)
-        _sessions.update { sessions -> sessions.filterNot { it.id == sessionId } }
-        _sessionEndedEvents.tryEmit(
-            SessionEndedEvent(
-                sessionId = sessionId,
-                reason = reason,
-                messageKind = messageKind,
-            ),
-        )
+        step { _resourceSnapshots.update { snapshots -> snapshots - sessionId } }
+        step { fileTransfers.onSessionEnded(sessionId) }
+        // The emulator is released only after the screen has stopped reading it,
+        // which the session withdrawal above already guaranteed.
+        step { terminalStore.remove(sessionId) }
+        step {
+            _sessionEndedEvents.tryEmit(
+                SessionEndedEvent(
+                    sessionId = sessionId,
+                    reason = reason,
+                    messageKind = messageKind,
+                ),
+            )
+        }
 
         when (reason) {
             SessionEndReason.USER_REQUEST -> MangoLog.info(MangoLogEvent.SSH_SESSION_CLOSED)
@@ -671,11 +757,33 @@ class SshSessionController internal constructor(
         // leaving Android's foreground-service watchdog armed.
     }
 
-    /** Completes any host-key or authentication waiters so background jobs cannot hang. */
-    private fun cancelPromptsForSession(sessionId: String) {
-        val promptsForSession = _prompts.value.filter { it.sessionId == sessionId }
-        promptsForSession.forEach { prompt -> promptWaiters.remove(prompt.requestId)?.complete(null) }
-        _prompts.update { prompts -> prompts.filterNot { it.sessionId == sessionId } }
+    /**
+     * Runs one teardown step, reporting rather than propagating a failure.
+     *
+     * A single uncooperative resource must not skip the remaining cleanup, and
+     * teardown itself must never be the thing that ends the process.
+     */
+    private fun step(action: () -> Unit) {
+        try {
+            action()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            MangoLog.warn(MangoLogEvent.SESSION_TEARDOWN_FAILED, error)
+        }
+    }
+
+    /**
+     * Completes any host-key or authentication waiters so background jobs cannot hang.
+     *
+     * The waiters are cancelled through the registry rather than through the
+     * published prompt list, because a prompt is registered before it is
+     * published: draining the visible list would miss a prompt raised in that
+     * window and strand its protocol thread until the prompt timeout expired.
+     */
+    private fun releasePromptWaiters(sessionId: String) {
+        val released = promptRegistry.cancelSession(sessionId)
+        if (released > 0) MangoLog.info(MangoLogEvent.SESSION_PROMPT_ABANDONED)
     }
 
     private suspend fun runSshSession(
@@ -716,6 +824,14 @@ class SshSessionController internal constructor(
             MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
             val session = connection.openSession()
+            // Host-key verification and authentication can take minutes, so the
+            // session may already have been torn down. Storing the channel now
+            // would attach a live resource to a ManagedSession nobody will ever
+            // clean up again.
+            if (sessionsById[sessionId] !== managed) {
+                runCatching { session.close() }
+                return
+            }
             managed.session = session
             session.requestPTY(
                 connectionPreferencesStore.current().sshTerminalType.termValue,
@@ -736,6 +852,8 @@ class SshSessionController internal constructor(
             }
             session.startShell()
 
+            if (sessionsById[sessionId] !== managed) return
+
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             startSshReaders(sessionId, managed)
@@ -746,7 +864,7 @@ class SshSessionController internal constructor(
                 .forEach { rule -> startPortForward(sessionId, rule) }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             finishSession(
                 sessionId = sessionId,
                 managed = managed,
@@ -797,12 +915,14 @@ class SshSessionController internal constructor(
             }
             MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
+            if (sessionsById[sessionId] !== managed) return
+
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             startSshKeepalive(sessionId, managed)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             finishSession(
                 sessionId = sessionId,
                 managed = managed,
@@ -867,9 +987,17 @@ class SshSessionController internal constructor(
             MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_SUCCEEDED)
 
             val relay = if (profile.route == ConnectionRoute.TSNET) {
-                requireNotNull(managed.tsnetLease)
-                    .startUdpRelay(profile.hostname, bootstrap.port)
-                    .also { managed.tsnetUdpRelay = it }
+                val lease = requireNotNull(managed.tsnetLease)
+                val started = lease.startUdpRelay(profile.hostname, bootstrap.port)
+                // The relay must only become the session's if the session is
+                // still the live one; otherwise teardown already ran past the
+                // point where it would have closed it.
+                if (sessionsById[sessionId] !== managed) {
+                    runCatching { started.close() }
+                    return
+                }
+                managed.tsnetUdpRelay = started
+                started
             } else {
                 null
             }
@@ -892,6 +1020,13 @@ class SshSessionController internal constructor(
                 // Clear the Java copy even when an asset or JNI check fails.
                 bootstrap.key.fill('\u0000')
             }
+            // A native child adopted by a session that no longer exists would
+            // never be signalled or reaped, so stop it here instead.
+            if (sessionsById[sessionId] !== managed) {
+                runCatching { moshProcess.close() }
+                runCatching { moshProcess.awaitExit() }
+                return
+            }
             managed.moshProcess = moshProcess
             MangoLog.info(MangoLogEvent.MOSH_PROCESS_STARTED)
 
@@ -904,7 +1039,7 @@ class SshSessionController internal constructor(
                 .forEach { rule -> startPortForward(sessionId, rule) }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
             finishSession(
                 sessionId = sessionId,
                 managed = managed,
@@ -916,7 +1051,7 @@ class SshSessionController internal constructor(
     }
 
     /** Returns only fixed localized wording for failure categories that need clarification. */
-    private fun connectionFailureMessage(error: Exception): SessionEndMessageKind? = when (error) {
+    private fun connectionFailureMessage(error: Throwable): SessionEndMessageKind? = when (error) {
         is SshAuthenticationException -> SessionEndMessageKind.AUTHENTICATION_FAILED
         is MoshBootstrapException -> SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED
         is MoshRuntimeException -> SessionEndMessageKind.MOSH_RUNTIME_MISSING
@@ -1177,7 +1312,10 @@ class SshSessionController internal constructor(
             return StreamEnd.EOF
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Exception) {
+        } catch (error: Throwable) {
+            // Reported rather than propagated: the caller turns this into the
+            // session's end reason, and a reader that threw instead would leave
+            // the transport running with no one left to close it.
             return StreamEnd.Failed(error)
         }
     }
@@ -1435,15 +1573,30 @@ class SshSessionController internal constructor(
         ),
     )
 
-    private fun requestPrompt(prompt: SessionPrompt): List<String>? = runBlocking {
-        val waiter = CompletableDeferred<List<String>?>()
-        promptWaiters[prompt.requestId] = waiter
+    /**
+     * Publishes one prompt and blocks the calling protocol thread for the answer.
+     *
+     * This runs on a trilead transport thread, not on a session coroutine, so
+     * `runBlocking` here cannot be released by cancelling the session's job. The
+     * registry is what releases it: [releasePromptWaiters] completes the waiter
+     * during teardown. Registering before publishing keeps that guarantee — a
+     * waiter is always visible to teardown before its prompt is visible to the
+     * user.
+     *
+     * A session that is already gone is never asked: answering it could only
+     * feed a transport nobody owns.
+     */
+    private fun requestPrompt(prompt: SessionPrompt): List<String>? {
+        if (sessionsById[prompt.sessionId] == null) return null
+        val waiter = promptRegistry.register(prompt.requestId, prompt.sessionId)
         _prompts.update { it + prompt }
-        try {
-            withTimeoutOrNull(PROMPT_TIMEOUT_MILLIS) { waiter.await() }
-        } finally {
-            promptWaiters.remove(prompt.requestId)
-            _prompts.update { prompts -> prompts.filterNot { it.requestId == prompt.requestId } }
+        return runBlocking {
+            try {
+                withTimeoutOrNull(PROMPT_TIMEOUT_MILLIS) { waiter.await() }
+            } finally {
+                promptRegistry.release(prompt.requestId)
+                _prompts.update { prompts -> prompts.filterNot { it.requestId == prompt.requestId } }
+            }
         }
     }
 
@@ -1516,17 +1669,23 @@ class SshSessionController internal constructor(
                 ),
             )?.firstOrNull() == TRUST_APPROVAL
             if (accepted) {
-                runBlocking {
-                    vault.trustHostKey(
-                        TrustedHostKey(
-                            hostname = hostname,
-                            port = port,
-                            algorithm = algorithm,
-                            keyBlobBase64 = encoded,
-                            fingerprint = fingerprint,
-                        ),
-                    )
-                }
+                // This runs on trilead's key-exchange thread. Persisting the
+                // trust decision is a convenience for the next connection, so a
+                // vault write failure must not become an exception thrown into
+                // the protocol stack; the user already approved this key.
+                runCatching {
+                    runBlocking {
+                        vault.trustHostKey(
+                            TrustedHostKey(
+                                hostname = hostname,
+                                port = port,
+                                algorithm = algorithm,
+                                keyBlobBase64 = encoded,
+                                fingerprint = fingerprint,
+                            ),
+                        )
+                    }
+                }.onFailure { error -> MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error) }
             }
             return accepted
         }
