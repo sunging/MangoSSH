@@ -3,6 +3,10 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands curl mkdir mv rm sha256sum tar
 GO_VERSION="1.26.5"
 GO_ARCHIVE="go${GO_VERSION}.linux-amd64.tar.gz"
 GO_SHA256="5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"

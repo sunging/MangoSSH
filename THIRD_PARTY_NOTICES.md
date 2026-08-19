@@ -13,8 +13,8 @@ branch.
   every APK at `assets/licenses/GPL-3.0-or-later.txt`.
 - Packaged artifacts: `app/src/main/jniLibs/*/libmosh_client.so` and
   `app/src/main/assets/mosh/terminfo.zip`.
-- Build entry point: `tools/build-mosh-android-wsl.sh` using Android NDK
-  `27.3.13750724`; `tools/fetch-android-ndk-wsl.sh` obtains that NDK into the
+- Build entry point: `tools/build-mosh-android.sh` using Android NDK
+  `27.3.13750724`; `tools/fetch-android-ndk.sh` obtains that NDK into the
   ignored project-local `.tools` directory.
 
 The upstream Android build script uses its declared zlib, protobuf, ncurses,

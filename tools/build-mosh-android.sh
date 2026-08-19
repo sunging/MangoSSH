@@ -9,6 +9,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands \
+    autoconf automake awk bash bison chmod cmake curl find getconf git gperf \
+    grep install libtoolize make mkdir mktemp ninja patch perl pkg-config \
+    readelf rm rsync sed sort tar unzip zip
 NDK_REVISION="27.3.13750724"
 NDK_HOME="${ANDROID_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/$NDK_REVISION}"
 # A temporary LF-normalized checkout can be supplied when the Windows working
@@ -18,7 +25,7 @@ PATCH_FILE="$PROJECT_DIR/tools/patches/mosh4android-offline-sources.patch"
 PATCHED_MOSH_SOURCE="${MANGOSSH_PATCHED_MOSH_SOURCE:-$PROJECT_DIR/.tools/mosh4android-patched}"
 
 [[ -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]] || {
-    echo "Android NDK r27d is required; run tools/fetch-android-ndk-wsl.sh first." >&2
+    echo "Android NDK r27d is required; run tools/fetch-android-ndk.sh first." >&2
     exit 1
 }
 [[ -f "$UPSTREAM_MOSH_SOURCE/android/build-android-release-assets.sh" ]] || {
@@ -31,8 +38,6 @@ case "$PATCHED_MOSH_SOURCE" in
     "$PROJECT_DIR"/.tools/*) ;;
     *) echo "Unsafe patched Mosh source path: $PATCHED_MOSH_SOURCE" >&2; exit 1 ;;
 esac
-command -v git >/dev/null 2>&1 || { echo "git is required." >&2; exit 1; }
-command -v tar >/dev/null 2>&1 || { echo "tar is required." >&2; exit 1; }
 git -C "$UPSTREAM_MOSH_SOURCE" rev-parse --verify HEAD >/dev/null 2>&1 || {
     echo "The Mosh source must be a checked-out Git work tree." >&2
     exit 1

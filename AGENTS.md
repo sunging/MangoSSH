@@ -23,7 +23,7 @@
 
 - Native Mosh assets are GPL-3.0-or-later and must retain their upstream source,
   commit identity, license text, build instructions, and notices.
-- Use the repository's `third_party/mosh4android` submodule and the WSL build
+- Use the repository's `third_party/mosh4android` submodule and the Linux build
   scripts. Build `libmangossh_pty.so` before the Mosh client, then run
   `tools/install-mosh-assets.sh`; package all four ABI clients, terminfo, and
   the GPL text in the APK.
@@ -77,26 +77,27 @@ F-Droid-compatible signature.
 
 For native code, also validate the ABI assets, ELF interpreter/dependencies,
 and a debug APK package inspection. Every packaged `PT_LOAD` segment must have
-at least 16 KiB alignment: run `tools/check-16kb-elf-wsl.sh` against the debug
+at least 16 KiB alignment: run `tools/check-16kb-elf.sh` against the debug
 APK and `zipalign -c -P 16 -v 4` against that APK. NDK r27 builds must keep
 both `-Wl,-z,max-page-size=16384` and `-Wl,-z,common-page-size=16384` linker
 options. When a device is available, test SSH host key confirmation, OTP, Mosh
 bootstrap, reconnect, resize, process cleanup, and app background/foreground
 behavior.
 
-In Ubuntu WSL, run the native sequence from the repository root:
+On a glibc-compatible Linux x86_64 host, run the native sequence from the
+repository root:
 
 ```text
-bash tools/fetch-android-ndk-wsl.sh
-bash tools/build-pty-bridge-wsl.sh
-bash tools/build-mosh-android-wsl.sh
+bash tools/fetch-android-ndk.sh
+bash tools/build-pty-bridge.sh
+bash tools/build-mosh-android.sh
 bash tools/install-mosh-assets.sh
 ```
 
 After producing the debug APK, run:
 
 ```text
-bash tools/check-16kb-elf-wsl.sh \
+bash tools/check-16kb-elf.sh \
   app/build/outputs/apk/debug/app-debug.apk
 ```
 

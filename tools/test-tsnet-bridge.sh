@@ -3,6 +3,10 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands bash chmod cp flock git mkdir rm sha256sum
 BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
 GO_ROOT="$PROJECT_DIR/.tools/go/1.26.5"
 TAILSCALE_VERSION="v1.98.8"
@@ -14,7 +18,7 @@ WORK_DIR="/tmp/mangossh-tsnetbridge-test-v1.98.8"
 WORK_LOCK="/tmp/mangossh-tsnetbridge-test-v1.98.8.lock"
 PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch"
 
-bash "$PROJECT_DIR/tools/fetch-go-wsl.sh"
+bash "$PROJECT_DIR/tools/fetch-go.sh"
 export PATH="$GO_ROOT/bin:$PATH"
 export GOWORK=off
 GO_MODULE_CACHE_ROOT="${MANGOSSH_GO_TEST_MOD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mangossh/go-mod/tsnetbridge-test}"

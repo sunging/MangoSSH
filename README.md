@@ -72,18 +72,25 @@ palette licenses, versions, and SHA-256 values are recorded in
 
 ## Native Mosh build
 
-In Ubuntu WSL, run the following from the repository root:
+On a glibc-compatible Linux x86_64 host, run the following from the repository
+root:
 
 ```text
-bash tools/fetch-android-ndk-wsl.sh
-bash tools/build-pty-bridge-wsl.sh
-bash tools/build-mosh-android-wsl.sh
+bash tools/fetch-android-ndk.sh
+bash tools/build-pty-bridge.sh
+bash tools/build-mosh-android.sh
 bash tools/install-mosh-assets.sh
 ```
 
 The final command validates and copies the four ABI archives into the Android
-app. The scripts keep downloaded compilers and intermediate files in `.tools`,
-which is not committed.
+app. The scripts are distribution-neutral and report missing command-line
+dependencies without invoking a package manager. They keep downloaded compilers
+and intermediate files in `.tools`, which is not committed. On Windows, Gradle
+uses WSL only as an adapter for these same Linux scripts.
+
+Direct tsnet builds require `ANDROID_SDK_ROOT` or `ANDROID_HOME` to point to an
+existing Android SDK. Gradle resolves the configured SDK itself and passes that
+path to the generic Linux script.
 
 ## 16 KiB page-size verification
 
@@ -91,7 +98,7 @@ After building the debug APK, validate both the ELF load segments and the APK
 alignment. This is required for Android devices that use 16 KiB memory pages:
 
 ```text
-bash tools/check-16kb-elf-wsl.sh \
+bash tools/check-16kb-elf.sh \
   app/build/outputs/apk/debug/app-debug.apk
 zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -110,7 +117,7 @@ servers, exit nodes, and device-wide VPN routing are intentionally out of
 scope.
 
 Gradle builds the pinned four-ABI gomobile AAR on demand through
-`tools/build-tsnet-android-wsl.sh`; the generated AAR and downloaded toolchains
+`tools/build-tsnet-android.sh`; the generated AAR and downloaded toolchains
 are ignored and must not be committed. See
 [docs/embedded-tsnet.md](docs/embedded-tsnet.md) for the exact tool versions,
 security boundaries, build commands, and emulator/lab verification checklist.

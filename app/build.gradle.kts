@@ -43,6 +43,7 @@ require(derivedVersionCodeLong in 1L..2_100_000_000L) {
 val appVersionCode = derivedVersionCodeLong.toInt()
 
 val embeddedTsnetAar = layout.buildDirectory.file("generated/tsnet/mangossh-tsnet.aar")
+val androidSdkPath = androidComponents.sdkComponents.sdkDirectory.get().asFile.absolutePath
 val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
     group = "build"
     description = "Builds the pinned four-ABI embedded tsnet gomobile bridge."
@@ -51,26 +52,40 @@ val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
     }
     inputs.files(bridgeSources)
     inputs.files(
-        rootProject.file("tools/build-tsnet-android-wsl.sh"),
-        rootProject.file("tools/fetch-android-ndk-wsl.sh"),
-        rootProject.file("tools/fetch-go-wsl.sh"),
-        rootProject.file("tools/fetch-jdk17-wsl.sh"),
+        rootProject.file("tools/build-tsnet-android.sh"),
+        rootProject.file("tools/fetch-android-ndk.sh"),
+        rootProject.file("tools/fetch-go.sh"),
+        rootProject.file("tools/fetch-jdk17.sh"),
+        rootProject.file("tools/lib/linux-host.sh"),
         rootProject.file("tools/generate-tsnet-notices.py"),
         rootProject.file("tools/normalize-tsnet-aar.py"),
         rootProject.file("tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch"),
     )
+    inputs.property("androidSdkDirectory", androidSdkPath)
     outputs.file(embeddedTsnetAar)
     workingDir(rootProject.projectDir)
+
     if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-        val windowsRoot = rootProject.projectDir.absolutePath.replace("'", "'\"'\"'")
+        val translatedVariables =
+            "MANGOSSH_PROJECT_DIR/p:ANDROID_HOME/p:ANDROID_SDK_ROOT/p"
+        val inheritedWslEnv = providers.environmentVariable("WSLENV").orNull.orEmpty()
+        val wslEnv = listOf(inheritedWslEnv, translatedVariables)
+            .filter(String::isNotBlank)
+            .joinToString(":")
+        environment("MANGOSSH_PROJECT_DIR", rootProject.projectDir.absolutePath)
+        environment("ANDROID_HOME", androidSdkPath)
+        environment("ANDROID_SDK_ROOT", androidSdkPath)
+        environment("WSLENV", wslEnv)
         commandLine(
             "wsl.exe",
             "bash",
             "-lc",
-            "cd \"\$(wslpath -u '$windowsRoot')\" && bash tools/build-tsnet-android-wsl.sh",
+            "cd \"\$MANGOSSH_PROJECT_DIR\" && bash tools/build-tsnet-android.sh",
         )
     } else {
-        commandLine("bash", "tools/build-tsnet-android-wsl.sh")
+        environment("ANDROID_HOME", androidSdkPath)
+        environment("ANDROID_SDK_ROOT", androidSdkPath)
+        commandLine("bash", "tools/build-tsnet-android.sh")
     }
 }
 

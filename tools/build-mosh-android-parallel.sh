@@ -9,6 +9,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands bash cp env mkdir rm tail
 OUTPUT_DIR="${WORK_DIR:-$PROJECT_DIR/.tools/mosh-android-build}"
 PARALLELISM="${MANGOSSH_ABI_PARALLELISM:-2}"
 BUILD_JOBS="${MANGOSSH_ABI_BUILD_JOBS:-2}"
@@ -54,7 +58,7 @@ build_abi() {
         WORK_DIR="$worker_dir" \
         MAX_BUILD_JOBS="$BUILD_JOBS" \
         MANGOSSH_PATCHED_MOSH_SOURCE="$patched_source" \
-        bash "$PROJECT_DIR/tools/build-mosh-android-wsl.sh" \
+        bash "$PROJECT_DIR/tools/build-mosh-android.sh" \
         >"$OUTPUT_DIR/$abi.log" 2>&1
     cp "$worker_dir/mosh-android-$abi.zip" "$OUTPUT_DIR/"
 }

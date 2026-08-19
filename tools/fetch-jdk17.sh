@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Fetches the checksum-pinned Linux JDK used by the WSL gomobile build.
+# Fetches the checksum-pinned Linux JDK used by the gomobile build.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands curl cut mkdir mv rm sha256sum tar
 JDK_VERSION="17.0.19+10"
 JDK_ARCHIVE="OpenJDK17U-jdk_x64_linux_hotspot_17.0.19_10.tar.gz"
 JDK_URL="https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.19%2B10/$JDK_ARCHIVE"

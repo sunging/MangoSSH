@@ -8,6 +8,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands cmake grep ninja
 PROTOBUF_VERSION="29.1"
 PROTOBUF_SOURCE="${MANGOSSH_PROTOBUF_SOURCE:-${MANGOSSH_MOSH_DEPS_DIR:-}/protobuf}"
 BUILD_ROOT="${MANGOSSH_HOST_PROTOC_BUILD_ROOT:-$PROJECT_DIR/.tools/host-protoc-$PROTOBUF_VERSION}"

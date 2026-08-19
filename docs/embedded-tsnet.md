@@ -23,7 +23,7 @@ routing are intentionally unsupported.
 The reproducible bridge build pins:
 
 - Go `1.26.5`;
-- Eclipse Temurin JDK `17.0.19+10` for the WSL gomobile wrapper;
+- Eclipse Temurin JDK `17.0.19+10` for the gomobile build;
 - Android NDK `27.3.13750724` (r27d);
 - `tailscale.com v1.98.8`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
@@ -43,14 +43,19 @@ logtail buffer when no-support logging is disabled, routes the loopback SOCKS5
 dial through `tsnet.Server.Dial`, extends only the initial SOCKS5 destination
 dial to 30 seconds, and exposes a network-monitor refresh hook for Android.
 
-From Ubuntu, Linux CI, or Ubuntu WSL at the repository root:
+From a glibc-compatible Linux x86_64 host at the repository root:
 
 ```text
-bash tools/test-tsnet-bridge-wsl.sh
-bash tools/build-tsnet-android-wsl.sh
+bash tools/test-tsnet-bridge.sh
+bash tools/build-tsnet-android.sh
 ```
 
-On Windows, normal Gradle tasks invoke the same WSL build script:
+Direct builds require `ANDROID_SDK_ROOT` or `ANDROID_HOME` to name an existing
+Android SDK directory. The build normalizes the selected path and exports both
+variables to its child tools.
+
+On Windows, normal Gradle tasks use WSL as an adapter to invoke the same generic
+Linux build script and pass Gradle's resolved Android SDK path into Linux:
 
 ```text
 gradlew.bat :app:testDebugUnitTest
@@ -106,10 +111,10 @@ gradlew.bat :app:lint :app:assembleDebug :app:assembleRelease
 Then inspect the APK:
 
 ```text
-bash tools/check-16kb-elf-wsl.sh \
+bash tools/check-16kb-elf.sh \
   app/build/outputs/apk/debug/app-debug.apk
 zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
-bash tools/check-16kb-elf-wsl.sh \
+bash tools/check-16kb-elf.sh \
   app/build/outputs/apk/release/app-release-unsigned.apk
 zipalign -c -P 16 -v 4 app/build/outputs/apk/release/app-release-unsigned.apk
 ```

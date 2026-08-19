@@ -9,6 +9,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands awk cmake install mkdir ninja
 NDK_REVISION="27.3.13750724"
 NDK_HOME="${ANDROID_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/$NDK_REVISION}"
 SOURCE_DIR="$PROJECT_DIR/app/src/main/cpp"
@@ -20,7 +24,7 @@ STRIP="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 REQUIRED_ALIGNMENT=$((16 * 1024))
 
 [[ -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" && -x "$READELF" && -x "$STRIP" ]] || {
-    echo "Android NDK r27d is required; run tools/fetch-android-ndk-wsl.sh first." >&2
+    echo "Android NDK r27d is required; run tools/fetch-android-ndk.sh first." >&2
     exit 1
 }
 

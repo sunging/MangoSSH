@@ -3,6 +3,11 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands \
+    bash chmod cp find flock git grep install mkdir rm python3 sha256sum
 BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
 TOOLS_DIR="$PROJECT_DIR/.tools"
 GO_VERSION="1.26.5"
@@ -24,12 +29,20 @@ OUTPUT_AAR="$OUTPUT_DIR/mangossh-tsnet.aar"
 PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch"
 VENDOR_DIR="$BRIDGE_DIR/vendor"
 
+ANDROID_SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+[[ -d "$ANDROID_SDK_DIR" ]] || {
+    printf 'ANDROID_SDK_ROOT or ANDROID_HOME must point to the Android SDK.\n' >&2
+    exit 1
+}
+export ANDROID_HOME="$ANDROID_SDK_DIR"
+export ANDROID_SDK_ROOT="$ANDROID_SDK_DIR"
+
 if [[ ! -x "$GO_ROOT/bin/go" ]]; then
     if [[ "$STRICT_OFFLINE" == "1" ]]; then
         printf 'MANGOSSH_GO_ROOT or GOROOT must provide Go %s in offline mode.\n' "$GO_VERSION" >&2
         exit 1
     fi
-    bash "$PROJECT_DIR/tools/fetch-go-wsl.sh"
+    bash "$PROJECT_DIR/tools/fetch-go.sh"
     GO_ROOT="$TOOLS_DIR/go/$GO_VERSION"
 fi
 [[ "$("$GO_ROOT/bin/go" version)" == "go version go${GO_VERSION} linux/amd64" ]] || {
@@ -66,7 +79,7 @@ if [[ -z "${JAVA_HOME:-}" || ! -x "$JAVA_HOME/bin/javac" ]]; then
     if [[ ! -x "$JAVA_HOME/bin/javac" ]]; then
         JDK_TOOLS_DIR="$JDK_CACHE_ROOT" \
             JDK_ARCHIVE_PATH="$TOOLS_DIR/OpenJDK17U-jdk_x64_linux_hotspot_17.0.19_10.tar.gz" \
-            bash "$PROJECT_DIR/tools/fetch-jdk17-wsl.sh"
+            bash "$PROJECT_DIR/tools/fetch-jdk17.sh"
     fi
 fi
 export JAVA_HOME
@@ -79,16 +92,14 @@ else
         printf 'ANDROID_NDK_HOME must provide Android NDK r27d in offline mode.\n' >&2
         exit 1
     fi
-    # The NDK archive contains case-distinct Linux headers that cannot coexist
-    # on the default case-insensitive Windows filesystem. Keep the large
-    # archive in the ignored workspace cache, but extract into WSL's native
-    # filesystem. CI also benefits from the conventional ~/.cache location.
+    # Keep the large archive in the ignored workspace cache while extracting
+    # the toolchain into the conventional per-user cache location.
     NDK_CACHE_ROOT="${MANGOSSH_NDK_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mangossh}"
     NDK_HOME="$NDK_CACHE_ROOT/android-ndk-linux/$NDK_REVISION"
     if [[ ! -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]]; then
         TOOLS_DIR="$NDK_CACHE_ROOT" \
             NDK_ARCHIVE_PATH="$TOOLS_DIR/android-ndk-r27d-linux.zip" \
-            bash "$PROJECT_DIR/tools/fetch-android-ndk-wsl.sh"
+            bash "$PROJECT_DIR/tools/fetch-android-ndk.sh"
     fi
 fi
 grep -q '^Pkg.Revision = 27\.3\.13750724$' "$NDK_HOME/source.properties" || {
@@ -97,15 +108,6 @@ grep -q '^Pkg.Revision = 27\.3\.13750724$' "$NDK_HOME/source.properties" || {
 }
 export ANDROID_NDK_HOME="$NDK_HOME"
 
-if [[ -z "${ANDROID_HOME:-}" && -z "${ANDROID_SDK_ROOT:-}" ]]; then
-    DEFAULT_ANDROID_HOME="/mnt/d/code/android/sdk"
-    [[ -d "$DEFAULT_ANDROID_HOME" ]] || {
-        printf 'ANDROID_HOME or ANDROID_SDK_ROOT must point to the Android SDK.\n' >&2
-        exit 1
-    }
-    export ANDROID_HOME="$DEFAULT_ANDROID_HOME"
-fi
-
 mkdir -p "$GOBIN" "$OUTPUT_DIR"
 # Go's tool directive makes the pinned command packages available from vendor
 # without treating them as ordinary module imports. Resolve and install those
@@ -113,9 +115,9 @@ mkdir -p "$GOBIN" "$OUTPUT_DIR"
 pushd "$BRIDGE_DIR" >/dev/null
 gomobile_tool="$(go tool -n gomobile)"
 gobind_tool="$(go tool -n gobind)"
-[[ "$(realpath -m "$gomobile_tool")" == "$(realpath -m "$GOBIN/gomobile")" ]] ||
+[[ -e "$GOBIN/gomobile" && "$gomobile_tool" -ef "$GOBIN/gomobile" ]] ||
     install -m 0755 "$gomobile_tool" "$GOBIN/gomobile"
-[[ "$(realpath -m "$gobind_tool")" == "$(realpath -m "$GOBIN/gobind")" ]] ||
+[[ -e "$GOBIN/gobind" && "$gobind_tool" -ef "$GOBIN/gobind" ]] ||
     install -m 0755 "$gobind_tool" "$GOBIN/gobind"
 popd >/dev/null
 

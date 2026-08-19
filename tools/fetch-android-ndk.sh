@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Fetches the Linux-host Android NDK used by the WSL Mosh build. The toolchain
-# remains in .tools (which is ignored), so it neither modifies the Windows SDK
-# nor becomes part of a source commit.
+# Fetches the pinned Linux-host Android NDK. The toolchain remains in .tools
+# (which is ignored), so it neither modifies the Android SDK nor becomes part
+# of a source commit.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands curl cut head mkdir mv rm sha1sum stat unzip
 NDK_REVISION="27.3.13750724"
 NDK_ARCHIVE="android-ndk-r27d-linux.zip"
 NDK_URL="https://dl.google.com/android/repository/$NDK_ARCHIVE"
 NDK_SIZE="663956036"
 NDK_SHA1="22105e410cf29afcf163760cc95522b9fb981121"
 TOOLS_DIR="${TOOLS_DIR:-$PROJECT_DIR/.tools}"
-# A caller can retain a large downloaded archive on the workspace volume while
-# placing the extracted toolchain on WSL's faster Linux filesystem.
+# A caller can retain the large archive separately from the extracted
+# toolchain by overriding NDK_ARCHIVE_PATH and TOOLS_DIR.
 ARCHIVE_PATH="${NDK_ARCHIVE_PATH:-$TOOLS_DIR/$NDK_ARCHIVE}"
 TARGET_DIR="$TOOLS_DIR/android-ndk-linux/$NDK_REVISION"
 EXTRACTED_DIR="$(dirname "$TARGET_DIR")/android-ndk-r27d"

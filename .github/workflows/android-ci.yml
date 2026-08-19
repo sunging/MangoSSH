@@ -60,7 +60,7 @@ jobs:
         run: |
           build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$build_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
-          bash tools/check-16kb-elf-wsl.sh app/build/outputs/apk/debug/app-debug.apk
+          bash tools/check-16kb-elf.sh app/build/outputs/apk/debug/app-debug.apk
 
       # This is continuous delivery of an installable debug artifact. Tagged
       # production releases are signed by the dedicated release workflow.
@@ -126,7 +126,7 @@ jobs:
           build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$build_tools_dir/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
           "$build_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/release/app-release.apk
-          bash tools/check-16kb-elf-wsl.sh app/build/outputs/apk/release/app-release.apk
+          bash tools/check-16kb-elf.sh app/build/outputs/apk/release/app-release.apk
 
       # The `ci` name keeps this build out of the `MangoSSH-<tag>.apk` namespace
       # that published releases and the in-app updater use, while carrying the

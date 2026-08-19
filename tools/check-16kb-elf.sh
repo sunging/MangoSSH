@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Checks every native library packaged in an APK for 16 KiB PT_LOAD segment
-# alignment. It intentionally uses the host readelf so it can run in Ubuntu
-# WSL without requiring an Android device or Gradle task.
+# alignment using host tools, without requiring an Android device or Gradle
+# task.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands awk mktemp readelf rm unzip
 APK_PATH="${1:-$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk}"
 REQUIRED_ALIGNMENT=$((16 * 1024))
 
@@ -16,15 +20,6 @@ REQUIRED_ALIGNMENT=$((16 * 1024))
     echo "APK is missing: $APK_PATH" >&2
     exit 1
 }
-command -v readelf >/dev/null 2>&1 || {
-    echo "readelf is required." >&2
-    exit 1
-}
-command -v unzip >/dev/null 2>&1 || {
-    echo "unzip is required." >&2
-    exit 1
-}
-
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 unzip -q "$APK_PATH" 'lib/*/*.so' -d "$temp_dir"
