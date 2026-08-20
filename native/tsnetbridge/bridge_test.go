@@ -99,6 +99,7 @@ func TestRunningStatusWaitsForDialReadyPeerMap(t *testing.T) {
 func TestParseAndroidNetworkSnapshot(t *testing.T) {
 	interfaces, err := parseAndroidNetworkSnapshot(`{
 		"defaultRoute":"wlan0",
+		"defaultGateway":"192.0.2.1",
 		"interfaces":[{
 			"name":"wlan0",
 			"index":7,

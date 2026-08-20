@@ -43,7 +43,7 @@ var mtuProbePingSizesV6 []int
 // discoKeyAdvertisementInterval tells how often a disco update via TSMP can
 // happen. The update is triggered via enqueueCallMeMaybe, and thus it will
 // only be sent if the magicsock is in a state to send out CallMeMaybe.
-const discoKeyAdvertisementInterval = time.Second * 60
+const discoKeyAdvertisementInterval = time.Minute * 2
 
 func init() {
 	for _, m := range tstun.WireMTUsToProbe {
@@ -138,6 +138,20 @@ func (de *endpoint) udpRelayEndpointReady(maybeBest addrQuality) {
 func (de *endpoint) setBestAddrLocked(v addrQuality) {
 	if v.epAddr != de.bestAddr.epAddr {
 		de.probeUDPLifetime.resetCycleEndpointLocked()
+
+		// Reaching here, if we are upgrading from an invalid (missing) address
+		// to a valid one, record metrics:
+		if !de.bestAddr.ap.IsValid() && v.ap.IsValid() {
+			// If we are using data from a cached netmap, increment the counter for peers established.
+			isCached := de.c.usingCachedNetmap.Load()
+			if isCached {
+				metricCachedPeerContactDirect.Add(1)
+			}
+			// Regardless whether the netmap is cached, record how long it has
+			// been since the endpoint was initialized.
+			de.c.logf("magicsock: new contact: peer=%s usec=%d cached=%v via=direct",
+				de.publicKey.ShortString(), int64(mono.Since(de.c.initializedAt)/time.Microsecond), isCached)
+		}
 	}
 	de.bestAddr = v
 }
@@ -1348,8 +1362,12 @@ func (de *endpoint) startDiscoPingLocked(ep epAddr, now mono.Time, purpose disco
 
 }
 
-// sendDiscoPingsLocked starts pinging all of ep's endpoints.
+// sendDiscoPingsLocked starts pinging all of ep's direct endpoints.
+// Sibling of discoverUDPRelayPathsLocked for udprelay.
 func (de *endpoint) sendDiscoPingsLocked(now mono.Time, sendCallMeMaybe bool) {
+	if debugNeverDirectUDP() {
+		return // skip when direct UDP is disabled
+	}
 	de.lastFullPing = now
 	var sentAny bool
 	for ep, st := range de.endpointState {

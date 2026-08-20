@@ -157,6 +157,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
         assertFalse(first.getString("name").isBlank())
         assertTrue(first.has("addrs"))
         assertTrue(snapshot.has("defaultRoute"))
+        assertTrue(snapshot.has("defaultGateway"))
     }
 
     private class FakeStateStore(enrolled: Boolean) : EmbeddedTsnetStateStore {

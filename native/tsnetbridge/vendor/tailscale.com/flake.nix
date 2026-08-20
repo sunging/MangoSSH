@@ -159,9 +159,18 @@
           # qemu and e2fsprogs are needed for natlab
           qemu
           e2fsprogs
+
+          # mtools (mcopy) and dtc are needed by the `tsapp-qemu-pi`
+          # Makefile target that boots the Tailscale appliance under qemu.
+          mtools
+          dtc
+
+          # awscli2 is used by gokrazy/build.go to import and register the
+          # Tailscale appliance AMI.
+          awscli2.out
         ];
       };
     });
   };
 }
-# nix-direnv cache busting line: sha256-Sd2iLJ7eDfDYdIRuW4xuiKgzhQWJWGAnz97FJWrVRlE=
+# nix-direnv cache busting line: sha256-amKkUPszyhG4N5ZtrB01swBACYq76raSS+SQRneLmwc=

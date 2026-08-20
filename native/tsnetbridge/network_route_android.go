@@ -10,3 +10,7 @@ import "tailscale.com/net/netmon"
 func updateDefaultRouteInterface(name string) {
 	netmon.UpdateLastKnownDefaultRouteInterface(name)
 }
+
+func updateDefaultGateway(ip string) {
+	netmon.UpdateLastKnownDefaultGateway(ip)
+}

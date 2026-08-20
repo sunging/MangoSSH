@@ -34,6 +34,7 @@ const (
 	MetricProxyGroupIngressCount         = "k8s_proxygroup_ingress_resources"
 	MetricProxyGroupAPIServerCount       = "k8s_proxygroup_kube_apiserver_resources"
 	MetricTailnetCount                   = "k8s_tailnet_resources"
+	MetricPeerRelayCount                 = "k8s_peerrelay_resources"
 
 	// Keys that containerboot writes to state file that can be used to determine its state.
 	// fields set in Tailscale state Secret. These are mostly used by the Tailscale Kubernetes operator to determine
@@ -52,6 +53,8 @@ const (
 
 	// Pod's IPv4 address header key as returned by containerboot health check endpoint.
 	PodIPv4Header string = "Pod-IPv4"
+	// Pod's IPv6 address header key as returned by containerboot health check endpoint.
+	PodIPv6Header string = "Pod-IPv6"
 
 	EgessServicesPreshutdownEP = "/internal-egress-services-preshutdown"
 

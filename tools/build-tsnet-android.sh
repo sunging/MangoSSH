@@ -12,21 +12,21 @@ BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
 TOOLS_DIR="$PROJECT_DIR/.tools"
 GO_VERSION="1.26.5"
 JDK_VERSION="17.0.19+10"
-TAILSCALE_VERSION="v1.98.8"
-TAILSCALE_TSNET_GO_SHA256="322062bfafaf38d5e5b258faae61d355d06fe4157cb8c34c22f35cbb22924867"
+TAILSCALE_VERSION="v1.102.2"
+TAILSCALE_TSNET_GO_SHA256="6a8d6cc7deae3006729ef688ed5d33770284e04699f2dd040bc52c08de667ca5"
 TAILSCALE_SOCKS5_GO_SHA256="e2fa5c1aca0cc1ca63417c8515acaaa800d13862fde48bfa4a576d844307d6f4"
-TAILSCALE_TSNET_PATCHED_SHA256="d2ce46080b1c772010ee74b005696371cb37c1b91eb22ff5966449e63be94eed"
+TAILSCALE_TSNET_PATCHED_SHA256="5e432071e90d527f105fe984c9aa4e81fa5e8b119b3cad76541628cc929abfae"
 TAILSCALE_SOCKS5_PATCHED_SHA256="68c1b5eb44a76210f120931a83ab259b0d539f84c9b33452cd8023d6b34ea95f"
 GOMOBILE_VERSION="v0.0.0-20260709172247-6129f5bee9d5"
 NDK_REVISION="27.3.13750724"
 STRICT_OFFLINE="${MANGOSSH_OFFLINE_BUILD:-0}"
 GO_ROOT="${MANGOSSH_GO_ROOT:-${GOROOT:-$TOOLS_DIR/go/$GO_VERSION}}"
 GOBIN="${MANGOSSH_GOBIN:-$TOOLS_DIR/go-bin/$GO_VERSION}"
-WORK_DIR="/tmp/mangossh-tsnetbridge-v1.98.8"
-WORK_LOCK="/tmp/mangossh-tsnetbridge-v1.98.8.lock"
+WORK_DIR="/tmp/mangossh-tsnetbridge-v1.102.2"
+WORK_LOCK="/tmp/mangossh-tsnetbridge-v1.102.2.lock"
 OUTPUT_DIR="$PROJECT_DIR/app/build/generated/tsnet"
 OUTPUT_AAR="$OUTPUT_DIR/mangossh-tsnet.aar"
-PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch"
+PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.102.2-tsnet-no-logtail.patch"
 VENDOR_DIR="$BRIDGE_DIR/vendor"
 
 ANDROID_SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
@@ -122,7 +122,7 @@ gobind_tool="$(go tool -n gobind)"
 popd >/dev/null
 
 case "$WORK_DIR" in
-    /tmp/mangossh-tsnetbridge-v1.98.8) ;;
+    /tmp/mangossh-tsnetbridge-v1.102.2) ;;
     *) printf 'Unsafe tsnet work path: %s\n' "$WORK_DIR" >&2; exit 1 ;;
 esac
 exec 9>"$WORK_LOCK"
@@ -142,7 +142,7 @@ find "$BRIDGE_WORK_DIR/vendor" -type f -exec chmod 0644 {} +
 pushd "$BRIDGE_WORK_DIR" >/dev/null
 TAILSCALE_MODULE_DIR="$BRIDGE_WORK_DIR/vendor/tailscale.com"
 case "$TAILSCALE_MODULE_DIR" in
-    /tmp/mangossh-tsnetbridge-v1.98.8/gopath/src/website.sung.mangossh/tsnetbridge/vendor/tailscale.com) ;;
+    /tmp/mangossh-tsnetbridge-v1.102.2/gopath/src/website.sung.mangossh/tsnetbridge/vendor/tailscale.com) ;;
     *) printf 'Unsafe Tailscale module path: %s\n' "$TAILSCALE_MODULE_DIR" >&2; exit 1 ;;
 esac
 [[ -d "$TAILSCALE_MODULE_DIR" ]] || {
@@ -168,6 +168,7 @@ go list -deps -json ./... > "$WORK_DIR/modules.json"
 python3 "$PROJECT_DIR/tools/generate-tsnet-notices.py" \
     "$WORK_DIR/modules.json" \
     "$WORK_DIR/tsnet-third-party-notices.txt" \
+    "$TAILSCALE_VERSION" \
     "$BRIDGE_WORK_DIR/vendor"
 
 # gomobile creates a temporary module and runs `go mod tidy` for each target
@@ -185,7 +186,7 @@ UNSTRIPPED_AAR="$WORK_DIR/mangossh-tsnet-unstripped.aar"
     -target android \
     -androidapi 26 \
     -trimpath \
-    -tags "ts_omit_cachenetmap" \
+    -tags "ts_omit_cachenetmap,ts_omit_netlog" \
     -ldflags "-linkmode=external -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384 -buildid=" \
     -o "$UNSTRIPPED_AAR" .
 popd >/dev/null

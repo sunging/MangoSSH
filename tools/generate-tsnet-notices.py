@@ -26,14 +26,16 @@ def load_json_stream(path: Path) -> list[dict[str, object]]:
 
 
 def main() -> int:
-    if len(sys.argv) not in (3, 4):
+    if len(sys.argv) not in (4, 5):
         print(
-            "usage: generate-tsnet-notices.py MODULES_JSON OUTPUT [VENDOR_ROOT]",
+            "usage: generate-tsnet-notices.py MODULES_JSON OUTPUT "
+            "TAILSCALE_VERSION [VENDOR_ROOT]",
             file=sys.stderr,
         )
         return 2
     values = load_json_stream(Path(sys.argv[1]))
-    vendor_root = Path(sys.argv[3]).resolve() if len(sys.argv) == 4 else None
+    tailscale_version = sys.argv[3]
+    vendor_root = Path(sys.argv[4]).resolve() if len(sys.argv) == 5 else None
     modules_by_path: dict[str, dict[str, object]] = {}
     for value in values:
         module = value.get("Module")
@@ -72,7 +74,7 @@ def main() -> int:
                 if candidate.is_file()
             },
         )
-        label_version = "v1.98.8" if path == "tailscale.com" else version
+        label_version = tailscale_version if path == "tailscale.com" else version
         label = f"{path} {label_version}".rstrip()
         license_text = (
             "\n\n".join(

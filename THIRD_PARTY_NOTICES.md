@@ -46,16 +46,18 @@ MangoSSH's terminal rendering is [ConnectBot termlib
 ## Tailscale tsnet
 
 MangoSSH builds an outbound-only gomobile bridge against
-[`tailscale.com` v1.98.8](https://github.com/tailscale/tailscale/tree/v1.98.8).
+[`tailscale.com` v1.102.2](https://github.com/tailscale/tailscale/tree/v1.102.2).
 Tailscale is distributed under the BSD 3-Clause license. The packages linked
 into the bridge are committed as vendored Go source so F-Droid can rebuild the
 AAR without network access.
 
 - Exact module checksums are recorded in `native/tsnetbridge/go.sum`, and the
   matching source is under `native/tsnetbridge/vendor`.
-- `tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch` disables creation
+- `tools/patches/tailscale-v1.102.2-tsnet-no-logtail.patch` disables creation
   and upload of tsnet's raw logtail buffer; the build fails if the patch no
   longer applies exactly.
+- The bridge is built with `ts_omit_netlog`, so upstream's logtail-backed
+  network flow logger is never linked into the binary.
 - `tools/generate-tsnet-notices.py` derives notices from the Go packages
   actually linked into the bridge.
 - Every generated AAR and APK contains the Tailscale BSD license at
