@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by MangoSSH in 2026 to make pinch-to-zoom's magnification range configurable.
 package org.connectbot.terminal
 
 import android.app.Activity
@@ -307,6 +308,8 @@ private const val DOUBLE_UNDERLINE_SPACING = 2f
  * @param selectionForegroundColor Foreground color for selected text (default: Black)
  * @param delKeyMode How the backspace/delete keys should map to terminal characters
  * @param onInterceptKey Optional callback to intercept raw Compose KeyEvents before the terminal emulator handles them. Return true to consume the event.
+ * @param minZoomScale Minimum pinch-to-zoom multiplier applied on top of the rendered font size. Defaults to 0.5x.
+ * @param maxZoomScale Maximum pinch-to-zoom multiplier applied on top of the rendered font size. Defaults to 3x.
  */
 @Composable
 fun Terminal(
@@ -334,6 +337,8 @@ fun Terminal(
     rightAltMode: RightAltMode = RightAltMode.CharacterModifier,
     delKeyMode: DelKeyMode = DelKeyMode.Delete,
     onInterceptKey: ((ComposeKeyEvent) -> Boolean)? = null,
+    minZoomScale: Float = MIN_ZOOM_SCALE,
+    maxZoomScale: Float = MAX_ZOOM_SCALE,
 ) {
     if (LocalInspectionMode.current) {
         TerminalPreview(modifier, backgroundColor, foregroundColor)
@@ -366,6 +371,8 @@ fun Terminal(
         selectionBackgroundColor = selectionBackgroundColor,
         selectionForegroundColor = selectionForegroundColor,
         delKeyMode = delKeyMode,
+        minZoomScale = minZoomScale,
+        maxZoomScale = maxZoomScale,
     )
 }
 
@@ -403,6 +410,8 @@ internal fun TerminalWithAccessibility(
     selectionBackgroundColor: Color = Color(0xFFB3D7FF),
     selectionForegroundColor: Color = Color.Black,
     delKeyMode: DelKeyMode = DelKeyMode.Delete,
+    minZoomScale: Float = MIN_ZOOM_SCALE,
+    maxZoomScale: Float = MAX_ZOOM_SCALE,
 ) {
     if (terminalEmulator !is TerminalEmulatorImpl) {
         Box(
@@ -1201,8 +1210,8 @@ internal fun TerminalWithAccessibility(
                                     val oldScale = zoomScale
                                     val newScale =
                                         (oldScale * gestureZoom).coerceIn(
-                                            MIN_ZOOM_SCALE,
-                                            MAX_ZOOM_SCALE,
+                                            minZoomScale,
+                                            maxZoomScale,
                                         )
 
                                     zoomOffset += gesturePan

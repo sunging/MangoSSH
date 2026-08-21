@@ -72,6 +72,20 @@ class SshKeepaliveTest {
     }
 
     @Test
+    fun containsAFailingFailureReport() = runBlocking {
+        // The loop is the body of a root coroutine and [onFailure] tears the
+        // session down, so a throw from the report itself would have nothing
+        // left to catch it and would end the process.
+        runSshKeepaliveLoop(
+            intervalMillis = 30_000,
+            isSessionActive = { true },
+            sendKeepalive = { throw IOException("transport closed") },
+            onFailure = { throw IllegalStateException("teardown failed") },
+            waitForNextKeepalive = {},
+        )
+    }
+
+    @Test
     fun preservesCoroutineCancellation() {
         var failureReported = false
 

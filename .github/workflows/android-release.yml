@@ -115,11 +115,11 @@ jobs:
 
       - name: Rebuild PTY and Mosh assets from pinned source
         run: |
-          bash tools/fetch-android-ndk-wsl.sh
+          bash tools/fetch-android-ndk.sh
           echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724" >> "$GITHUB_ENV"
           export ANDROID_NDK_HOME="$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724"
-          bash tools/build-pty-bridge-wsl.sh
-          bash tools/build-mosh-android-wsl.sh
+          bash tools/build-pty-bridge.sh
+          bash tools/build-mosh-android.sh
           bash tools/install-mosh-assets.sh
 
       - name: Restore release signing key
@@ -182,7 +182,7 @@ jobs:
           test -x "$alignment_tools_dir/zipalign"
           "$signing_tools_dir/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
           "$alignment_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/release/app-release.apk
-          bash tools/check-16kb-elf-wsl.sh app/build/outputs/apk/release/app-release.apk
+          bash tools/check-16kb-elf.sh app/build/outputs/apk/release/app-release.apk
 
       - name: Create versioned release artifacts and checksums
         run: |

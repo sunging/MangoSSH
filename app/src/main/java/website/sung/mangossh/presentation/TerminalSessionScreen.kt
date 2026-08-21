@@ -61,6 +61,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
@@ -75,8 +76,8 @@ import website.sung.mangossh.session.TerminalClipboardCopy
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
 import website.sung.mangossh.session.ServerResourceSnapshot
-import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.TerminalAppearance
+import website.sung.mangossh.domain.TerminalBehavior
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalShortcutAction
 import website.sung.mangossh.domain.TerminalShortcutConfig
@@ -95,6 +96,7 @@ fun TerminalSessionScreen(
     session: TerminalSessionState,
     terminalEmulator: TerminalEmulator,
     appearance: TerminalAppearance,
+    behavior: TerminalBehavior,
     shortcutConfig: TerminalShortcutConfig,
     clipboardCopies: SharedFlow<TerminalClipboardCopy>,
     onSend: (ByteArray) -> Unit,
@@ -105,12 +107,12 @@ fun TerminalSessionScreen(
 ) {
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val terminalFocusRequester = remember(session.id) { FocusRequester() }
     val terminalModifierState = remember(session.id) { TerminalModifierState() }
     val isOpen = session.phase == TerminalSessionPhase.OPEN
     val isImeVisible = WindowInsets.isImeVisible
-    val supportsSshChannels = session.protocol == ConnectionProtocol.SSH
     val colorScheme = appearance.colorScheme
     val terminalTypeface = remember(appearance.font) {
         ResourcesCompat.getFont(context, appearance.font.fontResourceId()) ?: Typeface.MONOSPACE
@@ -147,6 +149,12 @@ fun TerminalSessionScreen(
 
     DisposableEffect(session.id) {
         onDispose(terminalModifierState::clearTransients)
+    }
+
+    // Leaving the terminal must release the wake lock even if the preference changes mid-session.
+    DisposableEffect(view, behavior.keepScreenOn) {
+        view.keepScreenOn = behavior.keepScreenOn
+        onDispose { view.keepScreenOn = false }
     }
 
     LaunchedEffect(terminalEmulator, colorScheme) {
@@ -205,7 +213,7 @@ fun TerminalSessionScreen(
                     }
                     IconButton(
                         onClick = onOpenFileBrowser,
-                        enabled = isOpen && supportsSshChannels,
+                        enabled = isOpen,
                     ) {
                         Icon(
                             Icons.Outlined.FolderOpen,
@@ -217,7 +225,7 @@ fun TerminalSessionScreen(
                             showResourceReport = true
                             onRequestResources()
                         },
-                        enabled = isOpen && supportsSshChannels,
+                        enabled = isOpen,
                     ) {
                         Icon(Icons.Outlined.Storage, contentDescription = stringResource(R.string.ui_server_resources))
                     }
@@ -260,6 +268,9 @@ fun TerminalSessionScreen(
                                     false
                                 }
                             },
+                            rightAltMode = behavior.rightAltMode.toTermlib(),
+                            delKeyMode = behavior.delKeyMode.toTermlib(),
+                            maxZoomScale = behavior.maxPinchZoomScale,
                         )
                     }
                 }

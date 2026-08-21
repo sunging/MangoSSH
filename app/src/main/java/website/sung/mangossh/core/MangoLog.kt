@@ -48,14 +48,34 @@ enum class MangoLogEvent(val code: String) {
     SSH_SESSION_REMOTE_EXIT("ssh.session.remote_exit"),
     SSH_KEEPALIVE_FAILED("ssh.keepalive.failed"),
     SSH_SESSION_FAILED("ssh.session.failed"),
+
+    /**
+     * A session-scope coroutine ended with an unhandled throwable. Without the
+     * handler that reports this, the throwable would reach Android's default
+     * uncaught handler and kill the process instead of one transport.
+     */
+    SESSION_COROUTINE_FAILED("session.coroutine.failed"),
+
+    /** A cleanup step inside session teardown failed; the remaining steps still ran. */
+    SESSION_TEARDOWN_FAILED("session.teardown.failed"),
+
+    /** A host-key or authentication prompt was released without a user answer. */
+    SESSION_PROMPT_ABANDONED("session.prompt.abandoned"),
     FOREGROUND_SERVICE_STARTED("foreground_service.started"),
     FOREGROUND_SERVICE_STOPPED("foreground_service.stopped"),
+
+    /** Android refused a foreground-service start or promotion for this process state. */
+    FOREGROUND_SERVICE_START_DENIED("foreground_service.start.denied"),
     MOSH_BOOTSTRAP_STARTED("mosh.bootstrap.started"),
     MOSH_BOOTSTRAP_SUCCEEDED("mosh.bootstrap.succeeded"),
     MOSH_BOOTSTRAP_FAILED("mosh.bootstrap.failed"),
     MOSH_PROCESS_STARTED("mosh.process.started"),
     MOSH_PROCESS_STOPPED("mosh.process.stopped"),
     MOSH_RUNTIME_INSTALL_FAILED("mosh.runtime.install.failed"),
+    MOSH_COMPANION_SSH_DISCONNECTED("mosh.companion_ssh.disconnected"),
+    MOSH_COMPANION_SSH_RECONNECT_STARTED("mosh.companion_ssh.reconnect.started"),
+    MOSH_COMPANION_SSH_RECONNECT_SUCCEEDED("mosh.companion_ssh.reconnect.succeeded"),
+    MOSH_COMPANION_SSH_RECONNECT_FAILED("mosh.companion_ssh.reconnect.failed"),
     TSNET_STARTING("tsnet.starting"),
     TSNET_RUNNING("tsnet.running"),
     TSNET_FAILED("tsnet.failed"),
@@ -89,4 +109,10 @@ enum class MangoLogEvent(val code: String) {
     APP_UPDATE_INSTALL_HANDOFF_FAILED("app_update.install.handoff.failed"),
     BIOMETRIC_UNLOCK_FAILED("biometric_unlock.failed"),
     BIOMETRIC_UNLOCK_KEY_INVALIDATED("biometric_unlock.key_invalidated"),
+
+    /** A sanitized crash record was persisted before the process died. */
+    CRASH_REPORT_WRITTEN("crash_report.written"),
+
+    /** The crash record could not be persisted; the process still crashes normally. */
+    CRASH_REPORT_FAILED("crash_report.failed"),
 }

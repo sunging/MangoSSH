@@ -413,8 +413,9 @@ func (r *Runtime) removeRelay(relay *UDPRelay) {
 func discardLog(string, ...any) {}
 
 type androidNetworkSnapshot struct {
-	DefaultRoute string                    `json:"defaultRoute"`
-	Interfaces   []androidNetworkInterface `json:"interfaces"`
+	DefaultRoute   string                    `json:"defaultRoute"`
+	DefaultGateway string                    `json:"defaultGateway"`
+	Interfaces     []androidNetworkInterface `json:"interfaces"`
 }
 
 type androidNetworkInterface struct {
@@ -450,6 +451,7 @@ func parseAndroidNetworkSnapshot(payload string) ([]netmon.Interface, error) {
 		return nil, err
 	}
 	updateDefaultRouteInterface(snapshot.DefaultRoute)
+	updateDefaultGateway(snapshot.DefaultGateway)
 
 	interfaces := make([]netmon.Interface, 0, len(snapshot.Interfaces))
 	for _, item := range snapshot.Interfaces {

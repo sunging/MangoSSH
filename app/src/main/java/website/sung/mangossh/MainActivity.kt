@@ -3,9 +3,11 @@ package website.sung.mangossh
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Build
 import android.security.keystore.KeyPermanentlyInvalidatedException
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,7 +16,10 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.presentation.AppLanguage
@@ -22,6 +27,7 @@ import website.sung.mangossh.presentation.MangoSshApp
 import website.sung.mangossh.presentation.MangoSshViewModel
 import website.sung.mangossh.session.SessionForegroundService
 import website.sung.mangossh.ui.theme.MangoSshTheme
+import website.sung.mangossh.ui.theme.resolveAppDarkTheme
 
 /** Hosts the Compose UI and delegates biometric verification without retaining biometric data. */
 class MainActivity : AppCompatActivity() {
@@ -43,7 +49,19 @@ class MainActivity : AppCompatActivity() {
         handleSessionIntent(intent)
         enableEdgeToEdge()
         setContent {
-            MangoSshTheme {
+            val themePreferences by mangoViewModel.appTheme.collectAsStateWithLifecycle()
+            val darkTheme = resolveAppDarkTheme(themePreferences)
+            // enableEdgeToEdge() above already ran with system-only dark-mode detection, before
+            // the persisted theme preference could be read. Re-running it here with an explicit
+            // detectDarkMode keeps system-bar icon contrast correct when the app theme opposes
+            // the device theme (e.g. Light forced on a Dark system).
+            SideEffect {
+                enableEdgeToEdge(
+                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { darkTheme },
+                    navigationBarStyle = SystemBarStyle.auto(NAVIGATION_BAR_LIGHT_SCRIM, NAVIGATION_BAR_DARK_SCRIM) { darkTheme },
+                )
+            }
+            MangoSshTheme(preferences = themePreferences) {
                 MangoSshApp(
                     viewModel = mangoViewModel,
                     onRequestBiometricUnlock = ::requestBiometricUnlock,
@@ -61,8 +79,13 @@ class MainActivity : AppCompatActivity() {
         handleSessionIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        mangoViewModel.evaluateAutoLock()
+    }
+
     override fun onStop() {
-        if (!isChangingConfigurations) mangoViewModel.lockForBackground()
+        if (!isChangingConfigurations) mangoViewModel.noteBackgrounded()
         super.onStop()
     }
 
@@ -163,6 +186,12 @@ class MainActivity : AppCompatActivity() {
         const val ACTION_OPEN_SESSION = "website.sung.mangossh.action.OPEN_SESSION"
         const val ACTION_OPEN_SESSIONS = "website.sung.mangossh.action.OPEN_SESSIONS"
         const val EXTRA_SESSION_ID = "website.sung.mangossh.extra.SESSION_ID"
+
+        // Mirrors androidx.activity.EdgeToEdge's own default navigation-bar scrims, which are
+        // internal, so the app-forced theme can reuse them instead of losing 3-button-nav
+        // legibility on API 28 and below.
+        private val NAVIGATION_BAR_LIGHT_SCRIM = Color.argb(0xe6, 0xFF, 0xFF, 0xFF)
+        private val NAVIGATION_BAR_DARK_SCRIM = Color.argb(0x80, 0x1b, 0x1b, 0x1b)
 
         /** Creates an explicit, reusable intent for one live session notification. */
         fun sessionIntent(context: android.content.Context, sessionId: String): Intent {

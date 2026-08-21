@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Validates and installs the Mosh release archives produced by
-# build-mosh-android-wsl.sh into Android packaging locations. The executable is
+# build-mosh-android.sh into Android packaging locations. The executable is
 # named .so solely so Android extracts it into nativeLibraryDir with executable
 # permissions; MoshPtyProcess executes it directly and never dlopens it.
 
@@ -10,6 +10,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands awk grep install mkdir mktemp rm unzip
 NDK_REVISION="27.3.13750724"
 NDK_HOME="${ANDROID_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/$NDK_REVISION}"
 BUILD_DIR="${WORK_DIR:-$PROJECT_DIR/.tools/mosh-android-build}"

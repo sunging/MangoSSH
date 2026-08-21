@@ -16,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -53,6 +52,7 @@ import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalThemeId
+import website.sung.mangossh.ui.components.MangoSettingsCard
 
 /** Controls device-local terminal font, size, palette, and basic custom colors. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,152 +75,144 @@ internal fun TerminalAppearanceCard(
         FontFamily(Font(appearance.font.fontResourceId()))
     }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("terminal_appearance_card"),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(stringResource(R.string.terminal_appearance_title), style = MaterialTheme.typography.titleMedium)
-            Text(
-                stringResource(R.string.terminal_appearance_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    MangoSettingsCard(modifier = Modifier.testTag("terminal_appearance_card")) {
+        // The heading lives on the page as a section header, next to the other
+        // settings groups, so this card starts with its description.
+        Text(
+            stringResource(R.string.terminal_appearance_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
-            ExposedDropdownMenuBox(
+        ExposedDropdownMenuBox(
+            expanded = fontExpanded,
+            onExpandedChange = { fontExpanded = !fontExpanded },
+        ) {
+            OutlinedTextField(
+                value = appearance.font.label(),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text(stringResource(R.string.terminal_font_label)) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fontExpanded) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("terminal_font_dropdown")
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(
                 expanded = fontExpanded,
-                onExpandedChange = { fontExpanded = !fontExpanded },
+                onDismissRequest = { fontExpanded = false },
             ) {
-                OutlinedTextField(
-                    value = appearance.font.label(),
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text(stringResource(R.string.terminal_font_label)) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fontExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("terminal_font_dropdown")
-                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+                TerminalFont.entries.forEach { font ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(font.label()) },
+                        onClick = {
+                            onSetFont(font)
+                            fontExpanded = false
+                        },
+                        modifier = Modifier.testTag("terminal_font_${font.preferenceValue}"),
+                    )
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.terminal_font_size_label),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
                 )
-                ExposedDropdownMenu(
-                    expanded = fontExpanded,
-                    onDismissRequest = { fontExpanded = false },
+                IconButton(
+                    enabled = appearance.fontSizeSp > TerminalAppearance.MIN_FONT_SIZE_SP,
+                    onClick = { onSetFontSize(appearance.fontSizeSp - 1) },
+                    modifier = Modifier
+                        .testTag("terminal_font_size_decrease")
+                        .semantics {
+                            contentDescription = decreaseFontSizeDescription
+                        },
                 ) {
-                    TerminalFont.entries.forEach { font ->
+                    Icon(Icons.Outlined.Remove, contentDescription = null)
+                }
+                Text(
+                    stringResource(R.string.terminal_font_size_value, appearance.fontSizeSp),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                IconButton(
+                    enabled = appearance.fontSizeSp < TerminalAppearance.MAX_FONT_SIZE_SP,
+                    onClick = { onSetFontSize(appearance.fontSizeSp + 1) },
+                    modifier = Modifier
+                        .testTag("terminal_font_size_increase")
+                        .semantics {
+                            contentDescription = increaseFontSizeDescription
+                        },
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = null)
+                }
+            }
+            Slider(
+                value = appearance.fontSizeSp.toFloat(),
+                onValueChange = { onSetFontSize(it.roundToInt()) },
+                valueRange = TerminalAppearance.MIN_FONT_SIZE_SP.toFloat()..TerminalAppearance.MAX_FONT_SIZE_SP.toFloat(),
+                steps = TerminalAppearance.MAX_FONT_SIZE_SP - TerminalAppearance.MIN_FONT_SIZE_SP - 1,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("terminal_font_size_slider"),
+            )
+        }
+
+        ExposedDropdownMenuBox(
+            expanded = themeExpanded,
+            onExpandedChange = { themeExpanded = !themeExpanded },
+        ) {
+            OutlinedTextField(
+                value = appearance.theme.label(appearance.customColors),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text(stringResource(R.string.terminal_theme_label)) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = themeExpanded) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("terminal_theme_dropdown")
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(
+                expanded = themeExpanded,
+                onDismissRequest = { themeExpanded = false },
+            ) {
+                TerminalThemeId.entries
+                    .filterNot { it == TerminalThemeId.CUSTOM }
+                    .forEach { theme ->
                         androidx.compose.material3.DropdownMenuItem(
-                            text = { Text(font.label()) },
+                            text = { Text(theme.label()) },
                             onClick = {
-                                onSetFont(font)
-                                fontExpanded = false
+                                onSetTheme(theme)
+                                themeExpanded = false
                             },
-                            modifier = Modifier.testTag("terminal_font_${font.preferenceValue}"),
+                            modifier = Modifier.testTag("terminal_theme_${theme.preferenceValue}"),
                         )
                     }
-                }
             }
+        }
 
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        stringResource(R.string.terminal_font_size_label),
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    IconButton(
-                        enabled = appearance.fontSizeSp > TerminalAppearance.MIN_FONT_SIZE_SP,
-                        onClick = { onSetFontSize(appearance.fontSizeSp - 1) },
-                        modifier = Modifier
-                            .testTag("terminal_font_size_decrease")
-                            .semantics {
-                                contentDescription = decreaseFontSizeDescription
-                            },
-                    ) {
-                        Icon(Icons.Outlined.Remove, contentDescription = null)
-                    }
-                    Text(
-                        stringResource(R.string.terminal_font_size_value, appearance.fontSizeSp),
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    IconButton(
-                        enabled = appearance.fontSizeSp < TerminalAppearance.MAX_FONT_SIZE_SP,
-                        onClick = { onSetFontSize(appearance.fontSizeSp + 1) },
-                        modifier = Modifier
-                            .testTag("terminal_font_size_increase")
-                            .semantics {
-                                contentDescription = increaseFontSizeDescription
-                            },
-                    ) {
-                        Icon(Icons.Outlined.Add, contentDescription = null)
-                    }
-                }
-                Slider(
-                    value = appearance.fontSizeSp.toFloat(),
-                    onValueChange = { onSetFontSize(it.roundToInt()) },
-                    valueRange = TerminalAppearance.MIN_FONT_SIZE_SP.toFloat()..TerminalAppearance.MAX_FONT_SIZE_SP.toFloat(),
-                    steps = TerminalAppearance.MAX_FONT_SIZE_SP - TerminalAppearance.MIN_FONT_SIZE_SP - 1,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("terminal_font_size_slider"),
-                )
-            }
+        TerminalThemePreview(
+            scheme = scheme,
+            fontFamily = previewFamily,
+            fontSizeSp = appearance.fontSizeSp,
+        )
 
-            ExposedDropdownMenuBox(
-                expanded = themeExpanded,
-                onExpandedChange = { themeExpanded = !themeExpanded },
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { showCustomEditor = true },
+                modifier = Modifier.testTag("terminal_customize_colors"),
             ) {
-                OutlinedTextField(
-                    value = appearance.theme.label(appearance.customColors),
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text(stringResource(R.string.terminal_theme_label)) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = themeExpanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("terminal_theme_dropdown")
-                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-                )
-                ExposedDropdownMenu(
-                    expanded = themeExpanded,
-                    onDismissRequest = { themeExpanded = false },
-                ) {
-                    TerminalThemeId.entries
-                        .filterNot { it == TerminalThemeId.CUSTOM }
-                        .forEach { theme ->
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text(theme.label()) },
-                                onClick = {
-                                    onSetTheme(theme)
-                                    themeExpanded = false
-                                },
-                                modifier = Modifier.testTag("terminal_theme_${theme.preferenceValue}"),
-                            )
-                        }
-                }
+                Text(stringResource(R.string.terminal_customize_colors))
             }
-
-            TerminalThemePreview(
-                scheme = scheme,
-                fontFamily = previewFamily,
-                fontSizeSp = appearance.fontSizeSp,
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { showCustomEditor = true },
-                    modifier = Modifier.testTag("terminal_customize_colors"),
-                ) {
-                    Text(stringResource(R.string.terminal_customize_colors))
-                }
-                TextButton(
-                    onClick = onReset,
-                    modifier = Modifier.testTag("terminal_restore_defaults"),
-                ) {
-                    Text(stringResource(R.string.terminal_restore_defaults))
-                }
+            TextButton(
+                onClick = onReset,
+                modifier = Modifier.testTag("terminal_restore_defaults"),
+            ) {
+                Text(stringResource(R.string.terminal_restore_defaults))
             }
         }
     }

@@ -1,14 +1,19 @@
 # CI validates every proposed change. A successfully verified debug APK is
-# delivered for commits merged to main, without requiring release-signing secrets.
+# delivered for commits merged to main, and every run additionally produces a
+# release-signed APK for testing. That signed build reuses the release
+# workflow's keystore secrets, so it is skipped rather than failed whenever the
+# secrets are unavailable, as they always are for a fork's pull request.
 name: Android CI/CD
 
 on:
   pull_request:
     branches:
       - main
+      - develop
   push:
     branches:
       - main
+      - develop
   workflow_dispatch:
 
 # The workflow only needs to read this repository. Artifact uploads do not need
@@ -24,7 +29,7 @@ jobs:
   verify-and-deliver:
     name: Verify and deliver debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       # The GPL-licensed Mosh source remains reproducible through the submodule.
@@ -45,14 +50,17 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      # `assembleDebugAndroidTest` compiles the instrumented tests without a
+      # device. CI has no emulator, so nothing else here would catch an
+      # androidTest source set that no longer builds against the app it tests.
       - name: Verify version, test, lint, and package debug APK
-        run: ./gradlew --no-daemon :app:verifyReleaseVersion :app:testDebugUnitTest :app:lint :app:assembleDebug
+        run: ./gradlew --no-daemon :app:verifyReleaseVersion :app:testDebugUnitTest :app:lint :app:assembleDebug :app:assembleDebugAndroidTest
 
       - name: Verify 16 KiB native alignment
         run: |
           build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$build_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
-          bash tools/check-16kb-elf-wsl.sh app/build/outputs/apk/debug/app-debug.apk
+          bash tools/check-16kb-elf.sh app/build/outputs/apk/debug/app-debug.apk
 
       # This is continuous delivery of an installable debug artifact. Tagged
       # production releases are signed by the dedicated release workflow.
@@ -63,4 +71,136 @@ jobs:
           name: MangoSSH-debug-${{ github.sha }}
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14
+
+      # The release workflow fails when a signing secret is missing, because a
+      # published release must be signed. A test build must not fail CI over a
+      # secret that GitHub deliberately withholds, so this skips instead.
+      - name: Restore release signing key
+        id: signing_key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for secret_name in \
+            ANDROID_KEYSTORE_BASE64 \
+            ANDROID_KEYSTORE_PASSWORD \
+            ANDROID_KEY_ALIAS \
+            ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!secret_name}" ]]; then
+              echo "::notice::$secret_name is unavailable; skipping the signed test APK"
+              echo "available=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/mangossh-release.keystore"
+          test -s "$RUNNER_TEMP/mangossh-release.keystore"
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      # A separate Gradle invocation on purpose. The signing configuration reads
+      # these variables at configuration time, so folding them into the verify
+      # step above would make every test, lint, and debug check depend on
+      # secrets that a fork's pull request can never have.
+      - name: Build the release-signed test APK
+        if: steps.signing_key.outputs.available == 'true'
+        env:
+          MANGOSSH_RELEASE_STORE_FILE: ${{ runner.temp }}/mangossh-release.keystore
+          MANGOSSH_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MANGOSSH_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MANGOSSH_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Verify the signed release APK
+        if: steps.signing_key.outputs.available == 'true'
+        run: |
+          # Gradle names the artifact `app-release-unsigned.apk` when the signing
+          # configuration did not attach, so the signed name is itself the proof
+          # that the injected credentials were complete.
+          apk="app/build/outputs/apk/release/app-release.apk"
+          test -f "$apk" || {
+            echo "::error::$apk is missing; the release signing configuration did not attach"
+            exit 1
+          }
+          build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$build_tools_dir/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          "$build_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/release/app-release.apk
+          bash tools/check-16kb-elf.sh app/build/outputs/apk/release/app-release.apk
+
+      # The `ci` name keeps this build out of the `MangoSSH-<tag>.apk` namespace
+      # that published releases and the in-app updater use, while carrying the
+      # commit it was built from.
+      - name: Stage the release-signed test APK
+        if: steps.signing_key.outputs.available == 'true'
+        run: |
+          staging_dir="app/build/outputs/ci-release"
+          mkdir -p "$staging_dir"
+          cp app/build/outputs/apk/release/app-release.apk \
+            "$staging_dir/MangoSSH-ci-${GITHUB_SHA:0:12}.apk"
+
+      - name: Upload the release-signed test APK
+        if: steps.signing_key.outputs.available == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: MangoSSH-release-test-${{ github.sha }}
+          path: app/build/outputs/ci-release/MangoSSH-ci-*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  instrumented-tests:
+    name: Run instrumented tests on an emulator
+    # Booting an emulator is the slowest signal in this workflow, so it gates
+    # proposed changes only: a commit reaching main has already passed this job
+    # on its pull request. The verify job still compiles the instrumented tests
+    # on every event.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source and native Mosh source
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      # Without hardware acceleration the emulator does not finish booting
+      # inside the job's budget, and the runner exposes /dev/kvm only after its
+      # permissions are opened to every user.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The tests only need a device new enough to install the app (minSdk 26);
+      # this runs on a stable released image rather than the compileSdk preview.
+      - name: Run instrumented tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: ./gradlew --no-daemon :app:connectedDebugAndroidTest
+
+      - name: Upload instrumented test report
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: MangoSSH-instrumented-test-report-${{ github.sha }}
+          path: app/build/reports/androidTests/connected
+          if-no-files-found: warn
           retention-days: 14

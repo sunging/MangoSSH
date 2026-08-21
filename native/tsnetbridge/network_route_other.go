@@ -6,3 +6,5 @@
 package tsnetbridge
 
 func updateDefaultRouteInterface(string) {}
+
+func updateDefaultGateway(string) {}

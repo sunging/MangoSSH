@@ -2,6 +2,7 @@ package website.sung.mangossh.presentation
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.annotation.StringRes
 import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
@@ -41,16 +42,22 @@ import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.domain.AppRelease
+import website.sung.mangossh.domain.AppThemeMode
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProfileDraft
-import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.HostSortMode
 import website.sung.mangossh.domain.matchesHostQuery
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalCustomColors
+import website.sung.mangossh.domain.TerminalDelKeyMode
 import website.sung.mangossh.domain.TerminalFont
+import website.sung.mangossh.domain.TerminalRightAltMode
+import website.sung.mangossh.domain.SshTerminalType
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
+import website.sung.mangossh.domain.AppLockDelay
+import website.sung.mangossh.domain.shouldLockWhenBackgrounded
+import website.sung.mangossh.domain.shouldLockOnResume
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
 import website.sung.mangossh.session.RemoteFileEntry
@@ -64,6 +71,7 @@ import website.sung.mangossh.session.SessionEndReason
 import website.sung.mangossh.session.SessionEndMessageKind
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
+import website.sung.mangossh.presentation.settings.SettingsDestination
 
 /** Top-level areas exposed by the Compose navigation bar. */
 enum class AppSection {
@@ -144,6 +152,7 @@ private fun SessionEndMessageKind.toUiText(): UiText = uiText(
         SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED -> R.string.mosh_bootstrap_failed
         SessionEndMessageKind.MOSH_RUNTIME_MISSING -> R.string.mosh_runtime_missing
         SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED -> R.string.embedded_tsnet_enrollment_required
+        SessionEndMessageKind.FOREGROUND_SERVICE_UNAVAILABLE -> R.string.session_foreground_service_unavailable
     },
 )
 
@@ -160,7 +169,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val sessionController = runtime.sessionController
     private val embeddedTsnetManager = runtime.embeddedTsnetManager
     private val terminalAppearanceStore = runtime.terminalAppearance
+    private val terminalBehaviorStore = runtime.terminalBehavior
     private val terminalShortcutStore = runtime.terminalShortcuts
+    private val appThemeStore = runtime.appTheme
+    private val connectionPreferencesStore = runtime.connectionPreferences
     private val webDavClient = WebDavClient()
     private val appLockStore = AppLockStore(application)
     private val updatePreferencesStore = runtime.updatePreferences
@@ -224,7 +236,16 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     internal val embeddedTsnetStatus = embeddedTsnetManager.status
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
     val terminalAppearance = terminalAppearanceStore.appearance
+    val terminalBehavior = terminalBehaviorStore.behavior
     val terminalShortcuts = terminalShortcutStore.config
+    val appTheme = appThemeStore.preferences
+    val connectionPreferences = connectionPreferencesStore.preferences
+
+    /** Installed package version name, read from the platform rather than BuildConfig, for the About page. */
+    val installedVersionName: String get() = runtime.installedAppInfo?.versionName.orEmpty()
+
+    /** Installed package version code, read from the platform rather than BuildConfig, for the About page. */
+    val installedVersionCode: Long get() = runtime.installedAppInfo?.versionCode ?: 0L
 
     private val _updatePhase = MutableStateFlow<UpdatePhase>(UpdatePhase.Idle)
 
@@ -252,8 +273,33 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val _appLocked = MutableStateFlow(_appLockConfiguration.value.pinConfigured)
     val appLocked = _appLocked.asStateFlow()
 
+    /** Elapsed-realtime timestamp set by [noteBackgrounded] and consumed by [evaluateAutoLock]. */
+    private var backgroundedAtElapsedMillis: Long? = null
+
     private val _selectedSection = kotlinx.coroutines.flow.MutableStateFlow(AppSection.HOSTS)
     val selectedSection = _selectedSection.asStateFlow()
+
+    private val _settingsDestination = MutableStateFlow<SettingsDestination?>(null)
+
+    /**
+     * Open Settings detail page, or `null` for the category hub.
+     *
+     * Held here rather than in Compose state because the shared top app bar
+     * in `MangoSshApp` renders the detail title and back affordance from
+     * outside `SettingsScreen`'s own composition, and because leaving the
+     * Settings tab must return to the hub. This view model has no
+     * `SavedStateHandle`, so a process death restores Settings to the hub —
+     * acceptable, and safer than resuming into a security-sensitive page.
+     */
+    internal val settingsDestination = _settingsDestination.asStateFlow()
+
+    internal fun openSettingsDestination(destination: SettingsDestination) {
+        _settingsDestination.value = destination
+    }
+
+    internal fun closeSettingsDestination() {
+        _settingsDestination.value = null
+    }
 
     private val _remoteBrowser = MutableStateFlow<RemoteBrowserUiState?>(null)
     /** Null whenever the remote file browser is closed. */
@@ -305,6 +351,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     fun selectSection(section: AppSection) {
         _selectedSection.value = section
+        // Re-entering Settings from another tab should always land on the hub.
+        _settingsDestination.value = null
     }
 
     fun saveHost(draft: ConnectionProfileDraft) {
@@ -372,6 +420,16 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.resize(sessionId, columns, rows)
     }
 
+    /** Persists the app-wide theme mode; the whole Compose tree recomposes with the new scheme. */
+    fun setAppThemeMode(mode: AppThemeMode) {
+        appThemeStore.setMode(mode)
+    }
+
+    /** Persists whether Material You dynamic color is used on API 31+. */
+    fun setDynamicColorEnabled(enabled: Boolean) {
+        appThemeStore.setDynamicColorEnabled(enabled)
+    }
+
     /** Persists a bundled terminal font; composed terminals update without reconnecting. */
     fun setTerminalFont(font: TerminalFont) {
         terminalAppearanceStore.setFont(font)
@@ -403,6 +461,56 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     /** Persists the complete ordered floating shortcut layout for this device. */
     fun saveTerminalShortcuts(config: TerminalShortcutConfig) {
         terminalShortcutStore.save(config)
+    }
+
+    /** Off-screen line budget applied to sessions created after this call; live sessions are unaffected. */
+    fun setTerminalScrollbackLines(lines: Int) {
+        terminalBehaviorStore.setScrollbackLines(lines)
+    }
+
+    /** Applied to sessions created after this call; live sessions are unaffected. */
+    fun setTerminalBoldAsBright(enabled: Boolean) {
+        terminalBehaviorStore.setBoldAsBright(enabled)
+    }
+
+    /** Applied to sessions created after this call; live sessions are unaffected. */
+    fun setTerminalAutoDetectUrls(enabled: Boolean) {
+        terminalBehaviorStore.setAutoDetectUrls(enabled)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalKeepScreenOn(enabled: Boolean) {
+        terminalBehaviorStore.setKeepScreenOn(enabled)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalRightAltMode(mode: TerminalRightAltMode) {
+        terminalBehaviorStore.setRightAltMode(mode)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalDelKeyMode(mode: TerminalDelKeyMode) {
+        terminalBehaviorStore.setDelKeyMode(mode)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalMaxPinchZoomScale(scale: Float) {
+        terminalBehaviorStore.setMaxPinchZoomScale(scale)
+    }
+
+    /** Applied to connections opened after this call; zero disables SSH transport keepalives. */
+    fun setConnectionKeepaliveSeconds(seconds: Int) {
+        connectionPreferencesStore.setKeepaliveSeconds(seconds)
+    }
+
+    /** Applied to connections opened after this call. */
+    fun setConnectionTimeoutSeconds(seconds: Int) {
+        connectionPreferencesStore.setConnectTimeoutSeconds(seconds)
+    }
+
+    /** Applied to connections opened after this call; Mosh always requests xterm-256color regardless. */
+    fun setSshTerminalType(type: SshTerminalType) {
+        connectionPreferencesStore.setSshTerminalType(type)
     }
 
     /** Restores the bundled shortcut layout, including all three transient modifiers. */
@@ -479,11 +587,6 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
      * require a terminal session for the same host.
      */
     fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
-        val application = getApplication<Application>()
-        if (profile.protocol != ConnectionProtocol.SSH) {
-            _userMessage.value = uiText(R.string.mosh_not_supported_for_ssh_feature)
-            return
-        }
         runCatching { sessionController.startPortForwardOnNewConnection(profile, rule) }
             .onFailure {
                 _userMessage.value = uiText(R.string.session_ended_connection_failed)
@@ -528,10 +631,6 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun openRemoteBrowserForProfile(profile: ConnectionProfile) {
         val existing = _remoteBrowser.value
         if (existing != null && existing.ownsSession && existing.profileId == profile.id) return
-        if (profile.protocol != ConnectionProtocol.SSH) {
-            _userMessage.value = uiText(R.string.mosh_not_supported_for_ssh_feature)
-            return
-        }
         closeRemoteBrowser()
         val sessionId = runCatching { sessionController.connectForFileTransfer(profile) }
             .getOrElse { error ->
@@ -1017,8 +1116,52 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             .onFailure { _userMessage.value = uiText(R.string.message_app_pin_required) }
     }
 
+    fun setAutoLockDelay(delay: AppLockDelay) {
+        runCatching { appLockStore.setAutoLockDelay(delay) }
+            .onSuccess { _appLockConfiguration.value = appLockStore.configuration() }
+            .onFailure { _userMessage.value = uiText(R.string.message_app_pin_required) }
+    }
+
+    /** Locks immediately, regardless of the configured auto-lock delay. Used by the explicit "Lock now" action. */
     fun lockForBackground() {
         if (_appLockConfiguration.value.pinConfigured) _appLocked.value = true
+    }
+
+    /**
+     * Records the moment the app left the foreground; call from `Activity.onStop()`.
+     *
+     * Uses [SystemClock.elapsedRealtime] by default so a wall-clock change
+     * between backgrounding and resuming cannot extend the grace window (see
+     * [shouldLockOnResume]).
+     */
+    fun noteBackgrounded(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) {
+        backgroundedAtElapsedMillis = nowElapsedMillis
+        val configuration = _appLockConfiguration.value
+        if (configuration.pinConfigured && shouldLockWhenBackgrounded(configuration.autoLockDelay)) {
+            _appLocked.value = true
+        }
+    }
+
+    /**
+     * Locks if the configured auto-lock delay has elapsed since [noteBackgrounded]; call from
+     * `Activity.onStart()`.
+     *
+     * A missing timestamp means no real backgrounding was recorded since the
+     * last evaluation — either a cold start (where [_appLocked]'s initial
+     * value already reflects [AppLockConfiguration.pinConfigured]) or a
+     * resume from a configuration change, which `MainActivity.onStop()`
+     * deliberately does not report to [noteBackgrounded]. Either way there is
+     * nothing to evaluate, so this is a no-op rather than a lock.
+     */
+    fun evaluateAutoLock(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) {
+        val backgroundedAt = backgroundedAtElapsedMillis ?: return
+        val configuration = _appLockConfiguration.value
+        if (configuration.pinConfigured &&
+            shouldLockOnResume(configuration.autoLockDelay, backgroundedAt, nowElapsedMillis)
+        ) {
+            _appLocked.value = true
+        }
+        backgroundedAtElapsedMillis = null
     }
 
     fun unlockWithPin(pin: String) {

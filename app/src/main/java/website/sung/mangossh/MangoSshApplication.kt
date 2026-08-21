@@ -2,9 +2,13 @@ package website.sung.mangossh
 
 import android.app.Application
 import android.content.Context
+import website.sung.mangossh.core.CrashReporter
 import website.sung.mangossh.data.keys.SshKeyManager
+import website.sung.mangossh.data.settings.AppThemeStore
+import website.sung.mangossh.data.settings.ConnectionPreferencesStore
 import website.sung.mangossh.data.settings.HostListPreferencesStore
 import website.sung.mangossh.data.settings.TerminalAppearanceStore
+import website.sung.mangossh.data.settings.TerminalBehaviorStore
 import website.sung.mangossh.data.settings.TerminalShortcutStore
 import website.sung.mangossh.data.settings.UpdatePreferencesStore
 import website.sung.mangossh.data.update.installedAppInfo
@@ -27,6 +31,14 @@ class MangoSshApplication : Application() {
     val sessionRuntime: MangoSessionRuntime by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         MangoSessionRuntime(this)
     }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Installed before anything else can run: a crash during session setup
+        // is exactly the case that is hardest to reproduce and most valuable to
+        // record.
+        CrashReporter.install(this)
+    }
 }
 
 /**
@@ -46,6 +58,12 @@ class MangoSessionRuntime(context: Context) {
     /** Device-local display preferences shared by live terminals and Compose screens. */
     val terminalAppearance = TerminalAppearanceStore(context.applicationContext)
 
+    /** Device-local terminal emulator and input behavior shared by live terminals and Compose screens. */
+    val terminalBehavior = TerminalBehaviorStore(context.applicationContext)
+
+    /** Device-local app-wide theme mode and dynamic color preference. */
+    val appTheme = AppThemeStore(context.applicationContext)
+
     /** Device-local floating shortcut layout shared by all terminal screens. */
     val terminalShortcuts = TerminalShortcutStore(context.applicationContext)
 
@@ -54,6 +72,9 @@ class MangoSessionRuntime(context: Context) {
 
     /** Device-local host list sort preference shared by the host list and its top bar. */
     val hostListPreferences = HostListPreferencesStore(context.applicationContext)
+
+    /** Device-local defaults for new SSH/Mosh connections, shared by the session controller and settings. */
+    val connectionPreferences = ConnectionPreferencesStore(context.applicationContext)
 
     /**
      * True when this install manages its own updates. Resolved lazily because
@@ -76,5 +97,7 @@ class MangoSessionRuntime(context: Context) {
         keyManager,
         embeddedTsnetManager,
         terminalAppearance,
+        terminalBehavior,
+        connectionPreferences,
     )
 }

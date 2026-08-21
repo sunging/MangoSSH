@@ -59,6 +59,7 @@ import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalShortcutItem
 import website.sung.mangossh.domain.TerminalShortcutKey
 import website.sung.mangossh.domain.TerminalSpecialKey
+import website.sung.mangossh.ui.components.MangoSettingsCard
 
 /** Device-local editor entry point for the global floating terminal shortcut bar. */
 @Composable
@@ -67,29 +68,25 @@ internal fun TerminalShortcutSettingsCard(
     onSave: (TerminalShortcutConfig) -> Unit,
 ) {
     var showEditor by rememberSaveable { mutableStateOf(false) }
-    Card(modifier = Modifier.fillMaxWidth().testTag("terminal_shortcuts_card")) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+    // The heading lives on the page as a section header, next to the other
+    // settings groups, so this card starts with its description.
+    MangoSettingsCard(modifier = Modifier.testTag("terminal_shortcuts_card")) {
+        Text(
+            stringResource(R.string.terminal_shortcuts_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        ShortcutPreview(config.items.filter(TerminalShortcutItem::visible))
+        Text(
+            stringResource(R.string.terminal_shortcuts_warning),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        OutlinedButton(
+            onClick = { showEditor = true },
+            modifier = Modifier.testTag("terminal_shortcuts_customize"),
         ) {
-            Text(stringResource(R.string.terminal_shortcuts_title), style = MaterialTheme.typography.titleMedium)
-            Text(
-                stringResource(R.string.terminal_shortcuts_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            ShortcutPreview(config.items.filter(TerminalShortcutItem::visible))
-            Text(
-                stringResource(R.string.terminal_shortcuts_warning),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-            OutlinedButton(
-                onClick = { showEditor = true },
-                modifier = Modifier.testTag("terminal_shortcuts_customize"),
-            ) {
-                Text(stringResource(R.string.terminal_shortcuts_customize))
-            }
+            Text(stringResource(R.string.terminal_shortcuts_customize))
         }
     }
 

@@ -9,6 +9,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=tools/lib/linux-host.sh
+source "$PROJECT_DIR/tools/lib/linux-host.sh"
+mangossh_require_linux_x86_64
+mangossh_require_commands bash cmake grep
 
 die() {
     printf 'error: %s\n' "$*" >&2
@@ -56,12 +60,12 @@ fi
 [[ "$("$MANGOSSH_PROTOC" --version)" == "libprotoc 29.1" ]] || die "protoc 29.1 is required"
 
 cd "$PROJECT_DIR"
-bash tools/build-pty-bridge-wsl.sh
-bash tools/build-mosh-android-parallel-wsl.sh
+bash tools/build-pty-bridge.sh
+bash tools/build-mosh-android-parallel.sh
 bash tools/install-mosh-assets.sh
 ./gradlew --offline --no-daemon :app:verifyReleaseVersion :app:assembleRelease
 
 APK="$PROJECT_DIR/app/build/outputs/apk/release/app-release-unsigned.apk"
 [[ -f "$APK" ]] || die "unsigned release APK was not produced"
-bash tools/check-16kb-elf-wsl.sh "$APK"
+bash tools/check-16kb-elf.sh "$APK"
 printf 'Built unsigned F-Droid APK: %s\n' "$APK"

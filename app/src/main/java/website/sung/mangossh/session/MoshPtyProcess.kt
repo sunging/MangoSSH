@@ -9,6 +9,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import website.sung.mangossh.R
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 
 /**
  * A direct child process for the GPL Mosh client, connected to a pseudo
@@ -57,11 +59,17 @@ internal class MoshPtyProcess private constructor(
         }.isSuccess
         val cleanupThread = Thread(
             {
+                // A bare thread has no coroutine handler behind it, so anything
+                // escaping this body reaches Android's default uncaught handler
+                // and closes the app during an otherwise ordinary disconnect.
                 if (quitSent) {
                     runCatching { Thread.sleep(GRACEFUL_SHUTDOWN_MILLIS) }
                 }
                 forceStopAndClose()
-                runCatching { awaitExit() }
+                runMoshCleanupSteps(
+                    steps = listOf({ awaitExit() }),
+                    onFailure = ::reportCleanupFailure,
+                )
             },
             "MangoSSH-MoshShutdown",
         ).apply {
@@ -82,10 +90,20 @@ internal class MoshPtyProcess private constructor(
     }
 
     private fun forceStopAndClose() {
-        MoshPtyNative.requestStop(pid)
-        runCatching { output.close() }
-        runCatching { input.close() }
-        runCatching { master.close() }
+        runMoshCleanupSteps(
+            steps = listOf(
+                { MoshPtyNative.requestStop(pid) },
+                { output.close() },
+                { input.close() },
+                { master.close() },
+            ),
+            onFailure = ::reportCleanupFailure,
+        )
+    }
+
+    /** Reports a cleanup category without exposing native or descriptor details. */
+    private fun reportCleanupFailure(error: Throwable) {
+        MangoLog.warn(MangoLogEvent.SESSION_TEARDOWN_FAILED, error)
     }
 
     internal companion object {
@@ -137,6 +155,25 @@ internal class MoshPtyProcess private constructor(
             )
         }
 
+    }
+}
+
+/**
+ * Runs every Mosh cleanup step even when an earlier native or descriptor operation fails.
+ *
+ * Cleanup is intentionally exhaustive: once teardown starts, preserving later
+ * descriptor closes is more important than propagating the first failure.
+ */
+internal fun runMoshCleanupSteps(
+    steps: List<() -> Unit>,
+    onFailure: (Throwable) -> Unit,
+) {
+    steps.forEach { action ->
+        try {
+            action()
+        } catch (error: Throwable) {
+            runCatching { onFailure(error) }
+        }
     }
 }
 

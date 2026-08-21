@@ -7,6 +7,7 @@ import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
+import website.sung.mangossh.domain.AppLockDelay
 
 /** Stores only a salted PBKDF2 verifier; the app PIN is never persisted. */
 class AppLockStore(context: Context) {
@@ -15,6 +16,7 @@ class AppLockStore(context: Context) {
     fun configuration(): AppLockConfiguration = AppLockConfiguration(
         pinConfigured = preferences.contains(KEY_PIN_HASH) && preferences.contains(KEY_PIN_SALT),
         biometricEnabled = preferences.getBoolean(KEY_BIOMETRIC_ENABLED, false),
+        autoLockDelay = AppLockDelay.fromPreference(readString(KEY_AUTO_LOCK_DELAY)) ?: AppLockDelay.DEFAULT,
     )
 
     fun setPin(pin: CharArray) {
@@ -52,9 +54,21 @@ class AppLockStore(context: Context) {
         preferences.edit { putBoolean(KEY_BIOMETRIC_ENABLED, enabled) }
     }
 
+    /** Requires a PIN first, matching [setBiometricEnabled]: there is nothing to delay-guard otherwise. */
+    fun setAutoLockDelay(delay: AppLockDelay) {
+        require(configuration().pinConfigured) { "An app PIN must be configured first." }
+        preferences.edit { putString(KEY_AUTO_LOCK_DELAY, delay.preferenceValue) }
+    }
+
+    /** Also resets the auto-lock delay to [AppLockDelay.DEFAULT], since it clears the whole preference file. */
     fun clear() {
         preferences.edit { clear() }
     }
+
+    /** Treats type-mismatched or otherwise damaged preference values as absent. */
+    private fun readString(key: String): String? = runCatching {
+        preferences.getString(key, null)
+    }.getOrNull()
 
     private fun derive(pin: CharArray, salt: ByteArray): ByteArray {
         val spec = PBEKeySpec(pin, salt, PBKDF2_ITERATIONS, KEY_BITS)
@@ -76,6 +90,7 @@ class AppLockStore(context: Context) {
         private const val KEY_PIN_SALT = "pin_salt"
         private const val KEY_PIN_HASH = "pin_hash"
         private const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"
+        private const val KEY_AUTO_LOCK_DELAY = "auto_lock_delay"
         private const val SALT_BYTES = 16
         private const val KEY_BITS = 256
         private const val PBKDF2_ITERATIONS = 310_000
@@ -85,4 +100,5 @@ class AppLockStore(context: Context) {
 data class AppLockConfiguration(
     val pinConfigured: Boolean,
     val biometricEnabled: Boolean,
+    val autoLockDelay: AppLockDelay = AppLockDelay.DEFAULT,
 )

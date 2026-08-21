@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -121,6 +122,31 @@ class EmbeddedTsnetManagerInstrumentedTest {
     }
 
     @Test
+    fun foregroundPromotionFailureStopsEnrollmentRuntime() = runBlocking {
+        val factory = FakeBackendFactory(remainWaitingForLogin = true)
+        val manager = EmbeddedTsnetManager(
+            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            stateStore = FakeStateStore(enrolled = false),
+            backendFactory = factory,
+            foregroundStarter = {},
+        )
+        manager.beginBrowserEnrollment()
+        withTimeout(5_000) {
+            manager.status.first { it.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN }
+        }
+
+        manager.onForegroundServiceUnavailable()
+
+        withTimeout(5_000) {
+            manager.status.first { it.phase == EmbeddedTsnetPhase.FAILED }
+        }
+        withTimeout(5_000) {
+            while (factory.closed.get() != 1) delay(10)
+        }
+        assertFalse(manager.foregroundRequired.value)
+    }
+
+    @Test
     fun androidNetworkSnapshotUsesPlatformInterfaces() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val snapshot = JSONObject(AndroidTsnetNetworkStateSource(context).snapshotJson())
@@ -131,6 +157,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
         assertFalse(first.getString("name").isBlank())
         assertTrue(first.has("addrs"))
         assertTrue(snapshot.has("defaultRoute"))
+        assertTrue(snapshot.has("defaultGateway"))
     }
 
     private class FakeStateStore(enrolled: Boolean) : EmbeddedTsnetStateStore {
@@ -161,6 +188,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
 
     private class FakeBackendFactory(
         private val transientLoginBeforeRunning: Boolean = false,
+        private val remainWaitingForLogin: Boolean = false,
     ) : EmbeddedTsnetBackendFactory {
         val created = AtomicInteger()
         val closed = AtomicInteger()
@@ -176,6 +204,10 @@ class EmbeddedTsnetManagerInstrumentedTest {
             return object : EmbeddedTsnetBackend {
                 override fun start(authKey: String) {
                     authKeyWasNonEmpty.set(authKey.isNotEmpty())
+                    if (remainWaitingForLogin) {
+                        listener.onStatus("needs_login", "")
+                        return
+                    }
                     if (transientLoginBeforeRunning) {
                         listener.onStatus("needs_login", "")
                         Thread.sleep(100)

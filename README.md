@@ -9,17 +9,22 @@ profiles.
 ## Port forwarding
 
 Local, remote, and SOCKS5 rules live on the **Forwarding** page. Starting a rule
-reuses an open terminal session for the same host when there is one, and
-otherwise opens a connection dedicated to that forward, so a tunnel does not
-require keeping a shell open. A dedicated connection closes as soon as its last
-forward stops, and its host-key or password prompt appears over the page that
-started it.
+reuses an open SSH terminal or a Mosh terminal's authenticated companion SSH
+connection for the same host. Otherwise it opens a connection dedicated to the
+forward, so a tunnel does not require keeping a terminal open. A dedicated
+connection closes as soon as its last forward stops, and its host-key or
+password prompt appears over the page that started it. If a Mosh companion SSH
+disconnects, its forwards are marked failed without ending the UDP terminal;
+start a failed rule again to reconnect it.
 
 ## File transfers
 
-Open a host's **Files** action to browse it over SFTP; a connection dedicated to
-transfers is opened when no terminal session is running. Single files and whole
-folders can be downloaded and uploaded.
+Browse a host over SFTP from the **Files** button inside an open SSH or Mosh
+terminal, which reuses that session's authenticated SSH connection, or from a
+host's overflow-menu **Files** action, which opens a connection dedicated to
+transfers. Single files and whole folders can be downloaded and uploaded. Mosh
+terminals use the same SSH companion for the server-resource report in their
+terminal toolbar.
 
 Running transfers appear behind the transfer icon in the host list top bar, with
 combined progress. That sheet can pause, resume, cancel, and retry a transfer,
@@ -67,18 +72,25 @@ palette licenses, versions, and SHA-256 values are recorded in
 
 ## Native Mosh build
 
-In Ubuntu WSL, run the following from the repository root:
+On a glibc-compatible Linux x86_64 host, run the following from the repository
+root:
 
 ```text
-bash tools/fetch-android-ndk-wsl.sh
-bash tools/build-pty-bridge-wsl.sh
-bash tools/build-mosh-android-wsl.sh
+bash tools/fetch-android-ndk.sh
+bash tools/build-pty-bridge.sh
+bash tools/build-mosh-android.sh
 bash tools/install-mosh-assets.sh
 ```
 
 The final command validates and copies the four ABI archives into the Android
-app. The scripts keep downloaded compilers and intermediate files in `.tools`,
-which is not committed.
+app. The scripts are distribution-neutral and report missing command-line
+dependencies without invoking a package manager. They keep downloaded compilers
+and intermediate files in `.tools`, which is not committed. On Windows, Gradle
+uses WSL only as an adapter for these same Linux scripts.
+
+Direct tsnet builds require `ANDROID_SDK_ROOT` or `ANDROID_HOME` to point to an
+existing Android SDK. Gradle resolves the configured SDK itself and passes that
+path to the generic Linux script.
 
 ## 16 KiB page-size verification
 
@@ -86,7 +98,7 @@ After building the debug APK, validate both the ELF load segments and the APK
 alignment. This is required for Android devices that use 16 KiB memory pages:
 
 ```text
-bash tools/check-16kb-elf-wsl.sh \
+bash tools/check-16kb-elf.sh \
   app/build/outputs/apk/debug/app-debug.apk
 zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -105,7 +117,7 @@ servers, exit nodes, and device-wide VPN routing are intentionally out of
 scope.
 
 Gradle builds the pinned four-ABI gomobile AAR on demand through
-`tools/build-tsnet-android-wsl.sh`; the generated AAR and downloaded toolchains
+`tools/build-tsnet-android.sh`; the generated AAR and downloaded toolchains
 are ignored and must not be committed. See
 [docs/embedded-tsnet.md](docs/embedded-tsnet.md) for the exact tool versions,
 security boundaries, build commands, and emulator/lab verification checklist.
@@ -155,6 +167,14 @@ release workflow its declared `contents`, `issues`, and `pull-requests` write
 permissions. The workflow uses only the built-in `GITHUB_TOKEN`; no PAT or
 GitHub App credential is required. A manual run validates signing and uploads
 an Actions artifact, but never creates a tag or publishes a GitHub Release.
+
+Android CI runs on `main` and `develop`, for both pushes and pull requests.
+Every CI run also builds and uploads a release-signed
+`MangoSSH-ci-<commit>.apk` artifact for testing, using the same keystore as
+published releases so it installs over them. It is deliberately named apart
+from the `MangoSSH-<tag>.apk` release assets the in-app updater consumes, and
+it is skipped rather than failed when the signing secrets are unavailable, as
+they always are for a fork's pull request.
 
 Validate the current version, localized notes, and an optional tag locally:
 

@@ -7,8 +7,9 @@ MangoSSH has three explicit profile routes:
 - `DIRECT` uses the Android network selected by the system.
 - `TAILNET` preserves the existing system Tailscale VPN behavior and forces
   Tailscale SSH authentication.
-- `TSNET` uses the app's independent userspace Tailnet node. SSH bootstrap
-  traffic uses tsnet's authenticated loopback SOCKS5 listener. Mosh then uses a
+- `TSNET` uses the app's independent userspace Tailnet node. SSH bootstrap and
+  the authenticated companion used by Mosh files, resource queries, and port
+  forwards use tsnet's loopback SOCKS5 listener. Mosh terminal traffic uses a
   loopback UDP relay backed by the same node.
 
 The embedded node handles only profiles that select `TSNET`. It does not
@@ -22,9 +23,9 @@ routing are intentionally unsupported.
 The reproducible bridge build pins:
 
 - Go `1.26.5`;
-- Eclipse Temurin JDK `17.0.19+10` for the WSL gomobile wrapper;
+- Eclipse Temurin JDK `17.0.19+10` for the gomobile build;
 - Android NDK `27.3.13750724` (r27d);
-- `tailscale.com v1.98.8`;
+- `tailscale.com v1.102.2`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
 
 Local-development download scripts verify the published Go SHA-256, Temurin
@@ -33,7 +34,7 @@ those toolchains to be supplied by the build environment and fail before any
 download is attempted. The complete Go module source graph is committed under
 `native/tsnetbridge/vendor`. In addition to `go.sum`, both patched Tailscale
 source files have pinned pre-patch and post-patch SHA-256 values.
-`tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch` is applied with
+`tools/patches/tailscale-v1.102.2-tsnet-no-logtail.patch` is applied with
 `git apply --check`; a source mismatch, skipped hunk, or unexpected patched
 result stops both the test and production builds.
 
@@ -42,14 +43,26 @@ logtail buffer when no-support logging is disabled, routes the loopback SOCKS5
 dial through `tsnet.Server.Dial`, extends only the initial SOCKS5 destination
 dial to 30 seconds, and exposes a network-monitor refresh hook for Android.
 
-From Ubuntu, Linux CI, or Ubuntu WSL at the repository root:
+`app/build.gradle.kts` reads this same pin from
+`native/tsnetbridge/vendor/tailscale.com/VERSION.txt` at configure time, cross-
+checks it against `vendor/modules.txt`, and generates a Kotlin constant that
+Settings → Embedded Tailscale displays below the enrollment card. That path
+never touches the gomobile build, so the display can't drift from the source
+`tools/build-tsnet-android.sh` actually links into `mangossh-tsnet.aar`.
+
+From a glibc-compatible Linux x86_64 host at the repository root:
 
 ```text
-bash tools/test-tsnet-bridge-wsl.sh
-bash tools/build-tsnet-android-wsl.sh
+bash tools/test-tsnet-bridge.sh
+bash tools/build-tsnet-android.sh
 ```
 
-On Windows, normal Gradle tasks invoke the same WSL build script:
+Direct builds require `ANDROID_SDK_ROOT` or `ANDROID_HOME` to name an existing
+Android SDK directory. The build normalizes the selected path and exports both
+variables to its child tools.
+
+On Windows, normal Gradle tasks use WSL as an adapter to invoke the same generic
+Linux build script and pass Gradle's resolved Android SDK path into Linux:
 
 ```text
 gradlew.bat :app:testDebugUnitTest
@@ -89,8 +102,10 @@ Failures use fixed categories and require fresh input.
 The bridge exposes only start, fixed status, authenticated SOCKS5, UDP relay,
 logout, and close operations. It does not expose Tailscale LocalAPI. Upstream
 text logging is discarded, `TS_NO_LOGS_NO_SUPPORT` is enabled, and the audited
-patch prevents creation or upload of the raw logtail buffer. MangoSSH logs only
-fixed state event codes.
+patch prevents creation or upload of the raw logtail buffer. The `ts_omit_netlog`
+build tag keeps upstream's logtail-backed network flow logger out of the binary
+rather than relying on its runtime check. MangoSSH logs only fixed state event
+codes.
 
 ## Automated verification
 
@@ -105,10 +120,10 @@ gradlew.bat :app:lint :app:assembleDebug :app:assembleRelease
 Then inspect the APK:
 
 ```text
-bash tools/check-16kb-elf-wsl.sh \
+bash tools/check-16kb-elf.sh \
   app/build/outputs/apk/debug/app-debug.apk
 zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
-bash tools/check-16kb-elf-wsl.sh \
+bash tools/check-16kb-elf.sh \
   app/build/outputs/apk/release/app-release-unsigned.apk
 zipalign -c -P 16 -v 4 app/build/outputs/apk/release/app-release-unsigned.apk
 ```
@@ -128,8 +143,9 @@ configuration:
 2. Create `TSNET` SSH profiles for both the lab MagicDNS name and Tailnet IP.
    Verify Tailscale SSH, first-use host-key confirmation, terminal I/O, and
    ordinary password/key/interactive authentication where configured.
-3. Verify Mosh bootstrap, UDP input/output, terminal resize, network switching,
-   reconnection, background/foreground transitions, and explicit disconnect.
+3. Verify Mosh bootstrap, UDP input/output, terminal resize, SFTP browsing,
+   resource queries, all three port-forward types, network switching, companion
+   SSH reconnection, background/foreground transitions, and explicit disconnect.
 4. Force-stop and restart MangoSSH. Confirm the same app node reconnects
    without another Auth Key.
 5. Disconnect all `TSNET` sessions, sign out, then enroll through the system

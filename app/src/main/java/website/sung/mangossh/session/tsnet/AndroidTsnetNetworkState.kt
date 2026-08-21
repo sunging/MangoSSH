@@ -6,6 +6,7 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import java.io.Closeable
+import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
@@ -31,14 +32,28 @@ internal class AndroidTsnetNetworkStateSource(context: Context) : NetworkStateSo
                 .getOrNull()
                 ?.let(interfaces::put)
         }
-        val defaultRoute = connectivityManager.activeNetwork
+        val linkProperties = connectivityManager.activeNetwork
             ?.let(connectivityManager::getLinkProperties)
-            ?.interfaceName
-            .orEmpty()
         return JSONObject()
-            .put("defaultRoute", defaultRoute)
+            .put("defaultRoute", linkProperties?.interfaceName.orEmpty())
+            .put("defaultGateway", linkProperties.defaultGateway())
             .put("interfaces", interfaces)
             .toString()
+    }
+
+    /**
+     * Reports the IPv4 default gateway so tsnet can attempt local port mapping.
+     *
+     * Android hides the routing table from apps, so the upstream monitor cannot
+     * discover the home router on its own. Without this value UPnP/PMP/PCP
+     * discovery is skipped and direct connections degrade to relaying.
+     */
+    private fun LinkProperties?.defaultGateway(): String {
+        val gateway = this?.routes
+            ?.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }
+            ?.gateway
+            ?: return ""
+        return if (gateway.isAnyLocalAddress) "" else gateway.hostAddress.orEmpty()
     }
 
     private fun NetworkInterface.toJson(): JSONObject {

@@ -31,7 +31,11 @@ internal suspend fun runSshKeepaliveLoop(
         } catch (error: Exception) {
             // A concurrent user close can make the transport write fail after
             // the active check. The user-initiated close already owns cleanup.
-            if (isSessionActive()) onFailure(error)
+            //
+            // [onFailure] typically tears the session down, and this loop is the
+            // body of a root coroutine, so a throw from it would have nothing
+            // left to catch it.
+            if (isSessionActive()) runCatching { onFailure(error) }
             return
         }
     }

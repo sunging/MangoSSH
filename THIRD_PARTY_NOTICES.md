@@ -13,8 +13,8 @@ branch.
   every APK at `assets/licenses/GPL-3.0-or-later.txt`.
 - Packaged artifacts: `app/src/main/jniLibs/*/libmosh_client.so` and
   `app/src/main/assets/mosh/terminfo.zip`.
-- Build entry point: `tools/build-mosh-android-wsl.sh` using Android NDK
-  `27.3.13750724`; `tools/fetch-android-ndk-wsl.sh` obtains that NDK into the
+- Build entry point: `tools/build-mosh-android.sh` using Android NDK
+  `27.3.13750724`; `tools/fetch-android-ndk.sh` obtains that NDK into the
   ignored project-local `.tools` directory.
 
 The upstream Android build script uses its declared zlib, protobuf, ncurses,
@@ -25,19 +25,39 @@ never downloads compiler binaries or dependency source. Do not replace the
 packaged binary with an unverifiable build or remove the source submodule,
 license text, build patch, or this notice.
 
+## ConnectBot terminal library
+
+MangoSSH's terminal rendering is [ConnectBot termlib
+0.1.0](https://github.com/connectbot/termlib), vendored as Kotlin source at
+`third_party/termlib`, pinned to upstream commit
+`e3f4bdc3b3b5563fee54b0eca4b50d0e611bfd07`.
+
+- License: Apache License, Version 2.0.
+- License text: `third_party/termlib/LICENSE` and the copy included in every
+  APK at `assets/licenses/Apache-2.0-ConnectBot-Terminal.txt`.
+- Native artifact: the four ABI `libjni_cb_term.so` files are extracted at
+  build time from the pinned Maven Central AAR (`org.connectbot:termlib:0.1.0`)
+  and are not committed to this repository.
+- Local modifications are documented in `third_party/termlib/README.md` and
+  kept additive to the upstream defaults, currently a terminal-resize damage
+  fix, a configurable scrollback line limit, and a configurable pinch-to-zoom
+  magnification range.
+
 ## Tailscale tsnet
 
 MangoSSH builds an outbound-only gomobile bridge against
-[`tailscale.com` v1.98.8](https://github.com/tailscale/tailscale/tree/v1.98.8).
+[`tailscale.com` v1.102.2](https://github.com/tailscale/tailscale/tree/v1.102.2).
 Tailscale is distributed under the BSD 3-Clause license. The packages linked
 into the bridge are committed as vendored Go source so F-Droid can rebuild the
 AAR without network access.
 
 - Exact module checksums are recorded in `native/tsnetbridge/go.sum`, and the
   matching source is under `native/tsnetbridge/vendor`.
-- `tools/patches/tailscale-v1.98.8-tsnet-no-logtail.patch` disables creation
+- `tools/patches/tailscale-v1.102.2-tsnet-no-logtail.patch` disables creation
   and upload of tsnet's raw logtail buffer; the build fails if the patch no
   longer applies exactly.
+- The bridge is built with `ts_omit_netlog`, so upstream's logtail-backed
+  network flow logger is never linked into the binary.
 - `tools/generate-tsnet-notices.py` derives notices from the Go packages
   actually linked into the bridge.
 - Every generated AAR and APK contains the Tailscale BSD license at

@@ -76,6 +76,12 @@ enum class SessionEndMessageKind {
     MOSH_BOOTSTRAP_FAILED,
     MOSH_RUNTIME_MISSING,
     TSNET_ENROLLMENT_REQUIRED,
+
+    /**
+     * Android refused foreground-service ownership for the current process
+     * state, so the connection was never allowed to start.
+     */
+    FOREGROUND_SERVICE_UNAVAILABLE,
 }
 
 enum class PortForwardRuntimePhase {
@@ -93,6 +99,22 @@ data class PortForwardRuntimeState(
     val phase: PortForwardRuntimePhase,
     val detail: String? = null,
 )
+
+/** Marks only live forwards on [sessionId] failed when their SSH carrier disappears. */
+internal fun failPortForwardsForSession(
+    states: List<PortForwardRuntimeState>,
+    sessionId: String,
+    detail: String,
+): List<PortForwardRuntimeState> = states.map { state ->
+    if (
+        state.sessionId == sessionId &&
+        (state.phase == PortForwardRuntimePhase.STARTING || state.phase == PortForwardRuntimePhase.ACTIVE)
+    ) {
+        state.copy(phase = PortForwardRuntimePhase.FAILED, detail = detail)
+    } else {
+        state
+    }
+}
 
 enum class ScpTransferDirection {
     UPLOAD,

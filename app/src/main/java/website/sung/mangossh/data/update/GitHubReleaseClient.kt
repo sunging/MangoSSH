@@ -271,19 +271,21 @@ internal class GitHubReleaseClient(
     private fun isAllowedDownloadHost(host: String): Boolean =
         host == "github.com" || host == "api.github.com" || host.endsWith(".githubusercontent.com")
 
-    private companion object {
-        const val REPO_SLUG = "sunging/MangoSSH"
-        const val LATEST_RELEASE_URL = "https://api.github.com/repos/$REPO_SLUG/releases/latest"
-        const val GITHUB_API_VERSION = "2022-11-28"
-        const val CONNECT_TIMEOUT_MILLIS = 15_000
-        const val READ_TIMEOUT_MILLIS = 30_000
-        const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
-        const val MAX_METADATA_BYTES = 512 * 1024
-        const val MAX_CHECKSUM_BYTES = 64 * 1024
-        const val MAX_APK_BYTES = 256L * 1024 * 1024
-        const val MAX_REDIRECTS = 5
-        const val HTTP_TOO_MANY_REQUESTS = 429
-        val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
+    companion object {
+        /** Canonical public repository used by both update checks and the About page. */
+        internal const val REPO_SLUG = "sunging/MangoSSH"
+
+        private const val LATEST_RELEASE_URL = "https://api.github.com/repos/$REPO_SLUG/releases/latest"
+        private const val GITHUB_API_VERSION = "2022-11-28"
+        private const val CONNECT_TIMEOUT_MILLIS = 15_000
+        private const val READ_TIMEOUT_MILLIS = 30_000
+        private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
+        private const val MAX_METADATA_BYTES = 512 * 1024
+        private const val MAX_CHECKSUM_BYTES = 64 * 1024
+        private const val MAX_APK_BYTES = 256L * 1024 * 1024
+        private const val MAX_REDIRECTS = 5
+        private const val HTTP_TOO_MANY_REQUESTS = 429
+        private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
     }
 }
 
