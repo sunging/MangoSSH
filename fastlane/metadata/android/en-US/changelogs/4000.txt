@@ -1,0 +1,7 @@
+New in 0.4.0:
+
+- Mosh sessions now support SFTP file browsing, port forwarding, and server resource info, previously SSH-only.
+- Added a Settings hub for connection defaults, terminal behavior, keyboard input, and a configurable auto-lock delay.
+- Customize terminal scrollback length and pinch-zoom range, and choose an app theme mode with dynamic color.
+- New About page shows the app and embedded Tailscale build versions; Settings now uses a two-pane layout on tablets.
+- Hardened handling of session failures for more reliable disconnects and recovery.
