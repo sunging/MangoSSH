@@ -43,6 +43,13 @@ logtail buffer when no-support logging is disabled, routes the loopback SOCKS5
 dial through `tsnet.Server.Dial`, extends only the initial SOCKS5 destination
 dial to 30 seconds, and exposes a network-monitor refresh hook for Android.
 
+`app/build.gradle.kts` reads this same pin from
+`native/tsnetbridge/vendor/tailscale.com/VERSION.txt` at configure time, cross-
+checks it against `vendor/modules.txt`, and generates a Kotlin constant that
+Settings → Embedded Tailscale displays below the enrollment card. That path
+never touches the gomobile build, so the display can't drift from the source
+`tools/build-tsnet-android.sh` actually links into `mangossh-tsnet.aar`.
+
 From a glibc-compatible Linux x86_64 host at the repository root:
 
 ```text

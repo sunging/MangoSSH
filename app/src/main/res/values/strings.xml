@@ -36,6 +36,7 @@
     <string name="embedded_tsnet_logout_failed">Unable to sign out embedded Tailscale. Try again.</string>
     <string name="embedded_tsnet_invalid_authorization_url">Embedded Tailscale returned an invalid authorization request.</string>
     <string name="embedded_tsnet_enrollment_required">Sign in to Embedded Tailscale in Settings before connecting this profile.</string>
+    <string name="embedded_tsnet_version">Embedded node version %1$s</string>
     <string name="active_sessions_notification_public_title">MangoSSH is running</string>
     <string name="active_sessions_notification_public_text">An active terminal session is protected.</string>
     <string name="active_session_notification_title">%1$s</string>
