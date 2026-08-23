@@ -13,7 +13,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$PROJECT_DIR/tools/lib/linux-host.sh"
 mangossh_require_linux_x86_64
 mangossh_require_commands awk mktemp readelf rm unzip
-APK_PATH="${1:-$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk}"
+APK_PATH="${1:-$PROJECT_DIR/app/build/outputs/apk/github/debug/app-github-debug.apk}"
 REQUIRED_ALIGNMENT=$((16 * 1024))
 
 [[ -f "$APK_PATH" ]] || {

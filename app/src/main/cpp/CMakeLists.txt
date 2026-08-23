@@ -7,10 +7,22 @@ add_library(mangossh_pty SHARED mosh_pty_bridge.cpp)
 find_library(android_log_lib log)
 
 target_compile_features(mangossh_pty PRIVATE cxx_std_20)
-target_compile_options(mangossh_pty PRIVATE -Wall -Wextra -Werror -fstack-protector-strong)
+target_compile_options(mangossh_pty PRIVATE
+    -Wall
+    -Wextra
+    -Werror
+    -fstack-protector-strong
+    "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+    "-ffile-prefix-map=${CMAKE_BINARY_DIR}=."
+    "-fdebug-prefix-map=${CMAKE_SOURCE_DIR}=."
+    "-fdebug-prefix-map=${CMAKE_BINARY_DIR}=."
+    "-fmacro-prefix-map=${CMAKE_SOURCE_DIR}=."
+    "-fmacro-prefix-map=${CMAKE_BINARY_DIR}=."
+)
 # NDK r27 does not opt into flexible 16 KiB page sizes automatically. Both
 # values ensure every PT_LOAD segment can map on 4 KiB and 16 KiB devices.
 target_link_options(mangossh_pty PRIVATE
+    "-Wl,--build-id=none"
     "-Wl,-z,max-page-size=16384"
     "-Wl,-z,common-page-size=16384"
 )

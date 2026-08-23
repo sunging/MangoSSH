@@ -13,9 +13,13 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$PROJECT_DIR/tools/lib/linux-host.sh"
 mangossh_require_linux_x86_64
 mangossh_require_commands \
-    autoconf automake awk bash bison chmod cmake curl find getconf git gperf \
+    autoconf automake awk bash bison chmod cmake cp find getconf git gperf \
     grep install libtoolize make mkdir mktemp ninja patch perl pkg-config \
     readelf rm rsync sed sort tar unzip zip
+if [[ "${MANGOSSH_OFFLINE_BUILD:-0}" != "1" ]]; then
+    mangossh_require_commands curl tic
+    export MANGOSSH_TIC="${MANGOSSH_TIC:-$(command -v tic)}"
+fi
 NDK_REVISION="27.3.13750724"
 NDK_HOME="${ANDROID_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/$NDK_REVISION}"
 # A temporary LF-normalized checkout can be supplied when the Windows working
@@ -50,9 +54,14 @@ git -C "$UPSTREAM_MOSH_SOURCE" archive --format=tar HEAD |
     tar -xf - -C "$PATCHED_MOSH_SOURCE"
 (
     cd "$PATCHED_MOSH_SOURCE"
-    git apply --check --whitespace=nowarn "$PATCH_FILE"
-    git apply --whitespace=nowarn "$PATCH_FILE"
+    patch --dry-run --batch --forward --fuzz=0 -p1 --input="$PATCH_FILE"
+    patch --batch --forward --fuzz=0 -p1 --input="$PATCH_FILE"
 )
+grep -Fq 'EXTERNAL_SOURCES_DIR="${MANGOSSH_MOSH_DEPS_DIR:-}"' \
+    "$PATCHED_MOSH_SOURCE/android/build-android-release-assets.sh" || {
+    echo "The exported Mosh source did not receive the offline-source patch." >&2
+    exit 1
+}
 MOSH_SOURCE="$PATCHED_MOSH_SOURCE"
 
 if [[ "${MANGOSSH_OFFLINE_BUILD:-0}" == "1" ]]; then
@@ -62,6 +71,14 @@ if [[ "${MANGOSSH_OFFLINE_BUILD:-0}" == "1" ]]; then
     }
     [[ -x "${MANGOSSH_PROTOC:-}" ]] || {
         echo "MANGOSSH_PROTOC must provide protoc 29.1 in offline mode." >&2
+        exit 1
+    }
+    [[ -x "${MANGOSSH_TIC:-}" ]] || {
+        echo "MANGOSSH_TIC must provide source-built ncurses 6.4 tic in offline mode." >&2
+        exit 1
+    }
+    [[ "$("$MANGOSSH_TIC" -V 2>&1)" == "ncurses 6.4.20221231" ]] || {
+        echo "MANGOSSH_TIC must be ncurses 6.4.20221231." >&2
         exit 1
     }
 fi
@@ -88,6 +105,15 @@ printf '%s\n' '#!/usr/bin/env sh' \
     '  command -p getconf "$@"' \
     'fi' > "$shim_dir/getconf"
 chmod 755 "$shim_dir/getconf"
+if [[ "${MANGOSSH_OFFLINE_BUILD:-0}" == "1" ]]; then
+    for network_tool in curl git wget; do
+        printf '%s\n' \
+            '#!/usr/bin/env sh' \
+            'echo "Network-capable command is disabled during the offline Mosh build." >&2' \
+            'exit 97' > "$shim_dir/$network_tool"
+        chmod 755 "$shim_dir/$network_tool"
+    done
+fi
 export PATH="$shim_dir:$PATH"
 
 bash "$MOSH_SOURCE/android/build-android-release-assets.sh"

@@ -17,7 +17,7 @@ class ThirdPartyNoticesTest {
     }
 
     @Test
-    fun releasePageUsesTheCanonicalRepository() {
-        assertEquals("https://github.com/sunging/MangoSSH/releases", projectReleasesUrl())
+    fun projectPageUsesTheCanonicalRepository() {
+        assertEquals("https://github.com/sunging/MangoSSH", projectRepositoryUrl())
     }
 }

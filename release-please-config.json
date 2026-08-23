@@ -5,7 +5,7 @@
   "include-v-in-tag": true,
   "draft": true,
   "force-tag-creation": true,
-  "pull-request-header": "## Release checklist\n\n- [ ] Review the generated version and changelog.\n- [ ] Add non-empty localized release notes under `fastlane/metadata/android/{en-US,zh-CN}/changelogs/<versionCode>.txt`.\n- [ ] Approve and pass Android CI before merging.",
+  "pull-request-header": "## Release checklist\n\n- [ ] Review the generated version and changelog.\n- [ ] Update `version-code.txt` to the code derived from `version.txt`.\n- [ ] Add non-empty localized release notes under `fastlane/metadata/android/{en-US,zh-CN}/changelogs/<versionCode>.txt`.\n- [ ] Approve and pass Android CI before merging.",
   "packages": {
     ".": {}
   }

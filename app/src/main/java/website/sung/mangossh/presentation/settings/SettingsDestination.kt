@@ -15,6 +15,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import website.sung.mangossh.R
+import website.sung.mangossh.presentation.update.distributionUpdateSummaryResource
+import website.sung.mangossh.presentation.update.distributionUpdateTitleResource
 
 /**
  * One category shown on the Settings hub, each opening its own detail page.
@@ -90,7 +92,7 @@ internal fun SettingsDestination.title(): String = stringResource(
         SettingsDestination.BACKUP -> R.string.settings_category_backup_title
         SettingsDestination.SNIPPETS -> R.string.settings_category_snippets_title
         SettingsDestination.TSNET -> R.string.settings_category_tsnet_title
-        SettingsDestination.UPDATES -> R.string.settings_category_updates_title
+        SettingsDestination.UPDATES -> distributionUpdateTitleResource()
         SettingsDestination.ABOUT -> R.string.settings_category_about_title
     },
 )
@@ -106,7 +108,7 @@ internal fun SettingsDestination.summary(): String = stringResource(
         SettingsDestination.BACKUP -> R.string.settings_category_backup_summary
         SettingsDestination.SNIPPETS -> R.string.settings_category_snippets_summary
         SettingsDestination.TSNET -> R.string.settings_category_tsnet_summary
-        SettingsDestination.UPDATES -> R.string.settings_category_updates_summary
+        SettingsDestination.UPDATES -> distributionUpdateSummaryResource()
         SettingsDestination.ABOUT -> R.string.settings_category_about_summary
     },
 )

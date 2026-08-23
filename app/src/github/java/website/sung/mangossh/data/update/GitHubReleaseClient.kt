@@ -11,8 +11,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import website.sung.mangossh.core.AppUpdateLogEvent
 import website.sung.mangossh.core.MangoLog
-import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.domain.AppRelease
 import website.sung.mangossh.domain.AppReleaseAsset
 import website.sung.mangossh.domain.CHECKSUM_ASSET_NAME
@@ -46,7 +46,7 @@ internal class GitHubReleaseClient(
 ) {
     /** Fetches and decodes the latest published, non-draft, non-prerelease release. */
     suspend fun latestRelease(): AppUpdateCheckResult = withContext(Dispatchers.IO) {
-        MangoLog.info(MangoLogEvent.APP_UPDATE_CHECK_STARTED)
+        MangoLog.info(AppUpdateLogEvent.CHECK_STARTED)
         runCatching {
             val body = withConnection(URL(LATEST_RELEASE_URL), followRedirects = false) { connection ->
                 connection.setRequestProperty("Accept", "application/vnd.github+json")
@@ -59,12 +59,12 @@ internal class GitHubReleaseClient(
             GitHubReleaseCodec.decodeRelease(String(body, Charsets.UTF_8))
         }.fold(
             onSuccess = { release ->
-                MangoLog.info(MangoLogEvent.APP_UPDATE_CHECK_SUCCEEDED)
+                MangoLog.info(AppUpdateLogEvent.CHECK_SUCCEEDED)
                 AppUpdateCheckResult.Success(release)
             },
             onFailure = { error ->
                 if (error is CancellationException) throw error
-                MangoLog.warn(MangoLogEvent.APP_UPDATE_CHECK_FAILED, error)
+                MangoLog.warn(AppUpdateLogEvent.CHECK_FAILED, error)
                 val (reason, statusCode) = error.failureParts()
                 AppUpdateCheckResult.Failure(reason, statusCode)
             },
@@ -85,7 +85,7 @@ internal class GitHubReleaseClient(
         destination: File,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit,
     ): AppUpdateDownloadResult = withContext(Dispatchers.IO) {
-        MangoLog.info(MangoLogEvent.APP_UPDATE_DOWNLOAD_STARTED)
+        MangoLog.info(AppUpdateLogEvent.DOWNLOAD_STARTED)
         runCatching {
             val checksumAsset = release.checksumAsset
                 ?: throw AppUpdateException(AppUpdateFailureReason.CHECKSUM_MISSING)
@@ -93,7 +93,7 @@ internal class GitHubReleaseClient(
             downloadAndVerify(release.apkAsset, expectedDigest, destination, onProgress)
         }.fold(
             onSuccess = {
-                MangoLog.info(MangoLogEvent.APP_UPDATE_DOWNLOAD_SUCCEEDED)
+                MangoLog.info(AppUpdateLogEvent.DOWNLOAD_SUCCEEDED)
                 AppUpdateDownloadResult.Success(destination)
             },
             onFailure = { error ->
@@ -102,10 +102,10 @@ internal class GitHubReleaseClient(
                 // teardown), not a network failure, and must propagate through
                 // structured concurrency rather than surface as a Failed phase.
                 if (error is CancellationException) {
-                    MangoLog.info(MangoLogEvent.APP_UPDATE_DOWNLOAD_CANCELLED)
+                    MangoLog.info(AppUpdateLogEvent.DOWNLOAD_CANCELLED)
                     throw error
                 }
-                MangoLog.warn(MangoLogEvent.APP_UPDATE_DOWNLOAD_FAILED, error)
+                MangoLog.warn(AppUpdateLogEvent.DOWNLOAD_FAILED, error)
                 val (reason, statusCode) = error.failureParts()
                 AppUpdateDownloadResult.Failure(reason, statusCode)
             },
@@ -173,7 +173,7 @@ internal class GitHubReleaseClient(
         val expected = expectedDigestHex.hexToByteArrayOrNull()
             ?: throw AppUpdateException(AppUpdateFailureReason.CHECKSUM_MISMATCH)
         if (!MessageDigest.isEqual(expected, actual)) {
-            MangoLog.warn(MangoLogEvent.APP_UPDATE_VERIFY_FAILED)
+            MangoLog.warn(AppUpdateLogEvent.VERIFY_FAILED)
             throw AppUpdateException(AppUpdateFailureReason.CHECKSUM_MISMATCH)
         }
     }

@@ -10,7 +10,7 @@ import website.sung.mangossh.presentation.UpdateCardCallbacks
 import website.sung.mangossh.presentation.UpdateSettingsCard
 import website.sung.mangossh.presentation.UpdateUiState
 
-/** Updates detail page. Hidden from the hub entirely when a store owns updates for this install. */
+/** Updates detail page for the GitHub distribution. */
 @Composable
 internal fun UpdateSettingsPage(
     state: UpdateUiState,
