@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.0](https://github.com/sunging/MangoSSH/compare/v0.3.0...v0.4.0) (2026-08-21)
+
+
+### Features
+
+* keep an authenticated SSH companion for Mosh sessions ([a2061f4](https://github.com/sunging/MangoSSH/commit/a2061f428917d9e933850162ab34a36cd78b81b4))
+* **security:** make the app auto-lock delay configurable ([cc55d50](https://github.com/sunging/MangoSSH/commit/cc55d5044b3f9e065138a949c20842869d6dac26))
+* **settings:** add an about page ([c034abf](https://github.com/sunging/MangoSSH/commit/c034abf6d11b85880dcec75a058743c0421cac5c))
+* **settings:** add app theme mode and dynamic color ([1fc2e5f](https://github.com/sunging/MangoSSH/commit/1fc2e5f5fe4d41da2eb9cd7935cd7aa67565597b))
+* **settings:** add connection defaults ([1d32865](https://github.com/sunging/MangoSSH/commit/1d328654e7fc9934b4c960688243d7e424d65adf))
+* **settings:** add terminal behavior and keyboard input preferences ([5f662a0](https://github.com/sunging/MangoSSH/commit/5f662a06ac732cb24ac94c622cf095668c755bbe))
+* **settings:** keep an off-grid persisted value in its picker ([af02890](https://github.com/sunging/MangoSSH/commit/af02890014b2b3eceea9472c23bfcf1b10d1e4aa))
+* show the embedded Tailscale build version in Settings ([9a6b67c](https://github.com/sunging/MangoSSH/commit/9a6b67c45855adb4015b6a281b3209b9a4fd202d))
+* **terminal:** make emulator scrollback and pinch range configurable ([fd3c73f](https://github.com/sunging/MangoSSH/commit/fd3c73fccf89d5769b39901651060497ce689b67))
+* **ui:** add shared settings components and a two-pane tablet layout ([71c9f2e](https://github.com/sunging/MangoSSH/commit/71c9f2e6057e99a9ee024122797a66ed96ae2bd4))
+
+
+### Bug Fixes
+
+* address develop review findings ([dd002a0](https://github.com/sunging/MangoSSH/commit/dd002a0c8ee385743c6b8ef0286db068fed8b8be))
+* harden session failure handling ([7679c13](https://github.com/sunging/MangoSSH/commit/7679c130b432bc61f716f0418166d5923ef7057d))
+* **settings:** resolve duplicate preferences property in AppThemeStore ([dba5ed7](https://github.com/sunging/MangoSSH/commit/dba5ed739679bf3c4f201956df5b5b9bbf9daa0d))
+* **test:** repair the instrumented test source set ([fb04964](https://github.com/sunging/MangoSSH/commit/fb049640265a3cd81bebfa3b7b7d56ded5cdbc24))
+
 ## [0.3.0](https://github.com/sunging/MangoSSH/compare/v0.2.0...v0.3.0) (2026-08-07)
 
 
