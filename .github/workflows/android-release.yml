@@ -79,6 +79,9 @@ jobs:
             ./gradlew --no-daemon :app:verifyReleaseVersion
           fi
 
+      - name: Prefetch Gradle dependencies for the offline build
+        run: ./gradlew --no-daemon :app:dependencies
+
       - name: Select artifact version
         env:
           RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
@@ -96,31 +99,34 @@ jobs:
           test -x "$sdkmanager_bin"
           "$sdkmanager_bin" "build-tools;36.0.0"
 
-      - name: Cache pinned native toolchains
+      - name: Cache pinned Android NDK
         uses: actions/cache@v5
         with:
           path: |
             .tools/android-ndk-linux/27.3.13750724
             .tools/android-ndk-r27d-linux.zip
-            .tools/downloads/go1.26.5.linux-amd64.tar.gz
-            .tools/go/1.26.5
-          key: mangossh-native-r27d-go1.26.5-v1
+          key: mangossh-native-r27d-v1
 
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
-            autoconf automake bison cmake gettext gperf libtool ninja-build \
+            autoconf automake binutils bison cmake gettext golang-go gperf git libtool ninja-build \
             pkg-config rsync texinfo unzip zip
 
-      - name: Rebuild PTY and Mosh assets from pinned source
+      - name: Fetch F-Droid source inputs at locked commits
+        run: bash tools/fetch-fdroid-sources.sh
+
+      - name: Rebuild native assets from pinned source
+        env:
+          MANGOSSH_GO_SOURCE: ${{ github.workspace }}/.fdroid/sources/go
+          MANGOSSH_MOSH_DEPS_DIR: ${{ github.workspace }}/.fdroid/sources
+          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.5
         run: |
           bash tools/fetch-android-ndk.sh
           echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724" >> "$GITHUB_ENV"
           export ANDROID_NDK_HOME="$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724"
-          bash tools/build-pty-bridge.sh
-          bash tools/build-mosh-android.sh
-          bash tools/install-mosh-assets.sh
+          bash tools/prepare-fdroid-native.sh
 
       - name: Restore release signing key
         env:
@@ -142,8 +148,18 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/mangossh-release.keystore"
           test -s "$RUNNER_TEMP/mangossh-release.keystore"
 
-      - name: Test, lint, and build unsigned APK and AAB
-        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lint :app:assembleRelease :app:bundleRelease
+      - name: Test, lint, and build both unsigned distributions
+        env:
+          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.5
+        run: |
+          ./gradlew --no-daemon --offline -PmangosshOfflineBuild=true \
+            :app:testGithubDebugUnitTest \
+            :app:testFdroidDebugUnitTest \
+            :app:lintGithubDebug \
+            :app:lintFdroidDebug \
+            :app:assembleGithubRelease \
+            :app:bundleGithubRelease \
+            :app:assembleFdroidRelease
 
       # Build Tools 34 is deliberately used for the APK signature because its
       # v2/v3 signing block is compatible with F-Droid's apksigcopier-based
@@ -156,23 +172,25 @@ jobs:
         run: |
           build_tools_dir="$ANDROID_HOME/build-tools/34.0.0"
           test -x "$build_tools_dir/apksigner"
-          "$build_tools_dir/apksigner" sign \
-            --ks "$RUNNER_TEMP/mangossh-release.keystore" \
-            --ks-key-alias "$ANDROID_KEY_ALIAS" \
-            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
-            --key-pass env:ANDROID_KEY_PASSWORD \
-            --out app/build/outputs/apk/release/app-release.apk \
-            app/build/outputs/apk/release/app-release-unsigned.apk
-          mv app/build/outputs/bundle/release/app-release.aab \
-            app/build/outputs/bundle/release/app-release-unsigned.aab
+          for distribution in github fdroid; do
+            "$build_tools_dir/apksigner" sign \
+              --ks "$RUNNER_TEMP/mangossh-release.keystore" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --key-pass env:ANDROID_KEY_PASSWORD \
+              --out "app/build/outputs/apk/$distribution/release/app-$distribution-release.apk" \
+              "app/build/outputs/apk/$distribution/release/app-$distribution-release-unsigned.apk"
+          done
+          mv app/build/outputs/bundle/githubRelease/app-github-release.aab \
+            app/build/outputs/bundle/githubRelease/app-github-release-unsigned.aab
           jarsigner \
             -keystore "$RUNNER_TEMP/mangossh-release.keystore" \
             -storepass:env ANDROID_KEYSTORE_PASSWORD \
             -keypass:env ANDROID_KEY_PASSWORD \
-            -signedjar app/build/outputs/bundle/release/app-release.aab \
-            app/build/outputs/bundle/release/app-release-unsigned.aab \
+            -signedjar app/build/outputs/bundle/githubRelease/app-github-release.aab \
+            app/build/outputs/bundle/githubRelease/app-github-release-unsigned.aab \
             "$ANDROID_KEY_ALIAS"
-          rm app/build/outputs/bundle/release/app-release-unsigned.aab
+          rm app/build/outputs/bundle/githubRelease/app-github-release-unsigned.aab
 
       - name: Verify signed APK and 16 KiB native alignment
         run: |
@@ -180,21 +198,29 @@ jobs:
           alignment_tools_dir="$ANDROID_HOME/build-tools/36.0.0"
           test -x "$signing_tools_dir/apksigner"
           test -x "$alignment_tools_dir/zipalign"
-          "$signing_tools_dir/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
-          "$alignment_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/release/app-release.apk
-          bash tools/check-16kb-elf.sh app/build/outputs/apk/release/app-release.apk
+          for apk in \
+            app/build/outputs/apk/github/release/app-github-release.apk \
+            app/build/outputs/apk/fdroid/release/app-fdroid-release.apk; do
+            "$signing_tools_dir/apksigner" verify --verbose "$apk"
+            "$alignment_tools_dir/zipalign" -c -P 16 -v 4 "$apk"
+            bash tools/check-16kb-elf.sh "$apk"
+          done
+          AAPT2="$alignment_tools_dir/aapt2" \
+            bash tools/check-fdroid-apk.sh app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
 
       - name: Create versioned release artifacts and checksums
         run: |
           release_dir="app/build/outputs/release"
           apk_name="MangoSSH-$MANGOSSH_ARTIFACT_VERSION.apk"
+          fdroid_apk_name="MangoSSH-$MANGOSSH_ARTIFACT_VERSION-fdroid.apk"
           aab_name="MangoSSH-$MANGOSSH_ARTIFACT_VERSION.aab"
           mkdir -p "$release_dir"
-          cp app/build/outputs/apk/release/app-release.apk "$release_dir/$apk_name"
-          cp app/build/outputs/bundle/release/app-release.aab "$release_dir/$aab_name"
+          cp app/build/outputs/apk/github/release/app-github-release.apk "$release_dir/$apk_name"
+          cp app/build/outputs/apk/fdroid/release/app-fdroid-release.apk "$release_dir/$fdroid_apk_name"
+          cp app/build/outputs/bundle/githubRelease/app-github-release.aab "$release_dir/$aab_name"
           (
             cd "$release_dir"
-            sha256sum "$apk_name" "$aab_name" > SHA256SUMS
+            sha256sum "$apk_name" "$fdroid_apk_name" "$aab_name" > SHA256SUMS
           )
 
       - name: Upload signed APK and AAB
@@ -220,6 +246,7 @@ jobs:
           test -n "$RELEASE_TAG"
           gh release upload "$RELEASE_TAG" \
             "app/build/outputs/release/MangoSSH-$RELEASE_TAG.apk" \
+            "app/build/outputs/release/MangoSSH-$RELEASE_TAG-fdroid.apk" \
             "app/build/outputs/release/MangoSSH-$RELEASE_TAG.aab" \
             app/build/outputs/release/SHA256SUMS \
             --clobber

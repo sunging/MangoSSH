@@ -2,7 +2,6 @@
 
 package website.sung.mangossh.presentation
 
-import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.os.Build
@@ -143,6 +142,7 @@ import website.sung.mangossh.presentation.settings.ShortcutSettingsState
 import website.sung.mangossh.presentation.settings.SnippetSettingsState
 import website.sung.mangossh.presentation.settings.TerminalSettingsState
 import website.sung.mangossh.presentation.settings.rememberSettingsCallbacks
+import website.sung.mangossh.presentation.update.distributionUpdateBadgeDescription
 
 private sealed interface PendingRemovalRequest {
     val id: String
@@ -271,19 +271,7 @@ fun MangoSshApp(
             onCheckNow = viewModel::checkForUpdates,
             onDownload = viewModel::downloadUpdate,
             onCancelDownload = viewModel::cancelUpdateDownload,
-            onInstall = {
-                val uri = viewModel.readyInstallUri()
-                if (uri != null) {
-                    val intent = Intent(Intent.ACTION_VIEW)
-                        .setDataAndType(uri, "application/vnd.android.package-archive")
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    try {
-                        context.startActivity(intent)
-                    } catch (_: ActivityNotFoundException) {
-                        viewModel.reportInstallHandoffFailed()
-                    }
-                }
-            },
+            onInstall = { viewModel.installReadyUpdate(context) },
             onDismissNotice = viewModel::dismissUpdateNotice,
             onSetAutomaticCheck = viewModel::setAutomaticUpdateCheckEnabled,
             onOpenReleasePage = {
@@ -693,7 +681,7 @@ private fun MangoNavigationBar(
     onSelectSection: (AppSection) -> Unit,
     showUpdateBadge: Boolean,
 ) {
-    val updateBadgeDescription = stringResource(R.string.app_update_badge_description)
+    val updateBadgeDescription = distributionUpdateBadgeDescription()
     NavigationBar {
         AppSection.entries.forEach { section ->
             NavigationBarItem(

@@ -1,8 +1,6 @@
-diff --git a/android/build-android-release-assets.sh b/android/build-android-release-assets.sh
-index 10e9338..04c6d55 100755
 --- a/android/build-android-release-assets.sh
 +++ b/android/build-android-release-assets.sh
-@@ -12,6 +12,9 @@ NCURSES_VERSION="${NCURSES_VERSION:-v6.4}"
+@@ -12,6 +12,9 @@
  GMP_VERSION="${GMP_VERSION:-v6.2.1}"
  NETTLE_VERSION="${NETTLE_VERSION:-nettle_3.10_release_20240616}"
  
@@ -12,7 +10,7 @@ index 10e9338..04c6d55 100755
  die() {
    echo "error: $*" >&2
    exit 1
-@@ -62,6 +65,25 @@ fetch_git() {
+@@ -62,6 +65,25 @@
    fi
  }
  
@@ -38,7 +36,7 @@ index 10e9338..04c6d55 100755
  download_protoc() {
    local platform="$1"
    local dest="$WORK_DIR/protoc-$PROTOBUF_VERSION-$platform"
-@@ -79,6 +101,20 @@ download_protoc() {
+@@ -79,6 +101,20 @@
    echo "$dest"
  }
  
@@ -59,7 +57,30 @@ index 10e9338..04c6d55 100755
  abi_config() {
    case "$1" in
      arm64-v8a) echo "aarch64-linux-android aarch64-linux-android" ;;
-@@ -274,10 +310,10 @@ build_mosh_client() {
+@@ -165,6 +201,9 @@
+     cd "$build_dir/ncurses"
+     "$SOURCES_DIR/ncurses/configure" \
+       --prefix="$prefix" \
++      --with-default-terminfo-dir=/usr/share/terminfo \
++      --with-terminfo-dirs=/usr/share/terminfo \
++      --with-tic-path="$MANGOSSH_TIC" \
+       --enable-pc-files \
+       --without-shared \
+       --without-debug \
+@@ -181,7 +220,11 @@
+       --host="$host" \
+       --target="$host"
+     make -s -j"$NCPU"
+-    make -s install
++    make -s install.libs install.includes
++    make -s install.data DESTDIR="$prefix"
++    mkdir -p "$prefix/share/terminfo/x"
++    cp "$prefix/usr/share/terminfo/x/xterm-256color" "$prefix/share/terminfo/x/"
++    rm -rf "$prefix/usr"
+   )
+ }
+ 
+@@ -274,10 +317,10 @@
    (
      cd "$src_dir"
      env \
@@ -72,7 +93,17 @@ index 10e9338..04c6d55 100755
        CC="$CC" \
        CXX="$CXX" \
        CFLAGS="$CFLAGS -DHAVE_LANGINFO_H" \
-@@ -335,11 +371,10 @@ package_and_validate() {
+@@ -287,7 +330,7 @@
+       AR="$AR" \
+       RANLIB="$RANLIB" \
+       ./configure \
+-        --prefix="$prefix/mosh" \
++        --prefix=/usr \
+         --host="$host" \
+         --target="$host" \
+         --enable-client \
+@@ -334,12 +377,11 @@
+ 
    (
      cd "$package_dir"
 -    zip -q -X -r "$output" mosh-client terminfo.zip
@@ -86,7 +117,7 @@ index 10e9338..04c6d55 100755
  need_tool make
  need_tool patch
  need_tool perl
-@@ -351,6 +386,16 @@ need_tool ninja
+@@ -351,6 +393,16 @@
  need_tool autoreconf
  need_tool pkg-config
  
@@ -103,8 +134,7 @@ index 10e9338..04c6d55 100755
  if [[ "${KEEP_WORK_DIR:-0}" != "1" ]]; then
    rm -rf "$WORK_DIR"
  fi
-@@ -369,13 +414,13 @@ NCPU="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
- SOURCES_DIR="$WORK_DIR/sources"
+@@ -370,13 +422,13 @@
  mkdir -p "$SOURCES_DIR"
  rm -f "$WORK_DIR"/mosh-android-*.zip
  
@@ -123,28 +153,32 @@ index 10e9338..04c6d55 100755
 +prepare_source "$SOURCES_DIR/nettle" nettle https://gitlab.com/gnutls/nettle.git "$NETTLE_VERSION" --config core.autocrlf=input
  
  sed -i /tsearch/d "$SOURCES_DIR/ncurses/configure"
-@@ -396,21 +441,22 @@ for abi in $ABIS; do
+ 
+@@ -393,10 +445,13 @@
+   [[ -x "$CXX" ]] || die "missing compiler $CXX"
+ 
+   COMMON_FLAGS="-fPIC -fPIE -D_FORTIFY_SOURCE=2 -fstack-protector-all -fno-strict-overflow -w"
++  COMMON_FLAGS="$COMMON_FLAGS -ffile-prefix-map=$WORK_DIR=. -ffile-prefix-map=$ROOT_DIR=."
++  COMMON_FLAGS="$COMMON_FLAGS -fdebug-prefix-map=$WORK_DIR=. -fdebug-prefix-map=$ROOT_DIR=."
++  COMMON_FLAGS="$COMMON_FLAGS -fmacro-prefix-map=$WORK_DIR=. -fmacro-prefix-map=$ROOT_DIR=."
    CFLAGS="$COMMON_FLAGS -std=gnu17"
    CXXFLAGS="$COMMON_FLAGS -std=gnu++17"
    ASMFLAGS="--target=$HOST -w -D_FORTIFY_SOURCE=2 -fPIE -fPIC"
 -  LDFLAGS="-pie -Wl,-z,max-page-size=16384"
-+  LDFLAGS="-pie -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
++  LDFLAGS="-pie -Wl,--build-id=none -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
  
    build_dir="$WORK_DIR/build-$abi"
    prefix="$WORK_DIR/prefix-$abi"
-   package_dir="$WORK_DIR/package-$abi"
-   rm -rf "$package_dir"
-   mkdir -p "$build_dir" "$prefix" "$package_dir"
- 
-   build_zlib "$abi" "$prefix" "$build_dir"
-   build_protobuf "$abi" "$prefix" "$build_dir"
+@@ -409,7 +464,11 @@
    build_ncurses "$HOST" "$prefix" "$build_dir"
    (
      cd "$prefix"
 -    zip -q -X -r "$prefix/share/terminfo.zip" share/terminfo
-+    find share/terminfo -exec touch -h -d '@315532800' {} +
-+    TZ=UTC zip -q -X -r "$prefix/share/terminfo.zip" share/terminfo
++    terminfo_entry="share/terminfo/x/xterm-256color"
++    [[ -f "$terminfo_entry" ]] || die "xterm-256color terminfo was not built"
++    touch -h -d '@315532800' "$terminfo_entry"
++    rm -f "$prefix/share/terminfo.zip"
++    TZ=UTC zip -q -X "$prefix/share/terminfo.zip" "$terminfo_entry"
    )
    build_gmp "$HOST" "$prefix" "$build_dir"
    build_nettle "$HOST" "$prefix" "$build_dir"
-   build_mosh_client "$HOST" "$prefix" "$build_dir" "$package_dir"

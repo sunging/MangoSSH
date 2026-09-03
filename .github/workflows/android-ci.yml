@@ -53,14 +53,30 @@ jobs:
       # `assembleDebugAndroidTest` compiles the instrumented tests without a
       # device. CI has no emulator, so nothing else here would catch an
       # androidTest source set that no longer builds against the app it tests.
-      - name: Verify version, test, lint, and package debug APK
-        run: ./gradlew --no-daemon :app:verifyReleaseVersion :app:testDebugUnitTest :app:lint :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Verify version, test, lint, and package both distributions
+        run: |
+          ./gradlew --no-daemon \
+            :app:verifyReleaseVersion \
+            :app:testGithubDebugUnitTest \
+            :app:testFdroidDebugUnitTest \
+            :app:lintGithubDebug \
+            :app:lintFdroidDebug \
+            :app:assembleGithubDebug \
+            :app:assembleFdroidDebug \
+            :app:assembleGithubDebugAndroidTest \
+            :app:assembleFdroidDebugAndroidTest
 
       - name: Verify 16 KiB native alignment
         run: |
           build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          "$build_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
-          bash tools/check-16kb-elf.sh app/build/outputs/apk/debug/app-debug.apk
+          for apk in \
+            app/build/outputs/apk/github/debug/app-github-debug.apk \
+            app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk; do
+            "$build_tools_dir/zipalign" -c -P 16 -v 4 "$apk"
+            bash tools/check-16kb-elf.sh "$apk"
+          done
+          AAPT2="$build_tools_dir/aapt2" \
+            bash tools/check-fdroid-apk.sh app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk
 
       # This is continuous delivery of an installable debug artifact. Tagged
       # production releases are signed by the dedicated release workflow.
@@ -69,7 +85,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: MangoSSH-debug-${{ github.sha }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/github/debug/app-github-debug.apk
+            app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -110,23 +128,28 @@ jobs:
           MANGOSSH_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           MANGOSSH_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           MANGOSSH_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon :app:assembleRelease
+        run: ./gradlew --no-daemon :app:assembleGithubRelease :app:assembleFdroidRelease
 
       - name: Verify the signed release APK
         if: steps.signing_key.outputs.available == 'true'
         run: |
-          # Gradle names the artifact `app-release-unsigned.apk` when the signing
-          # configuration did not attach, so the signed name is itself the proof
-          # that the injected credentials were complete.
-          apk="app/build/outputs/apk/release/app-release.apk"
-          test -f "$apk" || {
-            echo "::error::$apk is missing; the release signing configuration did not attach"
-            exit 1
-          }
+          # Gradle keeps `-unsigned` in each flavored filename when the signing
+          # configuration did not attach, so the signed names prove that the
+          # injected credentials were complete.
           build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          "$build_tools_dir/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
-          "$build_tools_dir/zipalign" -c -P 16 -v 4 app/build/outputs/apk/release/app-release.apk
-          bash tools/check-16kb-elf.sh app/build/outputs/apk/release/app-release.apk
+          for apk in \
+            app/build/outputs/apk/github/release/app-github-release.apk \
+            app/build/outputs/apk/fdroid/release/app-fdroid-release.apk; do
+            test -f "$apk" || {
+              echo "::error::$apk is missing; the release signing configuration did not attach"
+              exit 1
+            }
+            "$build_tools_dir/apksigner" verify --verbose "$apk"
+            "$build_tools_dir/zipalign" -c -P 16 -v 4 "$apk"
+            bash tools/check-16kb-elf.sh "$apk"
+          done
+          AAPT2="$build_tools_dir/aapt2" \
+            bash tools/check-fdroid-apk.sh app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
 
       # The `ci` name keeps this build out of the `MangoSSH-<tag>.apk` namespace
       # that published releases and the in-app updater use, while carrying the
@@ -136,8 +159,10 @@ jobs:
         run: |
           staging_dir="app/build/outputs/ci-release"
           mkdir -p "$staging_dir"
-          cp app/build/outputs/apk/release/app-release.apk \
+          cp app/build/outputs/apk/github/release/app-github-release.apk \
             "$staging_dir/MangoSSH-ci-${GITHUB_SHA:0:12}.apk"
+          cp app/build/outputs/apk/fdroid/release/app-fdroid-release.apk \
+            "$staging_dir/MangoSSH-ci-${GITHUB_SHA:0:12}-fdroid.apk"
 
       - name: Upload the release-signed test APK
         if: steps.signing_key.outputs.available == 'true'
@@ -194,7 +219,7 @@ jobs:
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./gradlew --no-daemon :app:connectedDebugAndroidTest
+          script: ./gradlew --no-daemon :app:connectedGithubDebugAndroidTest
 
       - name: Upload instrumented test report
         if: failure()

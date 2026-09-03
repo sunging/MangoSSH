@@ -52,7 +52,7 @@ import website.sung.mangossh.R
 import website.sung.mangossh.domain.AppRelease
 import website.sung.mangossh.ui.components.mangoCardColors
 
-/** Settings card for checking, downloading, verifying, and installing GitHub releases. */
+/** GitHub-distribution card for checking, downloading, verifying, and installing releases. */
 @Composable
 internal fun UpdateSettingsCard(
     state: UpdateUiState,

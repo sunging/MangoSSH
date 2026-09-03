@@ -31,16 +31,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.R
 import website.sung.mangossh.core.CrashReporter
-import website.sung.mangossh.data.update.GitHubReleaseClient
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.MangoSettingsCard
 import website.sung.mangossh.ui.components.SettingsActionRow
 
-/** Public releases page for this project; distinct from [MangoSshViewModel.releasePageUrl], which is null until a check has run. */
-internal fun projectReleasesUrl(): String = "https://github.com/${GitHubReleaseClient.REPO_SLUG}/releases"
+/** Public source repository, available in every distribution without coupling About to the self-updater. */
+internal fun projectRepositoryUrl(): String = "https://github.com/sunging/MangoSSH"
 
-/** About detail page: installed version, release page link, and bundled open-source licenses. */
+/** About detail page: installed version, source repository, and bundled open-source licenses. */
 @Composable
 internal fun AboutSettingsPage(
     state: AboutSettingsState,

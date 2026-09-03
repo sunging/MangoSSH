@@ -8,13 +8,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!--
-        Used only for the in-app self-update flow, and only reachable when the
-        install is sideloaded (see data/update/InstallSource.kt). Store-managed
-        installs never see this path exercised.
-    -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-
     <application
         android:name=".MangoSshApplication"
         android:allowBackup="false"
@@ -60,19 +53,6 @@
                 android:value="true" />
         </service>
 
-        <!--
-            Serves only the digest-verified update APK from app-private cache
-            storage, read-only and per-invocation. Nothing else is exposed.
-        -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.updates"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
     </application>
 
 </manifest>

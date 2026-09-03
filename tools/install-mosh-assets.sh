@@ -13,7 +13,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=tools/lib/linux-host.sh
 source "$PROJECT_DIR/tools/lib/linux-host.sh"
 mangossh_require_linux_x86_64
-mangossh_require_commands awk grep install mkdir mktemp rm unzip
+mangossh_require_commands awk cmp grep install mkdir mktemp rm unzip
 NDK_REVISION="27.3.13750724"
 NDK_HOME="${ANDROID_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/$NDK_REVISION}"
 BUILD_DIR="${WORK_DIR:-$PROJECT_DIR/.tools/mosh-android-build}"
@@ -83,8 +83,14 @@ for abi in $ABIS; do
         echo "Mosh client for $abi unexpectedly needs libc++_shared.so." >&2
         exit 1
     fi
-    # terminfo is architecture-independent; retain the first validated copy.
-    [[ -n "$first_terminfo" ]] || first_terminfo="$temp_dir/terminfo-$abi.zip"
+    # terminfo is architecture-independent; every ABI build must reproduce the
+    # same archive before the first validated copy is retained.
+    if [[ -z "$first_terminfo" ]]; then
+        first_terminfo="$temp_dir/terminfo-$abi.zip"
+    elif ! cmp -s "$first_terminfo" "$temp_dir/terminfo-$abi.zip"; then
+        echo "Mosh terminfo archive differs across ABIs." >&2
+        exit 1
+    fi
     mkdir -p "$JNI_LIBS_DIR/$abi"
     install -m 0755 "$temp_dir/mosh-client-$abi" "$JNI_LIBS_DIR/$abi/libmosh_client.so"
     # Keep the packaged executable and JNI bridge compact without changing

@@ -64,6 +64,9 @@ class EmbeddedTsnetManagerInstrumentedTest {
         assertEquals(0, factory.closed.get())
         lease.close()
         withTimeout(5_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.READY_IDLE } }
+        withTimeout(5_000) {
+            while (factory.closed.get() == 0) delay(10)
+        }
         assertEquals(1, factory.closed.get())
     }
 

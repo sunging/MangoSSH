@@ -18,15 +18,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.presentation.MangoSshViewModel
 import website.sung.mangossh.presentation.SecurityBanner
+import website.sung.mangossh.presentation.update.distributionUpdateBadgeDescription
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.SettingsCategoryRow
@@ -107,7 +106,7 @@ private fun SettingsHub(
     onOpen: (SettingsDestination) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val updateBadgeDescription = stringResource(R.string.app_update_badge_description)
+    val updateBadgeDescription = distributionUpdateBadgeDescription()
     val sections = visibleDestinations(state).groupBy { it.section }
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("settings_hub"),

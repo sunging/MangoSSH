@@ -1,6 +1,5 @@
 package website.sung.mangossh.presentation.settings
 
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.Composable
@@ -86,25 +85,13 @@ internal fun rememberSettingsCallbacks(
                 onCheckNow = viewModel::checkForUpdates,
                 onDownload = viewModel::downloadUpdate,
                 onCancelDownload = viewModel::cancelUpdateDownload,
-                onInstall = {
-                    val uri = viewModel.readyInstallUri()
-                    if (uri != null) {
-                        val intent = Intent(Intent.ACTION_VIEW)
-                            .setDataAndType(uri, "application/vnd.android.package-archive")
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        try {
-                            context.startActivity(intent)
-                        } catch (_: ActivityNotFoundException) {
-                            viewModel.reportInstallHandoffFailed()
-                        }
-                    }
-                },
+                onInstall = { viewModel.installReadyUpdate(context) },
                 onDismissNotice = viewModel::dismissUpdateNotice,
                 onSetAutomaticCheck = viewModel::setAutomaticUpdateCheckEnabled,
                 onOpenReleasePage = { openGithubUrl(context, viewModel, viewModel.releasePageUrl()) },
             ),
             about = AboutSettingsCallbacks(
-                onOpenReleasePage = { openGithubUrl(context, viewModel, projectReleasesUrl()) },
+                onOpenReleasePage = { openGithubUrl(context, viewModel, projectRepositoryUrl()) },
             ),
         )
     }

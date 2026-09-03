@@ -17,19 +17,38 @@ object MangoLog {
         Log.i(TAG, event.code)
     }
 
+    /** Records one compile-time flavor event without exposing free-form text to callers. */
+    internal fun info(event: MangoFlavorLogEvent) {
+        Log.i(TAG, event.code)
+    }
+
     /**
      * Records a failed transition and only exposes the exception class. The
      * exception message is intentionally omitted because protocol libraries
      * frequently include remote or credential-adjacent text in their messages.
      */
     fun warn(event: MangoLogEvent, error: Throwable? = null) {
+        warnCode(event.code, error)
+    }
+
+    /** Records a failed compile-time flavor transition with the same redaction boundary. */
+    internal fun warn(event: MangoFlavorLogEvent, error: Throwable? = null) {
+        warnCode(event.code, error)
+    }
+
+    private fun warnCode(code: String, error: Throwable?) {
         val suffix = error?.javaClass?.simpleName?.takeIf(String::isNotBlank)
         if (suffix == null) {
-            Log.w(TAG, event.code)
+            Log.w(TAG, code)
         } else {
-            Log.w(TAG, "${event.code}; cause=$suffix")
+            Log.w(TAG, "$code; cause=$suffix")
         }
     }
+}
+
+/** Fixed-code contract for events whose declarations live in a product flavor. */
+internal interface MangoFlavorLogEvent {
+    val code: String
 }
 
 /** Fixed log events that are safe to publish from security-sensitive code. */
@@ -97,16 +116,6 @@ enum class MangoLogEvent(val code: String) {
     WEBDAV_UPLOAD_FAILED("webdav.upload.failed"),
     WEBDAV_DOWNLOAD_SUCCEEDED("webdav.download.succeeded"),
     WEBDAV_DOWNLOAD_FAILED("webdav.download.failed"),
-    APP_UPDATE_CHECK_STARTED("app_update.check.started"),
-    APP_UPDATE_CHECK_SUCCEEDED("app_update.check.succeeded"),
-    APP_UPDATE_CHECK_FAILED("app_update.check.failed"),
-    APP_UPDATE_DOWNLOAD_STARTED("app_update.download.started"),
-    APP_UPDATE_DOWNLOAD_SUCCEEDED("app_update.download.succeeded"),
-    APP_UPDATE_DOWNLOAD_FAILED("app_update.download.failed"),
-    APP_UPDATE_DOWNLOAD_CANCELLED("app_update.download.cancelled"),
-    APP_UPDATE_VERIFY_FAILED("app_update.verify.failed"),
-    APP_UPDATE_INSTALL_HANDOFF("app_update.install.handoff"),
-    APP_UPDATE_INSTALL_HANDOFF_FAILED("app_update.install.handoff.failed"),
     BIOMETRIC_UNLOCK_FAILED("biometric_unlock.failed"),
     BIOMETRIC_UNLOCK_KEY_INVALIDATED("biometric_unlock.key_invalidated"),
 
