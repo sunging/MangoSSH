@@ -24,6 +24,9 @@ Builds:
         golang-go gperf libtool ninja-build pkg-config rsync texinfo unzip zip
     timeout: 14400
     srclibs:
+      - go120mangossh@90a870f1dc49bfcc6ffe95f80fbaf21875198e7a
+      - go122mangossh@5817e650946aaa0ac28956de96b3f9aa1de4b299
+      - go124mangossh@7f36edc26d4e3becb6d9c9008ff00f260bb19055
       - go@c19862e5f8415b4f24b189d065ed739517c548ba
       - zlib@51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf
       - protobufmangossh@796e49f6ca82f763d1087d2ff7355d2f0d7b71b1
@@ -35,6 +38,9 @@ Builds:
       - app/src/main/assets/mosh/terminfo.zip
     build: |-
       mkdir -p .fdroid/mosh-deps
+      ln -s $$go120mangossh$$ .fdroid/mosh-deps/go-bootstrap-1.20.14
+      ln -s $$go122mangossh$$ .fdroid/mosh-deps/go-bootstrap-1.22.12
+      ln -s $$go124mangossh$$ .fdroid/mosh-deps/go-bootstrap-1.24.6
       ln -s $$zlib$$ .fdroid/mosh-deps/zlib
       ln -s $$protobufmangossh$$ .fdroid/mosh-deps/protobuf
       ln -s $$ncursesmangossh$$ .fdroid/mosh-deps/ncurses

@@ -1,4 +1,7 @@
 # name|repository|release ref|full commit
+go-bootstrap-1.20.14|https://github.com/golang/go.git|go1.20.14|90a870f1dc49bfcc6ffe95f80fbaf21875198e7a
+go-bootstrap-1.22.12|https://github.com/golang/go.git|go1.22.12|5817e650946aaa0ac28956de96b3f9aa1de4b299
+go-bootstrap-1.24.6|https://github.com/golang/go.git|go1.24.6|7f36edc26d4e3becb6d9c9008ff00f260bb19055
 go|https://github.com/golang/go.git|go1.26.5|c19862e5f8415b4f24b189d065ed739517c548ba
 zlib|https://github.com/madler/zlib.git|v1.3.1|51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf
 protobuf|https://github.com/protocolbuffers/protobuf.git|v29.1|796e49f6ca82f763d1087d2ff7355d2f0d7b71b1
