@@ -13,7 +13,7 @@ Before submitting:
 3. Confirm the GitHub release contains `MangoSSH-v0.4.1-fdroid.apk`, signed by
    certificate SHA-256
    `6ad86ccb0026c60606b016a643fb5f90c090035591c2c734d0fd66004b9373be`.
-4. Copy `metadata/website.sung.mangossh.yml` and the four files under `srclibs/`
+4. Copy `metadata/website.sung.mangossh.yml` and the seven files under `srclibs/`
    to the matching fdroiddata directories.
 5. Run `fdroid rewritemeta`, `fdroid lint website.sung.mangossh`,
    `fdroid checkupdates website.sung.mangossh`, and

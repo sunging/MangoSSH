@@ -25,6 +25,7 @@ source_dir() {
 }
 
 while IFS='|' read -r name repository release_ref expected_commit; do
+    expected_commit="${expected_commit%$'\r'}"
     [[ -n "$name" && "${name:0:1}" != "#" ]] || continue
     directory="$(source_dir "$name")"
     [[ -d "$directory" ]] || die "missing $name source directory: $directory"

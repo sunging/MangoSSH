@@ -8,6 +8,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing draft release tag to rebuild and publish
+        required: false
+        type: string
 
 permissions: {}
 
@@ -55,7 +60,7 @@ jobs:
       - name: Check out source and native Mosh source
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.release-please.outputs.sha || github.ref }}
+          ref: ${{ needs.release-please.outputs.sha || inputs.release_tag || github.ref }}
           submodules: recursive
 
       - name: Set up JDK 17
@@ -70,7 +75,7 @@ jobs:
 
       - name: Verify release version and localized notes
         env:
-          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name || inputs.release_tag }}
         run: |
           if [[ -n "$RELEASE_TAG" ]]; then
             ./gradlew --no-daemon :app:verifyReleaseVersion \
@@ -84,7 +89,7 @@ jobs:
 
       - name: Select artifact version
         env:
-          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name || inputs.release_tag }}
         run: |
           if [[ -n "$RELEASE_TAG" ]]; then
             artifact_version="$RELEASE_TAG"
@@ -234,14 +239,18 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      # Manual dispatch validates signing and produces an Actions artifact only.
-      # A Release Please run uploads to its draft release, then publishes it only
-      # after every build, signature, alignment, and checksum check has passed.
+      # A dispatch without release_tag validates signing and produces an Actions
+      # artifact only. A Release Please run or an explicit existing draft tag is
+      # published only after every build and verification step has passed.
       - name: Upload assets and publish GitHub Release
-        if: needs.release-please.outputs.release_created == 'true'
+        if: >-
+          ${{
+            needs.release-please.outputs.release_created == 'true' ||
+            inputs.release_tag != ''
+          }}
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name || inputs.release_tag }}
         run: |
           test -n "$RELEASE_TAG"
           gh release upload "$RELEASE_TAG" \

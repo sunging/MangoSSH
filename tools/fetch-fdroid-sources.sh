@@ -22,13 +22,35 @@ esac
 
 mkdir -p "$FETCH_ROOT"
 while IFS='|' read -r name repository release_ref commit; do
+    commit="${commit%$'\r'}"
     [[ -n "$name" && "${name:0:1}" != "#" ]] || continue
     [[ "$name" != "mosh4android" ]] || continue
     target="$FETCH_ROOT/$name"
+    if [[ -d "$target/.git" ]] &&
+        [[ "$(git -C "$target" rev-parse HEAD 2>/dev/null || true)" == "$commit" ]]; then
+        git -C "$target" reset --hard --quiet "$commit"
+        git -C "$target" clean -dffx --quiet
+        if [[ "$name" == "protobuf" ]]; then
+            git -C "$target" submodule update --init --recursive --depth 1
+        fi
+        printf 'Reused  %-14s %s (%s)\n' "$name" "$commit" "$release_ref"
+        continue
+    fi
     rm -rf -- "$target"
     git init --quiet "$target"
     git -C "$target" remote add origin "$repository"
-    git -C "$target" fetch --quiet --depth 1 origin "$commit"
+    fetched=0
+    for attempt in 1 2 3; do
+        if git -C "$target" fetch --quiet --depth 1 origin "$commit"; then
+            fetched=1
+            break
+        fi
+        if ((attempt < 3)); then
+            printf 'Retrying %-14s fetch (%d/3)\n' "$name" "$((attempt + 1))" >&2
+            sleep "$((attempt * 2))"
+        fi
+    done
+    [[ "$fetched" == 1 ]] || die "failed to fetch $name at $commit after 3 attempts"
     git -C "$target" checkout --quiet --detach FETCH_HEAD
     if [[ "$name" == "protobuf" ]]; then
         git -C "$target" submodule update --init --recursive --depth 1
