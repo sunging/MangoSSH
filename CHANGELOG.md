@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/sunging/MangoSSH/compare/v0.4.0...v0.4.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **distribution:** add official F-Droid build ([6320f73](https://github.com/sunging/MangoSSH/commit/6320f739ece3649c609374ec9587be63c53af233))
+* **distribution:** add official F-Droid build ([5eaad41](https://github.com/sunging/MangoSSH/commit/5eaad419f9a674217123a6d8fe3470666a8d35db))
+
 ## [0.4.0](https://github.com/sunging/MangoSSH/compare/v0.3.0...v0.4.0) (2026-08-21)
 
 
