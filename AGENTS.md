@@ -57,14 +57,16 @@
 Run from the repository root using JDK 17:
 
 ```text
-gradlew.bat :app:testDebugUnitTest
-gradlew.bat :app:lint :app:assembleDebug
-gradlew.bat :app:assembleDebugAndroidTest
+gradlew.bat :app:testGithubDebugUnitTest :app:testFdroidDebugUnitTest
+gradlew.bat :app:lintGithubDebug :app:lintFdroidDebug :app:assembleGithubDebug :app:assembleFdroidDebug
+gradlew.bat :app:assembleGithubDebugAndroidTest :app:assembleFdroidDebugAndroidTest
 ```
 
 The instrumented tests need a device or emulator to run
-(`gradlew.bat :app:connectedDebugAndroidTest`), but
-`assembleDebugAndroidTest` compiles them anywhere, so run it after changing
+(`gradlew.bat :app:connectedGithubDebugAndroidTest` and
+`gradlew.bat :app:connectedFdroidDebugAndroidTest`), but
+the two `assemble<Distribution>DebugAndroidTest` tasks compile them anywhere,
+so run them after changing
 a composable or a constructor an instrumented test touches. CI compiles them
 on every event and runs them on an emulator for pull requests; without the
 compile step the `androidTest` source set silently stops building.
@@ -98,7 +100,7 @@ After producing the debug APK, run:
 
 ```text
 bash tools/check-16kb-elf.sh \
-  app/build/outputs/apk/debug/app-debug.apk
+  app/build/outputs/apk/github/debug/app-github-debug.apk
 ```
 
 ## Git workflow

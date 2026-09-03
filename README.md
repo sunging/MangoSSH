@@ -99,8 +99,8 @@ alignment. This is required for Android devices that use 16 KiB memory pages:
 
 ```text
 bash tools/check-16kb-elf.sh \
-  app/build/outputs/apk/debug/app-debug.apk
-zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
+  app/build/outputs/apk/github/debug/app-github-debug.apk
+zipalign -c -P 16 -v 4 app/build/outputs/apk/github/debug/app-github-debug.apk
 ```
 
 The JNI PTY bridge explicitly uses the NDK r27 16 KiB linker options. The
@@ -198,24 +198,22 @@ The feature depends on the same asset names the release workflow produces
 made to GitHub's API rate limit budget until the user opens Settings or an
 automatic check is due; it never sends a GitHub token.
 
-The whole feature is hidden at runtime — not just disabled — whenever
-`PackageManager` reports the app was installed by a store that already owns
-its own updates (F-Droid, Google Play, and common OEM app stores). This keeps
-a single build and manifest for every distribution channel, including the
-network-isolated F-Droid build, so the `REQUEST_INSTALL_PACKAGES` permission
-declared in the manifest is present but its code path is unreachable on
-F-Droid installs. See `data/update/InstallSource.kt` for the exact channel
-list.
+The `github` distribution includes this feature and hides it at runtime when
+`PackageManager` reports that a store already owns updates. The `fdroid`
+distribution excludes the GitHub client, download and archive-verification
+code, installer handoff, `REQUEST_INSTALL_PACKAGES` permission, and update
+`FileProvider` at compile time.
 
 ## F-Droid source build
 
-F-Droid builds use `tools/build-fdroid-release.sh` with network access disabled.
-The build environment must provide JDK 17, Android SDK/NDK r27d, Go 1.26.5,
-and the pinned zlib, protobuf, ncurses, GMP, and nettle source trees. It builds
-protoc 29.1 from the supplied protobuf source unless `MANGOSSH_PROTOC` already
-points to an exact host build. The script rejects release-signing variables and
-produces an unsigned APK after rebuilding the PTY bridge, Mosh client, and
-embedded tsnet bridge from source.
+F-Droid builds use `tools/prepare-fdroid-native.sh` followed by the standard
+`assembleFdroidRelease` Gradle task. `tools/build-fdroid-release.sh` composes
+those steps for local and CI verification with Gradle offline. The build
+environment must provide JDK 17, Android SDK/NDK r27d, and the source trees
+locked by `tools/fdroid-sources.lock`. Go 1.26.5, protoc 29.1, and the host
+`tic` used to compile terminfo are built from those sources; release-signing
+variables are rejected, and the result is an unsigned APK containing rebuilt
+PTY, Mosh, terminfo, and tsnet artifacts.
 
 The expected external source layout is selected by
 `MANGOSSH_MOSH_DEPS_DIR`:
@@ -228,9 +226,11 @@ gmp/       v6.2.1
 nettle/    nettle_3.10_release_20240616
 ```
 
-`MANGOSSH_GO_ROOT`, `JAVA_HOME`, `ANDROID_HOME`, and `ANDROID_NDK_HOME`
-must point to the corresponding pre-fetched toolchains. This interface keeps
-the official F-Droid build independent of developer machines and downloaded
-compiler binaries. Offline Mosh builds use isolated ABI workers; tune their
-safe concurrency with `MANGOSSH_ABI_PARALLELISM` and
-`MANGOSSH_ABI_BUILD_JOBS` (both default to `2` in the F-Droid path).
+`MANGOSSH_GO_SOURCE`, `MANGOSSH_MOSH_DEPS_DIR`, `JAVA_HOME`, `ANDROID_HOME`,
+and `ANDROID_NDK_HOME` complete the environment contract. The source-build
+scripts set strict offline flags for Go and Gradle and fail instead of fetching
+a missing input. `tools/fetch-fdroid-sources.sh` is a separate, explicitly
+network-enabled preparation helper for CI; it verifies every checkout against
+the full commit in the lock file before the isolated build begins. Offline Mosh
+builds use isolated ABI workers; tune their safe concurrency with
+`MANGOSSH_ABI_PARALLELISM` and `MANGOSSH_ABI_BUILD_JOBS` (both default to `2`).

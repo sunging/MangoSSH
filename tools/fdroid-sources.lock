@@ -1,0 +1,8 @@
+# name|repository|release ref|full commit
+go|https://github.com/golang/go.git|go1.26.5|c19862e5f8415b4f24b189d065ed739517c548ba
+zlib|https://github.com/madler/zlib.git|v1.3.1|51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf
+protobuf|https://github.com/protocolbuffers/protobuf.git|v29.1|796e49f6ca82f763d1087d2ff7355d2f0d7b71b1
+ncurses|https://github.com/mirror/ncurses.git|v6.4|79b9071f2be20a24c7be031655a5638f6032f29f
+gmp|https://github.com/alisw/GMP.git|v6.2.1|2bbd52703e5af82509773264bfbd20ff8464804f
+nettle|https://gitlab.com/gnutls/nettle.git|nettle_3.10_release_20240616|b8c841dc3278dec0812365f02370b41ea9d4ddee
+mosh4android|https://github.com/connectbot/mosh4android.git|android|2de58be90449bfee4041c5d798f921f84d10dc0b

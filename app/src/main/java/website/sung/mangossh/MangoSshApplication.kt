@@ -12,7 +12,6 @@ import website.sung.mangossh.data.settings.TerminalBehaviorStore
 import website.sung.mangossh.data.settings.TerminalShortcutStore
 import website.sung.mangossh.data.settings.UpdatePreferencesStore
 import website.sung.mangossh.data.update.installedAppInfo
-import website.sung.mangossh.data.update.selfUpdateSupported
 import website.sung.mangossh.data.vault.VaultRepository
 import website.sung.mangossh.session.SshSessionController
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetManager
@@ -75,14 +74,6 @@ class MangoSessionRuntime(context: Context) {
 
     /** Device-local defaults for new SSH/Mosh connections, shared by the session controller and settings. */
     val connectionPreferences = ConnectionPreferencesStore(context.applicationContext)
-
-    /**
-     * True when this install manages its own updates. Resolved lazily because
-     * it issues a package-manager binder call the caller may want off the main
-     * thread; `MangoSshViewModel` reads it for the first time from inside a
-     * coroutine so the check happens off `Dispatchers.Main`.
-     */
-    val selfUpdateSupported: Boolean by lazy { context.applicationContext.selfUpdateSupported() }
 
     /** Version identity of the running build, read from the installed package rather than BuildConfig. */
     val installedAppInfo = context.applicationContext.installedAppInfo()

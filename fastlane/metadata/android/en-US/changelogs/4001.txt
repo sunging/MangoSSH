@@ -1,0 +1,1 @@
+Adds an updater-free F-Droid distribution built reproducibly from pinned source dependencies.

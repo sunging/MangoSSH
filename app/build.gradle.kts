@@ -41,6 +41,18 @@ require(derivedVersionCodeLong in 1L..2_100_000_000L) {
     "Calculated Android versionCode is out of range: $derivedVersionCodeLong"
 }
 val appVersionCode = derivedVersionCodeLong.toInt()
+val appVersionCodeRegularFile = rootProject.layout.projectDirectory.file("version-code.txt")
+val appVersionCodeFile = appVersionCodeRegularFile.asFile
+require(appVersionCodeFile.isFile) {
+    "Missing version-code.txt at the repository root"
+}
+val declaredVersionCode = providers.fileContents(appVersionCodeRegularFile).asText.get().trim()
+    .toIntOrNull()
+    ?: error("Invalid integer in version-code.txt")
+require(declaredVersionCode == appVersionCode) {
+    "version-code.txt contains $declaredVersionCode, but version.txt '$appVersionName' " +
+        "derives versionCode $appVersionCode"
+}
 
 // The Tailscale version actually linked into the embedded tsnet bridge, read
 // straight from the vendored module's own VERSION.txt so the value shown in
@@ -107,6 +119,9 @@ val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
     } else {
         environment("ANDROID_HOME", androidSdkPath)
         environment("ANDROID_SDK_ROOT", androidSdkPath)
+        if (providers.gradleProperty("mangosshOfflineBuild").orNull == "true") {
+            environment("MANGOSSH_OFFLINE_BUILD", "1")
+        }
         commandLine("bash", "tools/build-tsnet-android.sh")
     }
 }
@@ -138,6 +153,16 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+    }
+
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("github") {
+            dimension = "distribution"
+        }
+        create("fdroid") {
+            dimension = "distribution"
+        }
     }
 
     signingConfigs {
@@ -252,7 +277,7 @@ tasks.register("verifyReleaseVersion") {
         it.second.relativeTo(rootProject.projectDir).invariantSeparatorsPath
     }
 
-    inputs.file(appVersionFile)
+    inputs.files(appVersionFile, appVersionCodeFile)
     inputs.files(localizedReleaseNotes.map { it.second })
     inputs.property("versionName", expectedVersionName)
     inputs.property("versionCode", expectedVersionCode)
