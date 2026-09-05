@@ -78,6 +78,9 @@ enum class MangoLogEvent(val code: String) {
     /** A cleanup step inside session teardown failed; the remaining steps still ran. */
     SESSION_TEARDOWN_FAILED("session.teardown.failed"),
 
+    /** Acquiring, renewing, or releasing the session CPU wake lock failed. */
+    SESSION_WAKE_LOCK_FAILED("session.wake_lock.failed"),
+
     /** A host-key or authentication prompt was released without a user answer. */
     SESSION_PROMPT_ABANDONED("session.prompt.abandoned"),
     FOREGROUND_SERVICE_STARTED("foreground_service.started"),
