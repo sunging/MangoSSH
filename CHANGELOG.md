@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.2](https://github.com/sunging/MangoSSH/compare/v0.4.1...v0.4.2) (2026-09-05)
+
+
+### Bug Fixes
+
+* **distribution:** update Go to 1.26.7 for 0.4.2 ([e3a952b](https://github.com/sunging/MangoSSH/commit/e3a952ba6e66219a8f5ea7a2953780e65882053c))
+* prepare 0.4.2 with Go 1.26.7, tsnet 1.102.3 and background sessions ([8fc9de2](https://github.com/sunging/MangoSSH/commit/8fc9de2ee19cf851dd6f8546db640e2125634422))
+* prepare 0.4.2 with updated tsnet and background sessions ([#18](https://github.com/sunging/MangoSSH/issues/18)) ([8fc9de2](https://github.com/sunging/MangoSSH/commit/8fc9de2ee19cf851dd6f8546db640e2125634422))
+* **session:** keep active sessions awake in background ([e580479](https://github.com/sunging/MangoSSH/commit/e58047971ff9ef2b71e186c983daed031593fb92))
+* **tsnet:** update embedded Tailscale to 1.102.3 ([ec93edd](https://github.com/sunging/MangoSSH/commit/ec93eddb3e883bb72b5479e53b09fe999a275457))
+
 ## [0.4.1](https://github.com/sunging/MangoSSH/compare/v0.4.0...v0.4.1) (2026-09-03)
 
 
