@@ -19,8 +19,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import website.sung.mangossh.MainActivity
 import website.sung.mangossh.MangoSshApplication
@@ -50,6 +52,7 @@ class SessionForegroundService : Service() {
     private val sessionNotificationIds = mutableMapOf<String, Int>()
     private val nextNotificationId = AtomicInteger(FIRST_SESSION_NOTIFICATION_ID)
     private var foregroundStarted = false
+    private val sessionWakeLock by lazy { createSessionWakeLock(this) }
 
     /**
      * Set once this instance has decided it owns no work.
@@ -81,6 +84,15 @@ class SessionForegroundService : Service() {
         if (ensureForeground()) {
             MangoLog.info(MangoLogEvent.FOREGROUND_SERVICE_STARTED)
         }
+        // A bounded lease avoids a permanent battery drain if this renewal
+        // stops. Run on the same dispatcher as work snapshots and teardown so
+        // a stale renewal cannot reacquire after the final session closes.
+        serviceScope.launch {
+            while (isActive) {
+                delay(SessionWakeLock.RENEW_INTERVAL_MILLIS)
+                sessionWakeLock.renew()
+            }
+        }
         serviceScope.launch {
             combine(
                 sessionController.sessions,
@@ -105,6 +117,7 @@ class SessionForegroundService : Service() {
 
     override fun onDestroy() {
         serviceScope.cancel()
+        sessionWakeLock.close()
         clearSessionNotifications()
         if (foregroundStarted) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -118,6 +131,7 @@ class SessionForegroundService : Service() {
 
     private fun renderWork(sessions: List<TerminalSessionState>, tsnetRequired: Boolean) {
         if (sessions.isEmpty() && !tsnetRequired) {
+            sessionWakeLock.close()
             stopping = true
             clearSessionNotifications()
             if (foregroundStarted) {
@@ -129,6 +143,10 @@ class SessionForegroundService : Service() {
         }
 
         if (!ensureForeground()) return
+        sessionWakeLock.update(
+            hasSessions = sessions.isNotEmpty(),
+            foregroundOwned = foregroundStarted,
+        )
 
         // Posting notifications is a best-effort presentation concern: the
         // sessions themselves stay alive either way, so a rejected post must not
@@ -177,6 +195,7 @@ class SessionForegroundService : Service() {
             )
         } catch (error: RuntimeException) {
             MangoLog.warn(MangoLogEvent.FOREGROUND_SERVICE_START_DENIED, error)
+            sessionWakeLock.close()
             stopping = true
             // A launch request can succeed before Android later rejects the
             // actual promotion here. No connection or embedded network runtime
