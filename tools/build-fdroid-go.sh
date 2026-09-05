@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-GO_VERSION="1.26.5"
+GO_VERSION="1.26.7"
 GO_SOURCE="${MANGOSSH_GO_SOURCE:-}"
 GO_ROOT="${MANGOSSH_GO_ROOT:-$PROJECT_DIR/.tools/go/$GO_VERSION}"
 DEPS_DIR="${MANGOSSH_MOSH_DEPS_DIR:-}"

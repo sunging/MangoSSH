@@ -126,7 +126,7 @@ jobs:
         env:
           MANGOSSH_GO_SOURCE: ${{ github.workspace }}/.fdroid/sources/go
           MANGOSSH_MOSH_DEPS_DIR: ${{ github.workspace }}/.fdroid/sources
-          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.5
+          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.7
         run: |
           bash tools/fetch-android-ndk.sh
           echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724" >> "$GITHUB_ENV"
@@ -155,7 +155,7 @@ jobs:
 
       - name: Test, lint, and build both unsigned distributions
         env:
-          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.5
+          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.7
         run: |
           ./gradlew --no-daemon --offline -PmangosshOfflineBuild=true \
             :app:testGithubDebugUnitTest \

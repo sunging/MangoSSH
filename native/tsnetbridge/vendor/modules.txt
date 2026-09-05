@@ -306,8 +306,8 @@ gvisor.dev/gvisor/pkg/tcpip/transport/tcp
 gvisor.dev/gvisor/pkg/tcpip/transport/tcpconntrack
 gvisor.dev/gvisor/pkg/tcpip/transport/udp
 gvisor.dev/gvisor/pkg/waiter
-# tailscale.com v1.102.2
-## explicit; go 1.26.5
+# tailscale.com v1.102.3
+## explicit; go 1.26.6
 tailscale.com
 tailscale.com/appc
 tailscale.com/atomicfile

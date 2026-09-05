@@ -1,0 +1,2 @@
+Updates the embedded Tailscale build toolchain to Go 1.26.7 and aligns GitHub and F-Droid release builds.
+Updates embedded Tailscale to 1.102.3 and keeps active sessions awake while running in the background.
