@@ -93,7 +93,7 @@ val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
         rootProject.file("tools/lib/linux-host.sh"),
         rootProject.file("tools/generate-tsnet-notices.py"),
         rootProject.file("tools/normalize-tsnet-aar.py"),
-        rootProject.file("tools/patches/tailscale-v1.102.2-tsnet-no-logtail.patch"),
+        rootProject.file("tools/patches/tailscale-v1.102.3-tsnet-no-logtail.patch"),
     )
     inputs.property("androidSdkDirectory", androidSdkPath)
     outputs.file(embeddedTsnetAar)

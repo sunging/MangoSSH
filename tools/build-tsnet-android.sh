@@ -12,7 +12,7 @@ BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
 TOOLS_DIR="$PROJECT_DIR/.tools"
 GO_VERSION="1.26.7"
 JDK_VERSION="17.0.19+10"
-TAILSCALE_VERSION="v1.102.2"
+TAILSCALE_VERSION="v1.102.3"
 TAILSCALE_TSNET_GO_SHA256="6a8d6cc7deae3006729ef688ed5d33770284e04699f2dd040bc52c08de667ca5"
 TAILSCALE_SOCKS5_GO_SHA256="e2fa5c1aca0cc1ca63417c8515acaaa800d13862fde48bfa4a576d844307d6f4"
 TAILSCALE_TSNET_PATCHED_SHA256="5e432071e90d527f105fe984c9aa4e81fa5e8b119b3cad76541628cc929abfae"
@@ -22,11 +22,11 @@ NDK_REVISION="27.3.13750724"
 STRICT_OFFLINE="${MANGOSSH_OFFLINE_BUILD:-0}"
 GO_ROOT="${MANGOSSH_GO_ROOT:-${GOROOT:-$TOOLS_DIR/go/$GO_VERSION}}"
 GOBIN="${MANGOSSH_GOBIN:-$TOOLS_DIR/go-bin/$GO_VERSION}"
-WORK_DIR="/tmp/mangossh-tsnetbridge-v1.102.2"
-WORK_LOCK="/tmp/mangossh-tsnetbridge-v1.102.2.lock"
+WORK_DIR="/tmp/mangossh-tsnetbridge-v1.102.3"
+WORK_LOCK="/tmp/mangossh-tsnetbridge-v1.102.3.lock"
 OUTPUT_DIR="$PROJECT_DIR/app/build/generated/tsnet"
 OUTPUT_AAR="$OUTPUT_DIR/mangossh-tsnet.aar"
-PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.102.2-tsnet-no-logtail.patch"
+PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.102.3-tsnet-no-logtail.patch"
 VENDOR_DIR="$BRIDGE_DIR/vendor"
 
 ANDROID_SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
@@ -122,7 +122,7 @@ gobind_tool="$(go tool -n gobind)"
 popd >/dev/null
 
 case "$WORK_DIR" in
-    /tmp/mangossh-tsnetbridge-v1.102.2) ;;
+    /tmp/mangossh-tsnetbridge-v1.102.3) ;;
     *) printf 'Unsafe tsnet work path: %s\n' "$WORK_DIR" >&2; exit 1 ;;
 esac
 exec 9>"$WORK_LOCK"
@@ -142,7 +142,7 @@ find "$BRIDGE_WORK_DIR/vendor" -type f -exec chmod 0644 {} +
 pushd "$BRIDGE_WORK_DIR" >/dev/null
 TAILSCALE_MODULE_DIR="$BRIDGE_WORK_DIR/vendor/tailscale.com"
 case "$TAILSCALE_MODULE_DIR" in
-    /tmp/mangossh-tsnetbridge-v1.102.2/gopath/src/website.sung.mangossh/tsnetbridge/vendor/tailscale.com) ;;
+    /tmp/mangossh-tsnetbridge-v1.102.3/gopath/src/website.sung.mangossh/tsnetbridge/vendor/tailscale.com) ;;
     *) printf 'Unsafe Tailscale module path: %s\n' "$TAILSCALE_MODULE_DIR" >&2; exit 1 ;;
 esac
 [[ -d "$TAILSCALE_MODULE_DIR" ]] || {

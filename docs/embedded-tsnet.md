@@ -25,7 +25,7 @@ The reproducible bridge build pins:
 - Go `1.26.7`;
 - Eclipse Temurin JDK `17.0.19+10` for the gomobile build;
 - Android NDK `27.3.13750724` (r27d);
-- `tailscale.com v1.102.2`;
+- `tailscale.com v1.102.3`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
 
 Local-development download scripts verify the published Go SHA-256, Temurin
@@ -34,7 +34,7 @@ those toolchains to be supplied by the build environment and fail before any
 download is attempted. The complete Go module source graph is committed under
 `native/tsnetbridge/vendor`. In addition to `go.sum`, both patched Tailscale
 source files have pinned pre-patch and post-patch SHA-256 values.
-`tools/patches/tailscale-v1.102.2-tsnet-no-logtail.patch` is applied with
+`tools/patches/tailscale-v1.102.3-tsnet-no-logtail.patch` is applied with
 `git apply --check`; a source mismatch, skipped hunk, or unexpected patched
 result stops both the test and production builds.
 

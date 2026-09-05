@@ -1,1 +1,2 @@
 将内嵌 Tailscale 的构建工具链升级至 Go 1.26.7，并统一 GitHub 与 F-Droid 发布构建版本。
+内嵌 Tailscale 升级至 1.102.3，并为后台活动会话增加 CPU 唤醒保护。
