@@ -8,7 +8,7 @@ source "$PROJECT_DIR/tools/lib/linux-host.sh"
 mangossh_require_linux_x86_64
 mangossh_require_commands bash chmod cp flock git mkdir rm sha256sum
 BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
-GO_ROOT="$PROJECT_DIR/.tools/go/1.26.5"
+GO_ROOT="$PROJECT_DIR/.tools/go/1.26.7"
 TAILSCALE_VERSION="v1.102.2"
 TAILSCALE_TSNET_GO_SHA256="6a8d6cc7deae3006729ef688ed5d33770284e04699f2dd040bc52c08de667ca5"
 TAILSCALE_SOCKS5_GO_SHA256="e2fa5c1aca0cc1ca63417c8515acaaa800d13862fde48bfa4a576d844307d6f4"

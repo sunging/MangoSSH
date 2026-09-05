@@ -1,6 +1,6 @@
 module website.sung.mangossh/tsnetbridge
 
-go 1.26.5
+go 1.26.7
 
 require tailscale.com v1.102.2
 

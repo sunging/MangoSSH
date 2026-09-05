@@ -35,7 +35,7 @@ for secret_name in \
     [[ -z "${!secret_name:-}" ]] || die "release signing variables are forbidden in F-Droid builds"
 done
 
-export MANGOSSH_GO_ROOT="${MANGOSSH_GO_ROOT:-$PROJECT_DIR/.tools/go/1.26.5}"
+export MANGOSSH_GO_ROOT="${MANGOSSH_GO_ROOT:-$PROJECT_DIR/.tools/go/1.26.7}"
 export MANGOSSH_OFFLINE_BUILD=1
 export GOTOOLCHAIN=local
 export GOPROXY=off

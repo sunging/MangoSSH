@@ -210,7 +210,7 @@ F-Droid builds use `tools/prepare-fdroid-native.sh` followed by the standard
 `assembleFdroidRelease` Gradle task. `tools/build-fdroid-release.sh` composes
 those steps for local and CI verification with Gradle offline. The build
 environment must provide JDK 17, Android SDK/NDK r27d, and the source trees
-locked by `tools/fdroid-sources.lock`. Go 1.26.5, protoc 29.1, and the host
+locked by `tools/fdroid-sources.lock`. Go 1.26.7, protoc 29.1, and the host
 `tic` used to compile terminfo are built from those sources; release-signing
 variables are rejected, and the result is an unsigned APK containing rebuilt
 PTY, Mosh, terminfo, and tsnet artifacts.

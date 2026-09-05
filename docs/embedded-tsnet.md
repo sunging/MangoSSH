@@ -22,7 +22,7 @@ routing are intentionally unsupported.
 
 The reproducible bridge build pins:
 
-- Go `1.26.5`;
+- Go `1.26.7`;
 - Eclipse Temurin JDK `17.0.19+10` for the gomobile build;
 - Android NDK `27.3.13750724` (r27d);
 - `tailscale.com v1.102.2`;
@@ -79,7 +79,7 @@ downloaded local-development toolchains, and intermediate build trees are
 ignored build artifacts; the vendored Go source is versioned input.
 
 For the network-isolated F-Droid path, export the externally provided JDK 17,
-Android SDK/NDK r27d, Go 1.26.5, and pinned Mosh dependency source roots, then
+Android SDK/NDK r27d, Go 1.26.7, and pinned Mosh dependency source roots, then
 run `tools/build-fdroid-release.sh`. The entry point rejects signing variables,
 sets the Go proxy and checksum database offline, and creates only the unsigned
 release APK.

@@ -10,7 +10,7 @@ mangossh_require_commands \
     bash chmod cp find flock git grep install mkdir rm python3 sha256sum
 BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
 TOOLS_DIR="$PROJECT_DIR/.tools"
-GO_VERSION="1.26.5"
+GO_VERSION="1.26.7"
 JDK_VERSION="17.0.19+10"
 TAILSCALE_VERSION="v1.102.2"
 TAILSCALE_TSNET_GO_SHA256="6a8d6cc7deae3006729ef688ed5d33770284e04699f2dd040bc52c08de667ca5"
