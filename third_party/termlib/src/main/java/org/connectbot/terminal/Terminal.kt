@@ -117,7 +117,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.min
 import androidx.compose.ui.input.key.KeyEvent as ComposeKeyEvent
 
 private val DRAW_TEXT_BUFFER = ThreadLocal.withInitial { CharArray(1) }
@@ -143,6 +145,13 @@ private const val CURSOR_BLINK_RATE_MS = 500L
  * Amount of time to wait for second touch to detect multitouch gesture in milliseconds.
  */
 private const val WAIT_FOR_SECOND_TOUCH_MS = 40L
+
+/**
+ * Upper bound on wheel/arrow ticks forwarded to the remote program from a single
+ * pointer event. A fast swipe still advances the internal step counter by its
+ * full amount, so this only caps the burst rate, not the total.
+ */
+private const val MAX_REMOTE_SCROLL_STEPS_PER_EVENT = 8
 
 /**
  * Text selection magnifier loupe size in dp.
@@ -915,6 +924,21 @@ internal fun TerminalWithAccessibility(
                 }
         }
 
+        // Entering the alternate screen (tmux, vim, less, ...) leaves any stale
+        // primary scrollback behind the active view. Snap back to the bottom so a
+        // swipe there is unambiguously a "talk to the remote program" gesture
+        // rather than panning history the user can no longer see. Observed via a
+        // flow so the composable body does not resubscribe on every snapshot.
+        LaunchedEffect(screenState) {
+            snapshotFlow { screenState.snapshot.isAltScreen }
+                .collect { isAltScreen ->
+                    if (isAltScreen && screenState.scrollbackPosition != 0) {
+                        screenState.scrollToBottom()
+                        scrollOffset.snapTo(0f)
+                    }
+                }
+        }
+
         // Sync scrollOffset when scrollbackPosition changes externally (but not during user scrolling)
         LaunchedEffect(screenState.scrollbackPosition) {
             val targetOffset = screenState.scrollbackPosition * baseCharHeight
@@ -1086,6 +1110,10 @@ internal fun TerminalWithAccessibility(
                         val multiTouchTimeout = down.uptimeMillis + WAIT_FOR_SECOND_TOUCH_MS
                         var panAccumulator = Offset.Zero
                         var initialScrollOffset = 0f
+                        // Wheel/arrow ticks already forwarded to the remote program
+                        // this gesture (used when the alternate screen or mouse
+                        // tracking is active, where local scrollback cannot pan).
+                        var emittedRemoteScrollSteps = 0
 
                         // 4. Main event loop
                         try {
@@ -1154,24 +1182,56 @@ internal fun TerminalWithAccessibility(
                                     }
 
                                     GestureType.Scroll -> {
-                                        // Update scroll offset using total pan from the start of the gesture
-                                        // to avoid stuttering from stale scrollOffset.value.
-                                        val currentMaxScroll =
-                                            screenState.snapshot.scrollback.size * baseCharHeight
-                                        val newOffset = (initialScrollOffset + panAccumulator.y)
-                                            .coerceIn(0f, currentMaxScroll)
+                                        val snapshot = screenState.snapshot
+                                        if (snapshot.mouseTrackingActive || snapshot.isAltScreen) {
+                                            // Full-screen program is up: forward the swipe to it
+                                            // instead of panning (empty) local scrollback. Finger
+                                            // moving down means "show older content" = wheel up /
+                                            // arrow up, matching normal touch scrolling.
+                                            val totalSteps = (panAccumulator.y / baseCharHeight).toInt()
+                                            val delta = totalSteps - emittedRemoteScrollSteps
+                                            if (delta != 0) {
+                                                val scrollUp = delta > 0
+                                                val burst = min(
+                                                    abs(delta),
+                                                    MAX_REMOTE_SCROLL_STEPS_PER_EVENT,
+                                                )
+                                                val col = (change.position.x / baseCharWidth).toInt()
+                                                    .coerceIn(0, snapshot.cols - 1)
+                                                val row = (change.position.y / baseCharHeight).toInt()
+                                                    .coerceIn(0, snapshot.rows - 1)
+                                                repeat(burst) {
+                                                    if (snapshot.mouseTrackingActive) {
+                                                        terminalEmulator.sendMouseWheel(scrollUp, row, col)
+                                                    } else {
+                                                        terminalEmulator.dispatchKey(
+                                                            0,
+                                                            if (scrollUp) VTermKey.UP else VTermKey.DOWN,
+                                                        )
+                                                    }
+                                                }
+                                                emittedRemoteScrollSteps += delta
+                                            }
+                                        } else {
+                                            // Update scroll offset using total pan from the start of the gesture
+                                            // to avoid stuttering from stale scrollOffset.value.
+                                            val currentMaxScroll =
+                                                snapshot.scrollback.size * baseCharHeight
+                                            val newOffset = (initialScrollOffset + panAccumulator.y)
+                                                .coerceIn(0f, currentMaxScroll)
 
-                                        // Cancel any ongoing scroll or fling and snap to the new position.
-                                        // Using launch with cancel ensures the latest snap always wins.
-                                        scrollJob?.cancel()
-                                        scrollJob = launch {
-                                            scrollOffset.snapTo(newOffset)
+                                            // Cancel any ongoing scroll or fling and snap to the new position.
+                                            // Using launch with cancel ensures the latest snap always wins.
+                                            scrollJob?.cancel()
+                                            scrollJob = launch {
+                                                scrollOffset.snapTo(newOffset)
+                                            }
+
+                                            // Update terminal buffer scrollback position
+                                            val scrolledLines =
+                                                (newOffset / baseCharHeight).toInt()
+                                            screenState.scrollBy(scrolledLines - screenState.scrollbackPosition)
                                         }
-
-                                        // Update terminal buffer scrollback position
-                                        val scrolledLines =
-                                            (newOffset / baseCharHeight).toInt()
-                                        screenState.scrollBy(scrolledLines - screenState.scrollbackPosition)
                                     }
 
                                     else -> {}
@@ -1235,18 +1295,26 @@ internal fun TerminalWithAccessibility(
 
                         when (gestureType) {
                             GestureType.Scroll -> {
-                                // Apply fling animation
-                                val velocity = velocityTracker.calculateVelocity()
-                                scrollJob?.cancel()
-                                scrollJob = launch {
-                                    scrollOffset.animateDecay(
-                                        initialVelocity = velocity.y,
-                                        animationSpec = splineBasedDecay(density),
-                                    ) {
-                                        // Update terminal buffer during animation
-                                        val scrolledLines =
-                                            (value / baseCharHeight).toInt()
-                                        screenState.scrollBy(scrolledLines - screenState.scrollbackPosition)
+                                val snapshot = screenState.snapshot
+                                // Skip inertia when the swipe was forwarded to a remote
+                                // program tick by tick, so a fast flick does not spray
+                                // dozens of extra keys/wheel reports at the PTY.
+                                val forwardedToRemote =
+                                    snapshot.mouseTrackingActive || snapshot.isAltScreen
+                                if (!forwardedToRemote) {
+                                    // Apply fling animation
+                                    val velocity = velocityTracker.calculateVelocity()
+                                    scrollJob?.cancel()
+                                    scrollJob = launch {
+                                        scrollOffset.animateDecay(
+                                            initialVelocity = velocity.y,
+                                            animationSpec = splineBasedDecay(density),
+                                        ) {
+                                            // Update terminal buffer during animation
+                                            val scrolledLines =
+                                                (value / baseCharHeight).toInt()
+                                            screenState.scrollBy(scrolledLines - screenState.scrollbackPosition)
+                                        }
                                     }
                                 }
                             }

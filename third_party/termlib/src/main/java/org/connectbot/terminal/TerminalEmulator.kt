@@ -354,6 +354,11 @@ internal class TerminalEmulatorImpl(
     private var terminalTitle = ""
     private var isAltScreenActive = false
 
+    // True while the remote program has any mouse tracking mode enabled
+    // (libvterm VTERM_PROP_MOUSE is non-zero). Read into every snapshot so the UI
+    // can forward swipes as wheel reports instead of panning local scrollback.
+    private var mouseTrackingActive = false
+
     // Scrollback buffer
     private val scrollback = mutableListOf<TerminalLine>()
 
@@ -451,6 +456,24 @@ internal class TerminalEmulatorImpl(
      */
     override fun dispatchCharacter(modifiers: Int, codepoint: Int) {
         terminalNative.dispatchCharacter(modifiers, codepoint)
+    }
+
+    /**
+     * Forward one mouse-wheel tick to the remote program.
+     *
+     * Only meaningful while [TerminalSnapshot.mouseTrackingActive] is true. The
+     * bytes go through the same handler queue as [onKeyboardInput] so they stay
+     * ordered relative to typed input.
+     *
+     * @param scrollUp true for a wheel-up tick
+     * @param row zero-based terminal row under the pointer
+     * @param col zero-based terminal column under the pointer
+     */
+    internal fun sendMouseWheel(scrollUp: Boolean, row: Int, col: Int) {
+        val bytes = MouseReport.wheel(scrollUp, row, col)
+        handler.post {
+            onKeyboardInput.invoke(bytes)
+        }
     }
 
     /**
@@ -614,6 +637,17 @@ internal class TerminalEmulatorImpl(
                 }
 
                 is TerminalProperty.IntValue -> {
+                    // Property 8 is VTERM_PROP_MOUSE (enum VTermProp in vterm.h):
+                    // 0 = off, 1/2/3 = click/drag/move tracking. Any non-zero value
+                    // means the remote program wants pointer input.
+                    if (prop == 8) {
+                        val active = value.value != 0
+                        if (active != mouseTrackingActive) {
+                            mouseTrackingActive = active
+                            propertyChanged = true
+                        }
+                    }
+
                     // Property 6 is VTERM_PROP_CURSORSHAPE (from vterm.h line 260)
                     if (prop == 6) {
                         cursorShape = when (value.value) {
@@ -1145,6 +1179,8 @@ internal class TerminalEmulatorImpl(
             cols = cols,
             timestamp = System.currentTimeMillis(),
             sequenceNumber = sequenceNumber++,
+            isAltScreen = isAltScreenActive,
+            mouseTrackingActive = mouseTrackingActive,
         )
     }
 

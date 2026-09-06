@@ -21,6 +21,14 @@ upstream defaults so a future re-sync is a straightforward re-apply:
   accept optional `minZoomScale`/`maxZoomScale` parameters (defaults `0.5f`/
   `3f`, matching the prior hardcoded pinch-to-zoom bounds) so MangoSSH's
   settings UI can offer a wider or narrower pinch-to-zoom magnification range.
+- `TerminalSnapshot.kt` / `TerminalEmulator.kt` / `Terminal.kt` plus new
+  `MouseReport.kt`: while the alternate screen or a mouse tracking mode
+  (`VTERM_PROP_MOUSE`) is active there is no primary scrollback to pan, so a
+  vertical swipe is forwarded to the remote program — X10 wheel reports when it
+  tracks the mouse (tmux `mouse on`, vim `mouse=a`), otherwise arrow keys.
+  `TerminalSnapshot` gains `isAltScreen` / `mouseTrackingActive` (both default
+  `false`) and `TerminalEmulatorImpl` gains an internal `sendMouseWheel`.
+  Inertia is suppressed for these forwarded swipes.
 
 The four ABI `libjni_cb_term.so` files are extracted during the build from the
 pinned Maven Central AAR (`org.connectbot:termlib:0.1.0`). They are not copied
