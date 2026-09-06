@@ -314,6 +314,23 @@ class SshSessionController internal constructor(
         }
     }
 
+    /**
+     * Re-applies the terminal viewport size to a freshly opened transport.
+     *
+     * The terminal screen is on-screen throughout host-key confirmation, OTP,
+     * and authentication, so its layout can measure the real row/column count
+     * and push it to the retained emulator before any PTY exists. That early
+     * [resize] reaches a null channel and is dropped, and the emulator's own
+     * dimensions then already match the viewport, so the terminal view never
+     * emits another resize. Without this the remote stays at the initial
+     * [INITIAL_COLUMNS]x[INITIAL_ROWS] and full-screen programs such as tmux
+     * paint only the top portion of the screen.
+     */
+    private fun syncRemoteSizeToViewport(sessionId: String) {
+        val dimensions = terminalStore.terminalFor(sessionId)?.dimensions ?: return
+        resize(sessionId, dimensions.columns, dimensions.rows)
+    }
+
     /** Returns the retained emulator for a still-live session. */
     fun terminalEmulator(sessionId: String): TerminalEmulator? = terminalStore.terminalFor(sessionId)
 
@@ -856,6 +873,7 @@ class SshSessionController internal constructor(
 
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
+            syncRemoteSizeToViewport(sessionId)
             startSshReaders(sessionId, managed)
             startSshKeepalive(sessionId, managed)
             runStartupSnippet(sessionId, profile, snapshot)
@@ -1031,6 +1049,7 @@ class SshSessionController internal constructor(
             MangoLog.info(MangoLogEvent.MOSH_PROCESS_STARTED)
 
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.mosh_open))
+            syncRemoteSizeToViewport(sessionId)
             startMoshReader(sessionId, managed, moshProcess)
             attachMoshSshFeatureConnection(sessionId, managed, connection)
             runStartupSnippet(sessionId, profile, snapshot)
