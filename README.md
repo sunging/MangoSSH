@@ -222,9 +222,16 @@ The expected external source layout is selected by
 zlib/      v1.3.1
 protobuf/  v29.1, including its submodules
 ncurses/   v6.4
-gmp/       v6.2.1
 nettle/    nettle_3.10_release_20240616
 ```
+
+The Mosh build applies `tools/patches/mosh4android-no-gmp.patch` after the
+offline-source patch. It drops the upstream GMP build and configures Nettle
+with `--disable-public-key`, while `--disable-mini-gmp` keeps mini-GMP
+explicitly at its default off state. Mosh uses only Nettle AES, so neither GMP
+nor Hogweed is needed. This does not change the separate SSH or tsnet
+cryptography. Previously published releases and their fdroiddata recipes retain
+their original source requirements.
 
 `MANGOSSH_GO_SOURCE`, `MANGOSSH_MOSH_DEPS_DIR`, `JAVA_HOME`, `ANDROID_HOME`,
 and `ANDROID_NDK_HOME` complete the environment contract. The source-build

@@ -26,6 +26,7 @@ NDK_HOME="${ANDROID_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/$NDK_REVISIO
 # tree has converted the submodule's shell scripts to CRLF for local tooling.
 UPSTREAM_MOSH_SOURCE="${MOSH_SOURCE:-$PROJECT_DIR/third_party/mosh4android}"
 PATCH_FILE="$PROJECT_DIR/tools/patches/mosh4android-offline-sources.patch"
+NO_GMP_PATCH_FILE="$PROJECT_DIR/tools/patches/mosh4android-no-gmp.patch"
 PATCHED_MOSH_SOURCE="${MANGOSSH_PATCHED_MOSH_SOURCE:-$PROJECT_DIR/.tools/mosh4android-patched}"
 
 [[ -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]] || {
@@ -37,6 +38,7 @@ PATCHED_MOSH_SOURCE="${MANGOSSH_PATCHED_MOSH_SOURCE:-$PROJECT_DIR/.tools/mosh4an
     exit 1
 }
 [[ -f "$PATCH_FILE" ]] || { echo "Missing Mosh offline-source patch." >&2; exit 1; }
+[[ -f "$NO_GMP_PATCH_FILE" ]] || { echo "Missing Mosh no-GMP patch." >&2; exit 1; }
 
 case "$PATCHED_MOSH_SOURCE" in
     "$PROJECT_DIR"/.tools/*) ;;
@@ -56,6 +58,9 @@ git -C "$UPSTREAM_MOSH_SOURCE" archive --format=tar HEAD |
     cd "$PATCHED_MOSH_SOURCE"
     patch --dry-run --batch --forward --fuzz=0 -p1 --input="$PATCH_FILE"
     patch --batch --forward --fuzz=0 -p1 --input="$PATCH_FILE"
+    # Mosh only uses Nettle AES, not the GMP-backed public-key library.
+    patch --dry-run --batch --forward --fuzz=0 -p1 --input="$NO_GMP_PATCH_FILE"
+    patch --batch --forward --fuzz=0 -p1 --input="$NO_GMP_PATCH_FILE"
 )
 grep -Fq 'EXTERNAL_SOURCES_DIR="${MANGOSSH_MOSH_DEPS_DIR:-}"' \
     "$PATCHED_MOSH_SOURCE/android/build-android-release-assets.sh" || {

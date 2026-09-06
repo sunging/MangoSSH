@@ -50,6 +50,9 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      - name: Verify the Mosh patch chain excludes GMP
+        run: bash tools/test-mosh-no-gmp.sh
+
       # `assembleDebugAndroidTest` compiles the instrumented tests without a
       # device. CI has no emulator, so nothing else here would catch an
       # androidTest source set that no longer builds against the app it tests.

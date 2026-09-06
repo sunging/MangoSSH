@@ -17,13 +17,16 @@ branch.
   `27.3.13750724`; `tools/fetch-android-ndk.sh` obtains that NDK into the
   ignored project-local `.tools` directory.
 
-The upstream Android build script uses its declared zlib, protobuf, ncurses,
-GMP, and nettle tags. F-Droid supplies those exact source trees through its
+The MangoSSH Android build uses the declared zlib, protobuf, ncurses, and
+nettle tags. F-Droid supplies those exact source trees through its
 source-library mechanism, and MangoSSH applies
 `tools/patches/mosh4android-offline-sources.patch` so its network-isolated build
-never downloads compiler binaries or dependency source. Do not replace the
-packaged binary with an unverifiable build or remove the source submodule,
-license text, build patch, or this notice.
+never downloads compiler binaries or dependency source. The subsequent
+`tools/patches/mosh4android-no-gmp.patch` removes the upstream GMP build and
+configures Nettle with `--disable-public-key`, keeping mini-GMP at its default
+off state. Mosh only uses Nettle AES; GMP and Hogweed are not required. Do not
+replace the packaged binary with an unverifiable build or remove the source
+submodule, license text, build patch, or this notice.
 
 ## ConnectBot terminal library
 
