@@ -361,7 +361,15 @@ internal class SelectionManager {
 
     private fun isBlankCell(cell: TerminalLine.Cell): Boolean = (cell.char == ' ' || cell.char == '\u0000') && cell.combiningChars.isEmpty()
 
-    private fun lastContentCol(line: TerminalLine): Int {
+    /**
+     * Column of the last non-blank cell on [line] (0 if the line is empty).
+     *
+     * This is an O(cols) reverse scan. The renderer calls [isCellSelected] once
+     * per cell, so callers on the hot path must hoist this out of their per-cell
+     * loop and pass the result as `lineLastContentCol` rather than re-deriving it
+     * for every column.
+     */
+    internal fun lastContentCol(line: TerminalLine): Int {
         var last = line.cells.lastIndex
         while (last > 0 && isBlankCell(line.cells[last])) last--
         return last
@@ -428,7 +436,13 @@ internal class SelectionManager {
         }.trim()
     }
 
-    fun isCellSelected(row: Int, col: Int, line: TerminalLine? = null): Boolean {
+    /**
+     * @param lineLastContentCol column of the last non-blank cell on this row, from
+     *   [lastContentCol]. Pass [Int.MAX_VALUE] (the default) to skip the trailing-blank
+     *   check. Callers rendering a whole row must compute this once and reuse it for
+     *   every column instead of passing the line and paying an O(cols) rescan per cell.
+     */
+    fun isCellSelected(row: Int, col: Int, lineLastContentCol: Int = Int.MAX_VALUE): Boolean {
         val range = selectionRange ?: return false
         return when (mode) {
             SelectionMode.LINE -> {
@@ -438,7 +452,7 @@ internal class SelectionManager {
             }
 
             SelectionMode.CHARACTER, SelectionMode.WORD -> {
-                if (line != null && col > lastContentCol(line)) return false
+                if (col > lineLastContentCol) return false
                 range.contains(row, col)
             }
 

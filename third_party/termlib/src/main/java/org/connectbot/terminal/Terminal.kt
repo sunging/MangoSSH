@@ -112,6 +112,9 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -124,6 +127,21 @@ import androidx.compose.ui.input.key.KeyEvent as ComposeKeyEvent
 
 private val DRAW_TEXT_BUFFER = ThreadLocal.withInitial { CharArray(1) }
 private val CURLY_UNDERLINE_PATH = ThreadLocal.withInitial { Path() }
+
+/**
+ * Reusable per-row scratch buffer for batched glyph runs. Grown on demand and
+ * kept per draw thread; the terminal never has more columns than fit here in
+ * practice, and [ensureRunBuffer] resizes if it ever does.
+ */
+private val DRAW_RUN_BUFFER = ThreadLocal.withInitial { CharArray(256) }
+
+private fun ensureRunBuffer(minLength: Int): CharArray {
+    val existing = DRAW_RUN_BUFFER.get()!!
+    if (existing.size >= minLength) return existing
+    val grown = CharArray(Integer.highestOneBit(minLength - 1) * 2)
+    DRAW_RUN_BUFFER.set(grown)
+    return grown
+}
 
 /**
  * Gesture type for unified gesture handling state machine.
@@ -541,23 +559,31 @@ internal fun TerminalWithAccessibility(
         }
     }
 
-    // Cursor blink animation
-    LaunchedEffect(screenState) {
-        snapshotFlow {
-            val s = screenState.snapshot
-            Triple(s.cursorVisible, s.cursorBlink, s.cursorRow to s.cursorCol)
-        }.collectLatest { (visible, blink, _) ->
-            if (visible) {
-                cursorBlinkVisible = true
-                if (blink) {
-                    // Show cursor immediately when it moves or becomes visible
-                    while (true) {
-                        delay(CURSOR_BLINK_RATE_MS)
-                        cursorBlinkVisible = !cursorBlinkVisible
+    // Cursor blink animation.
+    //
+    // Gated on RESUMED so a remote program that requests a blinking cursor does
+    // not drive a 2 Hz state write (and full-window redraw) while the app is
+    // backgrounded. On resume the cursor is shown immediately, then blinking
+    // restarts.
+    val blinkLifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(screenState, blinkLifecycleOwner) {
+        blinkLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            snapshotFlow {
+                val s = screenState.snapshot
+                Triple(s.cursorVisible, s.cursorBlink, s.cursorRow to s.cursorCol)
+            }.collectLatest { (visible, blink, _) ->
+                if (visible) {
+                    cursorBlinkVisible = true
+                    if (blink) {
+                        // Show cursor immediately when it moves or becomes visible
+                        while (true) {
+                            delay(CURSOR_BLINK_RATE_MS)
+                            cursorBlinkVisible = !cursorBlinkVisible
+                        }
                     }
+                } else {
+                    cursorBlinkVisible = false
                 }
-            } else {
-                cursorBlinkVisible = false
             }
         }
     }
@@ -1392,6 +1418,27 @@ internal fun TerminalWithAccessibility(
                     autoDetectUrls = terminalEmulator.autoDetectUrls,
                 )
 
+                // Cursor is a separate Canvas so the 500 ms blink toggle
+                // invalidates only this one-drawRect layer, not the whole
+                // selection/compose overlay below.
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val snapshot = screenState.snapshot
+                    if (snapshot.cursorVisible && screenState.scrollbackPosition == 0 && cursorBlinkVisible) {
+                        drawCursor(
+                            row = snapshot.cursorRow,
+                            col = snapshot.cursorCol,
+                            charWidth = baseCharWidth,
+                            charHeight = baseCharHeight,
+                            foregroundColor = foregroundColor,
+                            backgroundColor = backgroundColor,
+                            cursorShape = snapshot.cursorShape,
+                            pendingDeadChar = composeController.pendingDeadChar,
+                            charBaseline = baseCharBaseline,
+                            textPaint = textPaint,
+                        )
+                    }
+                }
+
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val snapshot = screenState.snapshot
 
@@ -1415,22 +1462,6 @@ internal fun TerminalWithAccessibility(
                                 selectedOnly = true,
                             )
                         }
-                    }
-
-                    // Draw cursor (only when viewing current screen, not scrollback)
-                    if (snapshot.cursorVisible && screenState.scrollbackPosition == 0 && cursorBlinkVisible) {
-                        drawCursor(
-                            row = snapshot.cursorRow,
-                            col = snapshot.cursorCol,
-                            charWidth = baseCharWidth,
-                            charHeight = baseCharHeight,
-                            foregroundColor = foregroundColor,
-                            backgroundColor = backgroundColor,
-                            cursorShape = snapshot.cursorShape,
-                            pendingDeadChar = composeController.pendingDeadChar,
-                            charBaseline = baseCharBaseline,
-                            textPaint = textPaint,
-                        )
                     }
 
                     // Draw compose mode overlay
@@ -1707,7 +1738,10 @@ private fun TerminalRows(
     val density = LocalDensity.current
     val rowHeight = with(density) { charHeight.toDp() }
     val snapshot = screenState.snapshot
-    val hyperlinkMasks = remember(snapshot.sequenceNumber, screenState.scrollbackPosition, autoDetectUrls) {
+    // Keyed on contentVersion, which only advances when the visible lines or
+    // scrollback actually change — snapshot.sequenceNumber advances on every
+    // snapshot (including cursor-only moves) and so never let this cache hit.
+    val hyperlinkMasks = remember(screenState.contentVersion, screenState.scrollbackPosition, autoDetectUrls) {
         if (!autoDetectUrls) {
             emptyList()
         } else {
@@ -1721,7 +1755,10 @@ private fun TerminalRows(
 
     for (row in 0 until snapshot.rows) {
         val line = screenState.getVisibleLine(row)
-        key(row, line.lastModified, line.semanticSegments, screenState.scrollbackPosition) {
+        // TerminalLine equality is content-based (lastModified is excluded), so an
+        // unchanged row keeps a stable key and this block skips entirely; only a
+        // row whose cells or segments actually changed rebuilds.
+        key(row, line, screenState.scrollbackPosition) {
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1765,98 +1802,202 @@ private fun DrawScope.drawLine(
     selectedOnly: Boolean = false,
 ) {
     val y = row * charHeight
+    val baseline = y + charBaseline
+    val cells = line.cells
+    val count = cells.size
+
+    // O(cols) reverse scan hoisted out of the per-cell loop: isCellSelected needs
+    // the last non-blank column to reject trailing whitespace, and recomputing it
+    // per cell would make selection rendering O(cols^2) per row.
+    val selectionLastContentCol =
+        if (selectionManager != null) selectionManager.lastContentCol(line) else Int.MAX_VALUE
+
+    var col = 0
     var x = 0f
-
-    line.cells.forEachIndexed { col, cell ->
+    while (col < count) {
+        val cell = cells[col]
         val cellWidth = charWidth * cell.width
+        val isSelected = selectionManager?.isCellSelected(row, col, selectionLastContentCol) == true
 
-        // Check if this cell is selected
-        val isSelected = selectionManager?.isCellSelected(row, col, line) == true
         if (selectedOnly && !isSelected) {
             x += cellWidth
-            return@forEachIndexed
+            col++
+            continue
         }
 
-        // Check if this cell is part of a hyperlink
-        val isHyperlink = hyperlinkMask?.getOrNull(col) ?: (line.getHyperlinkUrlAt(col, autoDetectUrls) != null)
+        val isHyperlink = hyperlinkMask?.getOrNull(col)
+            ?: (line.getHyperlinkUrlAt(col, autoDetectUrls) != null)
 
-        // Determine colors (handle reverse video and selection)
-        val baseFgColor = if (cell.reverse) cell.bgColor else cell.fgColor
-        val bgColor = if (cell.reverse) cell.fgColor else cell.bgColor
+        // A cell wider than one column, carrying combining marks, or with a
+        // decoration that must line up with a single glyph (underline / strike /
+        // hyperlink) keeps the exact per-cell path.
+        val plain = cell.width == 1 &&
+            cell.combiningChars.isEmpty() &&
+            cell.underline == 0 &&
+            !cell.strike &&
+            !isHyperlink
 
-        // Draw background (with selection highlight)
-        val finalBgColor = if (isSelected) selectionBackgroundColor else bgColor
-        if (finalBgColor != defaultBg || isSelected) {
-            drawRect(
-                color = finalBgColor,
-                topLeft = Offset(x, y),
-                size = Size(cellWidth, charHeight),
+        if (!plain) {
+            drawSingleCell(
+                cell = cell,
+                x = x,
+                y = y,
+                charWidth = charWidth,
+                charHeight = charHeight,
+                charBaseline = charBaseline,
+                textPaint = textPaint,
+                underlinePaint = underlinePaint,
+                defaultBg = defaultBg,
+                isSelected = isSelected,
+                isHyperlink = isHyperlink,
+                selectionBackgroundColor = selectionBackgroundColor,
+                selectionForegroundColor = selectionForegroundColor,
             )
+            x += cellWidth
+            col++
+            continue
         }
 
-        // Draw character
-        if ((cell.char != ' ' && cell.char != '\u0000') || cell.combiningChars.isNotEmpty()) {
-            // Force high contrast for text on the selection background
-            val fgColor = if (isSelected) selectionForegroundColor else baseFgColor
+        // Extend a run of plain cells that share every visual attribute, then
+        // emit one background rect and one drawText for the whole run.
+        val runFg = if (cell.reverse) cell.bgColor else cell.fgColor
+        val runBg = if (cell.reverse) cell.fgColor else cell.bgColor
+        val buffer = ensureRunBuffer(count - col)
+        var end = col
+        var length = 0
+        var hasGlyph = false
+        while (end < count) {
+            val c = cells[end]
+            if (c.width != 1 || c.combiningChars.isNotEmpty() ||
+                c.underline != 0 || c.strike ||
+                c.bold != cell.bold || c.italic != cell.italic || c.reverse != cell.reverse
+            ) {
+                break
+            }
+            val cSelected = selectionManager?.isCellSelected(row, end, selectionLastContentCol) == true
+            if (cSelected != isSelected) break
+            val cHyperlink = hyperlinkMask?.getOrNull(end)
+                ?: (line.getHyperlinkUrlAt(end, autoDetectUrls) != null)
+            if (cHyperlink) break
+            val cFg = if (c.reverse) c.bgColor else c.fgColor
+            val cBg = if (c.reverse) c.fgColor else c.bgColor
+            if (cFg != runFg || cBg != runBg) break
 
-            // Configure text paint for this cell
+            val ch = c.char
+            val isBlank = ch == ' ' || ch == Char(0)
+            buffer[length] = if (isBlank) ' ' else ch
+            if (!isBlank) hasGlyph = true
+            length++
+            end++
+        }
+
+        val runWidth = charWidth * length
+        val finalBg = if (isSelected) selectionBackgroundColor else runBg
+        if (finalBg != defaultBg || isSelected) {
+            drawRect(color = finalBg, topLeft = Offset(x, y), size = Size(runWidth, charHeight))
+        }
+        if (hasGlyph) {
+            val fgColor = if (isSelected) selectionForegroundColor else runFg
             textPaint.color = fgColor.toArgb()
             textPaint.isFakeBoldText = cell.bold
             textPaint.textSkewX = if (cell.italic) -0.25f else 0f
-            // Underline if cell has underline OR if it's a hyperlink
-            textPaint.isUnderlineText = cell.underline == 1 || isHyperlink
-            textPaint.isStrikeThruText = cell.strike
-
-            // Draw text
-            if (cell.combiningChars.isEmpty()) {
-                val textBuffer = DRAW_TEXT_BUFFER.get()!!
-                textBuffer[0] = cell.char
-                drawContext.canvas.nativeCanvas.drawText(
-                    textBuffer,
-                    0,
-                    1,
-                    x,
-                    y + charBaseline,
-                    textPaint,
-                )
-            } else {
-                val text = buildString {
-                    append(cell.char)
-                    cell.combiningChars.forEach { append(it) }
-                }
-                drawContext.canvas.nativeCanvas.drawText(
-                    text,
-                    x,
-                    y + charBaseline,
-                    textPaint,
-                )
-            }
-
-            // Draw double underline if needed
-            if (cell.underline == 2) {
-                drawDoubleUnderline(
-                    x = x,
-                    y = y + charBaseline,
-                    width = cellWidth,
-                    color = fgColor,
-                    paint = underlinePaint,
-                )
-            }
-
-            // Draw curly underline if needed
-            if (cell.underline == 3) {
-                drawCurlyUnderline(
-                    x = x,
-                    y = y + charBaseline,
-                    width = cellWidth,
-                    charWidth = charWidth,
-                    color = fgColor,
-                    paint = underlinePaint,
-                )
-            }
+            textPaint.isUnderlineText = false
+            textPaint.isStrikeThruText = false
+            drawContext.canvas.nativeCanvas.drawText(buffer, 0, length, x, baseline, textPaint)
         }
 
-        x += cellWidth
+        x += runWidth
+        col = end
+    }
+}
+
+/**
+ * Per-cell draw path for cells that cannot join a batched run: wide (CJK) cells,
+ * cells with combining marks, and cells whose underline / strike / hyperlink
+ * decoration must align to exactly one glyph. Behaviour is identical to the
+ * original per-cell loop.
+ */
+private fun DrawScope.drawSingleCell(
+    cell: TerminalLine.Cell,
+    x: Float,
+    y: Float,
+    charWidth: Float,
+    charHeight: Float,
+    charBaseline: Float,
+    textPaint: TextPaint,
+    underlinePaint: Paint,
+    defaultBg: Color,
+    isSelected: Boolean,
+    isHyperlink: Boolean,
+    selectionBackgroundColor: Color,
+    selectionForegroundColor: Color,
+) {
+    val cellWidth = charWidth * cell.width
+    val baseFgColor = if (cell.reverse) cell.bgColor else cell.fgColor
+    val bgColor = if (cell.reverse) cell.fgColor else cell.bgColor
+
+    val finalBgColor = if (isSelected) selectionBackgroundColor else bgColor
+    if (finalBgColor != defaultBg || isSelected) {
+        drawRect(
+            color = finalBgColor,
+            topLeft = Offset(x, y),
+            size = Size(cellWidth, charHeight),
+        )
+    }
+
+    if ((cell.char != ' ' && cell.char != Char(0)) || cell.combiningChars.isNotEmpty()) {
+        val fgColor = if (isSelected) selectionForegroundColor else baseFgColor
+
+        textPaint.color = fgColor.toArgb()
+        textPaint.isFakeBoldText = cell.bold
+        textPaint.textSkewX = if (cell.italic) -0.25f else 0f
+        textPaint.isUnderlineText = cell.underline == 1 || isHyperlink
+        textPaint.isStrikeThruText = cell.strike
+
+        if (cell.combiningChars.isEmpty()) {
+            val textBuffer = DRAW_TEXT_BUFFER.get()!!
+            textBuffer[0] = cell.char
+            drawContext.canvas.nativeCanvas.drawText(
+                textBuffer,
+                0,
+                1,
+                x,
+                y + charBaseline,
+                textPaint,
+            )
+        } else {
+            val text = buildString {
+                append(cell.char)
+                cell.combiningChars.forEach { append(it) }
+            }
+            drawContext.canvas.nativeCanvas.drawText(
+                text,
+                x,
+                y + charBaseline,
+                textPaint,
+            )
+        }
+
+        if (cell.underline == 2) {
+            drawDoubleUnderline(
+                x = x,
+                y = y + charBaseline,
+                width = cellWidth,
+                color = fgColor,
+                paint = underlinePaint,
+            )
+        }
+
+        if (cell.underline == 3) {
+            drawCurlyUnderline(
+                x = x,
+                y = y + charBaseline,
+                width = cellWidth,
+                charWidth = charWidth,
+                color = fgColor,
+                paint = underlinePaint,
+            )
+        }
     }
 }
 

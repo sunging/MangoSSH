@@ -23,6 +23,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 
 /**
  * Compose-specific state adapter for terminal screen rendering.
@@ -48,10 +51,15 @@ internal class TerminalScreenState(
         val url: String,
     )
 
-    private var cachedSequenceNumber = -1L
     private var cachedScrollbackPosition = -1
     private var cachedAutoDetect = false
     private var cachedUrlGrid = Array(0) { arrayOfNulls<String>(0) }
+    private var cachedUrlVisibleLines: Array<TerminalLine?> = arrayOfNulls(0)
+
+    // Fast path: the mask builder calls getHyperlinkUrlAt rows*cols times against
+    // one unchanged snapshot, so remember which snapshot the grid was last
+    // validated against and skip the per-row instance sweep for repeats.
+    private var cachedUrlSnapshot: TerminalSnapshot? = null
 
     /**
      * The current immutable terminal snapshot.
@@ -65,6 +73,15 @@ internal class TerminalScreenState(
      * 0 = bottom (current screen), >0 = scrolled back in history
      */
     var scrollbackPosition by mutableStateOf(0)
+        private set
+
+    /**
+     * Increments only when the visible screen lines or the scrollback buffer
+     * actually change, never for a cursor-only move. Renderers key their
+     * memoized per-frame work (URL hyperlink masks, row draws) on this instead
+     * of [TerminalSnapshot.sequenceNumber], which changes on every snapshot.
+     */
+    var contentVersion by mutableStateOf(0L)
         private set
 
     /**
@@ -138,9 +155,9 @@ internal class TerminalScreenState(
 
         if (!autoDetectUrls) return null
 
-        if (snapshot.sequenceNumber != cachedSequenceNumber ||
-            scrollbackPosition != cachedScrollbackPosition ||
-            autoDetectUrls != cachedAutoDetect
+        if (scrollbackPosition != cachedScrollbackPosition ||
+            autoDetectUrls != cachedAutoDetect ||
+            !visibleLinesMatchUrlCache()
         ) {
             rebuildUrlCache(autoDetect = true)
         }
@@ -152,13 +169,37 @@ internal class TerminalScreenState(
         }
     }
 
+    /**
+     * True when every currently-visible row is the same [TerminalLine] instance
+     * used the last time the URL grid was built. `updateLine` only allocates a
+     * new instance for rows it actually changed, so this is a cheap `===` sweep
+     * that skips the regex rebuild for the common cursor-only / single-row
+     * updates.
+     */
+    private fun visibleLinesMatchUrlCache(): Boolean {
+        if (snapshot === cachedUrlSnapshot && scrollbackPosition == cachedScrollbackPosition) {
+            return true
+        }
+        val numRows = snapshot.rows
+        if (cachedUrlVisibleLines.size != numRows) return false
+        for (row in 0 until numRows) {
+            if (cachedUrlVisibleLines[row] !== getVisibleLine(row)) return false
+        }
+        // Grid is still valid for this snapshot; remember it so the rest of the
+        // rows*cols lookups in this pass skip the sweep.
+        cachedUrlSnapshot = snapshot
+        cachedScrollbackPosition = scrollbackPosition
+        return true
+    }
+
     private fun rebuildUrlCache(autoDetect: Boolean) {
-        cachedSequenceNumber = snapshot.sequenceNumber
         cachedScrollbackPosition = scrollbackPosition
         cachedAutoDetect = autoDetect
+        cachedUrlSnapshot = snapshot
 
         val numRows = snapshot.rows
         val cols = snapshot.cols
+        cachedUrlVisibleLines = Array(numRows) { row -> getVisibleLine(row) }
         if (cachedUrlGrid.size != numRows || (numRows > 0 && cachedUrlGrid[0].size != cols)) {
             cachedUrlGrid = Array(numRows) { arrayOfNulls<String>(cols) }
         } else {
@@ -350,13 +391,32 @@ internal class TerminalScreenState(
      * @param newSnapshot The new snapshot to use
      */
     internal fun updateSnapshot(newSnapshot: TerminalSnapshot) {
-        val oldScrollbackSize = snapshot.scrollback.size
+        val previous = snapshot
+        val oldScrollbackSize = previous.scrollback.size
         val newScrollbackSize = newSnapshot.scrollback.size
         snapshot = newSnapshot
         if (scrollbackPosition != 0) {
             val delta = newScrollbackSize - oldScrollbackSize
             scrollbackPosition = (scrollbackPosition + delta).coerceIn(0, newScrollbackSize)
         }
+        if (!sameVisibleContent(previous, newSnapshot)) {
+            contentVersion++
+        }
+    }
+
+    /**
+     * Whether two snapshots render the same screen and scrollback. `buildSnapshot`
+     * reuses the cached scrollback list unless it changed (one `===` check) and
+     * carries unchanged row instances forward, so this is a shallow sweep, not a
+     * deep per-cell comparison.
+     */
+    private fun sameVisibleContent(a: TerminalSnapshot, b: TerminalSnapshot): Boolean {
+        if (a.scrollback !== b.scrollback) return false
+        if (a.lines.size != b.lines.size) return false
+        for (i in a.lines.indices) {
+            if (a.lines[i] !== b.lines[i]) return false
+        }
+        return true
     }
 }
 
@@ -383,9 +443,17 @@ internal fun rememberTerminalScreenState(
     // Collecting in a LaunchedEffect keeps this adapter composable stable instead of
     // recomposing it because of Flow collection in this function. Updates to
     // state.snapshot still invalidate/recompose any composables that read it.
-    LaunchedEffect(terminalEmulator) {
-        terminalEmulator.snapshot.collect { newSnapshot ->
-            state.updateSnapshot(newSnapshot)
+    //
+    // Gated on STARTED: while the app is backgrounded there is no point applying
+    // snapshots or recomposing the terminal. The emulator itself also coalesces
+    // its rebuilds while backgrounded (setDisplayActive), and StateFlow replays
+    // the latest snapshot the moment collection resumes.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(terminalEmulator, lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            terminalEmulator.snapshot.collect { newSnapshot ->
+                state.updateSnapshot(newSnapshot)
+            }
         }
     }
 

@@ -195,6 +195,19 @@ sealed interface TerminalEmulator {
      * While the alternate screen is active, primary scrollback is not scanned.
      */
     fun getUrls(scope: UrlScanScope = UrlScanScope.CurrentView): List<TerminalUrl>
+
+    /**
+     * Declares whether a UI is currently displaying this emulator.
+     *
+     * The emulator is deliberately retained while its terminal screen is off
+     * composition (the app is backgrounded). While inactive, snapshot rebuilds
+     * are coalesced to a slow timer instead of running at frame cadence:
+     * transport bytes are still applied and scrollback still grows, but the
+     * emulator stops doing per-frame main-thread work for output nobody is
+     * watching. Passing `true` forces one full repaint from current terminal
+     * state.
+     */
+    fun setDisplayActive(active: Boolean)
 }
 
 class TerminalEmulatorFactory {
@@ -322,6 +335,12 @@ internal class TerminalEmulatorImpl(
     private var cursorMoved = false
     private var propertyChanged = false
 
+    // False while no UI is displaying this emulator (app backgrounded). Guarded
+    // by damageLock. Snapshot rebuilds are coalesced to BACKGROUND_COALESCE_MILLIS
+    // instead of frame cadence so a chatty background command stops driving
+    // per-frame main-thread work.
+    private var displayActive = true
+
     // Pending semantic segments to apply during processPendingUpdates
     private val pendingSemanticSegments = mutableListOf<PendingSemanticSegment>()
     private val movedSegmentRows = mutableSetOf<Int>()
@@ -369,8 +388,24 @@ internal class TerminalEmulatorImpl(
     // Reusable CellRun for fetching cell data
     private val cellRun = CellRun()
 
-    // Current screen lines cache
-    private var currentLines = List(initialRows) { row ->
+    // Flyweight for the blank cell used to pad a row out to the terminal width.
+    // Cells are immutable and compared structurally, so every padding cell across
+    // every row can share one instance; on a typical mostly-empty screen this is
+    // the bulk of per-repaint Cell allocation. updateLine only runs on the main
+    // thread, so a plain field with a single-slot cache is enough.
+    private var paddingCell: TerminalLine.Cell? = null
+
+    private fun paddingCell(fg: Color, bg: Color): TerminalLine.Cell {
+        val cached = paddingCell
+        if (cached != null && cached.fgColor == fg && cached.bgColor == bg) return cached
+        return TerminalLine.Cell(char = ' ', fgColor = fg, bgColor = bg).also { paddingCell = it }
+    }
+
+    // Current screen lines cache. An Array (not a List) so updateLine can replace
+    // one damaged row in place under damageLock instead of copying the whole
+    // row list per damaged row (that was O(rows^2) for a full-screen repaint).
+    // buildSnapshot still takes an immutable .toList() copy for each snapshot.
+    private var currentLines: Array<TerminalLine> = Array(initialRows) { row ->
         TerminalLine.empty(row, initialCols, currentDefaultForeground, currentDefaultBackground)
     }
 
@@ -421,7 +456,7 @@ internal class TerminalEmulatorImpl(
             // the new row count. Reset it atomically so every scheduled row
             // lookup remains valid, then rebuild from libvterm on the normal
             // serialized snapshot-update path.
-            currentLines = List(newRows) { row ->
+            currentLines = Array(newRows) { row ->
                 TerminalLine.empty(row, newCols, currentDefaultFg, currentDefaultBg)
             }
 
@@ -731,7 +766,7 @@ internal class TerminalEmulatorImpl(
                     // Full-screen scroll
                     currentLines.size
                 }
-                val newLines = currentLines.toMutableList()
+                val newLines = currentLines.copyOf()
                 for (row in 0 until shiftEnd - 1) {
                     shiftStoredSegmentTexts(fromRow = row + 1, toRow = row)
                     newLines[row] = currentLines[row + 1].copy(row = row)
@@ -890,9 +925,7 @@ internal class TerminalEmulatorImpl(
             )
 
             val updatedSegments = (line.semanticSegments + newSegment).sortedBy { it.startCol }
-            currentLines = currentLines.toMutableList().apply {
-                this[row] = line.copy(semanticSegments = updatedSegments)
-            }
+            currentLines[row] = line.copy(semanticSegments = updatedSegments)
             pendingSemanticSegments.add(
                 PendingSemanticSegment(
                     row = row,
@@ -1001,9 +1034,7 @@ internal class TerminalEmulatorImpl(
             .sortedBy { it.startCol }
 
         // Update the line with new segments
-        currentLines = currentLines.toMutableList().apply {
-            this[row] = line.copy(semanticSegments = updatedSegments)
-        }
+        currentLines[row] = line.copy(semanticSegments = updatedSegments)
         storeSegmentText(row, newSegment, line)
     }
 
@@ -1032,15 +1063,10 @@ internal class TerminalEmulatorImpl(
             val runLength = terminalNative.getCellRun(row, col, cellRun)
 
             if (runLength <= 0) {
-                // Fill remaining with empty cells
+                // Fill remaining with shared blank padding cells
+                val pad = paddingCell(currentDefaultFg, currentDefaultBg)
                 while (col < cols) {
-                    cells.add(
-                        TerminalLine.Cell(
-                            char = ' ',
-                            fgColor = currentDefaultFg,
-                            bgColor = currentDefaultBg,
-                        ),
-                    )
+                    cells.add(pad)
                     col++
                 }
                 break
@@ -1128,23 +1154,22 @@ internal class TerminalEmulatorImpl(
         // invalidations, such as palette changes, to keep semantic metadata.
         // Must synchronize to ensure visibility of segments added by addSemanticSegment
         synchronized(damageLock) {
-            currentLines = currentLines.toMutableList().apply {
-                val previousLine = this[row]
-                val existingSegments = previousLine.semanticSegments
-                val preservedSegments = if (damageRegion.preserveSegments || preserveMovedSegments) {
-                    existingSegments.filter { segment ->
-                        segment.endCol <= cells.size &&
-                            (!preserveMovedSegments || segmentTextStillMatches(row, segment, cells))
-                    }
-                } else {
-                    existingSegments.filter { segment ->
-                        segment.endCol <= cells.size &&
-                            !segment.overlaps(damageRegion.startCol, damageRegion.endCol)
-                    }
+            if (row >= currentLines.size) return
+            val previousLine = currentLines[row]
+            val existingSegments = previousLine.semanticSegments
+            val preservedSegments = if (damageRegion.preserveSegments || preserveMovedSegments) {
+                existingSegments.filter { segment ->
+                    segment.endCol <= cells.size &&
+                        (!preserveMovedSegments || segmentTextStillMatches(row, segment, cells))
                 }
-                replaceStoredSegmentTexts(row, preservedSegments)
-                this[row] = TerminalLine(row, cells, softWrapped = softWrapped, semanticSegments = preservedSegments)
+            } else {
+                existingSegments.filter { segment ->
+                    segment.endCol <= cells.size &&
+                        !segment.overlaps(damageRegion.startCol, damageRegion.endCol)
+                }
             }
+            replaceStoredSegmentTexts(row, preservedSegments)
+            currentLines[row] = TerminalLine(row, cells, softWrapped = softWrapped, semanticSegments = preservedSegments)
         }
     }
 
@@ -1370,6 +1395,13 @@ internal class TerminalEmulatorImpl(
     private fun requestProcessPendingUpdatesLocked() {
         if (damagePosted) return
         damagePosted = true
+        if (!displayActive) {
+            // Backgrounded: no UI is watching. Drain on a slow timer so damage
+            // and scrollback still get applied (nothing accumulates unbounded)
+            // without doing updateLine/buildSnapshot at frame cadence.
+            handler.postDelayed(backgroundFlushRunnable, BACKGROUND_COALESCE_MILLIS)
+            return
+        }
         if (looper == Looper.getMainLooper()) {
             handler.post {
                 Choreographer.getInstance().postFrameCallback {
@@ -1380,6 +1412,23 @@ internal class TerminalEmulatorImpl(
             handler.post {
                 processPendingUpdates()
             }
+        }
+    }
+
+    private val backgroundFlushRunnable = Runnable { processPendingUpdates() }
+
+    override fun setDisplayActive(active: Boolean) {
+        synchronized(damageLock) {
+            if (active == displayActive) return
+            displayActive = active
+            if (!active) return
+            // Returning to the foreground: repaint from authoritative libvterm
+            // state and flush at frame cadence right away.
+            handler.removeCallbacks(backgroundFlushRunnable)
+            pendingDamageRegions.clear()
+            pendingDamageRegions.add(DamageRegion(0, rows, 0, cols, preserveSegments = true))
+            damagePosted = false
+            requestProcessPendingUpdatesLocked()
         }
     }
 
@@ -1504,6 +1553,9 @@ internal class TerminalEmulatorImpl(
     companion object {
         private const val TAG = "TerminalEmulatorImpl"
         private const val MAX_URL_SCAN_CONTINUATION_ROWS = 6
+
+        /** Snapshot coalescing period while no UI is attached (app backgrounded). */
+        private const val BACKGROUND_COALESCE_MILLIS = 2_000L
     }
 }
 
