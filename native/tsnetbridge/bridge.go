@@ -32,8 +32,14 @@ const (
 	statusStopped       = "stopped"
 	statusError         = "error"
 
-	statusPollInterval = 500 * time.Millisecond
-	operationTimeout   = 15 * time.Second
+	// Poll fast only while the node is still converging (login, approval,
+	// netmap). Once it reports Running, lifecycle changes are rare, so the
+	// LocalClient status round-trip (plus the JNI/StateFlow hop it drives)
+	// drops to a slow cadence, and slower still while the app is backgrounded.
+	statusPollInterval           = 500 * time.Millisecond
+	statusPollRunningInterval    = 5 * time.Second
+	statusPollBackgroundInterval = 60 * time.Second
+	operationTimeout             = 15 * time.Second
 )
 
 var (
@@ -91,6 +97,8 @@ type Runtime struct {
 	closed       bool
 	lastState    string
 	lastAuthURL  string
+	active       bool
+	pollWake     chan struct{}
 }
 
 // NewRuntime constructs a stopped embedded node.
@@ -102,6 +110,8 @@ func NewRuntime(stateDir, hostname string, store StateStore, networkState Networ
 		networkState: networkState,
 		listener:     listener,
 		relays:       make(map[*UDPRelay]struct{}),
+		active:       true,
+		pollWake:     make(chan struct{}, 1),
 	}
 }
 
@@ -310,15 +320,54 @@ func (r *Runtime) failStart(server *tsnet.Server) {
 }
 
 func (r *Runtime) pollStatus(ctx context.Context, server *tsnet.Server, client localStatusClient) {
-	ticker := time.NewTicker(statusPollInterval)
-	defer ticker.Stop()
 	peerMapReady := false
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
-		r.updateStatus(ctx, server, client, &peerMapReady)
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
+		case <-r.pollWake:
+			// SetActive toggled: re-poll now so a return to the foreground
+			// refreshes status promptly instead of after the slow interval.
+		}
+
+		r.updateStatus(ctx, server, client, &peerMapReady)
+
+		r.mu.Lock()
+		active := r.active
+		r.mu.Unlock()
+		next := statusPollInterval
+		if peerMapReady {
+			if active {
+				next = statusPollRunningInterval
+			} else {
+				next = statusPollBackgroundInterval
+			}
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(next)
+	}
+}
+
+// SetActive tells the status poller whether the app is in the foreground.
+// Backgrounded, the node still runs but its status is polled far less often.
+func (r *Runtime) SetActive(active bool) {
+	r.mu.Lock()
+	changed := r.active != active
+	r.active = active
+	wake := r.pollWake
+	r.mu.Unlock()
+	if changed && wake != nil {
+		select {
+		case wake <- struct{}{}:
+		default:
 		}
 	}
 }
