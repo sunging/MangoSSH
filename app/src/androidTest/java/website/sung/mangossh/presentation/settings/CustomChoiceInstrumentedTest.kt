@@ -38,6 +38,7 @@ class CustomChoiceInstrumentedTest {
                     state = ConnectionSettingsState(ConnectionPreferences(keepaliveSeconds = keepalive)),
                     callbacks = ConnectionSettingsCallbacks(
                         onSetKeepaliveSeconds = { keepalive = it },
+                        onSetBackgroundKeepaliveMultiplier = {},
                         onSetConnectTimeoutSeconds = {},
                         onSetSshTerminalType = {},
                     ),
@@ -63,6 +64,7 @@ class CustomChoiceInstrumentedTest {
                     state = ConnectionSettingsState(ConnectionPreferences(connectTimeoutSeconds = 45)),
                     callbacks = ConnectionSettingsCallbacks(
                         onSetKeepaliveSeconds = {},
+                        onSetBackgroundKeepaliveMultiplier = {},
                         onSetConnectTimeoutSeconds = {},
                         onSetSshTerminalType = {},
                     ),

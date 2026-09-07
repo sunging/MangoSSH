@@ -13,6 +13,7 @@ import website.sung.mangossh.data.settings.TerminalShortcutStore
 import website.sung.mangossh.data.settings.UpdatePreferencesStore
 import website.sung.mangossh.data.update.installedAppInfo
 import website.sung.mangossh.data.vault.VaultRepository
+import website.sung.mangossh.session.AppForegroundState
 import website.sung.mangossh.session.SshSessionController
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetManager
 
@@ -26,9 +27,18 @@ import website.sung.mangossh.session.tsnet.EmbeddedTsnetManager
  * than trying to reconnect them without user consent.
  */
 class MangoSshApplication : Application() {
+    /**
+     * Process-wide foreground/background signal. Created on the main thread in
+     * [onCreate] so the platform lifecycle observer is registered correctly,
+     * then handed to session components that relax power usage in the
+     * background.
+     */
+    lateinit var appForegroundState: AppForegroundState
+        private set
+
     /** Shared live-session dependencies for the lifetime of this app process. */
     val sessionRuntime: MangoSessionRuntime by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        MangoSessionRuntime(this)
+        MangoSessionRuntime(this, appForegroundState)
     }
 
     override fun onCreate() {
@@ -37,6 +47,7 @@ class MangoSshApplication : Application() {
         // is exactly the case that is hardest to reproduce and most valuable to
         // record.
         CrashReporter.install(this)
+        appForegroundState = AppForegroundState.create()
     }
 }
 
@@ -47,7 +58,7 @@ class MangoSshApplication : Application() {
  * Keeping one instance prevents an Activity recreated from a notification tap
  * from creating a second controller for the same process.
  */
-class MangoSessionRuntime(context: Context) {
+class MangoSessionRuntime(context: Context, val appForegroundState: AppForegroundState) {
     /** Device-bound encrypted persistence shared by all process-local screens. */
     val vault = VaultRepository(context.applicationContext)
 
@@ -90,5 +101,6 @@ class MangoSessionRuntime(context: Context) {
         terminalAppearance,
         terminalBehavior,
         connectionPreferences,
+        appForegroundState,
     )
 }

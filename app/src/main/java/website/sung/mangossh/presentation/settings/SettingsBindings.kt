@@ -53,6 +53,7 @@ internal fun rememberSettingsCallbacks(
             ),
             connection = ConnectionSettingsCallbacks(
                 onSetKeepaliveSeconds = viewModel::setConnectionKeepaliveSeconds,
+                onSetBackgroundKeepaliveMultiplier = viewModel::setConnectionBackgroundKeepaliveMultiplier,
                 onSetConnectTimeoutSeconds = viewModel::setConnectionTimeoutSeconds,
                 onSetSshTerminalType = viewModel::setSshTerminalType,
             ),

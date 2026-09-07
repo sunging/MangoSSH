@@ -29,6 +29,8 @@ class ConnectionPreferencesStore(context: Context) {
 
     fun setKeepaliveSeconds(seconds: Int) = update { it.copy(keepaliveSeconds = seconds) }
 
+    fun setBackgroundKeepaliveMultiplier(multiplier: Int) = update { it.copy(backgroundKeepaliveMultiplier = multiplier) }
+
     fun setConnectTimeoutSeconds(seconds: Int) = update { it.copy(connectTimeoutSeconds = seconds) }
 
     fun setSshTerminalType(type: SshTerminalType) = update { it.copy(sshTerminalType = type) }
@@ -43,10 +45,15 @@ class ConnectionPreferencesStore(context: Context) {
         val keepaliveSeconds = readInt(KEY_KEEPALIVE_SECONDS, ConnectionPreferences.DEFAULT_KEEPALIVE_SECONDS)
         val connectTimeoutSeconds = readInt(KEY_CONNECT_TIMEOUT_SECONDS, ConnectionPreferences.DEFAULT_CONNECT_TIMEOUT_SECONDS)
         val sshTerminalType = SshTerminalType.fromPreference(readString(KEY_SSH_TERMINAL_TYPE)) ?: SshTerminalType.DEFAULT
+        val backgroundKeepaliveMultiplier = readInt(
+            KEY_BACKGROUND_KEEPALIVE_MULTIPLIER,
+            ConnectionPreferences.DEFAULT_BACKGROUND_KEEPALIVE_MULTIPLIER,
+        )
         return ConnectionPreferences(
             keepaliveSeconds = keepaliveSeconds,
             connectTimeoutSeconds = connectTimeoutSeconds,
             sshTerminalType = sshTerminalType,
+            backgroundKeepaliveMultiplier = backgroundKeepaliveMultiplier,
         ).normalized()
     }
 
@@ -65,6 +72,7 @@ class ConnectionPreferencesStore(context: Context) {
             putInt(KEY_KEEPALIVE_SECONDS, value.keepaliveSeconds)
             putInt(KEY_CONNECT_TIMEOUT_SECONDS, value.connectTimeoutSeconds)
             putString(KEY_SSH_TERMINAL_TYPE, value.sshTerminalType.preferenceValue)
+            putInt(KEY_BACKGROUND_KEEPALIVE_MULTIPLIER, value.backgroundKeepaliveMultiplier)
         }
     }
 
@@ -73,5 +81,6 @@ class ConnectionPreferencesStore(context: Context) {
         const val KEY_KEEPALIVE_SECONDS = "keepalive_seconds"
         const val KEY_CONNECT_TIMEOUT_SECONDS = "connect_timeout_seconds"
         const val KEY_SSH_TERMINAL_TYPE = "ssh_terminal_type"
+        const val KEY_BACKGROUND_KEEPALIVE_MULTIPLIER = "background_keepalive_multiplier"
     }
 }

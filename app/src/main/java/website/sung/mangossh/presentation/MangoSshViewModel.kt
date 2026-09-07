@@ -460,6 +460,11 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         connectionPreferencesStore.setKeepaliveSeconds(seconds)
     }
 
+    /** Takes effect on the next background transition of any session, no reconnect needed. */
+    fun setConnectionBackgroundKeepaliveMultiplier(multiplier: Int) {
+        connectionPreferencesStore.setBackgroundKeepaliveMultiplier(multiplier)
+    }
+
     /** Applied to connections opened after this call. */
     fun setConnectionTimeoutSeconds(seconds: Int) {
         connectionPreferencesStore.setConnectTimeoutSeconds(seconds)

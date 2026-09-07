@@ -61,6 +61,28 @@ internal fun ConnectionSettingsPage(
                     modifier = Modifier.testTag("settings_keepalive_control"),
                 )
                 SettingsChoiceRow(
+                    label = stringResource(R.string.settings_connection_bg_keepalive_title),
+                    options = ConnectionPreferences.backgroundKeepaliveMultiplierChoices(
+                        preferences.backgroundKeepaliveMultiplier,
+                    ),
+                    selected = preferences.backgroundKeepaliveMultiplier,
+                    optionLabel = { multiplier ->
+                        val label = if (multiplier <= 1) {
+                            stringResource(R.string.settings_connection_bg_keepalive_same)
+                        } else {
+                            stringResource(R.string.settings_connection_bg_keepalive_value, multiplier)
+                        }
+                        markCustom(
+                            label,
+                            custom = multiplier !in ConnectionPreferences.BACKGROUND_KEEPALIVE_MULTIPLIER_CHOICES,
+                        )
+                    },
+                    onSelect = callbacks.onSetBackgroundKeepaliveMultiplier,
+                    supportingText = stringResource(R.string.settings_connection_bg_keepalive_summary),
+                    optionTestTag = { "settings_bg_keepalive_$it" },
+                    modifier = Modifier.testTag("settings_bg_keepalive_control"),
+                )
+                SettingsChoiceRow(
                     label = stringResource(R.string.settings_connection_timeout_title),
                     options = ConnectionPreferences.connectTimeoutChoices(preferences.connectTimeoutSeconds),
                     selected = preferences.connectTimeoutSeconds,

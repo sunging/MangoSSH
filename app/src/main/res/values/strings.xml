@@ -500,6 +500,10 @@
     <string name="settings_connection_keepalive_summary">How often an idle SSH transport sends a keepalive packet to stay visible to routers and firewalls.</string>
     <string name="settings_connection_keepalive_value">Every %1$d seconds</string>
     <string name="settings_connection_keepalive_off">Off</string>
+    <string name="settings_connection_bg_keepalive_title">Background keepalive</string>
+    <string name="settings_connection_bg_keepalive_summary">How much to stretch the keepalive interval once the app is in the background, so the device can sleep between sends. Longer saves more battery but a connection is likelier to drop while backgrounded.</string>
+    <string name="settings_connection_bg_keepalive_value">%1$d× the interval</string>
+    <string name="settings_connection_bg_keepalive_same">Same as foreground</string>
     <string name="settings_connection_timeout_title">Connect timeout</string>
     <string name="settings_connection_timeout_summary">How long to wait for a new connection to reach the server.</string>
     <string name="settings_connection_timeout_value">%1$d seconds</string>

@@ -484,6 +484,10 @@
     <string name="settings_connection_keepalive_summary">空闲 SSH 传输发送保活包的频率，用于在路由器和防火墙前保持可见。</string>
     <string name="settings_connection_keepalive_value">每 %1$d 秒</string>
     <string name="settings_connection_keepalive_off">关闭</string>
+    <string name="settings_connection_bg_keepalive_title">后台保活</string>
+    <string name="settings_connection_bg_keepalive_summary">应用退到后台后，将保活间隔拉长的倍数，好让设备在两次发送之间休眠。倍数越大越省电，但后台时连接被断开的可能也越大。</string>
+    <string name="settings_connection_bg_keepalive_value">间隔的 %1$d 倍</string>
+    <string name="settings_connection_bg_keepalive_same">与前台相同</string>
     <string name="settings_connection_timeout_title">连接超时</string>
     <string name="settings_connection_timeout_summary">等待新连接到达服务器的最长时间。</string>
     <string name="settings_connection_timeout_value">%1$d 秒</string>

@@ -72,6 +72,8 @@ class SessionForegroundService : Service() {
         get() = (application as MangoSshApplication).sessionRuntime.sessionController
     private val embeddedTsnetManager
         get() = (application as MangoSshApplication).sessionRuntime.embeddedTsnetManager
+    private val appForegroundState
+        get() = (application as MangoSshApplication).appForegroundState
 
     override fun onCreate() {
         super.onCreate()
@@ -97,8 +99,12 @@ class SessionForegroundService : Service() {
             combine(
                 sessionController.sessions,
                 embeddedTsnetManager.foregroundRequired,
-            ) { sessions, tsnetRequired -> sessions to tsnetRequired }
-                .collect { (sessions, tsnetRequired) -> renderWork(sessions, tsnetRequired) }
+                appForegroundState.foreground,
+            ) { sessions, tsnetRequired, uiForeground ->
+                Triple(sessions, tsnetRequired, uiForeground)
+            }.collect { (sessions, tsnetRequired, uiForeground) ->
+                renderWork(sessions, tsnetRequired, uiForeground)
+            }
         }
     }
 
@@ -111,6 +117,7 @@ class SessionForegroundService : Service() {
         renderWork(
             sessions = sessionController.sessions.value,
             tsnetRequired = embeddedTsnetManager.foregroundRequired.value,
+            uiForeground = appForegroundState.foreground.value,
         )
         return START_NOT_STICKY
     }
@@ -129,7 +136,11 @@ class SessionForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun renderWork(sessions: List<TerminalSessionState>, tsnetRequired: Boolean) {
+    private fun renderWork(
+        sessions: List<TerminalSessionState>,
+        tsnetRequired: Boolean,
+        uiForeground: Boolean,
+    ) {
         if (sessions.isEmpty() && !tsnetRequired) {
             sessionWakeLock.close()
             stopping = true
@@ -146,6 +157,7 @@ class SessionForegroundService : Service() {
         sessionWakeLock.update(
             hasSessions = sessions.isNotEmpty(),
             foregroundOwned = foregroundStarted,
+            uiForeground = uiForeground,
         )
 
         // Posting notifications is a best-effort presentation concern: the

@@ -133,6 +133,7 @@ internal data class ShortcutSettingsCallbacks(
 @Immutable
 internal data class ConnectionSettingsCallbacks(
     val onSetKeepaliveSeconds: (Int) -> Unit,
+    val onSetBackgroundKeepaliveMultiplier: (Int) -> Unit,
     val onSetConnectTimeoutSeconds: (Int) -> Unit,
     val onSetSshTerminalType: (SshTerminalType) -> Unit,
 )

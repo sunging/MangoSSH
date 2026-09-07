@@ -78,8 +78,20 @@ class SshSessionController internal constructor(
     private val terminalAppearanceStore: TerminalAppearanceStore,
     private val terminalBehaviorStore: TerminalBehaviorStore,
     private val connectionPreferencesStore: ConnectionPreferencesStore,
+    private val appForegroundState: AppForegroundState,
 ) {
     private val context = appContext.applicationContext
+
+    /**
+     * Paces keepalives: the user-configured interval while the app is on screen,
+     * a longer Doze-tolerant alarm once it is backgrounded and the session wake
+     * lock has been released. See [SessionKeepaliveScheduler].
+     */
+    private val keepaliveScheduler = SessionKeepaliveScheduler(
+        appForeground = appForegroundState.foreground,
+        alarm = createKeepaliveAlarm(context),
+        backgroundMultiplier = { connectionPreferencesStore.current().backgroundKeepaliveMultiplier },
+    )
 
     /**
      * Last-resort guard for the session scope.
@@ -136,6 +148,14 @@ class SshSessionController internal constructor(
 
     /** Transient OSC 52 copy requests for the currently visible terminal UI. */
     val clipboardCopies = terminalStore.clipboardCopies
+
+    init {
+        // Pause frame-cadence snapshot rebuilds for every retained emulator
+        // while the app is backgrounded; resume (and force a repaint) on return.
+        scope.launch {
+            appForegroundState.foreground.collect(terminalStore::setDisplayActive)
+        }
+    }
 
     /**
      * Starts a user-requested terminal session and protects it with the
@@ -1215,6 +1235,7 @@ class SshSessionController internal constructor(
                     MangoLog.warn(MangoLogEvent.SSH_KEEPALIVE_FAILED, error)
                     finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
                 },
+                waitForNextKeepalive = keepaliveScheduler::waitForNextKeepalive,
             )
         }
     }
@@ -1264,6 +1285,7 @@ class SshSessionController internal constructor(
                         MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)
                     }
                 },
+                waitForNextKeepalive = keepaliveScheduler::waitForNextKeepalive,
             )
         }
     }
