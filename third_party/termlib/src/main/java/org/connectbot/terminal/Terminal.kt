@@ -952,8 +952,8 @@ internal fun TerminalWithAccessibility(
 
         // Entering the alternate screen (tmux, vim, less, ...) leaves any stale
         // primary scrollback behind the active view. Snap back to the bottom so a
-        // swipe there is unambiguously a "talk to the remote program" gesture
-        // rather than panning history the user can no longer see. Observed via a
+        // swipe there cannot pan history the user can no longer see. Remote
+        // scrolling requires mouse tracking; otherwise swipes do nothing. Observed via a
         // flow so the composable body does not resubscribe on every snapshot.
         LaunchedEffect(screenState) {
             snapshotFlow { screenState.snapshot.isAltScreen }
@@ -1136,9 +1136,8 @@ internal fun TerminalWithAccessibility(
                         val multiTouchTimeout = down.uptimeMillis + WAIT_FOR_SECOND_TOUCH_MS
                         var panAccumulator = Offset.Zero
                         var initialScrollOffset = 0f
-                        // Wheel/arrow ticks already forwarded to the remote program
-                        // this gesture (used when the alternate screen or mouse
-                        // tracking is active, where local scrollback cannot pan).
+                        // Wheel ticks already forwarded to the remote program
+                        // this gesture while mouse tracking is active.
                         var emittedRemoteScrollSteps = 0
 
                         // 4. Main event loop
@@ -1209,11 +1208,11 @@ internal fun TerminalWithAccessibility(
 
                                     GestureType.Scroll -> {
                                         val snapshot = screenState.snapshot
-                                        if (snapshot.mouseTrackingActive || snapshot.isAltScreen) {
-                                            // Full-screen program is up: forward the swipe to it
-                                            // instead of panning (empty) local scrollback. Finger
-                                            // moving down means "show older content" = wheel up /
-                                            // arrow up, matching normal touch scrolling.
+                                        if (snapshot.mouseTrackingActive) {
+                                            // Preserve the touch location in wheel reports. Never
+                                            // substitute arrow keys: they target the focused input
+                                            // regardless of where the user actually swiped.
+                                            // Finger moving down means "show older content" = wheel up.
                                             val totalSteps = (panAccumulator.y / baseCharHeight).toInt()
                                             val delta = totalSteps - emittedRemoteScrollSteps
                                             if (delta != 0) {
@@ -1227,18 +1226,11 @@ internal fun TerminalWithAccessibility(
                                                 val row = (change.position.y / baseCharHeight).toInt()
                                                     .coerceIn(0, snapshot.rows - 1)
                                                 repeat(burst) {
-                                                    if (snapshot.mouseTrackingActive) {
-                                                        terminalEmulator.sendMouseWheel(scrollUp, row, col)
-                                                    } else {
-                                                        terminalEmulator.dispatchKey(
-                                                            0,
-                                                            if (scrollUp) VTermKey.UP else VTermKey.DOWN,
-                                                        )
-                                                    }
+                                                    terminalEmulator.sendMouseWheel(scrollUp, row, col)
                                                 }
                                                 emittedRemoteScrollSteps += delta
                                             }
-                                        } else {
+                                        } else if (!snapshot.isAltScreen) {
                                             // Update scroll offset using total pan from the start of the gesture
                                             // to avoid stuttering from stale scrollOffset.value.
                                             val currentMaxScroll =
@@ -1322,12 +1314,12 @@ internal fun TerminalWithAccessibility(
                         when (gestureType) {
                             GestureType.Scroll -> {
                                 val snapshot = screenState.snapshot
-                                // Skip inertia when the swipe was forwarded to a remote
-                                // program tick by tick, so a fast flick does not spray
-                                // dozens of extra keys/wheel reports at the PTY.
-                                val forwardedToRemote =
-                                    snapshot.mouseTrackingActive || snapshot.isAltScreen
-                                if (!forwardedToRemote) {
+                                // Only local history has inertia. Mouse reports stop on
+                                // release, and alternate-screen swipes without tracking
+                                // must neither send input nor reveal stale primary history.
+                                val canScrollLocalHistory =
+                                    !snapshot.mouseTrackingActive && !snapshot.isAltScreen
+                                if (canScrollLocalHistory) {
                                     // Apply fling animation
                                     val velocity = velocityTracker.calculateVelocity()
                                     scrollJob?.cancel()

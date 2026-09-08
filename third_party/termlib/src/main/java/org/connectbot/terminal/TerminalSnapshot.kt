@@ -53,11 +53,12 @@ internal enum class CursorShape {
  * @property isAltScreen Whether the alternate screen buffer is active (libvterm
  *   `VTERM_PROP_ALTSCREEN`). Full-screen programs such as tmux, vim, less, and man
  *   run here, and the alternate screen keeps no scrollback, so a swipe cannot pan
- *   local history and must instead be forwarded to the remote program.
+ *   local history. Without mouse tracking, swipes here do nothing.
  * @property mouseTrackingActive Whether the remote program has enabled any mouse
  *   tracking mode (libvterm `VTERM_PROP_MOUSE` is non-zero). When true, a swipe
  *   can be delivered as wheel events the program understands (tmux `mouse on`,
- *   vim `mouse=a`); otherwise a swipe falls back to arrow keys.
+ *   vim `mouse=a`). Without tracking, only primary-screen local history scrolls;
+ *   swipes never generate arrow keys that could modify the focused input.
  */
 internal data class TerminalSnapshot(
     val lines: List<TerminalLine>,

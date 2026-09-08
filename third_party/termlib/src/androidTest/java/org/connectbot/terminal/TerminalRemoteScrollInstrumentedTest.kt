@@ -10,10 +10,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Pins the terminal-property signals the UI relies on to forward a swipe to a
- * full-screen remote program (tmux, vim, less) instead of panning local
- * scrollback, plus the wheel-report encoding used when the program tracks the
- * mouse.
+ * Pins the terminal-property signals used to distinguish mouse reporting,
+ * primary-screen history and alternate screens without mouse support, plus
+ * the wheel-report encoding used when the program tracks the mouse.
  */
 @RunWith(AndroidJUnit4::class)
 class TerminalRemoteScrollInstrumentedTest {
