@@ -509,6 +509,23 @@ internal fun TerminalWithAccessibility(
     // Keep reference to ImeInputView for controlling IME
     var imeInputView by remember { mutableStateOf<ImeInputView?>(null) }
 
+    // With a hardware keyboard and the soft keyboard hidden, the 1.dp ImeInputView never takes
+    // Android focus (showIme()/requestFocus() only runs when the IME should be visible). Without
+    // a focus target inside the terminal subtree, key events are never delivered to
+    // onPreviewKeyEvent and the platform rewrites an unconsumed Esc into Back. Give the terminal
+    // Box its own focus requester and claim focus whenever the IME is not driving focus.
+    val hardwareKeyFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(keyboardEnabled, shouldShowIme) {
+        if (keyboardEnabled && !shouldShowIme) {
+            delay(UI_SETTLE_DELAY_MS)
+            try {
+                hardwareKeyFocusRequester.requestFocus()
+            } catch (_: IllegalStateException) {
+                // Focus requester not attached to the composition yet; ignore.
+            }
+        }
+    }
+
     // Cleanup IME when component is disposed
     DisposableEffect(imeInputView) {
         onDispose {
@@ -846,8 +863,10 @@ internal fun TerminalWithAccessibility(
             }
             .then(
                 if (keyboardEnabled) {
+                    // A key-input modifier must sit *above* the focus target it serves, so
+                    // .onPreviewKeyEvent precedes .focusable() here.
                     Modifier
-                        .focusable()
+                        .focusRequester(hardwareKeyFocusRequester)
                         .onPreviewKeyEvent { event ->
                             // In Review Mode, let accessibility system handle navigation keys
                             if (isReviewMode) {
@@ -873,6 +892,7 @@ internal fun TerminalWithAccessibility(
                                 keyboardHandler.onKeyEvent(event)
                             }
                         }
+                        .focusable()
                 } else {
                     Modifier
                 },
@@ -1705,8 +1725,8 @@ internal fun TerminalWithAccessibility(
                 },
                 modifier = Modifier
                     .size(1.dp)
-                    .focusable()
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .focusable(),
             )
         }
     }
