@@ -57,6 +57,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -81,6 +82,7 @@ import website.sung.mangossh.domain.TerminalBehavior
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalShortcutAction
 import website.sung.mangossh.domain.TerminalShortcutConfig
+import website.sung.mangossh.domain.TerminalSpecialKey
 import website.sung.mangossh.ui.theme.terminalChromeColorScheme
 
 /**
@@ -188,7 +190,26 @@ fun TerminalSessionScreen(
                     .fillMaxSize()
                     .statusBarsPadding()
                     .navigationBarsPadding()
-                    .imePadding(),
+                    .imePadding()
+                    // Catch an Esc that bubbled up unconsumed because focus was on the top bar
+                    // or the shortcut chips rather than the terminal, before the platform can
+                    // turn it into Back/Menu/Home. Down dispatches the key; both edges are
+                    // consumed so no fallback is synthesized.
+                    .onKeyEvent { event ->
+                        if (consumesUnhandledEscape(event.nativeKeyEvent.keyCode, isOpen)) {
+                            if (event.type == KeyEventType.KeyDown) {
+                                dispatchTerminalShortcut(
+                                    action = TerminalShortcutAction.SpecialKey(TerminalSpecialKey.ESCAPE),
+                                    modifierState = terminalModifierState,
+                                    terminalEmulator = terminalEmulator,
+                                    onPaste = pasteFromClipboard,
+                                )
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    },
             ) {
                 Row(
                     modifier = Modifier

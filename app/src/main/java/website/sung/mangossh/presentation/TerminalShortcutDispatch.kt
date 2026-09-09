@@ -95,6 +95,19 @@ internal fun dispatchTerminalShortcut(
     }
 }
 
+/**
+ * Whether a key event that bubbled up to the session screen unconsumed should be redirected
+ * into the terminal as an Escape rather than left to the platform.
+ *
+ * Android's `Generic.kcm` rewrites an unconsumed ESCAPE into BACK (which opens the
+ * leave-session dialog) and, with Ctrl or Alt/Meta held, into MENU or HOME. While a session
+ * is interactive Esc always belongs to the shell, so it is claimed here regardless of chord.
+ * Every other key is left alone — Tab and the arrow keys must keep driving focus traversal
+ * when the surrounding chrome holds focus.
+ */
+internal fun consumesUnhandledEscape(nativeKeyCode: Int, sessionOpen: Boolean): Boolean =
+    sessionOpen && nativeKeyCode == android.view.KeyEvent.KEYCODE_ESCAPE
+
 private fun dispatchText(
     dispatchKey: (Int, Int) -> Unit,
     dispatchCharacter: (Int, Int) -> Unit,

@@ -4,6 +4,7 @@ package website.sung.mangossh.presentation
 
 import android.content.ClipData
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
@@ -89,6 +90,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
@@ -128,6 +130,7 @@ import website.sung.mangossh.session.SessionPromptTextKind
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
 import website.sung.mangossh.session.TerminalSessionPhase
+import org.connectbot.terminal.VTermKey
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.presentation.settings.AboutSettingsState
 import website.sung.mangossh.presentation.settings.AppearanceSettingsState
@@ -356,8 +359,25 @@ fun MangoSshApp(
         val (activeSession, terminalEmulator) = terminalTarget
         val activePrompt = sessionPrompts.firstOrNull { it.sessionId == activeSession.id }
         val visiblePrompt = activePrompt ?: sessionPrompts.firstOrNull { it.sessionId != activeSession.id }
+        // A physical keyboard's Esc arrives here as a Back invocation, not a key event
+        // (the platform rewrites an unconsumed KEYCODE_ESCAPE, and on newer Android Back
+        // never travels through dispatchKeyEvent at all). While a hardware keyboard is
+        // attached and the shell is live, treat Back as that Esc and send it to the
+        // terminal; touch users, with no hardware keyboard, keep the leave-session prompt.
+        // The toolbar back arrow (onRequestLeave) is unaffected and still opens the prompt.
+        val configuration = LocalConfiguration.current
+        val hardwareKeyboardAttached = remember(configuration.keyboard, configuration.hardKeyboardHidden) {
+            configuration.keyboard == Configuration.KEYBOARD_QWERTY &&
+                configuration.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO
+        }
+        val backSendsEscape = hardwareKeyboardAttached &&
+            activeSession.phase == TerminalSessionPhase.OPEN
         BackHandler(enabled = visiblePrompt == null) {
-            leaveSessionId = activeSession.id
+            if (backSendsEscape) {
+                terminalEmulator.dispatchKey(0, VTermKey.ESCAPE)
+            } else {
+                leaveSessionId = activeSession.id
+            }
         }
         TerminalSessionScreen(
             session = activeSession,

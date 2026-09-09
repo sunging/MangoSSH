@@ -86,6 +86,27 @@ class TerminalShortcutDispatchTest {
         assertTrue(state.activeModifiers.isEmpty())
     }
 
+    @Test
+    fun unhandledEscapeIsClaimedForAnOpenSessionOnly() {
+        val escape = android.view.KeyEvent.KEYCODE_ESCAPE
+
+        assertTrue(consumesUnhandledEscape(escape, sessionOpen = true))
+        assertFalse(consumesUnhandledEscape(escape, sessionOpen = false))
+    }
+
+    @Test
+    fun unhandledNonEscapeKeysAreLeftForFocusTraversal() {
+        listOf(
+            android.view.KeyEvent.KEYCODE_TAB,
+            android.view.KeyEvent.KEYCODE_DPAD_UP,
+            android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+            android.view.KeyEvent.KEYCODE_ENTER,
+            android.view.KeyEvent.KEYCODE_BACK,
+        ).forEach { keyCode ->
+            assertFalse(consumesUnhandledEscape(keyCode, sessionOpen = true))
+        }
+    }
+
     private fun capture(action: TerminalShortcutAction, state: TerminalModifierState): Captured {
         val events = mutableListOf<Output>()
         var pasteCount = 0
