@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -26,9 +27,10 @@ import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
 
 /**
- * Covers the terminal screen's chrome visibility controls: the immersive toggle, and the
- * long-press menu's independent title-bar / shortcut-bar show-hide switches. Pointer-repeat
- * and layout behavior of the shortcut bar itself is covered by
+ * Covers the terminal screen's chrome visibility controls: the immersive toggle, the title
+ * bar's long-press menu, and the same two toggles reachable from the terminal's text-selection
+ * overflow menu — the escape hatch that stays reachable even once the title bar itself is
+ * hidden. Pointer-repeat and layout behavior of the shortcut bar itself is covered by
  * [TerminalShortcutBarInstrumentedTest].
  */
 class TerminalSessionScreenChromeInstrumentedTest {
@@ -96,8 +98,52 @@ class TerminalSessionScreenChromeInstrumentedTest {
         }
     }
 
+    @Test
+    fun selectionMenuRestoresTheTitleBarAfterItWasHiddenFromTheTopBarMenu() {
+        mount()
+        openChromeMenu()
+        composeRule.onNodeWithTag("terminal_menu_toggle_title_bar").performClick()
+        composeRule.onNodeWithTag("terminal_title_bar").assertDoesNotExist()
+
+        // With the title bar (and its own long-press menu) gone, this is the only way back.
+        openSelectionMenu()
+        composeRule.onNodeWithTag("terminal_selection_menu_toggle_title_bar").performClick()
+
+        composeRule.onNodeWithTag("terminal_title_bar").assertExists()
+    }
+
+    @Test
+    fun selectionMenuTogglesTheShortcutBar() {
+        mount()
+        openSelectionMenu()
+        composeRule.onNodeWithTag("terminal_selection_menu_toggle_shortcut_bar").performClick()
+
+        composeRule.onNodeWithTag("terminal_shortcut_bar").assertDoesNotExist()
+        composeRule.onNodeWithTag("terminal_title_bar").assertExists()
+    }
+
+    @Test
+    fun selectionMenuLeavesImmersiveModeWhenShowingABar() {
+        mount()
+        composeRule.onNodeWithTag("terminal_immersive_toggle").performClick()
+        composeRule.onNodeWithTag("terminal_title_bar").assertDoesNotExist()
+
+        openSelectionMenu()
+        composeRule.onNodeWithTag("terminal_selection_menu_toggle_title_bar").performClick()
+
+        composeRule.onNodeWithTag("terminal_title_bar").assertExists()
+        composeRule.onNodeWithTag("terminal_immersive_exit").assertDoesNotExist()
+    }
+
     private fun openChromeMenu() {
         composeRule.onNodeWithTag("terminal_immersive_toggle").performTouchInput { longClick() }
+    }
+
+    private fun openSelectionMenu() {
+        composeRule.onNodeWithTag("terminal_surface").performTouchInput { longClick() }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("More options").performClick()
+        composeRule.waitForIdle()
     }
 
     private fun mount() {

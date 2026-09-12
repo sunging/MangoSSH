@@ -42,6 +42,7 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -52,6 +53,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -337,6 +339,12 @@ private const val DOUBLE_UNDERLINE_SPACING = 2f
  * @param selectionForegroundColor Foreground color for selected text (default: Black)
  * @param delKeyMode How the backspace/delete keys should map to terminal characters
  * @param onInterceptKey Optional callback to intercept raw Compose KeyEvents before the terminal emulator handles them. Return true to consume the event.
+ * @param selectionMenuExtras Optional extra items appended (below a divider) to the selection
+ *                            overflow menu, for host-app entries such as chrome visibility
+ *                            toggles. Receives a `dismiss` callback that clears the current
+ *                            selection and closes the menu — the only way a caller can do so,
+ *                            since this composable does not expose a [SelectionController] by
+ *                            default.
  * @param minZoomScale Minimum pinch-to-zoom multiplier applied on top of the rendered font size. Defaults to 0.5x.
  * @param maxZoomScale Maximum pinch-to-zoom multiplier applied on top of the rendered font size. Defaults to 3x.
  * @param fontSizeOverride When non-null, overrides [initialFontSize] as the starting font size. Used by
@@ -376,6 +384,7 @@ fun Terminal(
     maxZoomScale: Float = MAX_ZOOM_SCALE,
     fontSizeOverride: TextUnit? = null,
     onFontSizeCommit: ((TextUnit) -> Unit)? = null,
+    selectionMenuExtras: (@Composable ColumnScope.(dismiss: () -> Unit) -> Unit)? = null,
 ) {
     if (LocalInspectionMode.current) {
         TerminalPreview(modifier, backgroundColor, foregroundColor)
@@ -412,6 +421,7 @@ fun Terminal(
         maxZoomScale = maxZoomScale,
         fontSizeOverride = fontSizeOverride,
         onFontSizeCommit = onFontSizeCommit,
+        selectionMenuExtras = selectionMenuExtras,
     )
 }
 
@@ -453,6 +463,7 @@ internal fun TerminalWithAccessibility(
     maxZoomScale: Float = MAX_ZOOM_SCALE,
     fontSizeOverride: TextUnit? = null,
     onFontSizeCommit: ((TextUnit) -> Unit)? = null,
+    selectionMenuExtras: (@Composable ColumnScope.(dismiss: () -> Unit) -> Unit)? = null,
 ) {
     if (terminalEmulator !is TerminalEmulatorImpl) {
         Box(
@@ -1741,6 +1752,13 @@ internal fun TerminalWithAccessibility(
                                         // Keep menu open for easy cycling
                                     },
                                 )
+                                if (selectionMenuExtras != null) {
+                                    HorizontalDivider()
+                                    selectionMenuExtras {
+                                        selectionManager.clearSelection()
+                                        overflowMenuExpanded = false
+                                    }
+                                }
                             }
                         }
                     }

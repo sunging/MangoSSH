@@ -14,6 +14,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -145,8 +146,11 @@ fun TerminalSessionScreen(
     var showResourceReport by remember(session.id) { mutableStateOf(false) }
 
     // Chrome visibility: immersive hides both bars and the system bars at once; the two
-    // per-element toggles (reachable from the long-press menu) are independent of it so a
-    // user can, say, keep the shortcut bar while hiding just the title bar.
+    // per-element toggles are independent of it so a user can, say, keep the shortcut bar
+    // while hiding just the title bar. They are reachable from two long-press menus: the
+    // title bar's own fullscreen button, and the terminal's text-selection overflow menu —
+    // the latter stays reachable even after the title bar itself is hidden, so it doubles
+    // as the way back.
     var immersive by rememberSaveable(session.id) { mutableStateOf(false) }
     var topBarVisible by rememberSaveable(session.id) { mutableStateOf(true) }
     var shortcutBarVisible by rememberSaveable(session.id) { mutableStateOf(true) }
@@ -366,7 +370,10 @@ fun TerminalSessionScreen(
                             // IconButton has no onLongClick, so this button is a plain clickable
                             // Box instead: a tap toggles immersive mode, a long press opens a
                             // menu to show/hide the title and shortcut bars independently, or
-                            // reset a pinch-to-zoom result.
+                            // reset a pinch-to-zoom result. The same two bar toggles are also
+                            // reachable from the terminal's text-selection menu (see the
+                            // Terminal() call below), which stays reachable even once this bar
+                            // is hidden.
                             Box(
                                 modifier = Modifier
                                     .size(40.dp)
@@ -390,35 +397,16 @@ fun TerminalSessionScreen(
                                 expanded = chromeMenuExpanded,
                                 onDismissRequest = { chromeMenuExpanded = false },
                             ) {
-                                DropdownMenuItem(
-                                    modifier = Modifier.testTag("terminal_menu_toggle_title_bar"),
-                                    text = {
-                                        Text(
-                                            stringResource(
-                                                if (topBarVisible) R.string.terminal_hide_title_bar else R.string.terminal_show_title_bar,
-                                            ),
-                                        )
-                                    },
-                                    onClick = {
-                                        topBarVisible = !topBarVisible
+                                ChromeVisibilityMenuItems(
+                                    titleBarShown = showTopBar,
+                                    shortcutBarShown = showShortcutBar,
+                                    tagPrefix = "terminal_menu",
+                                    onSetTitleBarShown = { shown ->
+                                        topBarVisible = shown
                                         chromeMenuExpanded = false
                                     },
-                                )
-                                DropdownMenuItem(
-                                    modifier = Modifier.testTag("terminal_menu_toggle_shortcut_bar"),
-                                    text = {
-                                        Text(
-                                            stringResource(
-                                                if (shortcutBarVisible) {
-                                                    R.string.terminal_hide_shortcut_bar
-                                                } else {
-                                                    R.string.terminal_show_shortcut_bar
-                                                },
-                                            ),
-                                        )
-                                    },
-                                    onClick = {
-                                        shortcutBarVisible = !shortcutBarVisible
+                                    onSetShortcutBarShown = { shown ->
+                                        shortcutBarVisible = shown
                                         chromeMenuExpanded = false
                                     },
                                 )
@@ -446,7 +434,7 @@ fun TerminalSessionScreen(
                     key(appearance.font, appearance.fontSizeSp) {
                         Terminal(
                             terminalEmulator = terminalEmulator,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().testTag("terminal_surface"),
                             typeface = terminalTypeface,
                             initialFontSize = appearance.fontSizeSp.sp,
                             backgroundColor = Color(colorScheme.defaultBackgroundArgb),
@@ -484,6 +472,25 @@ fun TerminalSessionScreen(
                             maxZoomScale = behavior.maxPinchZoomScale,
                             fontSizeOverride = sessionFontSizeSp?.sp,
                             onFontSizeCommit = { onSessionFontSizeChange(it.value.roundToInt()) },
+                            // A reachable way back once the title bar is hidden: this menu
+                            // does not depend on any chrome being visible.
+                            selectionMenuExtras = { dismiss ->
+                                ChromeVisibilityMenuItems(
+                                    titleBarShown = showTopBar,
+                                    shortcutBarShown = showShortcutBar,
+                                    tagPrefix = "terminal_selection_menu",
+                                    onSetTitleBarShown = { shown ->
+                                        if (shown) immersive = false
+                                        topBarVisible = shown
+                                        dismiss()
+                                    },
+                                    onSetShortcutBarShown = { shown ->
+                                        if (shown) immersive = false
+                                        shortcutBarVisible = shown
+                                        dismiss()
+                                    },
+                                )
+                            },
                         )
                     }
 
@@ -559,6 +566,45 @@ fun TerminalSessionScreen(
             )
         }
     }
+}
+
+/**
+ * The two bar-visibility toggles shared between the title bar's long-press menu and the
+ * terminal's text-selection overflow menu. [tagPrefix] keeps each caller's testTags distinct
+ * (`"${tagPrefix}_toggle_title_bar"` / `"${tagPrefix}_toggle_shortcut_bar"`). Labels reflect
+ * the bar's current actual visibility, not the underlying preference alone, so a caller in
+ * immersive mode still sees an accurate "show" label rather than an inert "hide" one.
+ */
+@Composable
+private fun ColumnScope.ChromeVisibilityMenuItems(
+    titleBarShown: Boolean,
+    shortcutBarShown: Boolean,
+    tagPrefix: String,
+    onSetTitleBarShown: (Boolean) -> Unit,
+    onSetShortcutBarShown: (Boolean) -> Unit,
+) {
+    DropdownMenuItem(
+        modifier = Modifier.testTag("${tagPrefix}_toggle_title_bar"),
+        text = {
+            Text(
+                stringResource(
+                    if (titleBarShown) R.string.terminal_hide_title_bar else R.string.terminal_show_title_bar,
+                ),
+            )
+        },
+        onClick = { onSetTitleBarShown(!titleBarShown) },
+    )
+    DropdownMenuItem(
+        modifier = Modifier.testTag("${tagPrefix}_toggle_shortcut_bar"),
+        text = {
+            Text(
+                stringResource(
+                    if (shortcutBarShown) R.string.terminal_hide_shortcut_bar else R.string.terminal_show_shortcut_bar,
+                ),
+            )
+        },
+        onClick = { onSetShortcutBarShown(!shortcutBarShown) },
+    )
 }
 
 /** Maps a bundled appearance option to its packaged Android font resource. */
