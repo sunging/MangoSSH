@@ -1,4 +1,5 @@
 [versions]
+okhttp = "5.3.0"
 agp = "9.4.0"
 kotlin = "2.4.10"
 composeBom = "2026.06.01"
@@ -17,6 +18,8 @@ biometric = "1.4.0-alpha07"
 json = "20260719"
 
 [libraries]
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }

@@ -30,9 +30,6 @@ import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
 import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
-import website.sung.mangossh.data.sync.WebDavDownloadResult
-import website.sung.mangossh.data.sync.WebDavResult
-import website.sung.mangossh.data.sync.WebDavFailureReason
 import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
@@ -74,36 +71,6 @@ enum class AppSection {
     KEYS,
     FORWARDS,
     SETTINGS,
-}
-
-private fun WebDavResult.Failure.toUiText(upload: Boolean): UiText = webDavFailureText(
-    reason = reason,
-    statusCode = statusCode,
-    networkResource = if (upload) {
-        R.string.message_webdav_upload_failed
-    } else {
-        R.string.message_webdav_download_failed
-    },
-)
-
-private fun WebDavDownloadResult.Failure.toUiText(): UiText = webDavFailureText(
-    reason = reason,
-    statusCode = statusCode,
-    networkResource = R.string.message_webdav_download_failed,
-)
-
-private fun webDavFailureText(
-    reason: WebDavFailureReason,
-    statusCode: Int?,
-    @StringRes networkResource: Int,
-): UiText = when (reason) {
-    WebDavFailureReason.INVALID_CONFIGURATION -> uiText(R.string.message_webdav_invalid_configuration)
-    WebDavFailureReason.INVALID_BACKUP_SIZE -> uiText(R.string.message_webdav_invalid_backup_size)
-    WebDavFailureReason.HTTP_STATUS -> statusCode
-        ?.let { uiText(R.string.message_webdav_http_failed, it) }
-        ?: uiText(networkResource)
-    WebDavFailureReason.RESPONSE_TOO_LARGE -> uiText(R.string.message_webdav_response_too_large)
-    WebDavFailureReason.NETWORK -> uiText(networkResource)
 }
 
 /** One pending foreground-notification destination, retained across app unlock. */
@@ -151,7 +118,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val terminalShortcutStore = runtime.terminalShortcuts
     private val appThemeStore = runtime.appTheme
     private val connectionPreferencesStore = runtime.connectionPreferences
-    private val webDavClient = WebDavClient()
+    internal val backupCoordinator = website.sung.mangossh.data.vault.BackupCoordinator(application, vault, viewModelScope, unlocked = { !_appLocked.value }, appVersion = { installedVersionName })
+    val backupOperation = backupCoordinator.state
     private val appLockStore = AppLockStore(application)
     private val updatePreferencesStore = runtime.updatePreferences
     private val updateManager = DistributionUpdateManager(
@@ -234,8 +202,6 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val _userMessage = MutableStateFlow<UiText?>(null)
     val userMessage = _userMessage.asStateFlow()
 
-    private val _portableExport = MutableStateFlow<ByteArray?>(null)
-    val portableExport = _portableExport.asStateFlow()
 
     private val _appLockConfiguration = MutableStateFlow(appLockStore.configuration())
     val appLockConfiguration = _appLockConfiguration.asStateFlow()
@@ -968,81 +934,21 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             _userMessage.value = uiText(R.string.message_webdav_fields_required)
             return
         }
+        val config = WebDavConfig(normalizedEndpoint, username.trim(), password, normalizedFileName)
+        if (runCatching { WebDavClient().validate(config) }.isFailure) {
+            _userMessage.value = uiText(R.string.message_webdav_invalid_configuration)
+            return
+        }
         viewModelScope.launch {
-            vault.saveWebDavConfig(
-                WebDavConfig(
-                    endpoint = normalizedEndpoint,
-                    username = username.trim(),
-                    password = password,
-                    remoteFileName = normalizedFileName,
-                ),
-            )
-            _userMessage.value = uiText(R.string.message_webdav_saved)
+            val saved = vault.saveWebDavConfig(config)
+            _userMessage.value = uiText(if (saved) R.string.message_webdav_saved else R.string.backup_error_storage)
+            backupCoordinator.refreshPasswords()
         }
     }
 
     fun clearWebDavConfig() {
-        viewModelScope.launch { vault.saveWebDavConfig(null) }
-    }
-
-    fun preparePortableExport(passphrase: String) {
         viewModelScope.launch {
-            runCatching { vault.exportPortable(passphrase.toCharArray()) }
-                .onSuccess { blob ->
-                    _portableExport.value = blob
-                    _userMessage.value = uiText(R.string.message_choose_backup_destination)
-                }
-                .onFailure {
-                    _userMessage.value = uiText(R.string.message_backup_create_missing_passphrase)
-                }
-        }
-    }
-
-    fun consumePortableExport() {
-        _portableExport.value = null
-    }
-
-    fun importPortable(bytes: ByteArray, passphrase: String) {
-        viewModelScope.launch {
-            runCatching { vault.importPortable(bytes, passphrase.toCharArray()) }
-                .onSuccess { _userMessage.value = uiText(R.string.message_backup_imported) }
-                .onFailure { _userMessage.value = uiText(R.string.message_backup_import_failed) }
-        }
-    }
-
-    fun uploadWebDav(passphrase: String) {
-        viewModelScope.launch {
-            val config = vault.snapshot.value.webDavConfig
-            if (config == null) {
-                _userMessage.value = uiText(R.string.message_webdav_configure_first)
-                return@launch
-            }
-            val blob = runCatching { vault.exportPortable(passphrase.toCharArray()) }.getOrElse {
-                _userMessage.value = uiText(R.string.message_backup_create_failed)
-                return@launch
-            }
-            when (val result = webDavClient.upload(config, blob)) {
-                WebDavResult.Success -> _userMessage.value = uiText(R.string.message_webdav_upload_complete)
-                is WebDavResult.Failure -> _userMessage.value = result.toUiText(upload = true)
-            }
-        }
-    }
-
-    fun downloadWebDavAndImport(passphrase: String) {
-        viewModelScope.launch {
-            val config = vault.snapshot.value.webDavConfig
-            if (config == null) {
-                _userMessage.value = uiText(R.string.message_webdav_configure_first)
-                return@launch
-            }
-            when (val result = webDavClient.download(config)) {
-                is WebDavDownloadResult.Failure -> _userMessage.value = result.toUiText()
-                is WebDavDownloadResult.Success -> {
-                    runCatching { vault.importPortable(result.encryptedBlob, passphrase.toCharArray()) }
-                        .onSuccess { _userMessage.value = uiText(R.string.message_webdav_import_complete) }
-                        .onFailure { _userMessage.value = uiText(R.string.message_webdav_import_failed) }
-                }
-            }
+            if (vault.saveWebDavConfig(null)) backupCoordinator.refreshPasswords()
         }
     }
 
@@ -1086,7 +992,10 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     /** Locks immediately, regardless of the configured auto-lock delay. Used by the explicit "Lock now" action. */
     fun lockForBackground() {
-        if (_appLockConfiguration.value.pinConfigured) _appLocked.value = true
+        if (_appLockConfiguration.value.pinConfigured) {
+            _appLocked.value = true
+            backupCoordinator.cancel()
+        }
     }
 
     /**
@@ -1101,6 +1010,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         val configuration = _appLockConfiguration.value
         if (configuration.pinConfigured && shouldLockWhenBackgrounded(configuration.autoLockDelay)) {
             _appLocked.value = true
+            backupCoordinator.cancel()
         }
     }
 
@@ -1122,6 +1032,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             shouldLockOnResume(configuration.autoLockDelay, backgroundedAt, nowElapsedMillis)
         ) {
             _appLocked.value = true
+            backupCoordinator.cancel()
         }
         backgroundedAtElapsedMillis = null
     }
@@ -1169,6 +1080,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun releasePageUrl(): String? = updateManager.releasePageUrl()
 
     override fun onCleared() {
+        backupCoordinator.cancel()
         updateManager.close()
     }
 }

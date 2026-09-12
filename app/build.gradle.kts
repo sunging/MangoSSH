@@ -331,6 +331,8 @@ dependencies {
     implementation(libs.conscrypt.android)
     implementation(libs.androidx.biometric)
 
+    implementation(libs.okhttp)
+    testImplementation(libs.mockwebserver)
     testImplementation(libs.junit)
     testImplementation(libs.json)
     androidTestImplementation(platform(libs.androidx.compose.bom))

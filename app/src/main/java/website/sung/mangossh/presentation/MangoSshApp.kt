@@ -267,7 +267,7 @@ fun MangoSshApp(
     val scpTransfers by viewModel.scpTransfers.collectAsStateWithLifecycle()
     val resourceSnapshots by viewModel.resourceSnapshots.collectAsStateWithLifecycle()
     val webDavConfig by viewModel.webDavConfig.collectAsStateWithLifecycle()
-    val portableExport by viewModel.portableExport.collectAsStateWithLifecycle()
+    val backupOperation by viewModel.backupOperation.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val updateCallbacks = remember(viewModel) {
         UpdateCardCallbacks(
@@ -607,7 +607,7 @@ fun MangoSshApp(
                                     shortcuts = ShortcutSettingsState(config = terminalShortcutConfig, behavior = terminalBehavior),
                                     connection = ConnectionSettingsState(preferences = connectionPreferences),
                                     security = SecuritySettingsState(lock = appLockConfiguration),
-                                    backup = BackupSettingsState(vaultStatus = vaultStatus, webDavConfig = webDavConfig),
+                                    backup = BackupSettingsState(vaultStatus = vaultStatus, webDavConfig = webDavConfig, operation = backupOperation),
                                     snippets = SnippetSettingsState(snippets = snippets),
                                     tsnet = embeddedTsnetStatus,
                                     update = updateState,
@@ -616,7 +616,6 @@ fun MangoSshApp(
                                         versionCode = viewModel.installedVersionCode,
                                     ),
                                 ),
-                                portableExport = portableExport,
                                 callbacks = settingsCallbacks,
                             )
                         }

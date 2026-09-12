@@ -25,7 +25,7 @@ class PortableVaultCodecTest {
         try {
             PortableVaultCodec.decrypt(modified, "sync-passphrase".toCharArray())
             fail("Modified portable vault must not decrypt")
-        } catch (_: IllegalArgumentException) {
+        } catch (_: BackupException) {
             // Expected: AES-GCM authenticates the encrypted backup.
         }
     }

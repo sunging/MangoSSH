@@ -24,7 +24,7 @@ class AndroidKeystoreVault(context: Context) {
 
     @Synchronized
     fun read(): VaultSnapshot? {
-        if (!vaultFile.exists()) return null
+        if (!vaultFile.exists() && !File(vaultFile.path + ".bak").exists()) return null
         val encoded = atomicFile.readFully()
         val input = DataInputStream(ByteArrayInputStream(encoded))
         val magic = ByteArray(MAGIC.size)
@@ -55,8 +55,8 @@ class AndroidKeystoreVault(context: Context) {
     @Synchronized
     fun write(snapshot: VaultSnapshot) {
         val plaintext = VaultPayloadCodec.encode(snapshot)
-        require(plaintext.size <= MAX_PLAINTEXT_SIZE) { "Vault payload is too large" }
         try {
+            if (plaintext.size > MAX_PLAINTEXT_SIZE) throw BackupException(BackupFailure.TOO_LARGE)
             val payload = AesGcmCipher.encrypt(
                 key = getOrCreateKey(),
                 plaintext = plaintext,

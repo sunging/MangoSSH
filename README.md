@@ -70,6 +70,13 @@ only changes that currently displayed terminal for its lifetime. Font and
 palette licenses, versions, and SHA-256 values are recorded in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+## Backup and restore
+
+Encrypted file backups and WebDAV downloads support previewed merges, explicit
+replacement, local recovery points and remote history. Passphrases can optionally
+be remembered on the device. See [backup and restore](docs/backup-and-restore.md)
+for conflict rules, version compatibility and WebDAV requirements.
+
 ## Native Mosh build
 
 On a glibc-compatible Linux x86_64 host, run the following from the repository

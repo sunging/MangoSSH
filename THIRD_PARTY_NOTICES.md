@@ -1,5 +1,13 @@
 # Third-party notices
 
+## OkHttp and Okio
+
+WebDAV uses [OkHttp 5.3.0](https://github.com/square/okhttp) and its
+[Okio 3.16.2](https://github.com/square/okio) dependency, published by Square.
+Both use the Apache License, Version 2.0. The full license is shared with the
+existing APK asset `assets/licenses/Apache-2.0-ConnectBot-Terminal.txt`.
+Matching MockWebServer artifacts are used only in tests.
+
 ## Mosh for Android
 
 MangoSSH packages the native `mosh-client` executable from the

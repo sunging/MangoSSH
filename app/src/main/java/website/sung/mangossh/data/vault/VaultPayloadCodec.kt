@@ -9,6 +9,35 @@ import website.sung.mangossh.domain.ConnectionRoute
 
 /** Versioned JSON payload kept inside the authenticated encrypted vault. */
 internal object VaultPayloadCodec {
+    /** JSON coercions must not turn malformed booleans, numbers or collections into defaults. */
+    private fun validateTypes(root: JSONObject) {
+        val integers = setOf("schemaVersion", "port", "position", "connectionCount", "lastConnectedAtEpochMillis", "createdAtEpochMillis", "trustedAtEpochMillis", "bindPort", "destinationPort")
+        val booleans = setOf("agentForwarding", "favorite", "requiresPassphrase", "appendNewline", "startOnConnect")
+        val arrays = setOf("profiles", "keys", "knownHosts", "snippets", "portForwards")
+        fun checkObject(value: JSONObject, top: Boolean) {
+            value.keys().forEach { name ->
+                val item = value.get(name)
+                val nullable = name in setOf("keyId", "startupSnippetId", "destinationHost", "destinationPort", "webDavConfig")
+                if (item == JSONObject.NULL) {
+                    require(nullable)
+                } else when {
+                    top && name in arrays -> {
+                        require(item is JSONArray)
+                        repeat(item.length()) { checkObject(item.getJSONObject(it), false) }
+                    }
+                    top && name == "webDavConfig" -> { require(item is JSONObject); checkObject(item, false) }
+                    name in integers -> {
+                        require(item is Int || item is Long)
+                        if (name in setOf("schemaVersion", "port", "position", "connectionCount", "bindPort", "destinationPort")) require((item as Number).toLong() in Int.MIN_VALUE..Int.MAX_VALUE)
+                    }
+                    name in booleans -> require(item is Boolean)
+                    name in setOf("id", "label", "hostname", "username", "protocol", "route", "authentication", "keyId", "startupSnippetId", "algorithm", "publicKey", "fingerprint", "privateKeyPem", "keyBlobBase64", "script", "profileId", "type", "bindHost", "destinationHost", "endpoint", "password", "remoteFileName") -> require(item is String)
+                }
+            }
+        }
+        checkObject(root, true)
+    }
+
     fun encode(snapshot: VaultSnapshot): ByteArray {
         val profiles = JSONArray().apply {
             snapshot.profiles.forEach { profile ->
@@ -115,10 +144,9 @@ internal object VaultPayloadCodec {
 
     fun decode(bytes: ByteArray): VaultSnapshot {
         val root = JSONObject(bytes.decodeToString())
+        validateTypes(root)
         val schemaVersion = root.optInt("schemaVersion", 0)
-        require(schemaVersion in 1..VaultSnapshot.CURRENT_SCHEMA_VERSION) {
-            "Unsupported vault schema version: $schemaVersion"
-        }
+        if (schemaVersion !in 1..VaultSnapshot.CURRENT_SCHEMA_VERSION) throw BackupException(BackupFailure.VERSION)
         val profiles = root.optJSONArray("profiles")?.toProfiles(schemaVersion).orEmpty().let {
             if (schemaVersion < 5) it.assignLegacyDisplayOrder() else it
         }
@@ -135,7 +163,7 @@ internal object VaultPayloadCodec {
             snippets = snippets,
             portForwards = portForwards,
             webDavConfig = webDavConfig,
-        )
+        ).also(BackupValidator::validate)
     }
 
     private fun JSONArray.toProfiles(schemaVersion: Int): List<ConnectionProfile> = buildList {
@@ -252,7 +280,7 @@ internal object VaultPayloadCodec {
         if (isNull(name)) null else getString(name)
 
     private inline fun <reified T : Enum<T>> JSONObject.enumOrDefault(name: String, fallback: T): T =
-        runCatching { enumValueOf<T>(getString(name)) }.getOrDefault(fallback)
+        if (!has(name)) fallback else enumValueOf<T>(getString(name))
 
     /**
      * Missing route fields are accepted only for legacy payloads and mean
