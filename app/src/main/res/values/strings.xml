@@ -114,6 +114,14 @@
     <string name="terminal_theme_solarized_light" translatable="false">Solarized Light</string>
     <string name="terminal_theme_custom">Custom (%1$s)</string>
     <string name="terminal_shortcut_paste">Paste</string>
+    <string name="terminal_shortcuts_rows">Toolbar rows</string>
+    <string name="terminal_shortcuts_one_row">Single row</string>
+    <string name="terminal_shortcuts_two_rows">Two rows</string>
+    <string name="terminal_shortcut_arrow_up">Up arrow</string>
+    <string name="terminal_shortcut_arrow_down">Down arrow</string>
+    <string name="terminal_shortcut_arrow_left">Left arrow</string>
+    <string name="terminal_shortcut_arrow_right">Right arrow</string>
+    <string name="terminal_shortcut_repeat_description">%1$s. Touch and hold to repeat.</string>
     <string name="terminal_shortcuts_title">Floating shortcuts</string>
     <string name="terminal_shortcuts_description">Customize the ordered buttons shown above the terminal keyboard for every SSH and Mosh session.</string>
     <string name="terminal_shortcuts_warning">Shortcut text is stored in non-encrypted device settings. Do not save passwords, OTP codes, or other secrets.</string>
@@ -125,8 +133,8 @@
     <string name="terminal_shortcuts_save">Save</string>
     <string name="terminal_shortcuts_cancel">Cancel</string>
     <string name="terminal_shortcuts_visible">Visible</string>
-    <string name="terminal_shortcuts_move_up">Move shortcut left</string>
-    <string name="terminal_shortcuts_move_down">Move shortcut right</string>
+    <string name="terminal_shortcuts_move_up">Move shortcut earlier</string>
+    <string name="terminal_shortcuts_move_down">Move shortcut later</string>
     <string name="terminal_shortcuts_edit">Edit shortcut</string>
     <string name="terminal_shortcuts_delete">Delete shortcut</string>
     <string name="terminal_shortcut_add_title">Add shortcut</string>

@@ -106,10 +106,12 @@ data class TerminalShortcutItem(
  * Values are deliberately excluded from the encrypted profile backup. Text
  * actions are intended for non-secret convenience input and must never be
  * logged by consumers.
+ * [rowCount] selects a single scrolling row or the compact two-row keyboard layout.
  */
 @Immutable
 data class TerminalShortcutConfig(
     val items: List<TerminalShortcutItem> = defaultItems(),
+    val rowCount: Int = 2,
 ) {
     /** Drops damaged, duplicate, or over-limit entries while preserving valid ordering. */
     fun normalized(): TerminalShortcutConfig {
@@ -123,11 +125,11 @@ data class TerminalShortcutConfig(
                 add(item)
             }
         }
-        return TerminalShortcutConfig(accepted)
+        return copy(items = accepted, rowCount = rowCount.takeIf { it in 1..2 } ?: 2)
     }
 
     /** True when no normalization would alter the configuration. */
-    fun isValid(): Boolean = items.size <= MAX_ITEMS && normalized().items == items
+    fun isValid(): Boolean = items.size <= MAX_ITEMS && normalized() == this
 
     companion object {
         const val MAX_ITEMS = 32
@@ -142,17 +144,19 @@ data class TerminalShortcutConfig(
             TerminalShortcutItem("default-paste", TerminalShortcutAction.Paste),
             TerminalShortcutItem("default-modifier-ctrl", TerminalShortcutAction.Modifier(TerminalModifier.CTRL)),
             TerminalShortcutItem("default-modifier-alt", TerminalShortcutAction.Modifier(TerminalModifier.ALT)),
+            TerminalShortcutItem("default-up", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.UP)),
             TerminalShortcutItem("default-modifier-shift", TerminalShortcutAction.Modifier(TerminalModifier.SHIFT)),
+            TerminalShortcutItem("default-page-up", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.PAGE_UP)),
             TerminalShortcutItem("default-escape", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.ESCAPE)),
             TerminalShortcutItem("default-tab", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.TAB)),
+            TerminalShortcutItem("default-left", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.LEFT)),
+            TerminalShortcutItem("default-down", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.DOWN)),
+            TerminalShortcutItem("default-right", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.RIGHT)),
+            TerminalShortcutItem("default-page-down", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.PAGE_DOWN)),
             defaultCtrlChord('C'),
             defaultCtrlChord('D'),
             defaultCtrlChord('L'),
             defaultCtrlChord('Z'),
-            TerminalShortcutItem("default-up", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.UP)),
-            TerminalShortcutItem("default-down", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.DOWN)),
-            TerminalShortcutItem("default-left", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.LEFT)),
-            TerminalShortcutItem("default-right", TerminalShortcutAction.SpecialKey(TerminalSpecialKey.RIGHT)),
             TerminalShortcutItem("default-pipe", TerminalShortcutAction.Text("|"), labelOverride = "|"),
             TerminalShortcutItem("default-tilde", TerminalShortcutAction.Text("~"), labelOverride = "~"),
             TerminalShortcutItem("default-slash", TerminalShortcutAction.Text("/"), labelOverride = "/"),

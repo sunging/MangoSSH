@@ -12,6 +12,22 @@ import website.sung.mangossh.domain.TerminalSpecialKey
 
 class TerminalShortcutDispatchTest {
     @Test
+    fun holdKeepsItsCapturedModifiersButNextIndependentInputDoesNot() {
+        val state = TerminalModifierState()
+        state.toggle(TerminalModifier.CTRL)
+        state.toggle(TerminalModifier.SHIFT)
+        val arrow = TerminalShortcutAction.SpecialKey(TerminalSpecialKey.LEFT)
+        val heldAction = captureTerminalShortcutRepeat(arrow, state)
+        repeat(4) {
+            assertEquals(listOf(Output.Key(5, VTermKey.LEFT)), capture(heldAction, state).events)
+            assertTrue(state.activeModifiers.isEmpty())
+        }
+        assertEquals(listOf(Output.Key(0, VTermKey.LEFT)), capture(arrow, state).events)
+        assertFalse(TerminalShortcutAction.SpecialKey(TerminalSpecialKey.PAGE_UP).isRepeatableArrow())
+        assertFalse(heldAction.isRepeatableArrow())
+    }
+
+    @Test
     fun modifierButtonsToggleAndAllSevenCombinationsApplyOnce() {
         val combinations = listOf(
             setOf(TerminalModifier.CTRL),

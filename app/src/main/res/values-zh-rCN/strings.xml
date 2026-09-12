@@ -103,6 +103,14 @@
     <string name="terminal_cancel">取消</string>
     <string name="terminal_theme_custom">自定义（%1$s）</string>
     <string name="terminal_shortcut_paste">粘贴</string>
+    <string name="terminal_shortcuts_rows">工具栏行数</string>
+    <string name="terminal_shortcuts_one_row">单行</string>
+    <string name="terminal_shortcuts_two_rows">双行</string>
+    <string name="terminal_shortcut_arrow_up">向上方向键</string>
+    <string name="terminal_shortcut_arrow_down">向下方向键</string>
+    <string name="terminal_shortcut_arrow_left">向左方向键</string>
+    <string name="terminal_shortcut_arrow_right">向右方向键</string>
+    <string name="terminal_shortcut_repeat_description">%1$s，长按连续移动。</string>
     <string name="terminal_shortcuts_title">浮动快捷键</string>
     <string name="terminal_shortcuts_description">自定义所有 SSH 与 Mosh 会话中显示在终端键盘上方的有序按钮。</string>
     <string name="terminal_shortcuts_warning">快捷键文本保存在未加密的本机设置中，请勿保存密码、OTP 或其他秘密。</string>
@@ -114,8 +122,8 @@
     <string name="terminal_shortcuts_save">保存</string>
     <string name="terminal_shortcuts_cancel">取消</string>
     <string name="terminal_shortcuts_visible">显示</string>
-    <string name="terminal_shortcuts_move_up">向左移动快捷键</string>
-    <string name="terminal_shortcuts_move_down">向右移动快捷键</string>
+    <string name="terminal_shortcuts_move_up">向前移动快捷键</string>
+    <string name="terminal_shortcuts_move_down">向后移动快捷键</string>
     <string name="terminal_shortcuts_edit">编辑快捷键</string>
     <string name="terminal_shortcuts_delete">删除快捷键</string>
     <string name="terminal_shortcut_add_title">添加快捷键</string>

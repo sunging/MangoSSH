@@ -39,6 +39,19 @@ internal class TerminalModifierState : ModifierManager {
     }
 }
 
+/** Captures a hold's modifiers once; normal dispatch consumes the global one-shot state. */
+internal fun captureTerminalShortcutRepeat(
+    action: TerminalShortcutAction,
+    modifierState: TerminalModifierState,
+): TerminalShortcutAction {
+    require(action.isRepeatableArrow())
+    val key = (action as TerminalShortcutAction.SpecialKey).key
+    return if (modifierState.activeModifiers.isEmpty()) action else TerminalShortcutAction.Chord(
+        modifiers = modifierState.activeModifiers.toSet(),
+        key = TerminalShortcutKey.Special(key),
+    )
+}
+
 /**
  * Dispatches one configured action without ever logging its label or payload.
  *

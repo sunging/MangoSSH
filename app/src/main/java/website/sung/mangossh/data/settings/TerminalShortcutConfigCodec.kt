@@ -17,6 +17,7 @@ internal object TerminalShortcutConfigCodec {
         require(config.isValid()) { "Terminal shortcut configuration is invalid." }
         return JSONObject()
             .put("schemaVersion", SCHEMA_VERSION)
+            .put("rowCount", config.rowCount)
             .put(
                 "items",
                 JSONArray().apply {
@@ -35,8 +36,26 @@ internal object TerminalShortcutConfigCodec {
                 decodeItem(itemsJson.optJSONObject(index))?.let(::add)
             }
         }
-        TerminalShortcutConfig(items).normalized()
+        // Migrate only an intact old preset. Never infer defaults after dropping damaged entries.
+        if (!root.has("rowCount") && itemsJson.length() == legacyDefaultIds.size && items == legacyDefaults()) {
+            return TerminalShortcutConfig.defaults()
+        }
+        val rowCount = (root.opt("rowCount") as? Number)?.toDouble()
+            ?.takeIf { it == 1.0 || it == 2.0 }?.toInt() ?: 2
+        TerminalShortcutConfig(items, rowCount).normalized()
     }.getOrNull()
+
+    private val legacyDefaultIds = listOf(
+        "default-paste", "default-modifier-ctrl", "default-modifier-alt", "default-modifier-shift",
+        "default-escape", "default-tab", "default-ctrl-c", "default-ctrl-d", "default-ctrl-l",
+        "default-ctrl-z", "default-up", "default-down", "default-left", "default-right",
+        "default-pipe", "default-tilde", "default-slash",
+    )
+
+    private fun legacyDefaults(): List<TerminalShortcutItem> {
+        val defaults = TerminalShortcutConfig.defaults().items.associateBy(TerminalShortcutItem::id)
+        return legacyDefaultIds.map(defaults::getValue)
+    }
 
     private fun encodeItem(item: TerminalShortcutItem): JSONObject = JSONObject()
         .put("id", item.id)

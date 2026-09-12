@@ -5,34 +5,27 @@ import androidx.compose.ui.res.stringResource
 import android.content.ClipData
 import android.graphics.Typeface
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -296,13 +289,23 @@ fun TerminalSessionScreen(
                     }
                 }
 
-                TerminalKeyBar(
-                    enabled = isOpen,
-                    config = shortcutConfig,
-                    terminalEmulator = terminalEmulator,
-                    modifierState = terminalModifierState,
-                    onPaste = pasteFromClipboard,
-                )
+                key(session.id, terminalEmulator) {
+                    TerminalShortcutBar(
+                        enabled = isOpen,
+                        config = shortcutConfig,
+                        activeModifiers = terminalModifierState.activeModifiers,
+                        onAction = { item ->
+                            dispatchTerminalShortcut(item.action, terminalModifierState, terminalEmulator, pasteFromClipboard)
+                        },
+                        onStartRepeat = { item ->
+                            val repeatedAction = captureTerminalShortcutRepeat(item.action, terminalModifierState)
+                            val dispatch: () -> Unit = {
+                                dispatchTerminalShortcut(repeatedAction, terminalModifierState, terminalEmulator, pasteFromClipboard)
+                            }
+                            dispatch
+                        },
+                    )
+                }
             }
         }
 
@@ -338,59 +341,6 @@ internal fun TerminalFont.fontResourceId(): Int = when (this) {
 }
 
 private const val IME_REOPEN_RESET_DELAY_MS = 50L
-
-@Composable
-private fun TerminalKeyBar(
-    enabled: Boolean,
-    config: TerminalShortcutConfig,
-    terminalEmulator: TerminalEmulator,
-    modifierState: TerminalModifierState,
-    onPaste: () -> Unit,
-) {
-    val visibleItems = config.items.filter { it.visible }
-    if (visibleItems.isEmpty()) return
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        visibleItems.forEach { item ->
-            val click = {
-                dispatchTerminalShortcut(
-                    action = item.action,
-                    modifierState = modifierState,
-                    terminalEmulator = terminalEmulator,
-                    onPaste = onPaste,
-                )
-            }
-            val modifierAction = item.action as? TerminalShortcutAction.Modifier
-            if (modifierAction != null) {
-                FilterChip(
-                    selected = modifierState.isActive(modifierAction.modifier),
-                    onClick = click,
-                    enabled = enabled,
-                    label = { Text(item.displayLabel()) },
-                )
-            } else {
-                AssistChip(
-                    onClick = click,
-                    enabled = enabled,
-                    label = { Text(item.displayLabel()) },
-                    leadingIcon = if (item.action == TerminalShortcutAction.Paste) {
-                        { Icon(Icons.Outlined.ContentPaste, contentDescription = null) }
-                    } else {
-                        null
-                    },
-                )
-            }
-        }
-        Spacer(Modifier.width(2.dp))
-    }
-}
 
 /** Returns the localized, application-owned label for a live session phase. */
 @Composable
