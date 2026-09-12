@@ -166,6 +166,13 @@
     <string name="terminal_shortcut_summary_text">Text · %1$d characters</string>
     <string name="terminal_shortcut_summary_special">Special key · %1$s</string>
     <string name="terminal_shortcut_summary_chord">Chord · %1$s</string>
+    <string name="terminal_enter_immersive_mode">Enter immersive mode</string>
+    <string name="terminal_exit_immersive_mode">Exit immersive mode</string>
+    <string name="terminal_show_title_bar">Show title bar</string>
+    <string name="terminal_hide_title_bar">Hide title bar</string>
+    <string name="terminal_show_shortcut_bar">Show shortcut bar</string>
+    <string name="terminal_hide_shortcut_bar">Hide shortcut bar</string>
+    <string name="terminal_reset_zoom">Reset zoom</string>
     <string name="app_language_title">Language</string>
     <string name="app_language_description">Choose the language used by MangoSSH. System default follows the device or Android app-language setting.</string>
     <string name="app_language_system">System default</string>

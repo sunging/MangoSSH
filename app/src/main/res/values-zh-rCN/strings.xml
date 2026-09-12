@@ -155,6 +155,13 @@
     <string name="terminal_shortcut_summary_text">文本 · %1$d 个字符</string>
     <string name="terminal_shortcut_summary_special">特殊键 · %1$s</string>
     <string name="terminal_shortcut_summary_chord">组合键 · %1$s</string>
+    <string name="terminal_enter_immersive_mode">进入沉浸模式</string>
+    <string name="terminal_exit_immersive_mode">退出沉浸模式</string>
+    <string name="terminal_show_title_bar">显示标题栏</string>
+    <string name="terminal_hide_title_bar">隐藏标题栏</string>
+    <string name="terminal_show_shortcut_bar">显示快捷键栏</string>
+    <string name="terminal_hide_shortcut_bar">隐藏快捷键栏</string>
+    <string name="terminal_reset_zoom">重置缩放</string>
     <string name="app_language_title">语言</string>
     <string name="app_language_description">选择 MangoSSH 使用的语言。“跟随系统”会采用设备或 Android 应用语言设置。</string>
     <string name="app_language_system">跟随系统</string>

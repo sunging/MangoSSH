@@ -202,6 +202,14 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val _userMessage = MutableStateFlow<UiText?>(null)
     val userMessage = _userMessage.asStateFlow()
 
+    /**
+     * Per-session font size committed by a pinch-to-zoom gesture on the terminal, keyed by
+     * session id. Device-local UI state only: never persisted across process death and
+     * cleared whenever the global [terminalAppearance] font size changes or the session ends.
+     */
+    private val _sessionFontSizeOverrides = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val sessionFontSizeOverrides = _sessionFontSizeOverrides.asStateFlow()
+
 
     private val _appLockConfiguration = MutableStateFlow(appLockStore.configuration())
     val appLockConfiguration = _appLockConfiguration.asStateFlow()
@@ -267,6 +275,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                         )
                     }
                 }
+                clearSessionTerminalFontSize(event.sessionId)
             }
         }
         viewModelScope.launch { updateManager.initializeAfterUnlock(appLocked) }
@@ -361,6 +370,18 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     /** Persists a global base font size used whenever a terminal display is composed. */
     fun setTerminalFontSize(fontSizeSp: Int) {
         terminalAppearanceStore.setFontSize(fontSizeSp)
+        // A new global base size supersedes any session's pinch-to-zoom result.
+        _sessionFontSizeOverrides.value = emptyMap()
+    }
+
+    /** Remembers a session's pinch-to-zoom result; does not touch the global [terminalAppearance]. */
+    fun setSessionTerminalFontSize(sessionId: String, fontSizeSp: Int) {
+        _sessionFontSizeOverrides.update { it + (sessionId to fontSizeSp) }
+    }
+
+    /** Drops a session's pinch-to-zoom override, returning it to the global base font size. */
+    fun clearSessionTerminalFontSize(sessionId: String) {
+        _sessionFontSizeOverrides.update { it - sessionId }
     }
 
     /** Applies a bundled terminal palette to existing and future sessions. */
@@ -379,6 +400,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun resetTerminalAppearance() {
         terminalAppearanceStore.reset()
         sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
+        _sessionFontSizeOverrides.value = emptyMap()
     }
 
     /** Persists the complete ordered floating shortcut layout for this device. */

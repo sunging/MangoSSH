@@ -122,7 +122,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import androidx.compose.ui.input.key.KeyEvent as ComposeKeyEvent
 
 private val DRAW_TEXT_BUFFER = ThreadLocal.withInitial { CharArray(1) }
@@ -337,6 +339,12 @@ private const val DOUBLE_UNDERLINE_SPACING = 2f
  * @param onInterceptKey Optional callback to intercept raw Compose KeyEvents before the terminal emulator handles them. Return true to consume the event.
  * @param minZoomScale Minimum pinch-to-zoom multiplier applied on top of the rendered font size. Defaults to 0.5x.
  * @param maxZoomScale Maximum pinch-to-zoom multiplier applied on top of the rendered font size. Defaults to 3x.
+ * @param fontSizeOverride When non-null, overrides [initialFontSize] as the starting font size. Used by
+ *                         a host to restore a font size a prior pinch-to-zoom gesture committed for this
+ *                         session, surviving navigation away from and back to the terminal.
+ * @param onFontSizeCommit Invoked with the new font size when a pinch-to-zoom gesture ends and persists
+ *                         its result. Pinch-to-zoom is otherwise a transient visual effect; this callback
+ *                         is how a host observes and persists the committed outcome.
  */
 @Composable
 fun Terminal(
@@ -366,6 +374,8 @@ fun Terminal(
     onInterceptKey: ((ComposeKeyEvent) -> Boolean)? = null,
     minZoomScale: Float = MIN_ZOOM_SCALE,
     maxZoomScale: Float = MAX_ZOOM_SCALE,
+    fontSizeOverride: TextUnit? = null,
+    onFontSizeCommit: ((TextUnit) -> Unit)? = null,
 ) {
     if (LocalInspectionMode.current) {
         TerminalPreview(modifier, backgroundColor, foregroundColor)
@@ -400,6 +410,8 @@ fun Terminal(
         delKeyMode = delKeyMode,
         minZoomScale = minZoomScale,
         maxZoomScale = maxZoomScale,
+        fontSizeOverride = fontSizeOverride,
+        onFontSizeCommit = onFontSizeCommit,
     )
 }
 
@@ -439,6 +451,8 @@ internal fun TerminalWithAccessibility(
     delKeyMode: DelKeyMode = DelKeyMode.Delete,
     minZoomScale: Float = MIN_ZOOM_SCALE,
     maxZoomScale: Float = MAX_ZOOM_SCALE,
+    fontSizeOverride: TextUnit? = null,
+    onFontSizeCommit: ((TextUnit) -> Unit)? = null,
 ) {
     if (terminalEmulator !is TerminalEmulatorImpl) {
         Box(
@@ -455,6 +469,7 @@ internal fun TerminalWithAccessibility(
     val currentOnTerminalTap by rememberUpdatedState(onTerminalTap)
     val currentOnHyperlinkClick by rememberUpdatedState(onHyperlinkClick)
     val currentOnInterceptKey by rememberUpdatedState(onInterceptKey)
+    val currentOnFontSizeCommit by rememberUpdatedState(onFontSizeCommit)
 
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -484,7 +499,17 @@ internal fun TerminalWithAccessibility(
     var isZooming by remember(terminalEmulator) { mutableStateOf(false) }
     var isUserScrolling by remember(terminalEmulator) { mutableStateOf(false) }
     var isDraggingHandle by remember(terminalEmulator) { mutableStateOf(false) }
-    var calculatedFontSize by remember(terminalEmulator) { mutableStateOf(initialFontSize) }
+    var calculatedFontSize by remember(terminalEmulator) { mutableStateOf(fontSizeOverride ?: initialFontSize) }
+
+    // A host-driven override (e.g. a "reset zoom" action) arrives as a new fontSizeOverride
+    // value rather than a new terminalEmulator, so it would otherwise never reach the
+    // `remember` above. A gesture's own commit already updates calculatedFontSize directly
+    // and typically round-trips back here as an equal value, so this is a no-op then.
+    LaunchedEffect(fontSizeOverride) {
+        if (fontSizeOverride != null && fontSizeOverride != calculatedFontSize) {
+            calculatedFontSize = fontSizeOverride
+        }
+    }
 
     // Magnifying glass state
     var showMagnifier by remember(terminalEmulator) { mutableStateOf(false) }
@@ -1305,11 +1330,22 @@ internal fun TerminalWithAccessibility(
                                     val gestureZoom = event.calculateZoom()
                                     val gesturePan = event.calculatePan()
 
+                                    // Clamp the transient scale so it can never carry the
+                                    // eventually-committed font size past min/maxFontSize,
+                                    // on top of the gesture's own min/maxZoomScale range.
+                                    val lowerBound = max(
+                                        minZoomScale,
+                                        minFontSize.value / calculatedFontSize.value,
+                                    )
+                                    val upperBound = min(
+                                        maxZoomScale,
+                                        maxFontSize.value / calculatedFontSize.value,
+                                    )
                                     val oldScale = zoomScale
                                     val newScale =
                                         (oldScale * gestureZoom).coerceIn(
-                                            minZoomScale,
-                                            maxZoomScale,
+                                            lowerBound,
+                                            upperBound,
                                         )
 
                                     zoomOffset += gesturePan
@@ -1319,10 +1355,19 @@ internal fun TerminalWithAccessibility(
                                 }
                             }
 
-                            // Gesture ended - reset
+                            // Gesture ended - fold the transient scale into the persistent
+                            // font size instead of discarding it, so pinch-to-zoom actually
+                            // changes the terminal's row/column layout (and the remote pty
+                            // size) rather than only its on-screen appearance.
+                            val committedFontSize =
+                                commitZoomFontSize(calculatedFontSize, zoomScale, minFontSize, maxFontSize)
                             isZooming = false
                             zoomScale = 1f
                             zoomOffset = Offset.Zero
+                            if (committedFontSize != calculatedFontSize) {
+                                calculatedFontSize = committedFontSize
+                                currentOnFontSizeCommit?.invoke(committedFontSize)
+                            }
 
                             return@awaitEachGesture
                         }
@@ -2732,5 +2777,14 @@ private fun findOptimalFontSize(
     // Return the largest size that fits
     return minSizeCurrent.coerceIn(minSize, maxSize)
 }
+
+/**
+ * Folds a pinch-to-zoom gesture's transient [scale] into the terminal's persistent
+ * font size, rounding to the nearest whole sp so repeated small gestures converge
+ * instead of oscillating on floating-point remainders, then clamps to the
+ * configured [min]/[max] font size.
+ */
+internal fun commitZoomFontSize(current: TextUnit, scale: Float, min: TextUnit, max: TextUnit): TextUnit =
+    (current.value * scale).roundToInt().coerceIn(min.value.toInt(), max.value.toInt()).sp
 
 private fun charsPerDimension(pixels: Int, charPixels: Float) = (pixels / charPixels).toInt().coerceAtLeast(1)

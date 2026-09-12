@@ -171,6 +171,7 @@ fun MangoSshApp(
     val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
     val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
+    val sessionFontSizeOverrides by viewModel.sessionFontSizeOverrides.collectAsStateWithLifecycle()
     val terminalBehavior by viewModel.terminalBehavior.collectAsStateWithLifecycle()
     val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
     val appThemePreferences by viewModel.appTheme.collectAsStateWithLifecycle()
@@ -391,6 +392,10 @@ fun MangoSshApp(
             onRequestResources = { viewModel.requestServerResources(activeSession.id) },
             onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
             onRequestLeave = { leaveSessionId = activeSession.id },
+            sessionFontSizeSp = sessionFontSizeOverrides[activeSession.id],
+            onSessionFontSizeChange = { fontSizeSp ->
+                viewModel.setSessionTerminalFontSize(activeSession.id, fontSizeSp)
+            },
         )
         visiblePrompt?.let { prompt ->
             SessionPromptDialog(
