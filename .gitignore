@@ -18,6 +18,7 @@ local.properties
 /app/release
 /third_party/tailscale/.cache
 /third_party/termlib/build/
+/third_party/sshlib/build/
 /.tools/
 /.fdroid/
 /native/tsnetbridge/.build/
