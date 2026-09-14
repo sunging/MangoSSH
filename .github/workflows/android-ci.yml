@@ -1,8 +1,5 @@
-# CI validates every proposed change. A successfully verified debug APK is
-# delivered for commits merged to main, and every run additionally produces a
-# release-signed APK for testing. That signed build reuses the release
-# workflow's keystore secrets, so it is skipped rather than failed whenever the
-# secrets are unavailable, as they always are for a fork's pull request.
+# Validation never reads release secrets. Protected-branch pushes sign the verified
+# unsigned APKs in an isolated job which does not check out or build repository code.
 name: Android CI/CD
 
 on:
@@ -67,7 +64,13 @@ jobs:
             :app:assembleGithubDebug \
             :app:assembleFdroidDebug \
             :app:assembleGithubDebugAndroidTest \
-            :app:assembleFdroidDebugAndroidTest
+            :app:assembleFdroidDebugAndroidTest \
+            :third_party:termlib:testDebugUnitTest \
+            :third_party:termlib:lintDebug \
+            :third_party:termlib:assembleDebugAndroidTest \
+            :third_party:sshlib:test \
+            :app:assembleGithubRelease \
+            :app:assembleFdroidRelease
 
       - name: Verify 16 KiB native alignment
         run: |
@@ -94,85 +97,85 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # The release workflow fails when a signing secret is missing, because a
-      # published release must be signed. A test build must not fail CI over a
-      # secret that GitHub deliberately withholds, so this skips instead.
-      - name: Restore release signing key
-        id: signing_key
+      - name: Verify unsigned release packages
+        run: |
+          build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          for distribution in github fdroid; do
+            apk="app/build/outputs/apk/$distribution/release/app-$distribution-release-unsigned.apk"
+            "$build_tools_dir/zipalign" -c -P 16 -v 4 "$apk"
+            bash tools/check-16kb-elf.sh "$apk"
+          done
+          AAPT2="$build_tools_dir/aapt2" bash tools/check-fdroid-apk.sh \
+            app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk
+
+      - name: Upload unsigned release packages for isolated signing
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v6
+        with:
+          name: MangoSSH-unsigned-${{ github.sha }}
+          path: app/build/outputs/apk/*/release/*-unsigned.apk
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-test-package:
+    name: Sign verified test APKs
+    needs: verify-and-deliver
+    if: github.event_name == 'push' && github.ref_protected && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    environment: ci-signing
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Download this run's verified unsigned APKs
+        uses: actions/download-artifact@v8
+        with:
+          name: MangoSSH-unsigned-${{ github.sha }}
+          path: unsigned
+          digest-mismatch: error
+
+      - name: Sign with Android SDK tools
+        id: sign
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          for secret_name in \
-            ANDROID_KEYSTORE_BASE64 \
-            ANDROID_KEYSTORE_PASSWORD \
-            ANDROID_KEY_ALIAS \
-            ANDROID_KEY_PASSWORD; do
+          set -euo pipefail
+          for secret_name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
             if [[ -z "${!secret_name}" ]]; then
-              echo "::notice::$secret_name is unavailable; skipping the signed test APK"
+              echo "::notice::Signing secrets unavailable; skipping signed test APKs"
               echo "available=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           done
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/mangossh-release.keystore"
-          test -s "$RUNNER_TEMP/mangossh-release.keystore"
+          key_file="$RUNNER_TEMP/mangossh-ci.keystore"
+          trap 'rm -f -- "$key_file"' EXIT
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$key_file"
+          build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          mkdir -p signed
+          for distribution in github fdroid; do
+            input="unsigned/$distribution/release/app-$distribution-release-unsigned.apk"
+            suffix=""
+            if [[ "$distribution" == fdroid ]]; then suffix="-fdroid"; fi
+            output="signed/MangoSSH-ci-${GITHUB_SHA:0:12}${suffix}.apk"
+            "$build_tools_dir/zipalign" -c -P 16 -v 4 "$input"
+            "$build_tools_dir/apksigner" sign --ks "$key_file" --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEY_PASSWORD \
+              --out "$output" "$input"
+            "$build_tools_dir/apksigner" verify --verbose "$output"
+            "$build_tools_dir/zipalign" -c -P 16 -v 4 "$output"
+          done
           echo "available=true" >> "$GITHUB_OUTPUT"
 
-      # A separate Gradle invocation on purpose. The signing configuration reads
-      # these variables at configuration time, so folding them into the verify
-      # step above would make every test, lint, and debug check depend on
-      # secrets that a fork's pull request can never have.
-      - name: Build the release-signed test APK
-        if: steps.signing_key.outputs.available == 'true'
-        env:
-          MANGOSSH_RELEASE_STORE_FILE: ${{ runner.temp }}/mangossh-release.keystore
-          MANGOSSH_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          MANGOSSH_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          MANGOSSH_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon :app:assembleGithubRelease :app:assembleFdroidRelease
-
-      - name: Verify the signed release APK
-        if: steps.signing_key.outputs.available == 'true'
-        run: |
-          # Gradle keeps `-unsigned` in each flavored filename when the signing
-          # configuration did not attach, so the signed names prove that the
-          # injected credentials were complete.
-          build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          for apk in \
-            app/build/outputs/apk/github/release/app-github-release.apk \
-            app/build/outputs/apk/fdroid/release/app-fdroid-release.apk; do
-            test -f "$apk" || {
-              echo "::error::$apk is missing; the release signing configuration did not attach"
-              exit 1
-            }
-            "$build_tools_dir/apksigner" verify --verbose "$apk"
-            "$build_tools_dir/zipalign" -c -P 16 -v 4 "$apk"
-            bash tools/check-16kb-elf.sh "$apk"
-          done
-          AAPT2="$build_tools_dir/aapt2" \
-            bash tools/check-fdroid-apk.sh app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
-
-      # The `ci` name keeps this build out of the `MangoSSH-<tag>.apk` namespace
-      # that published releases and the in-app updater use, while carrying the
-      # commit it was built from.
-      - name: Stage the release-signed test APK
-        if: steps.signing_key.outputs.available == 'true'
-        run: |
-          staging_dir="app/build/outputs/ci-release"
-          mkdir -p "$staging_dir"
-          cp app/build/outputs/apk/github/release/app-github-release.apk \
-            "$staging_dir/MangoSSH-ci-${GITHUB_SHA:0:12}.apk"
-          cp app/build/outputs/apk/fdroid/release/app-fdroid-release.apk \
-            "$staging_dir/MangoSSH-ci-${GITHUB_SHA:0:12}-fdroid.apk"
-
-      - name: Upload the release-signed test APK
-        if: steps.signing_key.outputs.available == 'true'
+      - name: Upload signed test packages
+        if: steps.sign.outputs.available == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: MangoSSH-release-test-${{ github.sha }}
-          path: app/build/outputs/ci-release/MangoSSH-ci-*.apk
+          path: signed/MangoSSH-ci-*.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -222,7 +225,7 @@ jobs:
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./gradlew --no-daemon :app:connectedGithubDebugAndroidTest
+          script: ./gradlew --no-daemon :app:connectedGithubDebugAndroidTest :app:connectedFdroidDebugAndroidTest :third_party:termlib:connectedDebugAndroidTest
 
       - name: Upload instrumented test report
         if: failure()

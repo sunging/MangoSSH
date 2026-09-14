@@ -176,12 +176,13 @@ GitHub App credential is required. A manual run validates signing and uploads
 an Actions artifact, but never creates a tag or publishes a GitHub Release.
 
 Android CI runs on `main` and `develop`, for both pushes and pull requests.
-Every CI run also builds and uploads a release-signed
-`MangoSSH-ci-<commit>.apk` artifact for testing, using the same keystore as
-published releases so it installs over them. It is deliberately named apart
-from the `MangoSSH-<tag>.apk` release assets the in-app updater consumes, and
-it is skipped rather than failed when the signing secrets are unavailable, as
-they always are for a fork's pull request.
+Validation builds both unsigned release packages without signing secrets. On
+protected `main`/`develop` pushes, a separate `ci-signing` environment job signs
+those same-run artifacts using SDK tools, without checkout or Gradle execution.
+Configure that environment to admit only those protected branches and hold the
+four Android signing secrets. PRs never enter the signing job. Signed test APKs
+remain `MangoSSH-ci-<commit>.apk` artifacts, distinct from published releases;
+missing signing secrets skip delivery. See [CI isolation](docs/ci-signing.md).
 
 Validate the current version, localized notes, and an optional tag locally:
 
