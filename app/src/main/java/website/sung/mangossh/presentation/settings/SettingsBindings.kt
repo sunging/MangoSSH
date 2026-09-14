@@ -63,11 +63,12 @@ internal fun rememberSettingsCallbacks(
                 onSetBiometricEnabled = viewModel::setBiometricUnlockEnabled,
                 onLockNow = viewModel::lockForBackground,
                 onSetAutoLockDelay = viewModel::setAutoLockDelay,
+                onSetReauthentication = viewModel::setReauthentication,
             ),
             backup = BackupSettingsCallbacks(
                 onSaveWebDav = viewModel::saveWebDavConfig,
                 onClearWebDav = viewModel::clearWebDavConfig,
-                onPrepareExport = viewModel.backupCoordinator::prepareExport,
+                onPrepareExport = viewModel::prepareBackupExport,
                 onCommit = viewModel.backupCoordinator::commit,
                 onCancel = viewModel.backupCoordinator::cancel,
                 onConfirmUpload = viewModel.backupCoordinator::confirmUpload,

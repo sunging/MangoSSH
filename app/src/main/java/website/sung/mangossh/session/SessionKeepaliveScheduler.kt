@@ -37,7 +37,7 @@ internal class SessionKeepaliveScheduler(
     private val foregroundWait: suspend (Long) -> Unit = { delay(it) },
 ) {
     /** Matches `runSshKeepaliveLoop`'s `waitForNextKeepalive` seam. */
-    suspend fun waitForNextKeepalive(foregroundIntervalMillis: Long) {
+    suspend fun waitForNextKeepalive(foregroundIntervalMillis: Long, multiplier: Int = backgroundMultiplier()) {
         if (appForeground.value) {
             foregroundWait(foregroundIntervalMillis)
             return
@@ -45,7 +45,7 @@ internal class SessionKeepaliveScheduler(
 
         val fired = CompletableDeferred<Unit>()
         val cancelAlarm = alarm.schedule(
-            backgroundInterval(foregroundIntervalMillis, backgroundMultiplier()),
+            backgroundInterval(foregroundIntervalMillis, multiplier),
         ) {
             fired.complete(Unit)
         }

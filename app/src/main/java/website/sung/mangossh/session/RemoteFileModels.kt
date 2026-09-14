@@ -80,6 +80,7 @@ data class RemoteTreeEntry(
     val relativePath: String,
     val absolutePath: String,
     val sizeBytes: Long?,
+    val modifiedEpochMillis: Long? = null,
 )
 
 /**

@@ -24,7 +24,7 @@ class BackupPersistenceInstrumentedTest {
         try { block(context, namespace) } finally {
             directory.deleteRecursively()
             val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-            listOf("history", "passwords", "revisions").forEach { keys.deleteEntry("$namespace.$it.v1") }
+            listOf("history", "passwords", "revisions", "vault").forEach { keys.deleteEntry("$namespace.$it.v1") }
         }
     }
 
@@ -69,7 +69,7 @@ class BackupPersistenceInstrumentedTest {
     }
 
     @Test fun stalePreviewAndLockedCommitDoNotWriteRecoveryOrVault() = isolated { context, namespace -> runBlocking {
-        val repository = VaultRepository(context)
+        val repository = VaultRepository(context, AndroidKeystoreVault(context, "$namespace.vault.v1"))
         repository.open()
         val revision = repository.backupSnapshot().first
         repository.upsertSnippet(CommandSnippet("one", "one", ""))
@@ -84,7 +84,7 @@ class BackupPersistenceInstrumentedTest {
     } }
 
     @Test fun recoveryFailurePreservesOriginalVault() = isolated { context, namespace -> runBlocking {
-        val repository = VaultRepository(context)
+        val repository = VaultRepository(context, AndroidKeystoreVault(context, "$namespace.vault.v1"))
         repository.open()
         repository.upsertSnippet(CommandSnippet("original", "original", ""))
         File(context.noBackupFilesDir, "backup-state").writeText("")
@@ -93,11 +93,11 @@ class BackupPersistenceInstrumentedTest {
             fail("Recovery write must fail")
         } catch (_: Exception) { }
         assertEquals("original", repository.snapshot.value.snippets.single().id)
-        assertEquals("original", AndroidKeystoreVault(context).read()!!.snippets.single().id)
+        assertEquals("original", AndroidKeystoreVault(context, "$namespace.vault.v1").read()!!.snippets.single().id)
     } }
 
     @Test fun successfulImportCreatesRestorablePreviousSnapshot() = isolated { context, namespace -> runBlocking {
-        val repository = VaultRepository(context)
+        val repository = VaultRepository(context, AndroidKeystoreVault(context, "$namespace.vault.v1"))
         repository.open()
         repository.upsertSnippet(CommandSnippet("original", "original", ""))
         val local = BackupLocalStore(context, namespace)
@@ -110,7 +110,7 @@ class BackupPersistenceInstrumentedTest {
     } }
 
     @Test fun mainVaultWriteFailureKeepsOriginalAndRecoveryPoint() = isolated { context, namespace -> runBlocking {
-        val repository = VaultRepository(context)
+        val repository = VaultRepository(context, AndroidKeystoreVault(context, "$namespace.vault.v1"))
         repository.open()
         repository.upsertSnippet(CommandSnippet("original", "original", ""))
         val local = BackupLocalStore(context, namespace)
@@ -120,7 +120,7 @@ class BackupPersistenceInstrumentedTest {
             fail("Atomic write must fail")
         } catch (_: Exception) { }
         assertEquals("original", repository.snapshot.value.snippets.single().id)
-        assertEquals("original", AndroidKeystoreVault(context).read()!!.snippets.single().id)
+        assertEquals("original", AndroidKeystoreVault(context, "$namespace.vault.v1").read()!!.snippets.single().id)
         assertEquals("original", local.readHistory(local.list().single().id).snapshot.snippets.single().id)
     } }
 }

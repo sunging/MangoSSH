@@ -92,6 +92,11 @@ class MangoSessionRuntime(context: Context, val appForegroundState: AppForegroun
     /** Process-wide outbound-only Tailnet node, started only for explicit TSNET work. */
     internal val embeddedTsnetManager = EmbeddedTsnetManager(context.applicationContext)
 
+    /** Application lock state persists across activity recreation, like live sessions. */
+    internal val accessState = website.sung.mangossh.security.AppAccessState(
+        website.sung.mangossh.security.AppLockStore(context).configuration().pinConfigured,
+    )
+
     /** The sole live transport owner for this app process. */
     val sessionController = SshSessionController(
         context.applicationContext,
@@ -102,5 +107,6 @@ class MangoSessionRuntime(context: Context, val appForegroundState: AppForegroun
         terminalBehavior,
         connectionPreferences,
         appForegroundState,
+        accessState,
     )
 }

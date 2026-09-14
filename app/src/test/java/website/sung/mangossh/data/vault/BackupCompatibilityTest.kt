@@ -16,7 +16,7 @@ class BackupCompatibilityTest {
     @Test fun legacyContainersAndEverySupportedSchemaMigrate() {
         val password = UUID.randomUUID().toString().toCharArray()
         try {
-            for (version in 1..2) for (schema in 1..5) {
+            for (version in 1..2) for (schema in 1..VaultSnapshot.CURRENT_SCHEMA_VERSION) {
                 val payload = JSONObject(VaultPayloadCodec.encode(VaultSnapshot()).decodeToString()).put("schemaVersion", schema).toString().encodeToByteArray()
                 val archive = PortableVaultCodec.decryptArchive(legacy(version, payload, password), password)
                 assertNull(archive.metadata)
@@ -46,7 +46,7 @@ class BackupCompatibilityTest {
         val payload = JSONObject(VaultPayloadCodec.encode(VaultSnapshot()).decodeToString())
         payload.put("schemaVersion", "5")
         assertThrows(IllegalArgumentException::class.java) { VaultPayloadCodec.decode(payload.toString().encodeToByteArray()) }
-        payload.put("schemaVersion", 6)
+        payload.put("schemaVersion", VaultSnapshot.CURRENT_SCHEMA_VERSION + 1)
         assertEquals(BackupFailure.VERSION, assertThrows(BackupException::class.java) { VaultPayloadCodec.decode(payload.toString().encodeToByteArray()) }.reason)
     }
 

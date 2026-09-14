@@ -83,8 +83,10 @@ internal fun HostsScreen(
     onReorderHosts: (List<String>) -> Unit,
     onMoveHost: (id: String, delta: Int) -> Unit,
     onMoveHostToTop: (String) -> Unit,
+    endedTerminals: List<website.sung.mangossh.session.EndedTerminalRecord> = emptyList(),
+    onClearEnded: () -> Unit = {},
 ) {
-    if (hosts.isEmpty() && sessions.isEmpty()) {
+    if (hosts.isEmpty() && sessions.isEmpty() && endedTerminals.isEmpty()) {
         if (hasAnyHost) {
             NoHostsMatchSearch()
         } else {
@@ -180,6 +182,20 @@ internal fun HostsScreen(
                 onMoveToTop = { onMoveHostToTop(host.id) },
             )
         }
+        if (endedTerminals.isNotEmpty()) {
+            item(key = "ended-terminals-header") {
+                Row {
+                    Text(stringResource(R.string.terminal_ended_records), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = onClearEnded) { Text(stringResource(R.string.terminal_clear_records)) }
+                }
+            }
+            items(endedTerminals, key = { "ended-${it.session.id}" }) { record ->
+                OutlinedButton(onClick = { onOpenSession(record.session.id) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(record.session.title + " · " + record.session.phase.label())
+                }
+            }
+        }
+
     }
 }
 

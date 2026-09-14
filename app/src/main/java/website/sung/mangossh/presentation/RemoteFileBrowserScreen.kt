@@ -91,6 +91,7 @@ fun RemoteFileBrowserScreen(
     onUploadDirectory: (Uri, String) -> Unit,
     onDismissPreview: () -> Unit,
     onClose: () -> Unit,
+    onEditText: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     var pendingDownloadPath by remember { mutableStateOf<String?>(null) }
@@ -286,6 +287,7 @@ fun RemoteFileBrowserScreen(
         state.preview?.let { preview ->
             RemoteFilePreviewLayer(
                 preview = preview,
+                onEdit = { onEditText(preview.path) },
                 onDownload = { startDownload(preview.path) },
                 onDismiss = onDismissPreview,
             )
@@ -434,6 +436,7 @@ private fun RemoteBrowserMessage(message: String, isError: Boolean, onRetry: (()
 @Composable
 private fun RemoteFilePreviewLayer(
     preview: RemotePreviewUiState,
+    onEdit: () -> Unit,
     onDownload: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -472,6 +475,7 @@ private fun RemoteFilePreviewLayer(
                         overflow = TextOverflow.MiddleEllipsis,
                     )
                 }
+                if (preview.content?.truncated == false && !preview.isBinary) TextButton(onClick = onEdit) { Text(stringResource(R.string.editor_edit)) }
                 IconButton(onClick = onDownload) {
                     Icon(Icons.Outlined.Download, contentDescription = stringResource(R.string.common_download))
                 }

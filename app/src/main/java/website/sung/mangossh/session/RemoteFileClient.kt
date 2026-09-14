@@ -41,6 +41,11 @@ class RemoteFileException(
  */
 internal fun interface TransferControl {
     fun shouldContinue(): Boolean
+    fun own(session: com.trilead.ssh2.Session): Boolean = shouldContinue()
+    fun release(session: com.trilead.ssh2.Session) { session.abort() }
+    fun progressed() = Unit
+    fun ownLocal(resource: java.io.Closeable) = Unit
+    fun releaseLocal(resource: java.io.Closeable) { resource.close() }
 }
 
 /** Where an upload stopped, and the path it was writing to. */
@@ -72,6 +77,13 @@ internal class RemoteFileClient {
     }
 
     /** Returns the kind of [path] after following symlinks. */
+    fun identity(connection: Connection, path: String, control: TransferControl? = null): SourceIdentity =
+        withClient(connection, control) { client ->
+            val attributes = client.lstat(path)
+            if (attributes.toKind() != RemoteFileKind.FILE) throw SourceChangedException()
+            SourceIdentity(path, attributes.size, attributes.mtime?.times(1_000L))
+        }
+
     fun statKind(connection: Connection, path: String): RemoteFileKind = withClient(connection) { client ->
         client.stat(path).toKind()
     }
@@ -89,7 +101,7 @@ internal class RemoteFileClient {
         maxEntries: Int,
     ): RemoteDirectoryListing = withClient(connection) { client ->
         val directory = RemoteFilePaths.normalize(path)
-        val raw = client.ls(directory)
+        val raw = client.ls(directory, maxEntries + 1)
         val entries = raw.asSequence()
             .filter { it.filename != "." && it.filename != ".." }
             .mapNotNull { entry ->
@@ -134,18 +146,19 @@ internal class RemoteFileClient {
         val collected = ByteArrayOutputStream()
         try {
             var offset = 0L
-            while (collected.size() < maxBytes) {
-                val request = minOf(SFTP_CHUNK_BYTES, maxBytes - collected.size())
+            while (collected.size() < maxBytes + 1) {
+                val request = minOf(SFTP_CHUNK_BYTES, maxBytes + 1 - collected.size())
                 val read = client.read(handle, offset, buffer, 0, request)
                 if (read <= 0) break
                 collected.write(buffer, 0, read)
                 offset += read
             }
         } finally {
-            runCatching { client.closeFile(handle) }
+            client.closeFile(handle)
         }
-        val bytes = collected.toByteArray()
-        val truncated = totalSize != null && totalSize > bytes.size.toLong()
+        val collectedBytes = collected.toByteArray()
+        val bytes = collectedBytes.copyOf(minOf(collectedBytes.size, maxBytes))
+        val truncated = collectedBytes.size > maxBytes || (totalSize != null && totalSize > bytes.size.toLong())
         RemoteTextDecoder.decode(
             path = path,
             bytes = bytes,
@@ -168,10 +181,12 @@ internal class RemoteFileClient {
         remotePath: String,
         output: OutputStream,
         startOffset: Long,
+        expected: SourceIdentity? = null,
         control: TransferControl,
         onProgress: (Long, Long?) -> Unit,
-    ): Long = withClient(connection) { client ->
-        val attributes = client.stat(remotePath)
+    ): Long = withClient(connection, control) { client ->
+        val attributes = client.lstat(remotePath)
+        expected?.requireMatches(SourceIdentity(remotePath, attributes.size, attributes.mtime?.times(1_000L)))
         if (attributes.isDirectory) throw RemoteFileException(RemoteFileFailure.NOT_A_FILE)
         val total = attributes.size
         val handle = client.openFileRO(remotePath)
@@ -184,11 +199,17 @@ internal class RemoteFileClient {
                 if (read <= 0) break
                 output.write(buffer, 0, read)
                 offset += read
+                control.progressed()
                 onProgress(offset, total)
             }
             output.flush()
+            if (control.shouldContinue()) {
+                val finalAttributes = client.fstat(handle)
+                expected?.requireMatches(SourceIdentity(remotePath, finalAttributes.size, finalAttributes.mtime?.times(1_000L)))
+                if (total != null && offset != total) throw SourceChangedException()
+            }
         } finally {
-            runCatching { client.closeFile(handle) }
+            if (control.shouldContinue()) client.closeFile(handle) else runCatching { client.closeFile(handle) }
         }
         offset
     }
@@ -213,10 +234,11 @@ internal class RemoteFileClient {
         maxBytes: Long,
         control: TransferControl,
         onProgress: (Long, Long?) -> Unit,
-    ): RemoteUploadResult = withClient(connection) { client ->
+    ): RemoteUploadResult = withClient(connection, control) { client ->
         val remotePath = RemoteFilePaths.join(remoteDirectory, fileName)
         val resumable = startOffset > 0L &&
             runCatching { client.stat(remotePath).size }.getOrNull() == startOffset
+        if (startOffset > 0L && !resumable) throw SourceChangedException()
         val handle = if (resumable) {
             client.openFileRW(remotePath)
         } else {
@@ -236,12 +258,144 @@ internal class RemoteFileClient {
                 if (offset + read > maxBytes) throw RemoteFileException(RemoteFileFailure.TOO_LARGE)
                 client.write(handle, offset, buffer, 0, read)
                 offset += read
+                control.progressed()
                 onProgress(offset, totalBytes)
             }
         } finally {
-            runCatching { client.closeFile(handle) }
+            if (control.shouldContinue()) client.closeFile(handle) else runCatching { client.closeFile(handle) }
         }
+        if (control.shouldContinue() && totalBytes != null && totalBytes != offset) throw SourceChangedException()
         RemoteUploadResult(remotePath = remotePath, transferredBytes = offset)
+    }
+
+    /** Reads the whole editable UTF-8 file with metadata and hash validation on both sides of the read. */
+    fun readEditable(connection: Connection, path: String, control: TransferControl): EditableRemoteText {
+        val target = inspectTarget(connection, path, control)
+        val identity = target.identity ?: throw SourceChangedException()
+        if (identity.size != null && identity.size > MAX_REMOTE_PREVIEW_BYTES) throw RemoteFileException(RemoteFileFailure.TOO_LARGE)
+        val output = object : ByteArrayOutputStream() {
+            override fun write(bytes: ByteArray, offset: Int, count: Int) {
+                if (size() + count > MAX_REMOTE_PREVIEW_BYTES) throw RemoteFileException(RemoteFileFailure.TOO_LARGE)
+                super.write(bytes, offset, count)
+            }
+        }
+        download(connection, path, output, 0, identity, control) { _, _ -> }
+        if (!control.shouldContinue()) throw java.io.InterruptedIOException()
+        val bytes = output.toByteArray()
+        val decoded = RemoteTextDecoder.decode(path, bytes, false, bytes.size.toLong()) ?: throw RemoteFileException(RemoteFileFailure.NOT_A_FILE)
+        val hasBom = bytes.size >= 3 && bytes[0] == 0xef.toByte() && bytes[1] == 0xbb.toByte() && bytes[2] == 0xbf.toByte()
+        val text = decoded.text.removePrefix("\uFEFF")
+        return EditableRemoteText(path, text, hasBom, if (text.contains("\r\n")) "\r\n" else "\n", identity, target,
+            java.security.MessageDigest.getInstance("SHA-256").digest(bytes))
+    }
+
+    /** Shares the transfer staging and replacement protocol; conflicts preserve the caller's draft. */
+    fun saveEditable(connection: Connection, source: EditableRemoteText, draft: String, alternateName: String?,
+        allowDirectOverwrite: Boolean, control: TransferControl) {
+        val destination = alternateName?.let { RemoteFilePaths.join(RemoteFilePaths.parentOf(source.path), it) } ?: source.path
+        val target = if (destination == source.path) {
+            val current = readEditable(connection, source.path, control)
+            source.requireUnchanged(current)
+            current.target
+        } else inspectTarget(connection, destination, control).also { if (it.identity != null) throw SourceChangedException() }
+        if (target.identity != null && !target.atomicReplace && !allowDirectOverwrite) throw AtomicReplaceUnavailableException()
+        val bytes = source.encode(draft)
+        val token = java.util.UUID.randomUUID().toString()
+        val name = ".mangossh-$token.part"
+        val directory = RemoteFilePaths.parentOf(destination)
+        val temporary = reserveTemporary(connection, directory, token, control)
+        try {
+            upload(connection, bytes.inputStream(), directory, name, 0, bytes.size.toLong(), MAX_REMOTE_PREVIEW_BYTES.toLong(), control) { _, _ -> }
+            val expected = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            if (!java.security.MessageDigest.isEqual(expected, sha256(connection, temporary, control))) throw SourceChangedException()
+            if (destination == source.path) source.requireUnchanged(readEditable(connection, source.path, control))
+            commitTemporary(connection, temporary, destination, target, allowDirectOverwrite, control)
+        } finally {
+            bytes.fill(0)
+            runCatching { removeTemporary(connection, temporary, token) }
+        }
+    }
+
+    /** Captures target metadata without following symbolic links or swallowing permission errors. */
+    fun inspectTarget(connection: Connection, path: String, control: TransferControl? = null): RemoteTarget = withClient(connection, control) { client ->
+        val attributes = try { client.lstat(path) } catch (error: SFTPException) {
+            if (error.serverErrorCode == ErrorCodes.SSH_FX_NO_SUCH_FILE || error.serverErrorCode == ErrorCodes.SSH_FX_NO_SUCH_PATH) null else throw error
+        }
+        if (attributes != null && attributes.toKind() != RemoteFileKind.FILE) throw RemoteFileException(RemoteFileFailure.NOT_A_FILE)
+        RemoteTarget(attributes?.let { SourceIdentity(path, it.size, it.mtime?.times(1_000L)) }, attributes?.permissions, client.supportsPosixRename())
+    }
+
+    /** Calculates SHA-256 through SFTP reads; no remote shell command or external utility is invoked. */
+    fun sha256(connection: Connection, path: String, control: TransferControl): ByteArray {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val sink = object : OutputStream() {
+            override fun write(value: Int) { digest.update(value.toByte()) }
+            override fun write(bytes: ByteArray, offset: Int, count: Int) { digest.update(bytes, offset, count) }
+        }
+        val identity = identity(connection, path, control)
+        download(connection, path, sink, 0, identity, control) { _, _ -> }
+        if (!control.shouldContinue()) throw java.io.InterruptedIOException()
+        return digest.digest()
+    }
+
+    /** Commits one verified sibling temp; normal rename is used only when the target does not exist. */
+    fun commitTemporary(connection: Connection, temporary: String, destination: String, target: RemoteTarget,
+        allowDirectOverwrite: Boolean, control: TransferControl) = withClient(connection, control) { client ->
+        require(RemoteFilePaths.parentOf(temporary) == RemoteFilePaths.parentOf(destination))
+        val current = try { client.lstat(destination) } catch (error: SFTPException) {
+            if (error.serverErrorCode == ErrorCodes.SSH_FX_NO_SUCH_FILE || error.serverErrorCode == ErrorCodes.SSH_FX_NO_SUCH_PATH) null else throw error
+        }
+        if (target.identity == null) {
+            if (current != null) throw SourceChangedException()
+        } else {
+            if (current == null || current.toKind() != RemoteFileKind.FILE) throw SourceChangedException()
+            target.identity.requireMatches(SourceIdentity(destination, current.size, current.mtime?.times(1_000L)))
+        }
+        target.permissions?.let { permissions ->
+            client.setstat(temporary, com.trilead.ssh2.SFTPv3FileAttributes().apply { this.permissions = permissions })
+        }
+        if (target.identity == null) client.mv(temporary, destination)
+        else if (client.supportsPosixRename()) client.posixRename(temporary, destination)
+        else {
+            if (!allowDirectOverwrite) throw AtomicReplaceUnavailableException()
+            val source = client.openFileRO(temporary)
+            try {
+                val output = client.createFileTruncate(destination)
+                try {
+                    var offset = 0L
+                    val buffer = ByteArray(SFTP_CHUNK_BYTES)
+                    while (control.shouldContinue()) {
+                        val count = client.read(source, offset, buffer, 0, buffer.size)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        client.write(output, offset, buffer, 0, count)
+                        offset += count
+                        control.progressed()
+                    }
+                    if (!control.shouldContinue()) throw java.io.InterruptedIOException()
+                    if (client.fstat(source).size != client.fstat(output).size) throw SourceChangedException()
+                } finally { client.closeFile(output) }
+            } finally { client.closeFile(source) }
+            client.rm(temporary)
+        }
+    }
+
+    /** Claims a sibling temporary with exclusive-create before any upload or cleanup can own it. */
+    fun reserveTemporary(connection: Connection, directory: String, token: String, control: TransferControl): String = withClient(connection, control) { client ->
+        val path = RemoteFilePaths.join(directory, ".mangossh-$token.part")
+        val handle = client.createFileExclusive(path)
+        try { client.closeFile(handle) } catch (error: Exception) { runCatching { client.rm(path) }; throw error }
+        path
+    }
+
+    /** Deletes only a task-generated sibling name whose ownership token still matches. */
+    fun removeTemporary(connection: Connection, path: String, token: String) {
+        require(RemoteFilePaths.nameOf(path) == ".mangossh-$token.part")
+        withClient(connection) { client ->
+            try { client.rm(path) } catch (error: SFTPException) {
+                if (error.serverErrorCode != ErrorCodes.SSH_FX_NO_SUCH_FILE) throw error
+            }
+        }
     }
 
     /**
@@ -293,7 +447,8 @@ internal class RemoteFileClient {
         root: String,
         maxEntries: Int,
         maxDepth: Int,
-    ): RemoteTreeWalk = withClient(connection) { client ->
+        control: TransferControl? = null,
+    ): RemoteTreeWalk = withClient(connection, control, timeoutMillis = 60_000L) { client ->
         val base = RemoteFilePaths.normalize(root)
         val directories = mutableListOf<String>()
         val files = mutableListOf<RemoteTreeEntry>()
@@ -302,10 +457,13 @@ internal class RemoteFileClient {
         var skipped = 0
         val pending = ArrayDeque<Pair<String, Int>>()
         pending.addLast(base to 0)
-        while (pending.isNotEmpty()) {
+        var visited = 0
+        traversal@ while (pending.isNotEmpty()) {
             val (directory, depth) = pending.removeFirst()
-            val listing = client.ls(directory)
+            val listing = client.ls(directory, maxEntries - visited + 1)
             for (entry in listing) {
+                if (control?.shouldContinue() == false) throw java.io.InterruptedIOException()
+                if (++visited > maxEntries) { truncated = true; break@traversal }
                 val name = entry.filename ?: continue
                 if (name == "." || name == "..") continue
                 if (runCatching { RemoteFilePaths.requireSafeRemoteName(name) }.isFailure) {
@@ -318,7 +476,7 @@ internal class RemoteFileClient {
                     RemoteFileKind.DIRECTORY -> {
                         if (depth + 1 > maxDepth) {
                             truncated = true
-                            continue
+                            break@traversal
                         }
                         directories += relative
                         pending.addLast(absolute to depth + 1)
@@ -334,6 +492,7 @@ internal class RemoteFileClient {
                             relativePath = relative,
                             absolutePath = absolute,
                             sizeBytes = size,
+                            modifiedEpochMillis = entry.attributes?.mtime?.times(1_000L),
                         )
                         totalBytes += size ?: 0L
                     }
@@ -358,22 +517,32 @@ internal class RemoteFileClient {
      * Failures are normalized into [RemoteFileException] so no server-provided
      * text escapes this class.
      */
-    private fun <T> withClient(connection: Connection, block: (SFTPv3Client) -> T): T {
-        val client = try {
-            SFTPv3Client(connection).apply { setCharset(FILENAME_CHARSET) }
-        } catch (error: IOException) {
-            throw RemoteFileException(RemoteFileFailure.SUBSYSTEM_UNAVAILABLE, error)
-        }
+    private fun <T> withClient(
+        connection: Connection,
+        control: TransferControl? = null,
+        timeoutMillis: Long = 15_000L,
+        block: (SFTPv3Client) -> T,
+    ): T {
+        val owned = control ?: BlockingOperation(timeoutMillis)
+        var session: com.trilead.ssh2.Session? = null
         try {
+            if (!owned.shouldContinue()) throw java.io.InterruptedIOException()
+            session = connection.openSession()
+            if (!owned.own(session)) throw java.io.InterruptedIOException()
+            val client = SFTPv3Client(session).apply { setCharset(FILENAME_CHARSET) }
             return block(client)
-        } catch (error: RemoteFileException) {
+        } catch (error: RemoteFileException) { throw error
+        } catch (error: SourceChangedException) {
             throw error
-        } catch (error: SFTPException) {
-            throw RemoteFileException(error.toFailure(), error)
+        } catch (error: AtomicReplaceUnavailableException) {
+            throw error
+        } catch (error: SFTPException) { throw RemoteFileException(error.toFailure(), error)
         } catch (error: IOException) {
+            owned.shouldContinue() // Preserve an operation timeout instead of disguising it as an I/O error.
             throw RemoteFileException(RemoteFileFailure.IO_FAILURE, error)
         } finally {
-            runCatching { client.close() }
+            session?.let(owned::release)
+            if (control == null) (owned as BlockingOperation).close()
         }
     }
 

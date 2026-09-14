@@ -14,8 +14,7 @@ import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 
 /** Coordinates encrypted vault reads and serialized mutations on the I/O dispatcher. */
-class VaultRepository(context: Context) {
-    private val storage = AndroidKeystoreVault(context)
+class VaultRepository(context: Context, private val storage: AndroidKeystoreVault = AndroidKeystoreVault(context)) {
     private val mutationMutex = Mutex()
     private var revision = 0L
 
@@ -68,6 +67,14 @@ class VaultRepository(context: Context) {
         snapshot.copy(profiles = profiles)
     }
 
+    /** Saves the entire reviewed import atomically and validates all new references together. */
+    suspend fun importProfiles(profiles: List<ConnectionProfile>) = mutate { snapshot ->
+        val existingIds = snapshot.profiles.map { it.id }.toSet()
+        if (profiles.any { it.id in existingIds }) snapshot else snapshot.copy(
+            profiles = snapshot.profiles + profiles.mapIndexed { index, profile -> profile.copy(position = snapshot.profiles.size + index) },
+        )
+    }
+
     suspend fun removeProfile(id: String) = mutate { snapshot ->
         snapshot.copy(
             profiles = snapshot.profiles.filterNot { it.id == id }.normalizedPositions(),
@@ -108,7 +115,8 @@ class VaultRepository(context: Context) {
         snapshot.copy(
             keys = snapshot.keys.filterNot { it.id == id },
             profiles = snapshot.profiles.map { profile ->
-                if (profile.keyId == id) profile.copy(keyId = null) else profile
+                profile.copy(keyId = profile.keyId.takeUnless { it == id },
+                    agentPolicy = profile.agentPolicy.copy(allowedKeyIds = profile.agentPolicy.allowedKeyIds?.filterNot { it == id }))
             },
         )
     }
@@ -190,6 +198,7 @@ class VaultRepository(context: Context) {
         mutationMutex.withLock {
             if (_status.value !is VaultStatus.Ready) return@withLock false
             val updated = transform(_snapshot.value)
+            try { BackupValidator.validate(updated) } catch (_: BackupException) { return@withLock false }
             try {
                 storage.write(updated)
                 _snapshot.value = updated

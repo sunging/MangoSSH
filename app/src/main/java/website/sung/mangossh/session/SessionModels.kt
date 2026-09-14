@@ -70,8 +70,18 @@ data class SessionEndedEvent(
     val messageKind: SessionEndMessageKind? = null,
 )
 
+/** In-memory history only; this record owns no transport, lease, forwarding, or service demand. */
+data class EndedTerminalRecord(
+    val session: TerminalSessionState,
+    val reason: SessionEndReason,
+    val messageKind: SessionEndMessageKind?,
+    val endedAtEpochMillis: Long = System.currentTimeMillis(),
+    val diagnostics: ConnectionDiagnostics? = null,
+)
+
 /** Specific sanitized failure wording selected after a connection attempt ends. */
 enum class SessionEndMessageKind {
+    INPUT_OVERFLOW,
     AUTHENTICATION_FAILED,
     MOSH_BOOTSTRAP_FAILED,
     MOSH_RUNTIME_MISSING,
@@ -268,6 +278,10 @@ sealed interface SessionPromptText {
 
 /** Resource-independent identifiers for authentication wording owned by MangoSSH. */
 enum class SessionPromptTextKind {
+    WORKSPACE_UNAVAILABLE,
+    WORKSPACE_FALLBACK,
+    AGENT_TITLE,
+    AGENT_INSTRUCTION,
     PASSWORD_TITLE,
     PASSWORD_INSTRUCTION,
     PASSWORD_FIELD,

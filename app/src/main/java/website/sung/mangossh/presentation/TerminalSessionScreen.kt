@@ -127,6 +127,9 @@ fun TerminalSessionScreen(
     onRequestLeave: () -> Unit,
     sessionFontSizeSp: Int?,
     onSessionFontSizeChange: (Int) -> Unit,
+    onReconnect: () -> Unit = {},
+    onWorkspaces: () -> Unit = {},
+    onDiagnostics: () -> Unit = {},
 ) {
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
@@ -397,6 +400,9 @@ fun TerminalSessionScreen(
                                 expanded = chromeMenuExpanded,
                                 onDismissRequest = { chromeMenuExpanded = false },
                             ) {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.connection_diagnostics)) }, onClick = { chromeMenuExpanded = false; onDiagnostics() })
+                                if (isOpen) DropdownMenuItem(text = { Text(stringResource(R.string.host_policy_workspace)) }, onClick = { chromeMenuExpanded = false; onWorkspaces() })
+                                if (session.phase == TerminalSessionPhase.CLOSED) DropdownMenuItem(text = { Text(stringResource(R.string.terminal_reconnect)) }, onClick = { chromeMenuExpanded = false; onReconnect() })
                                 ChromeVisibilityMenuItems(
                                     titleBarShown = showTopBar,
                                     shortcutBarShown = showShortcutBar,

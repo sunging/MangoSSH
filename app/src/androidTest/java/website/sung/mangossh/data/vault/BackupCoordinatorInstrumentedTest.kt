@@ -59,7 +59,7 @@ class BackupCoordinatorInstrumentedTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val local = BackupLocalStore(context, namespace)
         val remote = Remote()
-        val repository = VaultRepository(context)
+        val repository = VaultRepository(context, AndroidKeystoreVault(context, "$namespace.vault.v1"))
         repository.open()
         repository.saveWebDavConfig(WebDavConfig("https://${UUID.randomUUID()}.invalid", UUID.randomUUID().toString(), UUID.randomUUID().toString()))
         val coordinator = BackupCoordinator(context, repository, scope, { true }, { "test" }, remote, { local })
@@ -68,7 +68,7 @@ class BackupCoordinatorInstrumentedTest {
             scope.coroutineContext[Job]!!.cancelAndJoin()
             directory.deleteRecursively()
             val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-            listOf("history", "passwords", "revisions").forEach { store.deleteEntry("$namespace.$it.v1") }
+            listOf("history", "passwords", "revisions", "vault").forEach { store.deleteEntry("$namespace.$it.v1") }
         }
     }
 

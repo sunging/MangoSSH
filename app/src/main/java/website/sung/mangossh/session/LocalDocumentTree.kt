@@ -14,6 +14,7 @@ internal data class LocalDocument(
     val mimeType: String,
     val isDirectory: Boolean,
     val sizeBytes: Long?,
+    val modifiedEpochMillis: Long? = null,
 )
 
 /** One local file discovered while enumerating a picked directory tree. */
@@ -21,6 +22,7 @@ internal data class LocalTreeEntry(
     val relativePath: String,
     val documentUri: Uri,
     val sizeBytes: Long?,
+    val modifiedEpochMillis: Long? = null,
 )
 
 /**
@@ -50,6 +52,29 @@ internal data class LocalTreeWalk(
  */
 internal object LocalDocumentTree {
 
+    /** Per-execution directory cache; mutations are reflected before the next sibling is created. */
+    class Targets(private val resolver: ContentResolver, private val treeUri: Uri) {
+        private val children = mutableMapOf<Uri, MutableMap<String, LocalDocument>>()
+
+        fun directory(parent: Uri, name: String): Uri = create(parent, name, DocumentsContract.Document.MIME_TYPE_DIR)
+        fun file(parent: Uri, name: String, mimeType: String): Uri = create(parent, name, mimeType)
+
+        private fun create(parent: Uri, name: String, mimeType: String): Uri {
+            val entries = children.getOrPut(parent) {
+                val listing = listChildren(resolver, treeUri, parent)
+                if (listing.size > MAX_TRANSFER_TREE_ENTRIES) throw TransferTreeTooLargeException()
+                listing.associateByTo(mutableMapOf()) { it.name }
+            }
+            entries[name]?.let {
+                if (it.isDirectory != (mimeType == DocumentsContract.Document.MIME_TYPE_DIR)) throw LocalDocumentException()
+                return it.documentUri
+            }
+            val uri = createDocument(resolver, parent, mimeType, name)
+            entries[name] = LocalDocument(uri, name, mimeType, mimeType == DocumentsContract.Document.MIME_TYPE_DIR, null)
+            return uri
+        }
+    }
+
     /** Returns the document that a tree URI granted by the picker points at. */
     fun rootOf(treeUri: Uri): Uri = try {
         DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
@@ -57,15 +82,29 @@ internal object LocalDocumentTree {
         throw LocalDocumentException(error)
     }
 
+    /** A provider query has its own deadline and is also cancelled with its parent transfer. */
+    fun <T> queryDocument(resolver: ContentResolver, uri: Uri, columns: Array<String>,
+        parent: TransferControl? = null, read: (android.database.Cursor) -> T): T = BlockingOperation(15_000).use { operation ->
+        parent?.ownLocal(operation)
+        val signal = android.os.CancellationSignal()
+        val cancellation = java.io.Closeable { signal.cancel() }
+        try {
+            operation.ownLocal(cancellation)
+            resolver.query(uri, columns, null, null, null, signal)?.use { cursor ->
+                if (!operation.shouldContinue()) throw java.io.InterruptedIOException()
+                read(cursor).also { if (!operation.shouldContinue()) throw java.io.InterruptedIOException() }
+            } ?: throw LocalDocumentException()
+        } finally {
+            operation.releaseLocal(cancellation)
+            parent?.releaseLocal(operation)
+        }
+    }
+
     /** Returns the display name of [documentUri], or null when the provider omits it. */
     fun displayName(resolver: ContentResolver, documentUri: Uri): String? = runCatching {
-        resolver.query(
-            documentUri,
-            arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
-            null,
-            null,
-            null,
-        )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+        queryDocument(resolver, documentUri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
     }.getOrNull()
 
     /** Lists the children of a directory document inside [treeUri]. */
@@ -73,7 +112,14 @@ internal object LocalDocumentTree {
         resolver: ContentResolver,
         treeUri: Uri,
         parentDocumentUri: Uri,
+        maxEntries: Int = MAX_TRANSFER_TREE_ENTRIES + 1,
+        control: TransferControl? = null,
     ): List<LocalDocument> {
+        if (control == null) return BlockingOperation(15_000).use { listChildren(resolver, treeUri, parentDocumentUri, maxEntries, it) }
+        if (!control.shouldContinue()) throw java.io.InterruptedIOException()
+        val cancellation = android.os.CancellationSignal()
+        val cancelQuery = java.io.Closeable { cancellation.cancel() }
+        control.ownLocal(cancelQuery)
         val childrenUri = try {
             DocumentsContract.buildChildDocumentsUriUsingTree(
                 treeUri,
@@ -87,17 +133,19 @@ internal object LocalDocumentTree {
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
         )
         val cursor = try {
-            resolver.query(childrenUri, projection, null, null, null)
+            resolver.query(childrenUri, projection, null, null, null, cancellation)
         } catch (error: Exception) {
             throw LocalDocumentException(error)
         } ?: throw LocalDocumentException()
-        return cursor.use {
+        try { return cursor.use {
             buildList {
-                while (cursor.moveToNext()) {
-                    val documentId = cursor.getString(0) ?: continue
-                    val name = cursor.getString(1) ?: continue
+                while (size < maxEntries && cursor.moveToNext()) {
+                    if (!control.shouldContinue()) throw java.io.InterruptedIOException()
+                    val documentId = cursor.getString(0) ?: throw LocalDocumentException()
+                    val name = cursor.getString(1) ?: throw LocalDocumentException()
                     val mimeType = cursor.getString(2).orEmpty()
                     val size = if (cursor.isNull(3)) null else cursor.getLong(3)
                     add(
@@ -107,11 +155,12 @@ internal object LocalDocumentTree {
                             mimeType = mimeType,
                             isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR,
                             sizeBytes = size,
+                            modifiedEpochMillis = if (cursor.isNull(4)) null else cursor.getLong(4).takeIf { it > 0 },
                         ),
                     )
                 }
             }
-        }
+        } } finally { control.releaseLocal(cancelQuery) }
     }
 
     /**
@@ -174,7 +223,14 @@ internal object LocalDocumentTree {
         treeUri: Uri,
         maxEntries: Int,
         maxDepth: Int,
-    ): LocalTreeWalk {
+        parentControl: TransferControl? = null,
+    ): LocalTreeWalk = BlockingOperation(60_000).use { control ->
+        parentControl?.ownLocal(control)
+        try { scan(resolver, treeUri, maxEntries, maxDepth, control) }
+        finally { parentControl?.releaseLocal(control) }
+    }
+
+    private fun scan(resolver: ContentResolver, treeUri: Uri, maxEntries: Int, maxDepth: Int, control: TransferControl): LocalTreeWalk {
         val root = rootOf(treeUri)
         val directories = mutableListOf<String>()
         val files = mutableListOf<LocalTreeEntry>()
@@ -182,9 +238,12 @@ internal object LocalDocumentTree {
         var truncated = false
         val pending = ArrayDeque<Triple<Uri, String, Int>>()
         pending.addLast(Triple(root, "", 0))
-        while (pending.isNotEmpty()) {
+        var visited = 0
+        traversal@ while (pending.isNotEmpty()) {
+            if (!control.shouldContinue()) throw java.io.InterruptedIOException()
             val (documentUri, prefix, depth) = pending.removeFirst()
-            for (child in listChildren(resolver, treeUri, documentUri)) {
+            for (child in listChildren(resolver, treeUri, documentUri, maxEntries - visited + 1, control)) {
+                if (++visited > maxEntries) { truncated = true; break@traversal }
                 if (runCatching { RemoteFilePaths.requireSafeRemoteName(child.name) }.isFailure) {
                     truncated = true
                     continue
@@ -193,19 +252,20 @@ internal object LocalDocumentTree {
                 if (child.isDirectory) {
                     if (depth + 1 > maxDepth) {
                         truncated = true
-                        continue
+                        break@traversal
                     }
                     directories += relative
                     pending.addLast(Triple(child.documentUri, relative, depth + 1))
                 } else {
                     if (files.size >= maxEntries) {
                         truncated = true
-                        continue
+                        break@traversal
                     }
                     files += LocalTreeEntry(
                         relativePath = relative,
                         documentUri = child.documentUri,
                         sizeBytes = child.sizeBytes,
+                        modifiedEpochMillis = child.modifiedEpochMillis,
                     )
                     totalBytes += child.sizeBytes ?: 0L
                 }

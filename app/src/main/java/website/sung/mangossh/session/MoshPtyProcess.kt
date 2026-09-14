@@ -51,12 +51,11 @@ internal class MoshPtyProcess private constructor(
      * reaps the child, so the UI caller never blocks and the remote server can
      * process the shutdown handshake instead of becoming orphaned.
      */
-    fun closeGracefully() {
+    fun closeGracefully(enqueueQuit: (ByteArray) -> Boolean) {
         if (!closed.compareAndSet(false, true)) return
         val quitSent = runCatching {
-            output.write(MOSH_QUIT_SEQUENCE)
-            output.flush()
-        }.isSuccess
+            enqueueQuit(MOSH_QUIT_SEQUENCE)
+        }.getOrDefault(false)
         val cleanupThread = Thread(
             {
                 // A bare thread has no coroutine handler behind it, so anything
@@ -147,12 +146,19 @@ internal class MoshPtyProcess private constructor(
             }
             check(handle.size == 2) { "Native Mosh PTY returned an invalid handle" }
             val descriptor = ParcelFileDescriptor.adoptFd(handle[0].toInt())
-            return MoshPtyProcess(
-                master = descriptor,
-                pid = handle[1].toInt(),
-                input = ParcelFileDescriptor.AutoCloseInputStream(descriptor.dup()),
-                output = ParcelFileDescriptor.AutoCloseOutputStream(descriptor.dup()),
-            )
+            var input: InputStream? = null
+            var output: OutputStream? = null
+            try {
+                input = ParcelFileDescriptor.AutoCloseInputStream(descriptor.dup())
+                output = ParcelFileDescriptor.AutoCloseOutputStream(descriptor.dup())
+                return MoshPtyProcess(descriptor, handle[1].toInt(), input, output)
+            } catch (error: Throwable) {
+                runMoshCleanupSteps(listOf(
+                    { output?.close() }, { input?.close() }, { descriptor.close() },
+                    { MoshPtyNative.requestStop(handle[1].toInt()) }, { MoshPtyNative.waitForExit(handle[1].toInt()) },
+                )) { MangoLog.warn(MangoLogEvent.SESSION_TEARDOWN_FAILED, it) }
+                throw error
+            }
         }
 
     }
@@ -209,7 +215,9 @@ private object MoshPtyNative {
  * Zip entries are validated against the extraction root to prevent Zip Slip.
  */
 private class MoshRuntimeInstaller(private val context: Context) {
-    fun install(): File {
+    fun install(): File = synchronized(runtimeLock) { installLocked() }
+
+    private fun installLocked(): File {
         val destination = File(context.noBackupFilesDir, DIRECTORY_NAME)
         val marker = File(destination, MARKER_NAME)
         if (marker.isFile && marker.readText() == RUNTIME_REVISION) return terminfoDirectory(destination)
@@ -275,6 +283,7 @@ private class MoshRuntimeInstaller(private val context: Context) {
         const val DIRECTORY_NAME = "mosh-terminfo"
         const val MARKER_NAME = ".mangossh-runtime-revision"
         const val RUNTIME_REVISION = "mosh4android-2de58be"
+        val runtimeLock = Any()
         const val TERMINF0_ASSET = "mosh/terminfo.zip"
     }
 }

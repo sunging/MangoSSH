@@ -2,6 +2,7 @@ package website.sung.mangossh.data.vault
 
 import org.json.JSONArray
 import org.json.JSONObject
+import website.sung.mangossh.domain.*
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
@@ -11,16 +12,22 @@ import website.sung.mangossh.domain.ConnectionRoute
 internal object VaultPayloadCodec {
     /** JSON coercions must not turn malformed booleans, numbers or collections into defaults. */
     private fun validateTypes(root: JSONObject) {
-        val integers = setOf("schemaVersion", "port", "position", "connectionCount", "lastConnectedAtEpochMillis", "createdAtEpochMillis", "trustedAtEpochMillis", "bindPort", "destinationPort")
-        val booleans = setOf("agentForwarding", "favorite", "requiresPassphrase", "appendNewline", "startOnConnect")
+        val integers = setOf("schemaVersion", "port", "position", "connectionCount", "lastConnectedAtEpochMillis", "createdAtEpochMillis", "trustedAtEpochMillis", "bindPort", "destinationPort", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "authorizationSeconds")
+        val booleans = setOf("agentForwarding", "favorite", "requiresPassphrase", "appendNewline", "startOnConnect", "confirmEachSignature", "requireReauthentication")
         val arrays = setOf("profiles", "keys", "knownHosts", "snippets", "portForwards")
         fun checkObject(value: JSONObject, top: Boolean) {
             value.keys().forEach { name ->
                 val item = value.get(name)
-                val nullable = name in setOf("keyId", "startupSnippetId", "destinationHost", "destinationPort", "webDavConfig")
+                val nullable = name in setOf("keyId", "startupSnippetId", "destinationHost", "destinationPort", "webDavConfig", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "terminalType", "allowedKeyIds", "requireReauthentication")
                 if (item == JSONObject.NULL) {
                     require(nullable)
                 } else when {
+                    name in setOf("overrides", "agentPolicy", "workspace") -> { require(item is JSONObject); checkObject(item, false) }
+                    name in setOf("allowedKeyIds", "jumpProfileIds") -> {
+                        require(item is JSONArray)
+                        repeat(item.length()) { require(item.get(it) is String) }
+                    }
+                    name in setOf("terminalType", "mode", "name", "sessionId") -> require(item is String)
                     top && name in arrays -> {
                         require(item is JSONArray)
                         repeat(item.length()) { checkObject(item.getJSONObject(it), false) }
@@ -28,7 +35,7 @@ internal object VaultPayloadCodec {
                     top && name == "webDavConfig" -> { require(item is JSONObject); checkObject(item, false) }
                     name in integers -> {
                         require(item is Int || item is Long)
-                        if (name in setOf("schemaVersion", "port", "position", "connectionCount", "bindPort", "destinationPort")) require((item as Number).toLong() in Int.MIN_VALUE..Int.MAX_VALUE)
+                        if (name in setOf("schemaVersion", "port", "position", "connectionCount", "bindPort", "destinationPort", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "authorizationSeconds")) require((item as Number).toLong() in Int.MIN_VALUE..Int.MAX_VALUE)
                     }
                     name in booleans -> require(item is Boolean)
                     name in setOf("id", "label", "hostname", "username", "protocol", "route", "authentication", "keyId", "startupSnippetId", "algorithm", "publicKey", "fingerprint", "privateKeyPem", "keyBlobBase64", "script", "profileId", "type", "bindHost", "destinationHost", "endpoint", "password", "remoteFileName") -> require(item is String)
@@ -54,6 +61,24 @@ internal object VaultPayloadCodec {
                         put("keyId", profile.keyId ?: JSONObject.NULL)
                         put("startupSnippetId", profile.startupSnippetId ?: JSONObject.NULL)
                         put("agentForwarding", profile.agentForwarding)
+                        put("overrides", JSONObject().apply {
+                            put("connectTimeoutSeconds", profile.overrides.connectTimeoutSeconds ?: JSONObject.NULL)
+                            put("keepaliveSeconds", profile.overrides.keepaliveSeconds ?: JSONObject.NULL)
+                            put("backgroundMultiplier", profile.overrides.backgroundMultiplier ?: JSONObject.NULL)
+                            put("terminalType", profile.overrides.terminalType?.name ?: JSONObject.NULL)
+                        })
+                        put("agentPolicy", JSONObject().apply {
+                            put("allowedKeyIds", profile.agentPolicy.allowedKeyIds?.let(::JSONArray) ?: JSONObject.NULL)
+                            put("confirmEachSignature", profile.agentPolicy.confirmEachSignature)
+                            put("authorizationSeconds", profile.agentPolicy.authorizationSeconds)
+                        })
+                        put("requireReauthentication", profile.requireReauthentication ?: JSONObject.NULL)
+                        put("workspace", JSONObject().apply {
+                            put("mode", profile.workspace.mode.name)
+                            put("name", profile.workspace.name)
+                            put("sessionId", profile.workspace.sessionId)
+                        })
+                        put("jumpProfileIds", JSONArray(profile.jumpProfileIds))
                         put("favorite", profile.favorite)
                         put("position", profile.position)
                         put("lastConnectedAtEpochMillis", profile.lastConnectedAtEpochMillis)
@@ -166,6 +191,9 @@ internal object VaultPayloadCodec {
         ).also(BackupValidator::validate)
     }
 
+    private fun JSONObject.nullableInt(name: String): Int? = if (isNull(name)) null else getInt(name)
+    private fun JSONArray.stringList(): List<String> = List(length()) { getString(it) }
+
     private fun JSONArray.toProfiles(schemaVersion: Int): List<ConnectionProfile> = buildList {
         repeat(length()) { index ->
             val value = getJSONObject(index)
@@ -185,6 +213,19 @@ internal object VaultPayloadCodec {
                     keyId = value.optionalString("keyId"),
                     startupSnippetId = value.optionalString("startupSnippetId"),
                     agentForwarding = value.optBoolean("agentForwarding", false),
+                    overrides = value.optJSONObject("overrides")?.let { policy ->
+                        HostConnectionOverrides(policy.nullableInt("connectTimeoutSeconds"), policy.nullableInt("keepaliveSeconds"),
+                            policy.nullableInt("backgroundMultiplier"), policy.optionalString("terminalType")?.let(SshTerminalType::valueOf))
+                    } ?: HostConnectionOverrides(),
+                    agentPolicy = value.optJSONObject("agentPolicy")?.let { policy ->
+                        HostAgentPolicy(policy.optJSONArray("allowedKeyIds")?.stringList(),
+                            policy.optBoolean("confirmEachSignature", false), policy.optInt("authorizationSeconds", 0))
+                    } ?: HostAgentPolicy(),
+                    requireReauthentication = if (value.isNull("requireReauthentication")) null else value.getBoolean("requireReauthentication"),
+                    workspace = value.optJSONObject("workspace")?.let { workspace ->
+                        TmuxWorkspace(workspace.enumOrDefault("mode", WorkspaceMode.DISABLED), workspace.optString("name", ""), workspace.optString("sessionId", ""))
+                    } ?: TmuxWorkspace(),
+                    jumpProfileIds = value.optJSONArray("jumpProfileIds")?.stringList().orEmpty(),
                     favorite = value.optBoolean("favorite", false),
                     position = value.optInt("position", index),
                     lastConnectedAtEpochMillis = value.optLong("lastConnectedAtEpochMillis", 0L),

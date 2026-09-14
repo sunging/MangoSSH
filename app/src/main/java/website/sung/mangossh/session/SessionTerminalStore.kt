@@ -33,6 +33,7 @@ internal class SessionTerminalStore(
      */
     @Volatile
     private var displayActive = true
+    @Volatile private var visibleSessionId: String? = null
 
     /** UI-only OSC 52 copy requests; no clipboard content is persisted or logged. */
     val clipboardCopies = _clipboardCopies.asSharedFlow()
@@ -73,7 +74,7 @@ internal class SessionTerminalStore(
         check(emulators.putIfAbsent(sessionId, emulator) == null) {
             "A terminal emulator already exists for this session."
         }
-        if (!displayActive) emulator.setDisplayActive(false)
+        emulator.setDisplayActive(displayActive && visibleSessionId == sessionId)
     }
 
     /**
@@ -83,7 +84,13 @@ internal class SessionTerminalStore(
      */
     fun setDisplayActive(active: Boolean) {
         displayActive = active
-        emulators.values.forEach { it.setDisplayActive(active) }
+        emulators.forEach { (id, emulator) -> emulator.setDisplayActive(active && id == visibleSessionId) }
+    }
+
+    /** Only the actually visible terminal renders frames; hidden transports still parse output. */
+    fun setVisibleSession(sessionId: String?) {
+        visibleSessionId = sessionId
+        emulators.forEach { (id, emulator) -> emulator.setDisplayActive(displayActive && id == sessionId) }
     }
 
     /** Returns the live emulator for a visible session, if it has not ended. */

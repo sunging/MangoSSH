@@ -164,6 +164,7 @@ fun MangoSshApp(
     selectedAppLanguage: AppLanguage,
     onSetAppLanguage: (AppLanguage) -> Unit,
 ) {
+    val endedTerminals by viewModel.endedTerminals.collectAsStateWithLifecycle()
     val appLocked by viewModel.appLocked.collectAsStateWithLifecycle()
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
@@ -179,6 +180,7 @@ fun MangoSshApp(
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(activeSessionId, appLocked) { viewModel.setVisibleTerminal(activeSessionId.takeUnless { appLocked }) }
     val currentActiveSessionId by rememberUpdatedState(activeSessionId)
     LaunchedEffect(viewModel) {
         viewModel.embeddedTsnetAuthorizationUrls.collect { value ->
@@ -198,7 +200,6 @@ fun MangoSshApp(
     LaunchedEffect(viewModel) {
         viewModel.sessionEndedEvents.collect { event ->
             if (event.sessionId == currentActiveSessionId) {
-                activeSessionId = null
                 leaveSessionId = null
                 viewModel.sessionEndMessage(event)?.let(viewModel::reportUserMessage)
             }
@@ -242,7 +243,9 @@ fun MangoSshApp(
         viewModel.consumeSessionNavigationRequest(request)
     }
     if (appLocked) {
+        val busy by viewModel.appLockBusy.collectAsStateWithLifecycle()
         AppLockScreen(
+            busy = busy,
             configuration = appLockConfiguration,
             message = userMessage,
             onUnlockWithPin = viewModel::unlockWithPin,
@@ -252,6 +255,34 @@ fun MangoSshApp(
         return
     }
 
+    val reauthenticationPending by viewModel.reauthenticationPending.collectAsStateWithLifecycle()
+    if (reauthenticationPending) {
+        val busy by viewModel.appLockBusy.collectAsStateWithLifecycle()
+        var pin by remember { mutableStateOf("") }
+        AlertDialog(onDismissRequest = viewModel::cancelReauthentication,
+            title = { Text(stringResource(R.string.reauthentication_title)) },
+            text = { Column {
+                OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(12) }, label = { Text(stringResource(R.string.ui_app_pin)) },
+                    visualTransformation = PasswordVisualTransformation(), singleLine = true)
+                userMessage?.let { Text(it.asString()) }
+            } },
+            confirmButton = { TextButton(enabled = !busy && pin.isNotEmpty(), onClick = { viewModel.verifySensitiveAction(pin); pin = "" }) {
+                Text(stringResource(if (busy) R.string.app_lock_verifying else R.string.common_ok))
+            } }, dismissButton = { TextButton(onClick = viewModel::cancelReauthentication) { Text(stringResource(R.string.common_cancel)) } })
+    }
+    val transferConflicts by viewModel.transferConflicts.collectAsStateWithLifecycle()
+    transferConflicts.firstOrNull()?.let { conflict ->
+        androidx.compose.runtime.key(conflict.id) { TransferConflictDialog(conflict) { viewModel.resolveTransferConflict(conflict.id, it) } }
+    }
+    val sessionPrompts by viewModel.sessionPrompts.collectAsStateWithLifecycle()
+    val remoteEditor by viewModel.remoteEditor.collectAsStateWithLifecycle()
+    remoteEditor?.let {
+        RemoteTextEditorScreen(it, viewModel::changeRemoteDraft, viewModel::saveRemoteEditor, viewModel::reloadRemoteEditor, viewModel::closeRemoteEditor)
+        sessionPrompts.firstOrNull()?.let { prompt ->
+            SessionPromptDialog(prompt) { values -> viewModel.respondToSessionPrompt(prompt, values) }
+        }
+        return
+    }
     val hosts by viewModel.hosts.collectAsStateWithLifecycle()
     val visibleHosts by viewModel.visibleHosts.collectAsStateWithLifecycle()
     val hostQuery by viewModel.hostQuery.collectAsStateWithLifecycle()
@@ -262,7 +293,6 @@ fun MangoSshApp(
     val selectedSection by viewModel.selectedSection.collectAsStateWithLifecycle()
     val settingsDestination by viewModel.settingsDestination.collectAsStateWithLifecycle()
     val vaultStatus by viewModel.vaultStatus.collectAsStateWithLifecycle()
-    val sessionPrompts by viewModel.sessionPrompts.collectAsStateWithLifecycle()
     val portForwardRules by viewModel.portForwardRules.collectAsStateWithLifecycle()
     val activePortForwards by viewModel.activePortForwards.collectAsStateWithLifecycle()
     val scpTransfers by viewModel.scpTransfers.collectAsStateWithLifecycle()
@@ -291,6 +321,7 @@ fun MangoSshApp(
         )
     }
     var editingHost by remember { mutableStateOf<ConnectionProfile?>(null) }
+    var showSshConfigImport by remember { mutableStateOf(false) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
     var showTransfers by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
@@ -321,6 +352,7 @@ fun MangoSshApp(
         val browserPrompt = sessionPrompts.firstOrNull { it.sessionId == browserState.sessionId }
         val visiblePrompt = browserPrompt ?: sessionPrompts.firstOrNull { it.sessionId != browserState.sessionId }
         RemoteFileBrowserScreen(
+            onEditText = viewModel::editRemoteText,
             state = browserState,
             onNavigate = viewModel::navigateRemoteBrowser,
             onHome = viewModel::remoteBrowserHome,
@@ -351,13 +383,33 @@ fun MangoSshApp(
     // abandon the terminal, its prompt dialog, and its emulator view without
     // emitting anything in their place.
     val terminalTarget = activeSessionId
-        ?.let { id -> sessions.firstOrNull { it.id == id } }
+        ?.let { id -> sessions.firstOrNull { it.id == id } ?: endedTerminals.firstOrNull { it.session.id == id }?.session }
         ?.let { session -> viewModel.terminalEmulator(session.id)?.let { session to it } }
     if (terminalTarget == null && activeSessionId != null) {
         LaunchedEffect(activeSessionId) { activeSessionId = null }
     }
     if (terminalTarget != null) {
         val (activeSession, terminalEmulator) = terminalTarget
+        var showDiagnostics by remember(activeSession.id) { mutableStateOf(false) }
+        var showWorkspaces by remember(activeSession.id) { mutableStateOf(false) }
+        if (showDiagnostics) ConnectionDiagnosticsDialog(viewModel.diagnostics(activeSession.id)) { showDiagnostics = false }
+        if (showWorkspaces) WorkspaceDialog(load = { viewModel.listWorkspaces(activeSession.id) },
+            onOpen = { workspace -> viewModel.openWorkspace(activeSession.id, workspace)?.let { activeSessionId = it }; showWorkspaces = false },
+            onDismiss = { showWorkspaces = false })
+        var showReconnect by remember(activeSession.id) { mutableStateOf(false) }
+        var allowStartupSnippet by remember(activeSession.id) { mutableStateOf(false) }
+        if (showReconnect) {
+            AlertDialog(onDismissRequest = { showReconnect = false }, title = { Text(stringResource(R.string.terminal_reconnect)) },
+                text = { Column {
+                    Text(stringResource(R.string.terminal_reconnect_fresh))
+                    Row { Checkbox(allowStartupSnippet, { allowStartupSnippet = it }); Text(stringResource(R.string.terminal_reconnect_snippet)) }
+                } },
+                confirmButton = { TextButton(onClick = {
+                    viewModel.reconnectEnded(activeSession.id, allowStartupSnippet)?.let { activeSessionId = it }
+                    showReconnect = false
+                }) { Text(stringResource(R.string.terminal_reconnect)) } },
+                dismissButton = { TextButton(onClick = { showReconnect = false }) { Text(stringResource(R.string.common_cancel)) } })
+        }
         val activePrompt = sessionPrompts.firstOrNull { it.sessionId == activeSession.id }
         val visiblePrompt = activePrompt ?: sessionPrompts.firstOrNull { it.sessionId != activeSession.id }
         // A physical keyboard's Esc arrives here as a Back invocation, not a key event
@@ -377,7 +429,7 @@ fun MangoSshApp(
             if (backSendsEscape) {
                 terminalEmulator.dispatchKey(0, VTermKey.ESCAPE)
             } else {
-                leaveSessionId = activeSession.id
+                if (activeSession.phase == TerminalSessionPhase.CLOSED) activeSessionId = null else leaveSessionId = activeSession.id
             }
         }
         TerminalSessionScreen(
@@ -391,7 +443,10 @@ fun MangoSshApp(
             resourceSnapshot = resourceSnapshots[activeSession.id],
             onRequestResources = { viewModel.requestServerResources(activeSession.id) },
             onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
-            onRequestLeave = { leaveSessionId = activeSession.id },
+            onRequestLeave = { if (activeSession.phase == TerminalSessionPhase.CLOSED) activeSessionId = null else leaveSessionId = activeSession.id },
+            onReconnect = { showReconnect = true },
+            onWorkspaces = { showWorkspaces = true },
+            onDiagnostics = { showDiagnostics = true },
             sessionFontSizeSp = sessionFontSizeOverrides[activeSession.id],
             onSessionFontSizeChange = { fontSizeSp ->
                 viewModel.setSessionTerminalFontSize(activeSession.id, fontSizeSp)
@@ -517,6 +572,7 @@ fun MangoSshApp(
                                 )
                             }
                             if (selectedSection == AppSection.HOSTS) {
+                                TextButton(onClick = { showSshConfigImport = true }) { Text(stringResource(R.string.ssh_config_import_short)) }
                                 IconButton(onClick = { hostSearchActive = true }) {
                                     Icon(Icons.Outlined.Search, contentDescription = stringResource(R.string.common_search))
                                 }
@@ -561,6 +617,8 @@ fun MangoSshApp(
                             hasAnyHost = hosts.isNotEmpty(),
                             reorderable = hostsReorderable,
                             sessions = sessions,
+                            endedTerminals = endedTerminals,
+                            onClearEnded = viewModel::clearEndedTerminals,
                             vaultStatus = vaultStatus,
                             onEditHost = { openHostEditor(it) },
                             onRemoveHost = { pendingRemoval = PendingRemovalRequest.Host(it) },
@@ -580,6 +638,8 @@ fun MangoSshApp(
                             keys = keys,
                             onGenerate = viewModel::generateKey,
                             onImport = viewModel::importPrivateKey,
+                            onExport = viewModel::exportPrivateKey,
+                            busy = viewModel.keyOperationBusy.collectAsStateWithLifecycle().value,
                             onRemove = { pendingRemoval = PendingRemovalRequest.Key(it) },
                         )
                         AppSection.FORWARDS -> PortForwardsScreen(
@@ -654,8 +714,14 @@ fun MangoSshApp(
         )
     }
 
+    if (showSshConfigImport) SshConfigImportDialog(keys, hosts,
+        onSave = { viewModel.importSshProfiles(it); showSshConfigImport = false },
+        onDismiss = { showSshConfigImport = false })
+
     if (showHostEditor) {
         HostEditorSheet(
+            hosts = hosts,
+            defaults = connectionPreferences,
             initialHost = editingHost,
             keys = keys,
             snippets = snippets,
@@ -674,6 +740,7 @@ fun MangoSshApp(
     pendingRemoval?.let { request ->
         RemovalConfirmationDialog(
             request = request,
+            hosts = hosts,
             onDismiss = { pendingRemoval = null },
             onConfirm = {
                 when (request) {
@@ -810,6 +877,7 @@ private fun HostSortMenu(sortMode: HostSortMode, onSelect: (HostSortMode) -> Uni
 @Composable
 private fun RemovalConfirmationDialog(
     request: PendingRemovalRequest,
+    hosts: List<ConnectionProfile>,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
@@ -826,9 +894,20 @@ private fun RemovalConfirmationDialog(
         is PendingRemovalRequest.Snippet -> stringResource(R.string.ui_remove_snippet) to
             stringResource(R.string.ui_this_snippet_will_be_permanently_removed_and_linked_host_profiles_will_s)
     }
+    val dependencies = hosts.filter { host -> when (request) {
+        is PendingRemovalRequest.Host -> request.id in host.jumpProfileIds
+        is PendingRemovalRequest.Key -> host.keyId == request.id || request.id in host.agentPolicy.allowedKeyIds.orEmpty()
+        else -> false
+    } }.joinToString("\n") { it.label }
+    if (request is PendingRemovalRequest.Host && dependencies.isNotEmpty()) {
+        AlertDialog(onDismissRequest = onDismiss, title = { Text(title) },
+            text = { Text(stringResource(R.string.host_dependencies_blocked, dependencies)) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_ok)) } })
+        return
+    }
     DestructiveConfirmationDialog(
         title = title,
-        message = message,
+        message = message + if (dependencies.isNotEmpty()) "\n\n" + stringResource(R.string.host_dependencies, dependencies) else "",
         onDismiss = onDismiss,
         onConfirm = onConfirm,
     )
@@ -870,6 +949,7 @@ internal fun DestructiveConfirmationDialog(
 
 @Composable
 private fun AppLockScreen(
+    busy: Boolean,
     configuration: AppLockConfiguration,
     message: UiText?,
     onUnlockWithPin: (String) -> Unit,
@@ -898,6 +978,7 @@ private fun AppLockScreen(
                 stringResource(R.string.ui_unlock_with_your_app_pin),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(stringResource(R.string.app_lock_scope), style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(20.dp))
             OutlinedTextField(
                 value = pin,
@@ -915,9 +996,9 @@ private fun AppLockScreen(
                     pin = ""
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = pin.isNotEmpty(),
+                enabled = pin.isNotEmpty() && !busy,
             ) {
-                Text(stringResource(R.string.ui_unlock_with_pin))
+                Text(stringResource(if (busy) R.string.app_lock_verifying else R.string.ui_unlock_with_pin))
             }
             if (configuration.biometricEnabled && onRequestBiometric != null) {
                 Spacer(Modifier.height(8.dp))
@@ -934,40 +1015,44 @@ private fun AppLockScreen(
 }
 
 @Composable
-private fun KeysScreen(
+internal fun KeysScreen(
     vaultStatus: VaultStatus,
     keys: List<StoredSshKey>,
     onGenerate: (type: SshKeyGenerationType, label: String) -> Unit,
     onImport: (label: String, contents: String, passphrase: String?) -> Unit,
     onRemove: (String) -> Unit,
+    onExport: (String, android.net.Uri) -> Unit,
+    busy: Boolean,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var showGenerator by rememberSaveable { mutableStateOf(false) }
+    var importBusy by remember { mutableStateOf(false) }
+    var importFailed by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<String?>(null) }
     var pendingExport by remember { mutableStateOf<StoredSshKey?>(null) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
+        if (busy || importBusy) return@rememberLauncherForActivityResult
+        importBusy = true
         scope.launch {
-            pendingImport = withContext(Dispatchers.IO) {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    stream.readBytes().decodeToString()
+            try {
+                pendingImport = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        website.sung.mangossh.session.BoundedProtocolReader.bytes(stream, 1024 * 1024).decodeToString()
+                    }
                 }
-            }
+                importFailed = pendingImport == null
+            } catch (_: Exception) { importFailed = true }
+            finally { importBusy = false }
         }
     }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-pem-file")) { uri ->
         val key = pendingExport
         pendingExport = null
         if (uri == null || key == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                context.contentResolver.openOutputStream(uri)?.use { stream ->
-                    stream.write(key.privateKeyPem.encodeToByteArray())
-                }
-            }
-        }
+        onExport(key.id, uri)
     }
 
     LazyColumn(
@@ -988,17 +1073,19 @@ private fun KeysScreen(
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { showGenerator = true }, enabled = vaultStatus !is VaultStatus.Failed) {
+                Button(onClick = { showGenerator = true }, enabled = !busy && !importBusy && vaultStatus !is VaultStatus.Failed) {
                     Text(stringResource(R.string.ui_generate_key))
                 }
                 OutlinedButton(
                     onClick = { importLauncher.launch(arrayOf("application/x-pem-file", "text/plain", "application/octet-stream")) },
-                    enabled = vaultStatus !is VaultStatus.Failed,
+                    enabled = !busy && !importBusy && vaultStatus !is VaultStatus.Failed,
                 ) {
                     Text(stringResource(R.string.ui_import_private_key))
                 }
             }
         }
+        if (busy || importBusy) item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        if (importFailed) item { Text(stringResource(R.string.message_key_import_failed)) }
         if (keys.isEmpty()) {
             item {
                 Text(
@@ -1037,6 +1124,7 @@ private fun KeysScreen(
                             Text(stringResource(R.string.ui_copy_public_key))
                         }
                         TextButton(
+                            enabled = !busy,
                             onClick = {
                                 pendingExport = key
                                 exportLauncher.launch("${key.label.replace(' ', '_')}.pem")
@@ -1044,7 +1132,7 @@ private fun KeysScreen(
                         ) {
                             Text(stringResource(R.string.ui_export_private_key))
                         }
-                        TextButton(onClick = { onRemove(key.id) }) {
+                        TextButton(enabled = !busy, onClick = { onRemove(key.id) }) {
                             Text(stringResource(R.string.common_remove))
                         }
                     }
@@ -1575,6 +1663,8 @@ private fun PortForwardRule.displayDescription(): String = when (type) {
 
 @Composable
 private fun HostEditorSheet(
+    hosts: List<ConnectionProfile>,
+    defaults: website.sung.mangossh.domain.ConnectionPreferences,
     initialHost: ConnectionProfile?,
     keys: List<StoredSshKey>,
     snippets: List<CommandSnippet>,
@@ -1593,6 +1683,18 @@ private fun HostEditorSheet(
     var keyId by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.keyId) }
     var startupSnippetId by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.startupSnippetId) }
     var agentForwarding by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.agentForwarding ?: false) }
+    var overrides by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.overrides ?: website.sung.mangossh.domain.HostConnectionOverrides()) }
+    var agentPolicy by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.agentPolicy ?: website.sung.mangossh.domain.HostAgentPolicy()) }
+    var reauthenticate by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.requireReauthentication) }
+    var workspace by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.workspace ?: website.sung.mangossh.domain.TmuxWorkspace()) }
+    var jumpIds by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.jumpProfileIds.orEmpty()) }
+    var pendingWorkspace by remember { mutableStateOf<website.sung.mangossh.domain.TmuxWorkspace?>(null) }
+    pendingWorkspace?.let { next ->
+        AlertDialog(onDismissRequest = { pendingWorkspace = null }, title = { Text(stringResource(R.string.host_policy_workspace)) },
+            text = { Text(stringResource(R.string.host_policy_workspace_exclusive)) },
+            confirmButton = { TextButton(onClick = { workspace = next; startupSnippetId = null; pendingWorkspace = null }) { Text(stringResource(R.string.common_ok)) } },
+            dismissButton = { TextButton(onClick = { pendingWorkspace = null }) { Text(stringResource(R.string.common_cancel)) } })
+    }
     val port = portText.toIntOrNull()
     val usesSystemTailscale = route == ConnectionRoute.TAILNET
     val authenticationIsConfigured = usesSystemTailscale ||
@@ -1602,7 +1704,9 @@ private fun HostEditorSheet(
         username.isNotBlank() &&
         port != null &&
         port in 1..65535 &&
-        authenticationIsConfigured
+        authenticationIsConfigured && overrides.isValid() && workspace.isValid() &&
+        (workspace.mode == website.sung.mangossh.domain.WorkspaceMode.DISABLED || startupSnippetId == null) &&
+        (protocol == ConnectionProtocol.SSH || jumpIds.isEmpty())
     val firstFieldFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(initialHost?.id) {
@@ -1775,12 +1879,21 @@ private fun HostEditorSheet(
                     Text(stringResource(R.string.ui_enable_ssh_agent_forwarding), style = MaterialTheme.typography.bodyMedium)
                 }
             }
+            HostPolicyEditor(defaults, overrides, { overrides = it }, agentPolicy, { agentPolicy = it }, keys, keyId,
+                reauthenticate, { reauthenticate = it }, workspace, {
+                    if (it.mode != website.sung.mangossh.domain.WorkspaceMode.DISABLED && startupSnippetId != null) pendingWorkspace = it else workspace = it
+                }, jumpIds, { jumpIds = it }, hosts, initialHost?.id, protocol)
             Spacer(Modifier.height(28.dp))
             Button(
                 onClick = {
                     onSave(
                         ConnectionProfileDraft(
                             id = initialHost?.id,
+                            overrides = overrides,
+                            agentPolicy = agentPolicy,
+                            requireReauthentication = reauthenticate,
+                            workspace = workspace,
+                            jumpProfileIds = jumpIds,
                             label = label,
                             hostname = hostname,
                             port = requireNotNull(port),
@@ -2005,6 +2118,10 @@ private fun PortForwardType.label(): String = stringResource(
 private fun SessionPromptText.asString(): String = when (this) {
     is SessionPromptText.Verbatim -> value
     is SessionPromptText.App -> when (kind) {
+        SessionPromptTextKind.WORKSPACE_UNAVAILABLE -> stringResource(R.string.workspace_unavailable)
+        SessionPromptTextKind.WORKSPACE_FALLBACK -> stringResource(R.string.workspace_fallback)
+        SessionPromptTextKind.AGENT_TITLE -> stringResource(R.string.agent_signature_title, requireNotNull(argument))
+        SessionPromptTextKind.AGENT_INSTRUCTION -> stringResource(R.string.agent_signature_instruction)
         SessionPromptTextKind.PASSWORD_TITLE ->
             stringResource(R.string.authentication_password_title, requireNotNull(argument))
         SessionPromptTextKind.PASSWORD_INSTRUCTION ->

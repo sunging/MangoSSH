@@ -26,7 +26,9 @@ class AndroidKeystoreVaultInstrumentedTest {
             override fun getApplicationContext(): Context = this
 
             override fun getFilesDir(): File = directory
+            override fun getNoBackupFilesDir(): File = directory
         }
+        val alias = "vault-test-${UUID.randomUUID()}"
         val expected = VaultSnapshot(
             snippets = listOf(
                 CommandSnippet(
@@ -38,12 +40,37 @@ class AndroidKeystoreVaultInstrumentedTest {
         )
 
         try {
-            val vault = AndroidKeystoreVault(context)
+            val vault = AndroidKeystoreVault(context, alias)
             vault.write(expected)
 
             assertEquals(expected, vault.read())
         } finally {
             directory.deleteRecursively()
+            java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
         }
     }
+    @Test fun schemaFiveUpgradePreservesEncryptedRecoveryBeforeMutation() {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(base.cacheDir, "migration-test-${UUID.randomUUID()}").apply { mkdirs() }
+        val alias = "migration-test-${UUID.randomUUID()}"
+        val context = object : ContextWrapper(base) {
+            override fun getApplicationContext(): Context = this
+            override fun getFilesDir() = File(directory, "files").apply { mkdirs() }
+            override fun getNoBackupFilesDir() = File(directory, "recovery").apply { mkdirs() }
+        }
+        try {
+            val vault = AndroidKeystoreVault(context, alias)
+            vault.write(VaultSnapshot(schemaVersion = 5))
+            val original = context.filesDir.listFiles()!!.single().readBytes()
+            val migrated = vault.read()!!
+            assertEquals(6, migrated.schemaVersion)
+            org.junit.Assert.assertArrayEquals(original, context.noBackupFilesDir.listFiles()!!.single().readBytes())
+            vault.write(migrated)
+            org.junit.Assert.assertArrayEquals(original, context.noBackupFilesDir.listFiles()!!.single().readBytes())
+        } finally {
+            directory.deleteRecursively()
+            java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
+        }
+    }
+
 }

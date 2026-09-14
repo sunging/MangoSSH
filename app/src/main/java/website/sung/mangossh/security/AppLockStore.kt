@@ -10,13 +10,14 @@ import javax.crypto.spec.PBEKeySpec
 import website.sung.mangossh.domain.AppLockDelay
 
 /** Stores only a salted PBKDF2 verifier; the app PIN is never persisted. */
-class AppLockStore(context: Context) {
+class AppLockStore(context: Context, private val clockMillis: () -> Long = System::currentTimeMillis) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     fun configuration(): AppLockConfiguration = AppLockConfiguration(
         pinConfigured = preferences.contains(KEY_PIN_HASH) && preferences.contains(KEY_PIN_SALT),
         biometricEnabled = preferences.getBoolean(KEY_BIOMETRIC_ENABLED, false),
         autoLockDelay = AppLockDelay.fromPreference(readString(KEY_AUTO_LOCK_DELAY)) ?: AppLockDelay.DEFAULT,
+        reauthentication = runCatching { ReauthenticationMode.valueOf(readString("reauthentication") ?: "DISABLED") }.getOrDefault(ReauthenticationMode.DISABLED),
     )
 
     fun setPin(pin: CharArray) {
@@ -29,6 +30,8 @@ class AppLockStore(context: Context) {
             preferences.edit {
                 putString(KEY_PIN_SALT, Base64.getEncoder().encodeToString(salt))
                 putString(KEY_PIN_HASH, Base64.getEncoder().encodeToString(verifier))
+                remove("pin_failures")
+                remove("pin_blocked_until")
             }
         } finally {
             verifier.fill(0)
@@ -36,17 +39,35 @@ class AppLockStore(context: Context) {
         }
     }
 
+    @Synchronized
     fun verifyPin(pin: CharArray): Boolean {
+        if (cooldownRemainingMillis() > 0) return false
         val salt = preferences.getString(KEY_PIN_SALT, null)?.let(Base64.getDecoder()::decode) ?: return false
         val expected = preferences.getString(KEY_PIN_HASH, null)?.let(Base64.getDecoder()::decode) ?: return false
         val actual = derive(pin, salt)
         return try {
-            MessageDigest.isEqual(expected, actual)
+            val accepted = MessageDigest.isEqual(expected, actual)
+            val next = if (accepted) PinBackoff() else backoff().failed(clockMillis())
+            // Synchronous persistence completes before another attempt can begin.
+            preferences.edit().putInt("pin_failures", next.failures)
+                .putLong("pin_blocked_until", next.blockedUntilMillis).commit()
+            accepted
         } finally {
             salt.fill(0)
             expected.fill(0)
             actual.fill(0)
         }
+    }
+
+    /** Remaining persistent cooldown; reading it never derives the PIN. */
+    fun cooldownRemainingMillis(): Long = backoff().remainingMillis(clockMillis())
+
+    private fun backoff() = PinBackoff(preferences.getInt("pin_failures", 0), preferences.getLong("pin_blocked_until", 0))
+
+    /** Reauthentication is opt-in and requires an existing verifier. */
+    fun setReauthentication(mode: ReauthenticationMode) {
+        require(mode == ReauthenticationMode.DISABLED || configuration().pinConfigured)
+        preferences.edit { putString("reauthentication", mode.name) }
     }
 
     fun setBiometricEnabled(enabled: Boolean) {
@@ -101,4 +122,5 @@ data class AppLockConfiguration(
     val pinConfigured: Boolean,
     val biometricEnabled: Boolean,
     val autoLockDelay: AppLockDelay = AppLockDelay.DEFAULT,
+    val reauthentication: ReauthenticationMode = ReauthenticationMode.DISABLED,
 )

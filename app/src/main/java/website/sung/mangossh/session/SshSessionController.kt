@@ -79,7 +79,36 @@ class SshSessionController internal constructor(
     private val terminalBehaviorStore: TerminalBehaviorStore,
     private val connectionPreferencesStore: ConnectionPreferencesStore,
     private val appForegroundState: AppForegroundState,
+    private val accessState: website.sung.mangossh.security.AppAccessState = website.sung.mangossh.security.AppAccessState(false),
 ) {
+    private val _endedTerminals = MutableStateFlow<List<EndedTerminalRecord>>(emptyList())
+    val endedTerminals = _endedTerminals.asStateFlow()
+
+    /** Returns measured SSH transport times; native Mosh network packet timings remain unknown. */
+    fun diagnostics(sessionId: String): ConnectionDiagnostics? {
+        val managed = sessionsById[sessionId]
+        return if (managed != null) diagnosticSnapshot(managed, _sessions.value.firstOrNull { it.id == sessionId }?.phase ?: TerminalSessionPhase.CLOSED)
+            else _endedTerminals.value.firstOrNull { it.session.id == sessionId }?.diagnostics
+    }
+
+    private fun diagnosticSnapshot(managed: ManagedSession, phase: TerminalSessionPhase): ConnectionDiagnostics {
+        val connection = managed.sshFeatureConnection ?: managed.connection
+        return ConnectionDiagnostics(managed.configuredRoute, phase,
+            connection.lastPacketSentNanos.takeIf { it > 0 }, connection.lastPacketReceivedNanos.takeIf { it > 0 },
+            managed.lastConfirmedNanos.takeIf { it > 0 },
+            if (managed.protocol == ConnectionProtocol.MOSH) managed.moshProcess != null && managed.lifecycle.isOpen else null,
+            if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection != null else null)
+    }
+
+    /** Clears only ended emulator history; active sessions are unaffected. */
+    fun clearEndedTerminals() {
+        synchronized(_endedTerminals) {
+            val removed = _endedTerminals.value
+            _endedTerminals.value = emptyList()
+            removed.forEach { terminalStore.remove(it.session.id) }
+        }
+    }
+
     private val context = appContext.applicationContext
 
     /**
@@ -89,7 +118,7 @@ class SshSessionController internal constructor(
      */
     private val keepaliveScheduler = SessionKeepaliveScheduler(
         appForeground = appForegroundState.foreground,
-        alarm = createKeepaliveAlarm(context),
+        alarm = CoalescingKeepaliveAlarm(createKeepaliveAlarm(context)),
         backgroundMultiplier = { connectionPreferencesStore.current().backgroundKeepaliveMultiplier },
     )
 
@@ -106,6 +135,7 @@ class SshSessionController internal constructor(
         MangoLog.warn(MangoLogEvent.SESSION_COROUTINE_FAILED, error)
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + coroutineFailureHandler)
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + coroutineFailureHandler)
     private val sessionsById = ConcurrentHashMap<String, ManagedSession>()
     private val promptRegistry = SessionPromptRegistry()
     private val remoteFiles = RemoteFileClient()
@@ -135,6 +165,9 @@ class SshSessionController internal constructor(
         onSessionIdle = ::closeFileTransferIfIdle,
     )
     val scpTransfers: StateFlow<List<ScpTransferState>> = fileTransfers.transfers
+    val transferConflicts = fileTransfers.conflicts
+    /** Resolves only the currently registered transfer preview. */
+    fun resolveTransferConflict(id: String, decision: TransferConflictDecision) = fileTransfers.resolveConflict(id, decision)
 
     private val _resourceSnapshots = MutableStateFlow<Map<String, ServerResourceSnapshot>>(emptyMap())
     val resourceSnapshots = _resourceSnapshots.asStateFlow()
@@ -149,11 +182,48 @@ class SshSessionController internal constructor(
     /** Transient OSC 52 copy requests for the currently visible terminal UI. */
     val clipboardCopies = terminalStore.clipboardCopies
 
+    private val connectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
+    private val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) { requestHealthChecks() }
+        override fun onLost(network: android.net.Network) { requestHealthChecks() }
+    }
+
+    /** Foreground and network events coalesce into at most one in-flight probe per session. */
+    private fun requestHealthChecks() {
+        sessionsById.forEach { (id, managed) ->
+            if (_sessions.value.none { it.id == id && it.phase == TerminalSessionPhase.OPEN }) return@forEach
+            if (!managed.healthChecking.compareAndSet(false, true)) return@forEach
+            launchOwned(managed) {
+                try {
+                    val connection = if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection else managed.connection
+                    if (connection != null) {
+                        try { connection.ping(15_000L); managed.lastConfirmedNanos = System.nanoTime() }
+                        catch (error: Exception) {
+                            if (managed.protocol == ConnectionProtocol.MOSH) invalidateMoshSshFeatureConnection(id, managed, connection)
+                            else finishSession(id, managed, SessionEndReason.CONNECTION_LOST, error)
+                        }
+                    }
+                } finally { managed.healthChecking.set(false) }
+            }
+        }
+    }
+
     init {
+        runCatching { connectivity?.registerDefaultNetworkCallback(networkCallback) }
         // Pause frame-cadence snapshot rebuilds for every retained emulator
         // while the app is backgrounded; resume (and force a repaint) on return.
         scope.launch {
-            appForegroundState.foreground.collect(terminalStore::setDisplayActive)
+            appForegroundState.foreground.collect { foreground ->
+                terminalStore.setDisplayActive(foreground)
+                if (foreground) requestHealthChecks()
+            }
+        }
+        scope.launch {
+            accessState.locked.collect { locked ->
+                if (locked) _prompts.value.filterIsInstance<SessionPrompt.Authentication>()
+                    .filter { (it.title as? SessionPromptText.App)?.kind == SessionPromptTextKind.AGENT_TITLE }
+                    .forEach { respondToPrompt(it.requestId, null) }
+            }
         }
     }
 
@@ -166,6 +236,8 @@ class SshSessionController internal constructor(
         val managed = ManagedSession(
             connection = Connection(profile.hostname, profile.port),
             profile = profile,
+            defaultPreferences = connectionPreferencesStore.current(),
+            initialSnapshot = vault.snapshot.value,
             protocol = profile.protocol,
         )
         sessionsById[sessionId] = managed
@@ -184,7 +256,7 @@ class SshSessionController internal constructor(
         )
         if (!startForegroundOwnership(sessionId, managed)) return sessionId
 
-        managed.connectionJob = scope.launch {
+        managed.connectionJob = launchOwned(managed) {
             when (profile.protocol) {
                 ConnectionProtocol.SSH -> runSshSession(sessionId, profile, managed)
                 ConnectionProtocol.MOSH -> runMoshSession(sessionId, profile, managed)
@@ -251,6 +323,8 @@ class SshSessionController internal constructor(
         val managed = ManagedSession(
             connection = Connection(profile.hostname, profile.port),
             profile = profile,
+            defaultPreferences = connectionPreferencesStore.current(),
+            initialSnapshot = vault.snapshot.value,
             protocol = ConnectionProtocol.SSH,
             kind = kind,
         )
@@ -270,7 +344,7 @@ class SshSessionController internal constructor(
         )
         if (!startForegroundOwnership(sessionId, managed)) return sessionId
 
-        managed.connectionJob = scope.launch {
+        managed.connectionJob = launchOwned(managed) {
             runShellessSession(sessionId, profile, managed)
         }
         return sessionId
@@ -304,34 +378,44 @@ class SshSessionController internal constructor(
     }
 
     fun send(sessionId: String, bytes: ByteArray) {
-        scope.launch {
-            val managed = sessionsById[sessionId] ?: return@launch
-            val output = managed.session?.stdin ?: managed.moshProcess?.output ?: return@launch
-            try {
-                output.write(bytes)
-                output.flush()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                // A broken PTY write is an observable transport failure even
-                // if a blocked read has not returned yet. End it promptly so
-                // the foreground notification cannot outlive the session.
-                finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
-            }
-        }
+        sessionsById[sessionId]?.takeIf { it.inputReady }?.writer?.send(bytes)
     }
 
     fun resize(sessionId: String, columns: Int, rows: Int) {
-        if (columns <= 0 || rows <= 0) return
-        scope.launch {
-            runCatching {
-                val managed = sessionsById[sessionId] ?: return@runCatching
-                when (managed.protocol) {
-                    ConnectionProtocol.SSH -> managed.session?.resizePTY(columns, rows, 0, 0)
-                    ConnectionProtocol.MOSH -> managed.moshProcess?.resize(columns, rows)
-                }
+        sessionsById[sessionId]?.resizeQueue?.offer(columns, rows)
+    }
+
+    /** Installs the only writer before startup commands or user input are admitted. */
+    private fun attachTerminalTransport(sessionId: String, managed: ManagedSession, output: java.io.OutputStream) {
+        val writer = TerminalTransport(cleanupScope, output,
+            onFailure = { finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, it) },
+            onOverflow = { finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST,
+                messageKind = SessionEndMessageKind.INPUT_OVERFLOW) })
+        install(managed, writer, { it.close() }) { managed.writer = it }
+        val sizes = TerminalResizeQueue(scope) { columns, rows ->
+            when (managed.protocol) {
+                ConnectionProtocol.SSH -> managed.session?.resizePTY(columns, rows, 0, 0)
+                ConnectionProtocol.MOSH -> managed.moshProcess?.resize(columns, rows)
             }
         }
+        install(managed, sizes, { it.close() }) { managed.resizeQueue = it }
+    }
+
+    /** Check and publication are indivisible with teardown; rejection releases caller-owned resources. */
+    private fun <T> install(managed: ManagedSession, resource: T, release: (T) -> Unit, attach: (T) -> Unit): Boolean {
+        val accepted = managed.lifecycle.whileOpen { attach(resource); true } == true
+        if (!accepted) step { release(resource) }
+        return accepted
+    }
+
+    /** Registers before scheduling so teardown also owns jobs that have not started. */
+    private fun launchOwned(managed: ManagedSession, block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit): Job {
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY, block = block)
+        if (managed.lifecycle.adopt(job) { job.cancel() }) {
+            job.invokeOnCompletion { managed.lifecycle.detach(job) }
+            job.start()
+        }
+        return job
     }
 
     /**
@@ -352,6 +436,8 @@ class SshSessionController internal constructor(
     }
 
     /** Returns the retained emulator for a still-live session. */
+    fun setVisibleTerminal(sessionId: String?) = terminalStore.setVisibleSession(sessionId)
+
     fun terminalEmulator(sessionId: String): TerminalEmulator? = terminalStore.terminalFor(sessionId)
 
     /** Applies a display-only scheme to retained sessions without reconnecting their transports. */
@@ -680,6 +766,7 @@ class SshSessionController internal constructor(
         // shutdown from leaving a protocol thread parked in a prompt.
         promptRegistry.cancelAll()
         _prompts.value = emptyList()
+        runCatching { connectivity?.unregisterNetworkCallback(networkCallback) }
         scope.cancel()
     }
 
@@ -704,7 +791,27 @@ class SshSessionController internal constructor(
         messageKind: SessionEndMessageKind? = null,
         deferTsnetMoshRelease: Boolean = true,
     ) {
-        if (!sessionsById.remove(sessionId, managed)) return
+        val callbacks = synchronized(managed.lifecycle.lock) {
+            val detached = managed.lifecycle.close() ?: return
+            sessionsById.remove(sessionId, managed)
+            if (managed.kind == SessionKind.TERMINAL) {
+                val state = _sessions.value.firstOrNull { it.id == sessionId }
+                if (state != null) synchronized(_endedTerminals) {
+                    val record = EndedTerminalRecord(state.copy(phase = TerminalSessionPhase.CLOSED), reason, messageKind,
+                        diagnostics = diagnosticSnapshot(managed, state.phase).copy(failure = messageKind, moshRunning = if (managed.protocol == ConnectionProtocol.MOSH) false else null, companionConnected = if (managed.protocol == ConnectionProtocol.MOSH) false else null))
+                    val records = listOf(record) + _endedTerminals.value
+                    _endedTerminals.value = records.take(10)
+                    records.drop(10).forEach { terminalStore.remove(it.session.id) }
+                }
+            }
+            detached
+        }
+        val gracefulMosh = reason == SessionEndReason.USER_REQUEST && managed.moshProcess != null
+        if (!gracefulMosh) managed.writer?.close()
+        managed.resizeQueue?.close()
+        callbacks.forEach { step(it) }
+        // Cleanup survives clear(); worker cancellation cannot abandon native reaping.
+        cleanupScope.launch {
 
         // Withdraw the session before anything else. The terminal screen is
         // reached through this list, so a single update makes it leave, taking
@@ -723,17 +830,22 @@ class SshSessionController internal constructor(
         step { managed.keepaliveJob?.cancel() }
         step { managed.sshFeatureKeepaliveJob?.cancel() }
         step { managed.readerJobs.toList().forEach(Job::cancel) }
+        step { managed.connection.abort() }
+        val jumps = synchronized(managed.lifecycle.lock) { managed.jumpConnections.toList().asReversed().also { managed.jumpConnections.clear() } }
+        jumps.forEach { connection -> step { connection.abort(); connection.close() } }
+        step { managed.sshFeatureConnection?.abort() }
         step { closePortForwards(sessionId, managed) }
-        step { managed.session?.close() }
+        step { managed.session?.abort() }
         step {
             managed.moshProcess?.let { process ->
                 if (reason == SessionEndReason.USER_REQUEST) {
-                    process.closeGracefully()
+                    process.closeGracefully { sequence -> managed.writer?.finish(sequence) == true }
+                    cleanupScope.launch { delay(TSNET_MOSH_GRACEFUL_RELEASE_MILLIS); managed.writer?.close() }
                 } else {
                     process.close()
                     // A non-user termination cancels the reader, so reap the
                     // direct native child separately from its normal EOF path.
-                    scope.launch { runCatching { process.awaitExit() } }
+                    runCatching { process.awaitExit() }
                 }
             }
         }
@@ -757,7 +869,7 @@ class SshSessionController internal constructor(
             // Keep the loopback UDP relay alive through Mosh's short graceful
             // quit window, then release the final process-wide tsnet reference.
             step {
-                scope.launch {
+                cleanupScope.launch {
                     delay(TSNET_MOSH_GRACEFUL_RELEASE_MILLIS)
                     closeEmbeddedTsnet()
                 }
@@ -770,7 +882,7 @@ class SshSessionController internal constructor(
         step { fileTransfers.onSessionEnded(sessionId) }
         // The emulator is released only after the screen has stopped reading it,
         // which the session withdrawal above already guaranteed.
-        step { terminalStore.remove(sessionId) }
+        if (managed.kind != SessionKind.TERMINAL) step { terminalStore.remove(sessionId) }
         step {
             _sessionEndedEvents.tryEmit(
                 SessionEndedEvent(
@@ -792,6 +904,7 @@ class SshSessionController internal constructor(
         // its shutdown. Calling stopService here could cancel a pending
         // startForegroundService request before onCreate acknowledges it,
         // leaving Android's foreground-service watchdog armed.
+        }
     }
 
     /**
@@ -803,8 +916,6 @@ class SshSessionController internal constructor(
     private fun step(action: () -> Unit) {
         try {
             action()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
         } catch (error: Throwable) {
             MangoLog.warn(MangoLogEvent.SESSION_TEARDOWN_FAILED, error)
         }
@@ -829,7 +940,7 @@ class SshSessionController internal constructor(
         managed: ManagedSession,
     ) {
         if (sessionsById[sessionId] !== managed) return
-        val snapshot = vault.snapshot.value
+        val snapshot = managed.initialSnapshot
         val connection = managed.connection
         try {
             prepareConnectionRoute(profile, managed)
@@ -845,7 +956,7 @@ class SshSessionController internal constructor(
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                connectTimeoutMillis(),
+                managed.preferences.connectTimeoutSeconds * 1_000,
                 KEY_EXCHANGE_TIMEOUT_MILLIS,
             )
 
@@ -869,9 +980,9 @@ class SshSessionController internal constructor(
                 runCatching { session.close() }
                 return
             }
-            managed.session = session
+            if (!install(managed, session, { it.close() }) { managed.session = it }) return
             session.requestPTY(
-                connectionPreferencesStore.current().sshTerminalType.termValue,
+                managed.preferences.sshTerminalType.termValue,
                 INITIAL_COLUMNS,
                 INITIAL_ROWS,
                 0,
@@ -879,7 +990,20 @@ class SshSessionController internal constructor(
                 ByteArray(0),
             )
             if (profile.agentForwarding) {
-                val enabled = session.requestAuthAgentForwarding(VaultSshAgent(snapshot.keys, keyManager))
+                val grant = website.sung.mangossh.security.AgentGrant(profile.agentPolicy, accessState)
+                val agent = VaultSshAgent(
+                    snapshot.keys.filter { it.id in (profile.agentPolicy.allowedKeyIds ?: listOfNotNull(profile.keyId)) },
+                    keyManager,
+                    authorized = { !accessState.locked.value && managed.lifecycle.isOpen },
+                    authorizeSignature = {
+                        grant.authorize {
+                            requestPrompt(SessionPrompt.Authentication(UUID.randomUUID().toString(), sessionId,
+                                SessionPromptText.App(SessionPromptTextKind.AGENT_TITLE, profile.label),
+                                SessionPromptText.App(SessionPromptTextKind.AGENT_INSTRUCTION), emptyList())) != null
+                        }
+                    },
+                )
+                val enabled = session.requestAuthAgentForwarding(agent)
                 if (!enabled) {
                     publishLocalizableNotice(
                         sessionId,
@@ -887,16 +1011,19 @@ class SshSessionController internal constructor(
                     )
                 }
             }
-            session.startShell()
+            val workspaceId = prepareWorkspace(sessionId, managed, connection)
+            if (workspaceId == null) session.startShell() else session.execCommand(TmuxWorkspaces.attachCommand(workspaceId))
 
             if (sessionsById[sessionId] !== managed) return
 
+            attachTerminalTransport(sessionId, managed, session.stdin)
+            runStartupSnippet(sessionId, profile, snapshot)
+            managed.lifecycle.whileOpen { managed.inputReady = true }
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             syncRemoteSizeToViewport(sessionId)
             startSshReaders(sessionId, managed)
             startSshKeepalive(sessionId, managed)
-            runStartupSnippet(sessionId, profile, snapshot)
             snapshot.portForwards
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
@@ -927,7 +1054,7 @@ class SshSessionController internal constructor(
         managed: ManagedSession,
     ) {
         if (sessionsById[sessionId] !== managed) return
-        val snapshot = vault.snapshot.value
+        val snapshot = managed.initialSnapshot
         val connection = managed.connection
         try {
             prepareConnectionRoute(profile, managed)
@@ -938,7 +1065,7 @@ class SshSessionController internal constructor(
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                connectTimeoutMillis(),
+                managed.preferences.connectTimeoutSeconds * 1_000,
                 KEY_EXCHANGE_TIMEOUT_MILLIS,
             )
 
@@ -982,7 +1109,7 @@ class SshSessionController internal constructor(
         managed: ManagedSession,
     ) {
         if (sessionsById[sessionId] !== managed) return
-        val snapshot = vault.snapshot.value
+        val snapshot = managed.initialSnapshot
         val connection = managed.connection
         try {
             prepareConnectionRoute(profile, managed)
@@ -998,7 +1125,7 @@ class SshSessionController internal constructor(
             )
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                connectTimeoutMillis(),
+                managed.preferences.connectTimeoutSeconds * 1_000,
                 KEY_EXCHANGE_TIMEOUT_MILLIS,
             )
             updateSession(
@@ -1018,7 +1145,7 @@ class SshSessionController internal constructor(
                 context.appString(R.string.mosh_connecting),
             )
             MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_STARTED)
-            val bootstrap = runCatching { bootstrapMosh(connection) }.getOrElse { error ->
+            val bootstrap = runCatching { bootstrapMosh(connection, prepareWorkspace(sessionId, managed, connection)) }.getOrElse { error ->
                 MangoLog.warn(MangoLogEvent.MOSH_BOOTSTRAP_FAILED, error)
                 throw MoshBootstrapException(error)
             }
@@ -1034,7 +1161,7 @@ class SshSessionController internal constructor(
                     runCatching { started.close() }
                     return
                 }
-                managed.tsnetUdpRelay = started
+                if (!install(managed, started, { it.close() }) { managed.tsnetUdpRelay = it }) return
                 started
             } else {
                 null
@@ -1065,14 +1192,16 @@ class SshSessionController internal constructor(
                 runCatching { moshProcess.awaitExit() }
                 return
             }
-            managed.moshProcess = moshProcess
+            if (!install(managed, moshProcess, { it.close(); it.awaitExit() }) { managed.moshProcess = it }) return
             MangoLog.info(MangoLogEvent.MOSH_PROCESS_STARTED)
 
+            attachTerminalTransport(sessionId, managed, moshProcess.output)
+            runStartupSnippet(sessionId, profile, snapshot)
+            managed.lifecycle.whileOpen { managed.inputReady = true }
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.mosh_open))
             syncRemoteSizeToViewport(sessionId)
             startMoshReader(sessionId, managed, moshProcess)
             attachMoshSshFeatureConnection(sessionId, managed, connection)
-            runStartupSnippet(sessionId, profile, snapshot)
             snapshot.portForwards
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
@@ -1098,10 +1227,44 @@ class SshSessionController internal constructor(
         else -> null
     }
 
+    /** Authenticates explicit ordered hops; every resource belongs to the final session. */
+    private suspend fun prepareConnectionRoute(profile: ConnectionProfile, managed: ManagedSession) {
+        if (profile.jumpProfileIds.isEmpty()) {
+            prepareDirectRoute(profile, managed, managed.connection)
+            return
+        }
+        require(profile.protocol == ConnectionProtocol.SSH && profile.jumpProfileIds.size <= 4)
+        require(profile.id !in profile.jumpProfileIds && profile.jumpProfileIds.distinct().size == profile.jumpProfileIds.size)
+        val snapshot = managed.initialSnapshot
+        val sessionId = sessionsById.entries.firstOrNull { it.value === managed }?.key ?: throw CancellationException()
+        var previous: Connection? = null
+        for (id in profile.jumpProfileIds) {
+            val hop = snapshot.profiles.single { it.id == id }
+            require(hop.protocol == ConnectionProtocol.SSH && hop.jumpProfileIds.isEmpty())
+            val connection = Connection(hop.hostname, hop.port)
+            if (!install(managed, connection, { it.abort(); it.close() }) { managed.jumpConnections += it }) throw CancellationException()
+            connection.addConnectionMonitor { error -> cleanupScope.launch {
+                finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
+            } }
+            if (previous == null) {
+                managed.configuredRoute = hop.route
+                prepareDirectRoute(hop, managed, connection)
+            } else connection.setProxyData(JumpProxyData(previous))
+            val preferences = hop.overrides.resolve(managed.defaultPreferences)
+            connection.connect(HostKeyVerifier(sessionId, hop, snapshot.knownHosts),
+                preferences.connectTimeoutSeconds * 1_000, KEY_EXCHANGE_TIMEOUT_MILLIS)
+            if (!authenticate(connection, sessionId, hop, snapshot)) throw SshAuthenticationException()
+            if (!managed.lifecycle.isOpen) throw CancellationException()
+            previous = connection
+        }
+        managed.connection.setProxyData(JumpProxyData(requireNotNull(previous)))
+    }
+
     /** Attaches tsnet's authenticated loopback SOCKS5 transport before SSH connects. */
-    private suspend fun prepareConnectionRoute(
+    private suspend fun prepareDirectRoute(
         profile: ConnectionProfile,
         managed: ManagedSession,
+        connection: Connection,
     ) {
         if (profile.route != ConnectionRoute.TSNET) return
         val lease = embeddedTsnetManager.acquire()
@@ -1109,86 +1272,17 @@ class SshSessionController internal constructor(
             lease.close()
             throw CancellationException()
         }
-        managed.tsnetLease = lease
-        managed.connection.setProxyData(lease.proxyData)
+        if (!install(managed, lease, { it.close() }) { managed.tsnetLease = it }) throw CancellationException()
+        launchOwned(managed) {
+            lease.invalidated.await()
+            finishSession(sessionsById.entries.firstOrNull { it.value === managed }?.key ?: return@launchOwned,
+                managed, SessionEndReason.CONNECTION_LOST)
+        }
+        connection.setProxyData(lease.proxyData)
     }
 
-    private fun authenticate(
-        connection: Connection,
-        sessionId: String,
-        profile: ConnectionProfile,
-        snapshot: VaultSnapshot,
-    ): Boolean {
-        if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH && connection.authenticateWithNone(profile.username)) {
-            return true
-        }
-        return when (profile.authentication) {
-        AuthenticationMethod.PASSWORD -> {
-            val password = requestAuthentication(
-                sessionId = sessionId,
-                title = SessionPromptText.App(SessionPromptTextKind.PASSWORD_TITLE, profile.label),
-                instruction = SessionPromptText.App(SessionPromptTextKind.PASSWORD_INSTRUCTION),
-                fields = listOf(
-                    AuthenticationField(
-                        SessionPromptText.App(SessionPromptTextKind.PASSWORD_FIELD),
-                        echo = false,
-                    ),
-                ),
-            )?.firstOrNull() ?: return false
-            connection.authenticateWithPassword(profile.username, password)
-        }
-
-        AuthenticationMethod.PRIVATE_KEY -> {
-            val key = profile.keyId?.let { keyId -> snapshot.keys.firstOrNull { it.id == keyId } }
-                ?: throw SshAuthenticationException()
-            val passphrase = if (key.requiresPassphrase) {
-                requestAuthentication(
-                    sessionId = sessionId,
-                    title = SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, key.label),
-                    instruction = SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
-                    fields = listOf(
-                        AuthenticationField(
-                            SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD),
-                            echo = false,
-                        ),
-                    ),
-                )?.firstOrNull() ?: return false
-            } else {
-                null
-            }
-            connection.authenticateWithPublicKey(
-                profile.username,
-                keyManager.decodeKeyPair(key, passphrase),
-            )
-        }
-
-        AuthenticationMethod.KEYBOARD_INTERACTIVE,
-        AuthenticationMethod.TAILSCALE_SSH,
-        -> connection.authenticateWithKeyboardInteractive(
-            profile.username,
-            InteractiveCallback { name, instruction, numberOfPrompts, prompts, echo ->
-                val fields = (0 until numberOfPrompts).map { index ->
-                    AuthenticationField(SessionPromptText.Verbatim(prompts[index]), echo[index])
-                }
-                requestAuthentication(
-                    sessionId = sessionId,
-                    title = name.takeIf(String::isNotBlank)
-                        ?.let(SessionPromptText::Verbatim)
-                        ?: SessionPromptText.App(
-                            if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH) {
-                                SessionPromptTextKind.TAILSCALE_LOGIN_TITLE
-                            } else {
-                                SessionPromptTextKind.INTERACTIVE_LOGIN_TITLE
-                            },
-                        ),
-                    instruction = instruction.takeIf(String::isNotBlank)
-                        ?.let(SessionPromptText::Verbatim),
-                    fields = fields,
-                )?.takeIf { it.size == numberOfPrompts }?.toTypedArray() ?: emptyArray()
-            },
-        )
-        }
-    }
+    private fun authenticate(connection: Connection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean =
+        SshAuthentication(keyManager, ::requestAuthentication).authenticate(connection, sessionId, profile, snapshot)
 
     /**
      * Starts stdout and stderr readers for an interactive SSH shell.
@@ -1199,14 +1293,14 @@ class SshSessionController internal constructor(
      */
     private fun startSshReaders(sessionId: String, managed: ManagedSession) {
         val session = managed.session ?: return
-        managed.readerJobs += scope.launch {
+        managed.readerJobs += launchOwned(managed) {
             onSshStreamEnded(
                 sessionId,
                 managed,
                 readStream(sessionId, session.stdout),
             )
         }
-        managed.readerJobs += scope.launch {
+        managed.readerJobs += launchOwned(managed) {
             onSshStreamEnded(
                 sessionId,
                 managed,
@@ -1224,18 +1318,21 @@ class SshSessionController internal constructor(
      * job is started; [runSshKeepaliveLoop] requires a positive interval.
      */
     private fun startSshKeepalive(sessionId: String, managed: ManagedSession) {
-        val keepaliveSeconds = connectionPreferencesStore.current().keepaliveSeconds
+        managed.connection.addConnectionMonitor { reason ->
+            cleanupScope.launch { finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, reason) }
+        }
+        val keepaliveSeconds = managed.preferences.keepaliveSeconds
         if (keepaliveSeconds <= 0) return
-        managed.keepaliveJob = scope.launch {
+        managed.keepaliveJob = launchOwned(managed) {
             runSshKeepaliveLoop(
                 intervalMillis = keepaliveSeconds * 1_000L,
                 isSessionActive = { sessionsById[sessionId] === managed },
-                sendKeepalive = { managed.connection.sendIgnorePacket() },
+                sendKeepalive = { managed.connection.ping(15_000L); managed.lastConfirmedNanos = System.nanoTime() },
                 onFailure = { error ->
                     MangoLog.warn(MangoLogEvent.SSH_KEEPALIVE_FAILED, error)
                     finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
                 },
-                waitForNextKeepalive = keepaliveScheduler::waitForNextKeepalive,
+                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.preferences.backgroundKeepaliveMultiplier) },
             )
         }
     }
@@ -1268,9 +1365,9 @@ class SshSessionController internal constructor(
             }
         }
         managed.sshFeatureKeepaliveJob?.cancel()
-        val keepaliveSeconds = connectionPreferencesStore.current().keepaliveSeconds
+        val keepaliveSeconds = managed.preferences.keepaliveSeconds
         if (keepaliveSeconds <= 0) return
-        managed.sshFeatureKeepaliveJob = scope.launch {
+        managed.sshFeatureKeepaliveJob = launchOwned(managed) {
             runSshKeepaliveLoop(
                 intervalMillis = keepaliveSeconds * 1_000L,
                 isSessionActive = {
@@ -1279,13 +1376,13 @@ class SshSessionController internal constructor(
                             managed.sshFeatureConnection === connection
                         }
                 },
-                sendKeepalive = { connection.sendIgnorePacket() },
+                sendKeepalive = { connection.ping(15_000L); managed.lastConfirmedNanos = System.nanoTime() },
                 onFailure = { error ->
                     if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
                         MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)
                     }
                 },
-                waitForNextKeepalive = keepaliveScheduler::waitForNextKeepalive,
+                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.preferences.backgroundKeepaliveMultiplier) },
             )
         }
     }
@@ -1300,10 +1397,10 @@ class SshSessionController internal constructor(
         managed: ManagedSession,
         process: MoshPtyProcess,
     ) {
-        managed.readerJobs += scope.launch {
+        managed.readerJobs += launchOwned(managed) {
             try {
                 val streamEnd = readStream(sessionId, process.input)
-                if (sessionsById[sessionId] !== managed) return@launch
+                if (sessionsById[sessionId] !== managed) return@launchOwned
                 val childExited = runCatching { process.awaitExit() }
                 val reason = if (streamEnd is StreamEnd.EOF && childExited.isSuccess) {
                     SessionEndReason.REMOTE_EXIT
@@ -1369,7 +1466,7 @@ class SshSessionController internal constructor(
         } else {
             snippet.script
         }
-        send(sessionId, text.encodeToByteArray())
+        sessionsById[sessionId]?.writer?.send(text.encodeToByteArray())
     }
 
     private fun createPortForward(connection: Connection, rule: PortForwardRule): ManagedPortForward {
@@ -1433,18 +1530,45 @@ class SshSessionController internal constructor(
      * text; raw server lines are never surfaced because a valid line contains
      * the sensitive Mosh key.
      */
-    private fun bootstrapMosh(connection: Connection): MoshBootstrap {
-        val bootstrapSession = connection.openSession()
-        return try {
-            bootstrapSession.execCommand(MOSH_SERVER_COMMAND)
-            val reader = bootstrapSession.stdout.bufferedReader()
-            for (lineIndex in 0 until MAX_MOSH_BOOTSTRAP_LINES) {
-                val line = reader.readLine() ?: break
-                MoshBootstrapParser.parse(line)?.let { bootstrap -> return bootstrap }
-            }
-            throw MoshBootstrapException()
+    private fun prepareWorkspace(sessionId: String, managed: ManagedSession, connection: Connection): String? = try {
+        TmuxWorkspaces.prepare(connection, managed.profile.workspace)
+    } catch (_: WorkspaceUnavailableException) {
+        val accepted = requestPrompt(SessionPrompt.Authentication(UUID.randomUUID().toString(), sessionId,
+            SessionPromptText.App(SessionPromptTextKind.WORKSPACE_UNAVAILABLE),
+            SessionPromptText.App(SessionPromptTextKind.WORKSPACE_FALLBACK), emptyList())) != null
+        if (accepted) null else throw WorkspaceUnavailableException()
+    }
+
+    /** A workspace reattach is a new session, using the original connection's fixed profile. */
+    fun openWorkspace(sessionId: String, workspace: website.sung.mangossh.domain.TmuxWorkspace): String? {
+        val profile = sessionsById[sessionId]?.profile ?: return null
+        require(workspace.isValid())
+        return connect(profile.copy(workspace = workspace, startupSnippetId = null))
+    }
+
+    internal suspend fun readEditableText(sessionId: String, path: String): EditableRemoteText = withContext(Dispatchers.IO) {
+        BlockingOperation(15_000L).use { remoteFiles.readEditable(requireSshFeatureConnection(sessionId), path, it) }
+    }
+
+    internal suspend fun saveEditableText(sessionId: String, source: EditableRemoteText, draft: String,
+        alternateName: String?, allowDirectOverwrite: Boolean) = withContext(Dispatchers.IO) {
+        BlockingOperation().use { remoteFiles.saveEditable(requireSshFeatureConnection(sessionId), source, draft, alternateName, allowDirectOverwrite, it) }
+    }
+
+    /** Reads workspace metadata through the session's SSH feature connection. */
+    suspend fun listWorkspaces(sessionId: String): List<RemoteWorkspace> = withContext(Dispatchers.IO) {
+        TmuxWorkspaces.list(requireSshFeatureConnection(sessionId))
+    }
+
+    private fun bootstrapMosh(connection: Connection, workspaceId: String?): MoshBootstrap = BlockingOperation(30_000L).use { operation ->
+        val session = connection.openSession()
+        if (!operation.own(session)) throw MoshBootstrapException()
+        try {
+            session.execCommand(MOSH_SERVER_COMMAND + (workspaceId?.let { " -- " + TmuxWorkspaces.attachCommand(it) } ?: ""))
+            BoundedProtocolReader.lines(session.stdout, MAX_MOSH_BOOTSTRAP_LINES, 4096, 32 * 1024,
+                MoshBootstrapParser::parse) ?: throw MoshBootstrapException()
         } finally {
-            runCatching { bootstrapSession.close() }
+            operation.release(session)
         }
     }
 
@@ -1482,7 +1606,8 @@ class SshSessionController internal constructor(
     ): Connection? {
         val connection = synchronized(managed.sshFeatureLock) { managed.sshFeatureConnection } ?: return null
         return try {
-            connection.sendIgnorePacket()
+            connection.ping(15_000L)
+            managed.lastConfirmedNanos = System.nanoTime()
             connection
         } catch (error: Exception) {
             if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
@@ -1505,7 +1630,10 @@ class SshSessionController internal constructor(
         val sameEndpoint = stored.hostname == managed.profile.hostname &&
             stored.port == managed.profile.port &&
             stored.route == managed.profile.route
-        return if (sameEndpoint) stored else managed.profile
+        return if (sameEndpoint) stored.copy(overrides = managed.profile.overrides,
+            agentPolicy = managed.profile.agentPolicy, requireReauthentication = managed.profile.requireReauthentication,
+            workspace = managed.profile.workspace, jumpProfileIds = managed.profile.jumpProfileIds,
+            agentForwarding = managed.profile.agentForwarding) else managed.profile
     }
 
     /** Re-authenticates a lost Mosh companion through the route held by the terminal session. */
@@ -1524,7 +1652,7 @@ class SshSessionController internal constructor(
             }
             connection.connect(
                 HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                connectTimeoutMillis(),
+                managed.preferences.connectTimeoutSeconds * 1_000,
                 KEY_EXCHANGE_TIMEOUT_MILLIS,
             )
             if (!authenticate(connection, sessionId, profile, snapshot)) {
@@ -1587,15 +1715,15 @@ class SshSessionController internal constructor(
         return true
     }
 
-    private fun collectServerResourceReport(connection: Connection): String {
-        val resourceSession = connection.openSession()
-        return try {
-            resourceSession.execCommand(RESOURCE_COMMAND)
-            resourceSession.stdout.bufferedReader().use { reader ->
-                reader.readText().take(MAX_RESOURCE_REPORT_CHARS).trim().ifBlank { "No resource data returned" }
-            }
+    private fun collectServerResourceReport(connection: Connection): String = BlockingOperation(15_000L).use { operation ->
+        val session = connection.openSession()
+        check(operation.own(session))
+        try {
+            session.execCommand(RESOURCE_COMMAND)
+            BoundedProtocolReader.bytes(session.stdout, 32 * 1024).toString(Charsets.UTF_8).trim()
+                .ifBlank { context.appString(R.string.resource_report_empty) }
         } finally {
-            runCatching { resourceSession.close() }
+            operation.release(session)
         }
     }
 
@@ -1628,9 +1756,10 @@ class SshSessionController internal constructor(
      * feed a transport nobody owns.
      */
     private fun requestPrompt(prompt: SessionPrompt): List<String>? {
-        if (sessionsById[prompt.sessionId] == null) return null
-        val waiter = promptRegistry.register(prompt.requestId, prompt.sessionId)
-        _prompts.update { it + prompt }
+        val managed = sessionsById[prompt.sessionId] ?: return null
+        val waiter = managed.lifecycle.whileOpen {
+            promptRegistry.register(prompt.requestId, prompt.sessionId).also { _prompts.update { it + prompt } }
+        } ?: return null
         return runBlocking {
             try {
                 withTimeoutOrNull(PROMPT_TIMEOUT_MILLIS) { waiter.await() }
@@ -1736,11 +1865,21 @@ class SshSessionController internal constructor(
     private class ManagedSession(
         val connection: Connection,
         val profile: ConnectionProfile,
+        val defaultPreferences: website.sung.mangossh.domain.ConnectionPreferences,
+        val initialSnapshot: VaultSnapshot,
         val protocol: ConnectionProtocol,
         val kind: SessionKind = SessionKind.TERMINAL,
     ) {
+        val preferences = profile.overrides.resolve(defaultPreferences)
         /** Guards companion replacement and forward attachment as one lifecycle boundary. */
-        val sshFeatureLock = Any()
+        val lifecycle = SessionLifecycle()
+        val jumpConnections = mutableListOf<Connection>()
+        @Volatile var lastConfirmedNanos = 0L
+        @Volatile var configuredRoute = profile.route
+        val sshFeatureLock = lifecycle.lock
+        @Volatile var inputReady = false
+        @Volatile var writer: TerminalTransport? = null
+        @Volatile var resizeQueue: TerminalResizeQueue? = null
 
         /** Serializes Mosh companion authentication so callers share one reconnect. */
         val sshFeatureReconnectMutex = Mutex()
@@ -1749,8 +1888,10 @@ class SshSessionController internal constructor(
          * The authenticated carrier for SFTP, resource queries, and forwards.
          * For Mosh this may be detached and replaced without ending the PTY.
          */
-        @Volatile
-        var sshFeatureConnection: Connection? = connection
+        private val sshFeatures = SshFeatureConnection(lifecycle, connection)
+        var sshFeatureConnection: Connection?
+            get() = sshFeatures.current
+            set(value) { sshFeatures.current = value }
 
         /** Set once the browser is done; the connection closes when its queue drains. */
         @Volatile
@@ -1759,8 +1900,8 @@ class SshSessionController internal constructor(
         @Volatile
         var connectionJob: Job? = null
 
-        @Volatile
-        var keepaliveJob: Job? = null
+        val healthChecking = java.util.concurrent.atomic.AtomicBoolean(false)
+        @Volatile var keepaliveJob: Job? = null
 
         @Volatile
         var sshFeatureKeepaliveJob: Job? = null
@@ -1811,6 +1952,8 @@ class SshSessionController internal constructor(
     private class VaultSshAgent(
         keys: List<StoredSshKey>,
         private val keyManager: SshKeyManager,
+        private val authorized: () -> Boolean,
+        private val authorizeSignature: () -> Boolean,
     ) : AuthAgentCallback {
         private val identities: Map<String, AgentIdentity> = buildMap {
             keys.filterNot(StoredSshKey::requiresPassphrase).forEach { key ->
@@ -1823,7 +1966,7 @@ class SshSessionController internal constructor(
         }
 
         override fun retrieveIdentities(): Map<String, ByteArray> =
-            identities.values.associate { identity -> identity.label to identity.publicKeyBlob }
+            if (authorized()) identities.values.associate { identity -> identity.label to identity.publicKeyBlob } else emptyMap()
 
         override fun addIdentity(keyPair: KeyPair, comment: String, confirmUse: Boolean, lifetime: Int): Boolean = false
 
@@ -1833,8 +1976,9 @@ class SshSessionController internal constructor(
 
         override fun getKeyPair(publicKey: ByteArray): KeyPair? =
             identities[Base64.getEncoder().encodeToString(publicKey)]?.keyPair
+                ?.takeIf { authorized() && authorizeSignature() && authorized() }
 
-        override fun isAgentLocked(): Boolean = false
+        override fun isAgentLocked(): Boolean = !authorized()
 
         override fun setAgentLock(lockPassphrase: String): Boolean = false
 
@@ -1868,7 +2012,6 @@ class SshSessionController internal constructor(
         }
 
     /** Authentication rejection intentionally carries a user-safe message only. */
-    private class SshAuthenticationException : Exception()
 
     /** Signals that the remote command did not return a valid Mosh bootstrap record. */
     private class MoshBootstrapException(cause: Throwable? = null) : Exception(cause)
