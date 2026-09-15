@@ -60,3 +60,46 @@ GitHub `ci-signing` 环境的受保护分支策略及环境 secrets 仍需仓库
 - 已安装应用、两种产物与 Studio debug 证书一致，使用保留数据覆盖安装，最终保留 GitHub debug。核对原有 29 个文件无丢失、加密保险库内容一致；唯一变化仍是 Profile Installer 记录。隔离 SSH/tmux 服务及本轮 ADB 映射已回收。没有提交、推送或发布。
 
 本次增量原始报告：本机临时目录中的 `mangossh-host-workflows-final-build.log`、`mangossh-host-workflows-fdroid-final-device.log`、`mangossh-host-workflows-github-final-device.log`。
+
+
+## 主机编辑页改造（2026-09-15）
+
+先按用户指定顺序整理现有成果，再开始编辑器改造。以下三个提交已在本地 `develop` 创建，没有推送：
+
+1. `70388df build(ssh): vendor patched sshlib 2.2.48`
+2. `282fb4e feat: improve session reliability and SSH workflows`
+3. `13fa9dc ci: isolate signing from Android validation`
+
+编辑器改造独立保留为未提交差异：
+
+- 手机全屏；窗口宽度至少 600 dp 时居中展示，最大宽度 720 dp。主页面仅保留基本字段及连接/跳板/启动/安全/高级五个摘要入口。
+- 同一容器内导航，详情共用草稿；主页面保存按钮固定，适配键盘。返回详情不落库，放弃修改需要确认；保存状态恢复保留草稿、所在详情及主页面滚动位置。
+- 路由、认证、终端及其他枚举改为当前值选择；密钥、片段及授权允许列表按需打开。Mosh 清除跳板、tmux 与片段替换均可取消。
+- 关闭 agent forwarding 隐藏授权详情并保留策略；授权弹窗全部内容可滚动。隐藏字段的无效配置在主页面入口和保存提示中标明。
+- 保留现有领域及保险库接口。表单完整携带主机元数据，仓库原有的收藏、排序、使用记录保护继续生效。新增文字提供英文和简体中文。
+
+最终验证：
+
+- JDK 17：GitHub 259 项、F-Droid 247 项单元测试通过；termlib 6 项、SSH 模块 2 项通过。
+- 两种发行版 Lint、debug APK、AndroidTest 编译通过；termlib Lint 和 AndroidTest 编译通过。
+- 两种发行版各通过 15 项编辑相关设备回归，覆盖生产路由选择器、草稿状态恢复、系统返回、双向启动互斥、Mosh 确认、缺失密钥、保存/取消、320×420 dp / 1.6 倍字体、宽屏及实际键盘展开。最后的授权弹窗滚动调整，另在两种发行版各通过 2 项增量测试。没有将该增量描述为整套设备测试重跑。
+- 手机、短屏大字体、宽屏及键盘界面截图已检查。模拟器系统屏幕尺寸和字体未改；软键盘显示设置仅在键盘测试期间临时启用，结束后恢复原值。
+- 最终两种 APK 的 ELF PT_LOAD 和 ZIP 16 KiB 对齐检查通过；四 ABI Mosh/PTY、terminfo、GPL/BSD 材料完整。
+- 沿用原有 emulator-5554，核对已安装应用、产物及 Studio debug 证书并检查版本后，使用 `install -r -t` 保留数据覆盖安装。最终保留 GitHub debug。原有 29 个文件无丢失，保险库 SHA-256 一致，仅 Profile Installer 记录变化；只清理本轮专属截图缓存。
+
+本轮原始记录位于本机临时目录：`mangossh-host-editor-final-build.log`、`mangossh-host-editor-{github,fdroid}-final-device.log`、`mangossh-host-editor-{github,fdroid}-agent-device.log`。该轮没有重新运行整个应用的完整设备套件，也没有新增远端网络或协议行为。
+
+
+## 编辑器减少弹框（2026-09-15）
+
+- 协议、路由、认证、tmux 模式及再认证改为详情页内直接选择，选项在窄屏和大字体下自动换行。
+- 超时、心跳、后台倍率、终端类型及 agent 授权期限改为锚定当前设置行的紧凑下拉菜单。
+- 登录密钥、启动片段、跳板和 agent 允许列表继续使用可搜索的长列表选择界面；放弃草稿、Mosh 清除跳板及替换启动方式保留明确确认。
+- 主页面仍为基本字段和五个摘要入口，未恢复原来的长表单。新增回归直接断言简单选项没有对话框；同时覆盖长列表搜索、路由联动与必要确认。
+
+
+本轮验证：JDK 17 下 GitHub/F-Droid 单元测试 259/247 项、termlib 6 项、SSH 模块 2 项通过；双发行版 Lint、debug APK、AndroidTest 编译及终端模块检查通过。两种发行版在原有 emulator-5554 上各通过 17 项编辑设备回归，连接与启动详情截图已检查。两种最终 APK 原生资产及 GPL/BSD 材料完整，ELF/ZIP 16 KiB 对齐通过。
+
+安装前核对已安装 APK、产物和 Studio debug 证书及版本，保留数据覆盖安装，最终保留 GitHub debug。原有 29 个文件无丢失，加密保险库内容一致，原有文件仅 Profile Installer 记录变化。软键盘显示设置已恢复，本轮专属截图缓存已清理。编辑页改动仍未提交，没有推送。
+
+报告保留于本机临时目录：`mangossh-editor-inline-build.log`、`mangossh-editor-inline-fdroid-device.log`、`mangossh-editor-inline-github-device.log`。

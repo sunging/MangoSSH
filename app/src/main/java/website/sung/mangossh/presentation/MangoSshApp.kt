@@ -119,7 +119,6 @@ import website.sung.mangossh.data.vault.PortForwardType
 import website.sung.mangossh.data.vault.StoredSshKey
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
-import website.sung.mangossh.domain.ConnectionProfileDraft
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.domain.HostSortMode
@@ -320,7 +319,7 @@ fun MangoSshApp(
             },
         )
     }
-    var editingHost by remember { mutableStateOf<ConnectionProfile?>(null) }
+    var editingHostId by rememberSaveable { mutableStateOf<String?>(null) }
     var showSshConfigImport by remember { mutableStateOf(false) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
     var showTransfers by rememberSaveable { mutableStateOf(false) }
@@ -340,7 +339,7 @@ fun MangoSshApp(
     }
 
     fun openHostEditor(host: ConnectionProfile? = null) {
-        editingHost = host
+        editingHostId = host?.id
         showHostEditor = true
     }
 
@@ -718,21 +717,21 @@ fun MangoSshApp(
         onSave = { viewModel.importSshProfiles(it); showSshConfigImport = false },
         onDismiss = { showSshConfigImport = false })
 
-    if (showHostEditor) {
-        HostEditorSheet(
+    if (showHostEditor && (editingHostId == null || hosts.any { it.id == editingHostId })) {
+        HostEditorDialog(
             hosts = hosts,
             defaults = connectionPreferences,
-            initialHost = editingHost,
+            initialHost = hosts.firstOrNull { it.id == editingHostId },
             keys = keys,
             snippets = snippets,
             onDismiss = {
                 showHostEditor = false
-                editingHost = null
+                editingHostId = null
             },
             onSave = { draft ->
                 viewModel.saveHost(draft)
                 showHostEditor = false
-                editingHost = null
+                editingHostId = null
             },
         )
     }
@@ -1661,283 +1660,7 @@ private fun PortForwardRule.displayDescription(): String = when (type) {
     PortForwardType.DYNAMIC -> "$bindHost:$bindPort · SOCKS5"
 }
 
-@Composable
-private fun HostEditorSheet(
-    hosts: List<ConnectionProfile>,
-    defaults: website.sung.mangossh.domain.ConnectionPreferences,
-    initialHost: ConnectionProfile?,
-    keys: List<StoredSshKey>,
-    snippets: List<CommandSnippet>,
-    onDismiss: () -> Unit,
-    onSave: (ConnectionProfileDraft) -> Unit,
-) {
-    var label by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.label.orEmpty()) }
-    var hostname by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.hostname.orEmpty()) }
-    var portText by rememberSaveable(initialHost?.id) { mutableStateOf((initialHost?.port ?: 22).toString()) }
-    var username by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.username.orEmpty()) }
-    var protocol by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.protocol ?: ConnectionProtocol.SSH) }
-    var route by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.route ?: ConnectionRoute.DIRECT) }
-    var authentication by rememberSaveable(initialHost?.id) {
-        mutableStateOf(initialHost?.authentication ?: AuthenticationMethod.PRIVATE_KEY)
-    }
-    var keyId by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.keyId) }
-    var startupSnippetId by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.startupSnippetId) }
-    var agentForwarding by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.agentForwarding ?: false) }
-    var overrides by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.overrides ?: website.sung.mangossh.domain.HostConnectionOverrides()) }
-    var agentPolicy by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.agentPolicy ?: website.sung.mangossh.domain.HostAgentPolicy()) }
-    var reauthenticate by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.requireReauthentication) }
-    var workspace by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.workspace ?: website.sung.mangossh.domain.TmuxWorkspace()) }
-    var jumpIds by rememberSaveable(initialHost?.id) { mutableStateOf(initialHost?.jumpProfileIds.orEmpty()) }
-    var pendingWorkspace by remember { mutableStateOf<website.sung.mangossh.domain.TmuxWorkspace?>(null) }
-    pendingWorkspace?.let { next ->
-        AlertDialog(onDismissRequest = { pendingWorkspace = null }, title = { Text(stringResource(R.string.host_policy_workspace)) },
-            text = { Text(stringResource(R.string.host_policy_workspace_exclusive)) },
-            confirmButton = { TextButton(onClick = { workspace = next; startupSnippetId = null; pendingWorkspace = null }) { Text(stringResource(R.string.common_ok)) } },
-            dismissButton = { TextButton(onClick = { pendingWorkspace = null }) { Text(stringResource(R.string.common_cancel)) } })
-    }
-    val port = portText.toIntOrNull()
-    val usesSystemTailscale = route == ConnectionRoute.TAILNET
-    val authenticationIsConfigured = usesSystemTailscale ||
-        authentication != AuthenticationMethod.PRIVATE_KEY ||
-        keys.any { it.id == keyId }
-    val canSave = hostname.isNotBlank() &&
-        username.isNotBlank() &&
-        port != null &&
-        port in 1..65535 &&
-        authenticationIsConfigured && overrides.isValid() && workspace.isValid() &&
-        (workspace.mode == website.sung.mangossh.domain.WorkspaceMode.DISABLED || startupSnippetId == null) &&
-        (protocol == ConnectionProtocol.SSH || jumpIds.isEmpty())
-    val firstFieldFocusRequester = remember { FocusRequester() }
-
-    LaunchedEffect(initialHost?.id) {
-        firstFieldFocusRequester.requestFocus()
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusProperties {
-                    onExit = { cancelFocusChange() }
-                }
-                .focusGroup()
-                .verticalScroll(rememberScrollState())
-                .padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
-        ) {
-            Text(
-                text = if (initialHost == null) stringResource(R.string.ui_new_server) else stringResource(R.string.ui_edit_server),
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            Spacer(Modifier.height(16.dp))
-            OutlinedTextField(
-                value = label,
-                onValueChange = { label = it },
-                label = { Text(stringResource(R.string.ui_name_optional)) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(firstFieldFocusRequester),
-                singleLine = true,
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = hostname,
-                onValueChange = { hostname = it },
-                label = { Text(stringResource(R.string.ui_hostname_or_ip_address)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                isError = hostname.isBlank(),
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text(stringResource(R.string.ui_username)) },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    isError = username.isBlank(),
-                )
-                OutlinedTextField(
-                    value = portText,
-                    onValueChange = { portText = it.filter(Char::isDigit) },
-                    label = { Text(stringResource(R.string.ui_port)) },
-                    modifier = Modifier.width(112.dp),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = port == null || port !in 1..65535,
-                )
-            }
-            Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.ui_protocol), style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ConnectionProtocol.entries.forEach { option ->
-                    FilterChip(
-                        selected = protocol == option,
-                        onClick = { protocol = option },
-                        label = { Text(option.label) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.ui_network_route), style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(8.dp))
-            ConnectionRouteSelector(
-                selected = route,
-                onSelected = { option ->
-                    if (route != option) {
-                        authentication = authenticationAfterRouteSelection(option, authentication)
-                    }
-                    route = option
-                },
-            )
-            if (usesSystemTailscale) {
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = stringResource(R.string.ui_tailnet_routing_reaches_the_target_through_the_device_s_enabled_tailscal),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Spacer(Modifier.height(20.dp))
-                Text(stringResource(R.string.ui_authentication), style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(8.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AuthenticationMethod.entries
-                        .filterNot {
-                            route == ConnectionRoute.DIRECT &&
-                                it == AuthenticationMethod.TAILSCALE_SSH
-                        }
-                        .forEach { option ->
-                            FilterChip(
-                                selected = authentication == option,
-                                onClick = { authentication = option },
-                                label = { Text(option.label()) },
-                            )
-                        }
-                }
-                if (route == ConnectionRoute.TSNET) {
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = stringResource(R.string.ui_embedded_tailscale_proxies_only_this_profile_s_ssh_and_mosh_traffic_tail),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (authentication == AuthenticationMethod.PRIVATE_KEY) {
-                    Spacer(Modifier.height(16.dp))
-                    Text(stringResource(R.string.ui_shared_private_key), style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(8.dp))
-                    if (keys.isEmpty()) {
-                        Text(
-                            stringResource(R.string.ui_generate_or_import_a_private_key_on_the_keys_page_first),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            keys.forEach { key ->
-                                FilterChip(
-                                    selected = keyId == key.id,
-                                    onClick = { keyId = key.id },
-                                    label = { Text(key.label) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            if (protocol == ConnectionProtocol.MOSH) {
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = stringResource(R.string.ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.ui_run_after_connection), style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = startupSnippetId == null,
-                    onClick = { startupSnippetId = null },
-                    label = { Text(stringResource(R.string.ui_do_not_run)) },
-                )
-                snippets.forEach { snippet ->
-                    FilterChip(
-                        selected = startupSnippetId == snippet.id,
-                        onClick = { startupSnippetId = snippet.id },
-                        label = { Text(snippet.label) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            if (protocol == ConnectionProtocol.SSH) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = agentForwarding, onCheckedChange = { agentForwarding = it })
-                    Text(stringResource(R.string.ui_enable_ssh_agent_forwarding), style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-            HostPolicyEditor(defaults, overrides, { overrides = it }, agentPolicy, { agentPolicy = it }, keys, keyId,
-                reauthenticate, { reauthenticate = it }, workspace, {
-                    if (it.mode != website.sung.mangossh.domain.WorkspaceMode.DISABLED && startupSnippetId != null) pendingWorkspace = it else workspace = it
-                }, jumpIds, { jumpIds = it }, hosts, initialHost?.id, protocol)
-            Spacer(Modifier.height(28.dp))
-            Button(
-                onClick = {
-                    onSave(
-                        ConnectionProfileDraft(
-                            id = initialHost?.id,
-                            overrides = overrides,
-                            agentPolicy = agentPolicy,
-                            requireReauthentication = reauthenticate,
-                            workspace = workspace,
-                            jumpProfileIds = jumpIds,
-                            label = label,
-                            hostname = hostname,
-                            port = requireNotNull(port),
-                            username = username,
-                            protocol = protocol,
-                            route = route,
-                            authentication = authentication,
-                            keyId = keyId,
-                            startupSnippetId = startupSnippetId,
-                            agentForwarding = protocol == ConnectionProtocol.SSH && agentForwarding,
-                        ),
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = canSave,
-            ) {
-                Text(stringResource(R.string.ui_save_profile))
-            }
-            Spacer(Modifier.height(8.dp))
-            FilledTonalButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.common_cancel))
-            }
-        }
-    }
-}
-
-/** Three-route selector kept vertical so all choices remain visible on narrow phones. */
-@Composable
-internal fun ConnectionRouteSelector(
-    selected: ConnectionRoute,
-    onSelected: (ConnectionRoute) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ConnectionRoute.entries.forEach { option ->
-            FilterChip(
-                selected = selected == option,
-                onClick = { onSelected(option) },
-                modifier = Modifier.testTag("connection_route_${option.name}"),
-                label = { Text(option.label()) },
-            )
-        }
-    }
-}
-
+/** Route changes preserve the established Tailnet authentication semantics. */
 internal fun authenticationAfterRouteSelection(
     route: ConnectionRoute,
     current: AuthenticationMethod,
@@ -2096,7 +1819,7 @@ internal fun ConnectionRoute.label(): String = stringResource(
 )
 
 @Composable
-private fun AuthenticationMethod.label(): String = stringResource(
+internal fun AuthenticationMethod.label(): String = stringResource(
     when (this) {
         AuthenticationMethod.PRIVATE_KEY -> R.string.authentication_private_key
         AuthenticationMethod.PASSWORD -> R.string.authentication_password
