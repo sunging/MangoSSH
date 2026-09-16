@@ -22,7 +22,9 @@ from paramiko.sftp import CMD_INIT, CMD_VERSION
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=22349)
-parser.add_argument("--wsl-tmux", action="store_true")
+tool_mode = parser.add_mutually_exclusive_group()
+tool_mode.add_argument("--wsl-tmux", action="store_true")
+tool_mode.add_argument("--native-tools", action="store_true", help="Run isolated tmux and Mosh fixtures directly on Linux")
 parser.add_argument("--no-posix-rename", action="store_true")
 parser.add_argument("--reject-metadata", action="store_true")
 parser.add_argument("--stall-forward-cancel", action="store_true")
@@ -31,6 +33,20 @@ tmux_socket = "mangossh-fixture-" + uuid.uuid4().hex
 key = paramiko.RSAKey.generate(2048)
 workspace = tempfile.TemporaryDirectory(prefix="mangossh-ssh-test-")
 root = Path(workspace.name).resolve()
+
+def linux_command(*words):
+    """Keep Linux CI tools direct while preserving the Windows/WSL fixture adapter."""
+    return (["wsl.exe", "--exec"] if args.wsl_tmux else []) + list(words)
+
+def linux_path(name):
+    """Resolve only repository-owned fixture helpers, never a remote command path."""
+    path = str(Path(__file__).resolve().parent / name)
+    if not args.wsl_tmux:
+        return path
+    return subprocess.run(linux_command("wslpath", "-a", path),
+        capture_output=True, timeout=10, check=True).stdout.decode().strip()
+
+tools_enabled = args.wsl_tmux or args.native_tools
 
 class Files(paramiko.SFTPServerInterface):
     def local(self, path):
@@ -95,19 +111,16 @@ class Sftp(paramiko.SFTPServer):
 class Server(paramiko.ServerInterface):
     def __init__(self): self.forward = set()
     def check_channel_exec_request(self, channel, command):
-        if args.wsl_tmux and command == b"fixture-mosh":
+        if tools_enabled and command == b"fixture-mosh":
             def start_mosh():
                 relay = None
                 try:
-                    def linux_path(name):
-                        return subprocess.run(["wsl.exe", "--exec", "wslpath", "-a", str(Path(__file__).resolve().parent / name)],
-                            capture_output=True, timeout=10, check=True).stdout.decode().strip()
-                    server = subprocess.run(["wsl.exe", "--exec", "env", "LANG=C.UTF-8", "MOSH_SERVER_NETWORK_TMOUT=30",
-                        "mosh-server", "new", "-s", "-i", "127.0.0.1", "-c", "256", "--", "/bin/sh", linux_path("ssh-fixture-mosh.sh")],
+                    server = subprocess.run(linux_command("env", "LANG=C.UTF-8", "MOSH_SERVER_NETWORK_TMOUT=30",
+                        "mosh-server", "new", "-s", "-i", "127.0.0.1", "-c", "256", "--", "/bin/sh", linux_path("ssh-fixture-mosh.sh")),
                         capture_output=True, timeout=15)
                     match = re.search(rb"MOSH CONNECT ([0-9]+) ([A-Za-z0-9+/=]+)", server.stdout)
                     if not match: channel.send_exit_status(1); return
-                    relay = subprocess.Popen(["wsl.exe", "--exec", "python3", linux_path("ssh-fixture-udp.py"), match[1].decode()],
+                    relay = subprocess.Popen(linux_command("python3", linux_path("ssh-fixture-udp.py"), match[1].decode()),
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
                     channel.sendall(b"MOSH CONNECT 1 " + match[2] + b"\n")
                     def to_udp():
@@ -131,7 +144,7 @@ class Server(paramiko.ServerInterface):
                     channel.shutdown_write()
             threading.Thread(target=start_mosh, daemon=True).start()
             return True
-        if not args.wsl_tmux: return False
+        if not tools_enabled: return False
         try: words = shlex.split(command.decode("utf-8"))
         except (ValueError, UnicodeError): return False
         version = words == ["tmux", "-V"]
@@ -142,7 +155,7 @@ class Server(paramiko.ServerInterface):
         if creating: words.append("/bin/cat")
         def execute():
             try:
-                result = subprocess.run(["wsl.exe", "--exec", "tmux", "-L", tmux_socket, "-f", "/dev/null"] + words[1:],
+                result = subprocess.run(linux_command("tmux", "-L", tmux_socket, "-f", "/dev/null") + words[1:],
                     capture_output=True, timeout=15)
                 channel.sendall(result.stdout)
                 channel.send_exit_status(result.returncode)
@@ -200,7 +213,7 @@ listener = socket.socket()
 listener.bind(("127.0.0.1", args.port))
 listener.listen(16)
 print("Disposable loopback fixture ready", flush=True)
-if args.wsl_tmux: print("Private fixture tmux socket: " + tmux_socket, flush=True)
+if tools_enabled: print("Private fixture tmux socket: " + tmux_socket, flush=True)
 def stop_from_stdin():
     for line in sys.stdin:
         if line.strip() == "stop":
@@ -214,6 +227,6 @@ try:
         threading.Thread(target=serve, args=(client,), daemon=True).start()
 finally:
     listener.close()
-    if args.wsl_tmux:
-        subprocess.run(["wsl.exe", "--exec", "tmux", "-L", tmux_socket, "kill-server"], capture_output=True, timeout=10)
+    if tools_enabled:
+        subprocess.run(linux_command("tmux", "-L", tmux_socket, "kill-server"), capture_output=True, timeout=10)
     workspace.cleanup()

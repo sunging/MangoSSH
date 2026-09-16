@@ -13,7 +13,7 @@ trap cleanup EXIT
 for mode in normal fallback metadata cancel; do
   options=()
   case "$mode" in
-    normal) port=22349 ;;
+    normal) port=22349; options=(--native-tools) ;;
     fallback) port=22350; options=(--no-posix-rename) ;;
     metadata) port=22351; options=(--reject-metadata) ;;
     cancel) port=22352; options=(--stall-forward-cancel) ;;
@@ -35,4 +35,6 @@ done
   -Pandroid.testInstrumentationRunnerArguments.fixtureMetadataPort=22351 \
   -Pandroid.testInstrumentationRunnerArguments.fixtureCancelPort=22352 \
   -Pandroid.testInstrumentationRunnerArguments.requireFixtures=true \
-  -Pandroid.testInstrumentationRunnerArguments.fixtureOwnership=true
+  -Pandroid.testInstrumentationRunnerArguments.fixtureOwnership=true \
+  -Pandroid.testInstrumentationRunnerArguments.fixtureTmux=true \
+  -Pandroid.testInstrumentationRunnerArguments.fixtureMosh=true

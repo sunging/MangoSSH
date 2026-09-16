@@ -222,6 +222,8 @@ jobs:
       # this runs on a stable released image rather than the compileSdk preview.
       - name: Prepare disposable SSH fixtures
         run: |
+          sudo apt-get update
+          sudo apt-get install --yes tmux mosh
           python3 -m venv "$RUNNER_TEMP/ssh-fixture-venv"
           "$RUNNER_TEMP/ssh-fixture-venv/bin/pip" install paramiko==4.0.0
 
