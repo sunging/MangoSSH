@@ -12,6 +12,7 @@ import java.util.UUID
 class RemoteSafetyInstrumentedTest {
     private fun fixture(block: (Connection, Int) -> Unit) {
         val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
+        if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
         assumeTrue("Run the disposable tools/ssh-test-fixture.py with adb reverse", port != null)
         val connection = Connection("127.0.0.1", port!!)
         try {

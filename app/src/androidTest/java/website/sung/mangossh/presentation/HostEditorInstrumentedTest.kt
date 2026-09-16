@@ -35,10 +35,10 @@ class HostEditorInstrumentedTest {
     private val snippets = listOf(CommandSnippet("snippet", "Example snippet", ""))
 
     private fun show(controller: HostEditorController, width: Int = 400, height: Int = 780, font: Float = 1f,
-        onDismiss: () -> Unit = {}, onSave: (ConnectionProfileDraft) -> Unit = {}) {
+        onDismiss: () -> Unit = {}, onSave: (ConnectionProfileDraft) -> Unit = {}, saveOperation: EditorSaveOperation? = null) {
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(1f, font)) { MaterialTheme {
             Surface(Modifier.width(width.dp).height(height.dp)) {
-                HostEditorScreen(controller, listOf(host("jump")), ConnectionPreferences(), keys, snippets, onDismiss, onSave)
+                HostEditorScreen(controller, listOf(host("jump")), ConnectionPreferences(), keys, snippets, onDismiss, onSave, saveOperation = saveOperation)
             }
         } } }
     }
@@ -238,7 +238,7 @@ class HostEditorInstrumentedTest {
 
     @Test fun phoneDialogDoesNotAutofocusAndKeepsSaveAboveKeyboard() {
         compose.setContent { MaterialTheme {
-            HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, {}, {})
+            HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, {}, { _, _ -> })
         } }
         compose.onNodeWithTag("host_editor_label").assertIsNotFocused()
         val initialHeight = compose.onNodeWithTag("host_editor").getUnclippedBoundsInRoot().let { (it.bottom - it.top).value }
@@ -253,11 +253,22 @@ class HostEditorInstrumentedTest {
     @Test fun systemBackFromDialogDetailReturnsToMain() {
         var dismissed = false
         compose.setContent { MaterialTheme {
-            HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, { dismissed = true }, {})
+            HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, { dismissed = true }, { _, _ -> })
         } }
         open(HostEditorPage.ADVANCED)
         androidx.test.espresso.Espresso.pressBack()
         compose.onNodeWithTag("host_editor_save").assertIsDisplayed()
         compose.runOnIdle { assertFalse(dismissed) }
+    }
+
+    @Test fun savingDisablesRepeatAndFailureRetainsDraftForRetry() {
+        val controller = HostEditorController(HostEditorDraft.from(host()).copy(label = "Retained draft"))
+        val save = EditorSaveOperation()
+        show(controller, saveOperation = save, onSave = { save.begin() })
+        compose.onNodeWithTag("host_editor_save").performClick().assertIsNotEnabled()
+        compose.runOnIdle { save.finish(uiText(R.string.vault_write_failed)) }
+        compose.onNodeWithTag("host_editor_save").assertIsEnabled()
+        compose.onNodeWithText(text(R.string.vault_write_failed)).assertIsDisplayed()
+        compose.runOnIdle { assertEquals("Retained draft", controller.draft.label) }
     }
 }

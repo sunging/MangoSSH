@@ -169,7 +169,7 @@ internal data class BackupSettingsCallbacks(
 
 @Immutable
 internal data class SnippetSettingsCallbacks(
-    val onSaveSnippet: (id: String?, label: String, script: String, appendNewline: Boolean) -> Unit,
+    val onSaveSnippet: (id: String?, label: String, script: String, appendNewline: Boolean, operation: website.sung.mangossh.presentation.EditorSaveOperation) -> Unit,
     val onRemoveSnippet: (String) -> Unit,
 )
 

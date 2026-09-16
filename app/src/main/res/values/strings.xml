@@ -734,4 +734,18 @@
     <string name="host_editor_missing_key">Missing key (remove this reference)</string>
     <string name="host_editor_custom_keys">Choose an explicit allowlist</string>
     <string name="host_editor_terminal">Terminal type</string>
+    <string name="port_forward_stopping">Stopping…</string>
+    <string name="port_forward_stopped">Stopped</string>
+    <string name="port_forward_stop_failed">The server did not confirm cancellation. The remote listener may still exist.</string>
+    <string name="transfer_metadata_failed">Cannot preserve file ownership or permissions. The replacement was not committed.</string>
+    <string name="transfer_commit_failed">Final commit failed. The destination may be incomplete. Retry to confirm the destination again.</string>
+    <string name="transfer_space_failed">Insufficient staging space. Additional bytes required: %1$d. Clear finished transfers or free storage.</string>
+    <string name="transfer_verifying">Verifying…</string>
+    <string name="transfer_committing">Committing… Pause and cancel are unavailable.</string>
+    <string name="transfer_counts">Transferred %1$d/%2$d · Skipped %3$d · Failed %4$d</string>
+    <string name="vault_write_failed">Could not save. Your changes have been kept for retry.</string>
+    <string name="vault_invalid">The configuration is invalid. Check the selected keys, hosts and jump chain.</string>
+    <string name="vault_referenced">This host is used as a jump host by: %1$s. Update those hosts first.</string>
+    <string name="vault_not_ready">The vault is not ready. Unlock or reopen it and retry.</string>
+    <string name="vault_saving">Saving…</string>
 </resources>

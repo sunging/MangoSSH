@@ -24,6 +24,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -118,7 +119,8 @@ class SshSessionController internal constructor(
      */
     private val keepaliveScheduler = SessionKeepaliveScheduler(
         appForeground = appForegroundState.foreground,
-        alarm = CoalescingKeepaliveAlarm(createKeepaliveAlarm(context)),
+        alarm = CoalescingKeepaliveAlarm(createKeepaliveAlarm(context), android.os.SystemClock::elapsedRealtime),
+        now = android.os.SystemClock::elapsedRealtime,
         backgroundMultiplier = { connectionPreferencesStore.current().backgroundKeepaliveMultiplier },
     )
 
@@ -448,7 +450,7 @@ class SshSessionController internal constructor(
     fun startPortForward(sessionId: String, rule: PortForwardRule) {
         val runtimeId = portForwardRuntimeId(sessionId, rule.id)
         val existing = _portForwards.value.firstOrNull { it.runtimeId == runtimeId }
-        if (existing?.phase == PortForwardRuntimePhase.ACTIVE || existing?.phase == PortForwardRuntimePhase.STARTING) {
+        if (existing?.phase == PortForwardRuntimePhase.ACTIVE || existing?.phase == PortForwardRuntimePhase.STARTING || existing?.phase == PortForwardRuntimePhase.STOPPING) {
             return
         }
         markPortForwardStarting(runtimeId, sessionId, rule, "Starting tunnel")
@@ -484,19 +486,33 @@ class SshSessionController internal constructor(
      * the duplicate-start guard would otherwise reject its own placeholder.
      */
     private fun activatePortForward(sessionId: String, rule: PortForwardRule, runtimeId: String) {
-        scope.launch {
-            val managed = sessionsById[sessionId]
-            if (managed == null) {
-                updatePortForward(runtimeId, PortForwardRuntimePhase.FAILED, "The SSH session is not open")
-                return@launch
+        val attempt = _portForwards.value.firstOrNull { it.runtimeId == runtimeId } ?: return
+        val managed = sessionsById[sessionId] ?: run {
+            // The session was torn down between the starting placeholder and
+            // this call, so its own sweep in closePortForwards has already run
+            // and will not run again. Leaving the rule starting would strand
+            // it: a restart is refused as a duplicate and stopping returns
+            // early because the session is gone.
+            _portForwards.update { states ->
+                states.map { state ->
+                    if (state === attempt) state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = SESSION_CLOSED_DETAIL) else state
+                }
             }
+            return
+        }
+        val opening = CompletableDeferred<Throwable?>()
+        synchronized(managed.sshFeatureLock) {
+            if (_portForwards.value.firstOrNull { it.runtimeId == runtimeId } !== attempt) return
+            managed.openingForwards[runtimeId] = opening
+        }
+        var openingFailure: Throwable? = null
+        val job = scope.launch {
             try {
                 val connection = requireSshFeatureConnection(sessionId)
                 val forward = createPortForward(connection, rule)
                 val installed = synchronized(managed.sshFeatureLock) {
-                    val stillStarting = _portForwards.value
-                        .firstOrNull { state -> state.runtimeId == runtimeId }
-                        ?.phase == PortForwardRuntimePhase.STARTING
+                    val stillStarting = _portForwards.value.firstOrNull { state -> state.runtimeId == runtimeId } === attempt &&
+                        attempt.phase == PortForwardRuntimePhase.STARTING
                     if (
                         sessionsById[sessionId] === managed &&
                         stillStarting &&
@@ -514,16 +530,24 @@ class SshSessionController internal constructor(
                     }
                 }
                 if (!installed) {
-                    runCatching { forward.close() }
+                    openingFailure = runCatching { forward.close() }.exceptionOrNull()
                     throw CancellationException()
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                updatePortForward(runtimeId, PortForwardRuntimePhase.FAILED, error.toSafeMessage())
+                openingFailure = error
+                synchronized(managed.sshFeatureLock) {
+                    if (_portForwards.value.firstOrNull { it.runtimeId == runtimeId } === attempt)
+                        updatePortForward(runtimeId, PortForwardRuntimePhase.FAILED, error.toSafeMessage())
+                }
                 // A connection opened only for this forward has nothing left to do.
                 closePortForwardSessionIfIdle(sessionId)
             }
+        }
+        job.invokeOnCompletion {
+            managed.openingForwards.remove(runtimeId, opening)
+            opening.complete(openingFailure)
         }
     }
 
@@ -569,20 +593,28 @@ class SshSessionController internal constructor(
     fun stopPortForward(sessionId: String, ruleId: String) {
         val runtimeId = portForwardRuntimeId(sessionId, ruleId)
         val managed = sessionsById[sessionId]
-        // Detaching and publishing under the lock an activation also takes stops
-        // a forward that is still opening from resurrecting the rule as running.
-        val forward = if (managed == null) {
-            updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPED, "Stopped")
-            null
-        } else {
+        if (managed == null) return
+        val (forward, opening) = synchronized(managed.sshFeatureLock) {
+            val phase = _portForwards.value.firstOrNull { it.runtimeId == runtimeId }?.phase
+            if (phase != PortForwardRuntimePhase.ACTIVE && phase != PortForwardRuntimePhase.STARTING) return
+            updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPING, context.appString(R.string.port_forward_stopping))
+            managed.forwards.remove(runtimeId) to managed.openingForwards[runtimeId]
+        }
+        // Remote cancellation waits for a protocol response. Never execute it on the caller's thread.
+        cleanupScope.launch {
+          val openingFailure = opening?.await()
+          closeForwardInBackground(cleanupScope, { forward?.close() }) { closeFailure ->
+            val failure = closeFailure ?: openingFailure
             synchronized(managed.sshFeatureLock) {
-                managed.forwards.remove(runtimeId).also {
-                    updatePortForward(runtimeId, PortForwardRuntimePhase.STOPPED, "Stopped")
+                if (sessionsById[sessionId] === managed &&
+                    _portForwards.value.firstOrNull { it.runtimeId == runtimeId }?.phase == PortForwardRuntimePhase.STOPPING) {
+                    updatePortForward(runtimeId, if (failure == null) PortForwardRuntimePhase.STOPPED else PortForwardRuntimePhase.FAILED,
+                        context.appString(if (failure == null) R.string.port_forward_stopped else R.string.port_forward_stop_failed))
                 }
             }
+            closePortForwardSessionIfIdle(sessionId)
+          }.join()
         }
-        runCatching { forward?.close() }
-        closePortForwardSessionIfIdle(sessionId)
     }
 
     /**
@@ -598,7 +630,7 @@ class SshSessionController internal constructor(
             state.sessionId == sessionId &&
                 (
                     state.phase == PortForwardRuntimePhase.ACTIVE ||
-                        state.phase == PortForwardRuntimePhase.STARTING
+                        state.phase == PortForwardRuntimePhase.STARTING || state.phase == PortForwardRuntimePhase.STOPPING
                     )
         }
         if (!busy) finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
@@ -1511,7 +1543,7 @@ class SshSessionController internal constructor(
                 _portForwards.update { states ->
                     states.map { state ->
                         if (state.sessionId == sessionId && state.phase != PortForwardRuntimePhase.STOPPED) {
-                            state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = "SSH session closed")
+                            state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = SESSION_CLOSED_DETAIL)
                         } else {
                             state
                         }
@@ -1645,6 +1677,7 @@ class SshSessionController internal constructor(
         val snapshot = vault.snapshot.value
         val profile = companionProfile(managed, snapshot)
         val connection = Connection(profile.hostname, profile.port)
+        val pending = adoptPendingConnection(managed.lifecycle, connection, cleanupScope)
         MangoLog.info(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_STARTED)
         try {
             if (profile.route == ConnectionRoute.TSNET) {
@@ -1663,6 +1696,7 @@ class SshSessionController internal constructor(
             val installed = synchronized(managed.sshFeatureLock) {
                 if (managed.sshFeatureConnection == null && sessionsById[sessionId] === managed) {
                     managed.sshFeatureConnection = connection
+                    managed.lifecycle.detach(pending)
                     true
                 } else {
                     false
@@ -1673,7 +1707,14 @@ class SshSessionController internal constructor(
             MangoLog.info(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_SUCCEEDED)
             return connection
         } catch (error: Exception) {
-            runCatching { connection.close() }
+            val release = managed.lifecycle.detach(pending)
+            if (release != null) release() else {
+                synchronized(managed.sshFeatureLock) {
+                    if (managed.sshFeatureConnection === connection) managed.sshFeatureConnection = null
+                }
+                connection.abort()
+                cleanupScope.launch { runCatching { connection.close() } }
+            }
             MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_FAILED, error)
             throw error
         }
@@ -1921,6 +1962,7 @@ class SshSessionController internal constructor(
         val readerJobs = ConcurrentHashMap.newKeySet<Job>()
         val completedReaderCount = AtomicInteger(0)
         val forwards = ConcurrentHashMap<String, ManagedPortForward>()
+        val openingForwards = ConcurrentHashMap<String, CompletableDeferred<Throwable?>>()
     }
 
     /** Result of one terminal stream; EOF is distinct from an I/O failure. */
@@ -2035,6 +2077,7 @@ class SshSessionController internal constructor(
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
         const val TSNET_LOOPBACK_HOST = "127.0.0.1"
+        const val SESSION_CLOSED_DETAIL = "SSH session closed"
         const val TSNET_MOSH_GRACEFUL_RELEASE_MILLIS = 2_000L
         const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256 -l LANG=C.UTF-8"
         const val RESOURCE_COMMAND = "printf 'Host: '; hostname; printf '\\nUptime: '; uptime; printf '\\nLoad: '; cat /proc/loadavg 2>/dev/null || true; printf '\\nMemory:\\n'; free -h 2>/dev/null || true; printf '\\nDisk:\\n'; df -h / 2>/dev/null || true; printf '\\nCPU: '; nproc 2>/dev/null || true"

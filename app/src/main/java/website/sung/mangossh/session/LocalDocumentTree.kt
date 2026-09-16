@@ -59,6 +59,17 @@ internal object LocalDocumentTree {
         fun directory(parent: Uri, name: String): Uri = create(parent, name, DocumentsContract.Document.MIME_TYPE_DIR)
         fun file(parent: Uri, name: String, mimeType: String): Uri = create(parent, name, mimeType)
 
+        /** Queries without creating, so conflict decisions describe the user's original files. */
+        fun findFile(parent: Uri, name: String): Uri? = listChildren(resolver, treeUri, parent)
+            .firstOrNull { it.name == name }?.also { if (it.isDirectory) throw LocalDocumentException() }?.documentUri
+
+        /** Only used after staging and approval; never reuses an unexpectedly created target. */
+        fun createFile(parent: Uri, name: String, mimeType: String): Uri {
+            if (findFile(parent, name) != null) throw SourceChangedException()
+            return createDocument(resolver, parent, mimeType, name)
+        }
+
+
         private fun create(parent: Uri, name: String, mimeType: String): Uri {
             val entries = children.getOrPut(parent) {
                 val listing = listChildren(resolver, treeUri, parent)

@@ -241,25 +241,28 @@ class MangoSshViewModel @JvmOverloads constructor(
     val reauthenticationPending = _reauthenticationPending.asStateFlow()
     private var pendingSensitiveAction: (() -> Unit)? = null
     private var approvedSensitiveAction = false
+    private var pendingSensitiveCancel: (() -> Unit)? = null
 
-    private fun authorizeSensitive(override: Boolean? = null, action: () -> Unit): Boolean {
-        if (_appLocked.value) return false
+    private fun authorizeSensitive(override: Boolean? = null, onCancelled: (() -> Unit)? = null, action: () -> Unit): Boolean {
+        if (_appLocked.value) { onCancelled?.invoke(); return false }
         val mode = _appLockConfiguration.value.reauthentication
         val required = override ?: (mode != website.sung.mangossh.security.ReauthenticationMode.DISABLED)
         if (!required || approvedSensitiveAction ||
             (mode == website.sung.mangossh.security.ReauthenticationMode.FIVE_MINUTES && reauthenticationWindow.isValid())) return true
         if (!_appLockConfiguration.value.pinConfigured) {
             _userMessage.value = uiText(R.string.message_app_pin_required)
+            onCancelled?.invoke()
             return false
         }
         if (pendingSensitiveAction == null) {
             pendingSensitiveAction = action
+            pendingSensitiveCancel = onCancelled
             _reauthenticationPending.value = true
-        }
+        } else onCancelled?.invoke()
         return false
     }
 
-    fun cancelReauthentication() { pendingSensitiveAction = null; _reauthenticationPending.value = false }
+    fun cancelReauthentication() { pendingSensitiveAction = null; pendingSensitiveCancel?.invoke(); pendingSensitiveCancel = null; _reauthenticationPending.value = false }
 
     /** The pending operation resumes only after the existing PBKDF2 verifier accepts the PIN. */
     fun verifySensitiveAction(pin: String) {
@@ -276,6 +279,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                 if (accepted && generation == runtime.accessState.generation && !_appLocked.value) {
                     reauthenticationWindow.grant()
                     val action = pendingSensitiveAction
+                    pendingSensitiveCancel = null
                     cancelReauthentication()
                     approvedSensitiveAction = true
                     try { action?.invoke() } finally { approvedSensitiveAction = false }
@@ -412,22 +416,37 @@ class MangoSshViewModel @JvmOverloads constructor(
         _settingsDestination.value = null
     }
 
-    fun saveHost(draft: ConnectionProfileDraft) {
-        if (!authorizeSensitive(vault.snapshot.value.profiles.firstOrNull { it.id == draft.id }?.requireReauthentication) { saveHost(draft) }) return
-        if (!draft.isValid()) return
-        viewModelScope.launch { vault.upsertProfile(draft.toProfile()) }
+    /** The originating editor owns completion, including delayed reauthentication. */
+    fun saveHost(draft: ConnectionProfileDraft, operation: EditorSaveOperation = EditorSaveOperation()) {
+        if (!operation.begin()) return
+        fun persist() {
+            if (!operation.pending) return
+            if (!draft.isValid()) { operation.finish(uiText(R.string.vault_invalid)); return }
+            viewModelScope.launch { operation.finish(mutationError(vault.upsertProfile(draft.toProfile()))) }
+        }
+        if (authorizeSensitive(vault.snapshot.value.profiles.firstOrNull { it.id == draft.id }?.requireReauthentication,
+                onCancelled = operation::cancel) { persist() }) persist()
+    }
+
+    private fun mutationError(result: website.sung.mangossh.data.vault.VaultMutationResult): UiText? = when (result) {
+        website.sung.mangossh.data.vault.VaultMutationResult.Success -> null
+        is website.sung.mangossh.data.vault.VaultMutationResult.ReferencedBy -> uiText(R.string.vault_referenced,
+            result.profileIds.mapNotNull { id -> vault.snapshot.value.profiles.firstOrNull { it.id == id }?.label }.joinToString(", "))
+        website.sung.mangossh.data.vault.VaultMutationResult.Invalid -> uiText(R.string.vault_invalid)
+        website.sung.mangossh.data.vault.VaultMutationResult.NotReady -> uiText(R.string.vault_not_ready)
+        website.sung.mangossh.data.vault.VaultMutationResult.StorageFailure -> uiText(R.string.vault_write_failed)
     }
 
     fun importSshProfiles(profiles: List<ConnectionProfile>) {
         if (!authorizeSensitive { importSshProfiles(profiles) }) return
         viewModelScope.launch {
             val saved = vault.importProfiles(profiles)
-            _userMessage.value = uiText(if (saved) R.string.ssh_config_saved else R.string.ssh_config_invalid)
+            _userMessage.value = uiText(if (saved.isSuccess) R.string.ssh_config_saved else R.string.ssh_config_invalid)
         }
     }
 
     fun removeHost(id: String) {
-        viewModelScope.launch { vault.removeProfile(id) }
+        viewModelScope.launch { _userMessage.value = mutationError(vault.removeProfile(id)) }
     }
 
     fun retryVault() {
@@ -624,30 +643,31 @@ class MangoSshViewModel @JvmOverloads constructor(
     /** Maps a lifecycle event to resource-backed wording, keeping orderly exits silent. */
     fun sessionEndMessage(event: SessionEndedEvent): UiText? = resolveSessionEndMessage(event)
 
-    fun savePortForward(rule: PortForwardRule) {
+    fun savePortForward(rule: PortForwardRule, operation: EditorSaveOperation = EditorSaveOperation()) {
+        if (!operation.begin()) return
         val isDestinationValid = rule.type == website.sung.mangossh.data.vault.PortForwardType.DYNAMIC ||
             (!rule.destinationHost.isNullOrBlank() && rule.destinationPort in 1..65535)
         if (rule.bindPort !in 1..65535 || !isDestinationValid) {
-            _userMessage.value = uiText(R.string.message_port_forward_incomplete)
+            operation.finish(uiText(R.string.message_port_forward_incomplete))
             return
         }
         viewModelScope.launch {
-            vault.upsertPortForward(rule)
-            _userMessage.value = uiText(R.string.message_port_forward_saved)
+            operation.finish(mutationError(vault.upsertPortForward(rule)))
         }
     }
 
     fun removePortForward(ruleId: String) {
-        viewModelScope.launch { vault.removePortForward(ruleId) }
+        viewModelScope.launch { _userMessage.value = mutationError(vault.removePortForward(ruleId)) }
     }
 
-    fun saveSnippet(id: String?, label: String, script: String, appendNewline: Boolean) {
+    fun saveSnippet(id: String?, label: String, script: String, appendNewline: Boolean, operation: EditorSaveOperation = EditorSaveOperation()) {
+        if (!operation.begin()) return
         if (label.isBlank() || script.isBlank()) {
-            _userMessage.value = uiText(R.string.message_snippet_required)
+            operation.finish(uiText(R.string.message_snippet_required))
             return
         }
         viewModelScope.launch {
-            vault.upsertSnippet(
+            val result = vault.upsertSnippet(
                 CommandSnippet(
                     id = id ?: UUID.randomUUID().toString(),
                     label = label.trim(),
@@ -655,12 +675,12 @@ class MangoSshViewModel @JvmOverloads constructor(
                     appendNewline = appendNewline,
                 ),
             )
-            _userMessage.value = uiText(R.string.message_snippet_saved)
+            operation.finish(mutationError(result))
         }
     }
 
     fun removeSnippet(id: String) {
-        viewModelScope.launch { vault.removeSnippet(id) }
+        viewModelScope.launch { _userMessage.value = mutationError(vault.removeSnippet(id)) }
     }
 
     fun startPortForward(sessionId: String, rule: PortForwardRule) {
@@ -1017,7 +1037,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                 }
             }
                 .onSuccess {
-                    _userMessage.value = if (vault.upsertKey(it)) {
+                    _userMessage.value = if (vault.upsertKey(it).isSuccess) {
                         uiText(R.string.message_key_generated, it.label)
                     } else {
                         uiText(R.string.message_vault_save_failed)
@@ -1037,7 +1057,7 @@ class MangoSshViewModel @JvmOverloads constructor(
           try {
             runCatching { withContext(cryptoDispatcher) { keyManager.importPrivateKey(label, contents, passphrase) } }
                 .onSuccess {
-                    _userMessage.value = if (vault.upsertKey(it)) {
+                    _userMessage.value = if (vault.upsertKey(it).isSuccess) {
                         uiText(R.string.message_key_imported, it.label)
                     } else {
                         uiText(R.string.message_vault_save_failed)
@@ -1058,7 +1078,7 @@ class MangoSshViewModel @JvmOverloads constructor(
 
     fun removeKey(id: String) {
         if (!authorizeSensitive { removeKey(id) }) return
-        viewModelScope.launch { vault.removeKey(id) }
+        viewModelScope.launch { _userMessage.value = mutationError(vault.removeKey(id)) }
     }
 
     fun dismissUserMessage() {
@@ -1134,14 +1154,14 @@ class MangoSshViewModel @JvmOverloads constructor(
         }
         viewModelScope.launch {
             val saved = vault.saveWebDavConfig(config)
-            _userMessage.value = uiText(if (saved) R.string.message_webdav_saved else R.string.backup_error_storage)
+            _userMessage.value = uiText(if (saved.isSuccess) R.string.message_webdav_saved else R.string.backup_error_storage)
             backupCoordinator.refreshPasswords()
         }
     }
 
     fun clearWebDavConfig() {
         viewModelScope.launch {
-            if (vault.saveWebDavConfig(null)) backupCoordinator.refreshPasswords()
+            if (vault.saveWebDavConfig(null).isSuccess) backupCoordinator.refreshPasswords()
         }
     }
 

@@ -123,4 +123,32 @@ class BackupPersistenceInstrumentedTest {
         assertEquals("original", AndroidKeystoreVault(context, "$namespace.vault.v1").read()!!.snippets.single().id)
         assertEquals("original", local.readHistory(local.list().single().id).snapshot.snippets.single().id)
     } }
+
+    @Test fun referencedJumpCannotBeRemovedOrChangedToMosh() = isolated { context, namespace -> runBlocking {
+        val repository = VaultRepository(context, AndroidKeystoreVault(context, "$namespace.vault.v1"))
+        repository.open()
+        val jump = website.sung.mangossh.domain.ConnectionProfile(id = UUID.randomUUID().toString(), label = "synthetic jump",
+            hostname = "synthetic.invalid", username = "synthetic")
+        val dependent = jump.copy(id = UUID.randomUUID().toString(), label = "synthetic dependent", jumpProfileIds = listOf(jump.id))
+        assertTrue(repository.upsertProfile(jump).isSuccess)
+        assertTrue(repository.upsertProfile(dependent).isSuccess)
+        val before = repository.snapshot.value
+        assertEquals(VaultMutationResult.ReferencedBy(listOf(dependent.id)), repository.removeProfile(jump.id))
+        assertEquals(VaultMutationResult.ReferencedBy(listOf(dependent.id)), repository.upsertProfile(jump.copy(protocol = website.sung.mangossh.domain.ConnectionProtocol.MOSH)))
+        assertEquals(before, repository.snapshot.value)
+    } }
+
+    @Test fun ordinaryWriteFailureKeepsCommittedSnapshotAndAllowsRetry() = isolated { context, namespace -> runBlocking {
+        val repository = VaultRepository(context, AndroidKeystoreVault(context, "$namespace.vault.v1"))
+        repository.open()
+        val before = repository.snapshot.value
+        val blocker = File(context.filesDir, "mangossh-vault.bin.new")
+        check(blocker.mkdir())
+        val snippet = CommandSnippet(UUID.randomUUID().toString(), "synthetic", "")
+        assertEquals(VaultMutationResult.StorageFailure, repository.upsertSnippet(snippet))
+        assertEquals(before, repository.snapshot.value)
+        assertEquals(VaultStatus.Ready, repository.status.value)
+        check(blocker.delete())
+        assertEquals(VaultMutationResult.Success, repository.upsertSnippet(snippet))
+    } }
 }

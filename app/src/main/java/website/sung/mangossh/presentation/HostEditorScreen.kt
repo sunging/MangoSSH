@@ -33,7 +33,9 @@ import website.sung.mangossh.ui.components.MangoPreferenceGroup
 @Composable
 internal fun HostEditorDialog(hosts: List<ConnectionProfile>, defaults: ConnectionPreferences,
     initialHost: ConnectionProfile?, keys: List<StoredSshKey>, snippets: List<CommandSnippet>,
-    onDismiss: () -> Unit, onSave: (ConnectionProfileDraft) -> Unit) {
+    onDismiss: () -> Unit, onSave: (ConnectionProfileDraft, EditorSaveOperation) -> Unit) {
+    val save = remember { EditorSaveOperation(onDismiss) }
+    DisposableEffect(save) { onDispose { save.dispose() } }
     val controller = rememberHostEditorController(initialHost)
     val tablet = LocalWindowInfo.current.containerDpSize.width >= 600.dp
     Dialog(onDismissRequest = { controller.back(onDismiss) }, properties = DialogProperties(
@@ -43,7 +45,7 @@ internal fun HostEditorDialog(hosts: List<ConnectionProfile>, defaults: Connecti
             Surface(Modifier.widthIn(max = if (tablet) 720.dp else androidx.compose.ui.unit.Dp.Infinity).fillMaxSize()
                 .testTag(if (tablet) "host_editor_tablet" else "host_editor_phone"),
                 shape = if (tablet) MaterialTheme.shapes.extraLarge else RectangleShape) {
-                HostEditorScreen(controller, hosts, defaults, keys, snippets, onDismiss, onSave)
+                HostEditorScreen(controller, hosts, defaults, keys, snippets, onDismiss, { onSave(it, save) }, saveOperation = save)
             }
         }
     }
@@ -53,7 +55,7 @@ internal fun HostEditorDialog(hosts: List<ConnectionProfile>, defaults: Connecti
 @Composable
 internal fun HostEditorScreen(controller: HostEditorController, hosts: List<ConnectionProfile>,
     defaults: ConnectionPreferences, keys: List<StoredSshKey>, snippets: List<CommandSnippet>,
-    onDismiss: () -> Unit, onSave: (ConnectionProfileDraft) -> Unit, modifier: Modifier = Modifier) {
+    onDismiss: () -> Unit, onSave: (ConnectionProfileDraft) -> Unit, modifier: Modifier = Modifier, saveOperation: EditorSaveOperation? = null) {
     val draft = controller.draft
     val invalid = draft.invalidPages(keys.map { it.id }.toSet(), snippets.map { it.id }.toSet(), hosts)
     val focus = LocalFocusManager.current
@@ -98,6 +100,7 @@ internal fun HostEditorScreen(controller: HostEditorController, hosts: List<Conn
         if (main) {
             HorizontalDivider()
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                saveOperation?.error?.let { Text(it.asString(), color = MaterialTheme.colorScheme.error) }
                 if (invalid.isNotEmpty()) {
                     val first = HostEditorPage.entries.first { it in invalid }
                     Text(stringResource(R.string.host_editor_save_blocked, first.title()),
@@ -105,8 +108,8 @@ internal fun HostEditorScreen(controller: HostEditorController, hosts: List<Conn
                         modifier = Modifier.testTag("host_editor_save_error"))
                 }
                 Button(onClick = { focus.clearFocus(); onSave(controller.draft.toProfileDraft()) },
-                    enabled = invalid.isEmpty(), modifier = Modifier.fillMaxWidth().testTag("host_editor_save")) {
-                    Text(stringResource(R.string.ui_save_profile))
+                    enabled = invalid.isEmpty() && saveOperation?.busy != true, modifier = Modifier.fillMaxWidth().testTag("host_editor_save")) {
+                    Text(stringResource(if (saveOperation?.busy == true) R.string.vault_saving else R.string.ui_save_profile))
                 }
             }
         }

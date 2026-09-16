@@ -714,4 +714,18 @@
     <string name="host_editor_missing_key">密钥不存在（请移除此引用）</string>
     <string name="host_editor_custom_keys">指定允许的密钥</string>
     <string name="host_editor_terminal">终端类型</string>
+    <string name="port_forward_stopping">正在停止…</string>
+    <string name="port_forward_stopped">已停止</string>
+    <string name="port_forward_stop_failed">服务器未确认取消，远端监听可能仍存在。</string>
+    <string name="transfer_metadata_failed">无法保留文件属主、属组或权限，未提交替换。</string>
+    <string name="transfer_commit_failed">最终提交失败，目标可能不完整。请重试并重新确认目标。</string>
+    <string name="transfer_space_failed">暂存空间不足，至少还需要 %1$d 字节。请清理已结束的传输或释放存储空间。</string>
+    <string name="transfer_verifying">正在校验…</string>
+    <string name="transfer_committing">正在提交… 暂时无法暂停或取消。</string>
+    <string name="transfer_counts">已传输 %1$d/%2$d · 已跳过 %3$d · 失败 %4$d</string>
+    <string name="vault_write_failed">保存失败，已保留您的修改以便重试。</string>
+    <string name="vault_invalid">配置无效，请检查所选密钥、主机和跳板链。</string>
+    <string name="vault_referenced">以下主机正在使用此跳板：%1$s。请先修改这些主机。</string>
+    <string name="vault_not_ready">保险库尚未就绪，请解锁或重新打开后重试。</string>
+    <string name="vault_saving">正在保存…</string>
 </resources>

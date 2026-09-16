@@ -17,6 +17,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import website.sung.mangossh.presentation.EditorSaveOperation
+import website.sung.mangossh.presentation.asString
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -106,10 +109,8 @@ internal fun SnippetSettingsPage(
                 showSnippetEditor = false
                 editingSnippet = null
             },
-            onSave = { label, script, appendNewline ->
-                callbacks.onSaveSnippet(editingSnippet?.id, label, script, appendNewline)
-                showSnippetEditor = false
-                editingSnippet = null
+            onSave = { label, script, appendNewline, save ->
+                callbacks.onSaveSnippet(editingSnippet?.id, label, script, appendNewline, save)
             },
         )
     }
@@ -119,8 +120,10 @@ internal fun SnippetSettingsPage(
 private fun CommandSnippetDialog(
     initial: CommandSnippet?,
     onDismiss: () -> Unit,
-    onSave: (label: String, script: String, appendNewline: Boolean) -> Unit,
+    onSave: (label: String, script: String, appendNewline: Boolean, operation: EditorSaveOperation) -> Unit,
 ) {
+    val save = remember { EditorSaveOperation(onDismiss) }
+    DisposableEffect(save) { onDispose { save.dispose() } }
     var label by rememberSaveable(initial?.id) { mutableStateOf(initial?.label.orEmpty()) }
     var script by rememberSaveable(initial?.id) { mutableStateOf(initial?.script.orEmpty()) }
     var appendNewline by rememberSaveable(initial?.id) { mutableStateOf(initial?.appendNewline ?: true) }
@@ -132,6 +135,7 @@ private fun CommandSnippetDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                save.error?.let { Text(it.asString(), color = MaterialTheme.colorScheme.error) }
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
@@ -154,9 +158,9 @@ private fun CommandSnippetDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(label.trim(), script, appendNewline) },
-                enabled = label.isNotBlank() && script.isNotBlank(),
-            ) { Text(stringResource(R.string.common_save)) }
+                onClick = { onSave(label.trim(), script, appendNewline, save) },
+                enabled = !save.busy && label.isNotBlank() && script.isNotBlank(),
+            ) { Text(stringResource(if (save.busy) R.string.vault_saving else R.string.common_save)) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )

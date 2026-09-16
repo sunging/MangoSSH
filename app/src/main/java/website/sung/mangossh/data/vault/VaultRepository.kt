@@ -189,26 +189,30 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
     }
 
     /**
-     * Applies one mutation atomically and reports whether the encrypted write
-     * committed. The caller must not claim success when persistence failed:
-     * generated private keys are intentionally retained only after this method
-     * returns `true`.
+     * Validates references under the write lock and reports why a mutation could not commit.
+     * Only Success may acknowledge a save or retain a newly generated key. A failed write
+     * leaves the published snapshot and revision unchanged so the caller can preserve its draft.
      */
-    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot): VaultMutationResult = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
-            if (_status.value !is VaultStatus.Ready) return@withLock false
+            if (_status.value !is VaultStatus.Ready) return@withLock VaultMutationResult.NotReady
             val updated = transform(_snapshot.value)
-            try { BackupValidator.validate(updated) } catch (_: BackupException) { return@withLock false }
+            val removedOrIncompatible = _snapshot.value.profiles.filter { old ->
+                val next = updated.profiles.firstOrNull { it.id == old.id }
+                next == null || next.protocol != website.sung.mangossh.domain.ConnectionProtocol.SSH || next.jumpProfileIds.isNotEmpty()
+            }.map { it.id }.toSet()
+            val dependents = updated.profiles.filter { it.jumpProfileIds.any(removedOrIncompatible::contains) }.map { it.id }
+            if (dependents.isNotEmpty()) return@withLock VaultMutationResult.ReferencedBy(dependents)
+            try { BackupValidator.validate(updated) } catch (_: BackupException) { return@withLock VaultMutationResult.Invalid }
             try {
                 storage.write(updated)
                 _snapshot.value = updated
                 revision++
                 MangoLog.info(MangoLogEvent.VAULT_WRITE_SUCCEEDED)
-                true
+                VaultMutationResult.Success
             } catch (error: Exception) {
-                _status.value = VaultStatus.Failed(VaultFailureReason.WRITE)
                 MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error)
-                false
+                VaultMutationResult.StorageFailure
             }
         }
     }

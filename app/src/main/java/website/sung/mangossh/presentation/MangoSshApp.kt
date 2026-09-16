@@ -2,6 +2,8 @@
 
 package website.sung.mangossh.presentation
 
+import androidx.compose.runtime.DisposableEffect
+
 import android.content.ClipData
 import android.content.Intent
 import android.content.res.Configuration
@@ -728,11 +730,7 @@ fun MangoSshApp(
                 showHostEditor = false
                 editingHostId = null
             },
-            onSave = { draft ->
-                viewModel.saveHost(draft)
-                showHostEditor = false
-                editingHostId = null
-            },
+            onSave = viewModel::saveHost,
         )
     }
 
@@ -1348,7 +1346,7 @@ private fun PortForwardsScreen(
     rules: List<PortForwardRule>,
     activeForwards: List<PortForwardRuntimeState>,
     sessions: List<website.sung.mangossh.session.TerminalSessionState>,
-    onSaveRule: (PortForwardRule) -> Unit,
+    onSaveRule: (PortForwardRule, EditorSaveOperation) -> Unit,
     onRemoveRule: (String) -> Unit,
     onStartRule: (String, PortForwardRule) -> Unit,
     onStartOnNewConnection: (ConnectionProfile, PortForwardRule) -> Unit,
@@ -1411,7 +1409,7 @@ private fun PortForwardsScreen(
             val profile = hosts.firstOrNull { it.id == rule.profileId }
             val running = activeForwards.firstOrNull {
                 it.rule.id == rule.id &&
-                    (it.phase == PortForwardRuntimePhase.ACTIVE || it.phase == PortForwardRuntimePhase.STARTING)
+                    (it.phase == PortForwardRuntimePhase.ACTIVE || it.phase == PortForwardRuntimePhase.STARTING || it.phase == PortForwardRuntimePhase.STOPPING)
             }
             val failed = activeForwards.lastOrNull {
                 it.rule.id == rule.id && it.phase == PortForwardRuntimePhase.FAILED
@@ -1443,6 +1441,7 @@ private fun PortForwardsScreen(
                         when (runtime.phase) {
                             PortForwardRuntimePhase.ACTIVE -> stringResource(R.string.ui_running)
                             PortForwardRuntimePhase.STARTING -> stringResource(R.string.ui_starting)
+                            PortForwardRuntimePhase.STOPPING -> stringResource(R.string.port_forward_stopping)
                             PortForwardRuntimePhase.FAILED -> stringResource(R.string.ui_failed)
                             PortForwardRuntimePhase.STOPPED -> ""
                         }
@@ -1522,11 +1521,7 @@ private fun PortForwardsScreen(
                 showRuleEditor = false
                 editingRule = null
             },
-            onSave = { rule ->
-                onSaveRule(rule)
-                showRuleEditor = false
-                editingRule = null
-            },
+            onSave = onSaveRule,
         )
     }
 }
@@ -1536,8 +1531,10 @@ private fun PortForwardRuleDialog(
     initial: PortForwardRule?,
     hosts: List<ConnectionProfile>,
     onDismiss: () -> Unit,
-    onSave: (PortForwardRule) -> Unit,
+    onSave: (PortForwardRule, EditorSaveOperation) -> Unit,
 ) {
+    val save = remember { EditorSaveOperation(onDismiss) }
+    DisposableEffect(save) { onDispose { save.dispose() } }
     var profileId by rememberSaveable(initial?.id) { mutableStateOf(initial?.profileId ?: hosts.firstOrNull()?.id.orEmpty()) }
     var type by rememberSaveable(initial?.id) { mutableStateOf(initial?.type ?: PortForwardType.LOCAL) }
     var bindHost by rememberSaveable(initial?.id) { mutableStateOf(initial?.bindHost ?: "127.0.0.1") }
@@ -1620,6 +1617,8 @@ private fun PortForwardRuleDialog(
             }
         },
         confirmButton = {
+            Column {
+            save.error?.let { Text(it.asString(), color = MaterialTheme.colorScheme.error) }
             TextButton(
                 onClick = {
                     onSave(
@@ -1632,11 +1631,12 @@ private fun PortForwardRuleDialog(
                             destinationHost = destinationHost.trim().takeIf { type != PortForwardType.DYNAMIC && it.isNotEmpty() },
                             destinationPort = destinationPortValue.takeIf { type != PortForwardType.DYNAMIC },
                             startOnConnect = startOnConnect,
-                        ),
+                        ), save,
                     )
                 },
-                enabled = canSave,
-            ) { Text(stringResource(R.string.common_save)) }
+                enabled = canSave && !save.busy,
+            ) { Text(stringResource(if (save.busy) R.string.vault_saving else R.string.common_save)) }
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )

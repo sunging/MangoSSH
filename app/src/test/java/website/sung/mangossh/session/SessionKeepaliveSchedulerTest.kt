@@ -105,4 +105,38 @@ class SessionKeepaliveSchedulerTest {
         withTimeout(1_000) { job.join() }
         assertTrue(cancelled)
     }
+
+    @Test fun foregroundToBackgroundRegistersImmediatelyUsingOriginalDeadline() = runBlocking {
+        val foreground = MutableStateFlow(true)
+        var now = 0L
+        var registered: Long? = null
+        var cancelled = false
+        val waiting = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val scheduler = SessionKeepaliveScheduler(foreground, KeepaliveAlarm { delay, _ ->
+            registered = delay
+            { cancelled = true }
+        }, foregroundWait = { waiting.complete(Unit); kotlinx.coroutines.awaitCancellation() }, now = { now })
+        val job = launch { scheduler.waitForNextKeepalive(30_000) }
+        waiting.await()
+        now = 5_000
+        foreground.value = false
+        withTimeout(1_000) { while (registered == null) yield() }
+        assertEquals(115_000L, registered)
+        foreground.value = true
+        withTimeout(1_000) { job.join() }
+        assertTrue(cancelled)
+    }
+
+    @Test fun cancellationUnregistersBackgroundAlarmAndLateCallbackIsHarmless() = runBlocking {
+        var fire: (() -> Unit)? = null
+        var cancellations = 0
+        val scheduler = SessionKeepaliveScheduler(MutableStateFlow(false), KeepaliveAlarm { _, callback ->
+            fire = callback
+            { cancellations++ }
+        })
+        val job = launch { scheduler.waitForNextKeepalive(30_000) }
+        withTimeout(1_000) { while (fire == null) yield() }
+        job.cancel(); job.join(); fire!!.invoke()
+        assertEquals(1, cancellations)
+    }
 }

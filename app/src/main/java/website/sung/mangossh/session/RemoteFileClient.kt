@@ -322,7 +322,7 @@ internal class RemoteFileClient {
             if (error.serverErrorCode == ErrorCodes.SSH_FX_NO_SUCH_FILE || error.serverErrorCode == ErrorCodes.SSH_FX_NO_SUCH_PATH) null else throw error
         }
         if (attributes != null && attributes.toKind() != RemoteFileKind.FILE) throw RemoteFileException(RemoteFileFailure.NOT_A_FILE)
-        RemoteTarget(attributes?.let { SourceIdentity(path, it.size, it.mtime?.times(1_000L)) }, attributes?.permissions, client.supportsPosixRename())
+        RemoteTarget(attributes?.let { SourceIdentity(path, it.size, it.mtime?.times(1_000L)) }, attributes?.permissions, client.supportsPosixRename(), attributes?.uid, attributes?.gid)
     }
 
     /** Calculates SHA-256 through SFTP reads; no remote shell command or external utility is invoked. */
@@ -340,8 +340,10 @@ internal class RemoteFileClient {
 
     /** Commits one verified sibling temp; normal rename is used only when the target does not exist. */
     fun commitTemporary(connection: Connection, temporary: String, destination: String, target: RemoteTarget,
-        allowDirectOverwrite: Boolean, control: TransferControl) = withClient(connection, control) { client ->
+        allowDirectOverwrite: Boolean, control: TransferControl, expectedTargetDigest: ByteArray? = null) = withClient(connection, control) { client ->
         require(RemoteFilePaths.parentOf(temporary) == RemoteFilePaths.parentOf(destination))
+        if (expectedTargetDigest != null && !java.security.MessageDigest.isEqual(expectedTargetDigest,
+                sha256(connection, destination, control))) throw SourceChangedException()
         val current = try { client.lstat(destination) } catch (error: SFTPException) {
             if (error.serverErrorCode == ErrorCodes.SSH_FX_NO_SUCH_FILE || error.serverErrorCode == ErrorCodes.SSH_FX_NO_SUCH_PATH) null else throw error
         }
@@ -350,9 +352,24 @@ internal class RemoteFileClient {
         } else {
             if (current == null || current.toKind() != RemoteFileKind.FILE) throw SourceChangedException()
             target.identity.requireMatches(SourceIdentity(destination, current.size, current.mtime?.times(1_000L)))
+            if (current.permissions != target.permissions || current.uid != target.uid || current.gid != target.gid) throw SourceChangedException()
         }
-        target.permissions?.let { permissions ->
-            client.setstat(temporary, com.trilead.ssh2.SFTPv3FileAttributes().apply { this.permissions = permissions })
+        if (target.identity != null) {
+            val uid = target.uid ?: throw MetadataPreservationException()
+            val gid = target.gid ?: throw MetadataPreservationException()
+            val mode = target.permissions?.and(0xfff) ?: throw MetadataPreservationException()
+            if (!client.supportsPosixRename() && mode and 0xe00 != 0) throw MetadataPreservationException()
+            if (client.supportsPosixRename()) {
+                try {
+                    val before = client.lstat(temporary)
+                    if (before.uid != uid || before.gid != gid) client.setstat(temporary,
+                        com.trilead.ssh2.SFTPv3FileAttributes().apply { this.uid = uid; this.gid = gid })
+                    client.setstat(temporary, com.trilead.ssh2.SFTPv3FileAttributes().apply { permissions = mode })
+                    val verified = client.lstat(temporary)
+                    if (verified.uid != uid || verified.gid != gid || verified.permissions?.and(0xfff) != mode)
+                        throw MetadataPreservationException()
+                } catch (_: SFTPException) { throw MetadataPreservationException() }
+            }
         }
         if (target.identity == null) client.mv(temporary, destination)
         else if (client.supportsPosixRename()) client.posixRename(temporary, destination)
@@ -373,7 +390,10 @@ internal class RemoteFileClient {
                         control.progressed()
                     }
                     if (!control.shouldContinue()) throw java.io.InterruptedIOException()
-                    if (client.fstat(source).size != client.fstat(output).size) throw SourceChangedException()
+                    val written = client.fstat(output)
+                    if (client.fstat(source).size != written.size) throw java.io.IOException()
+                    if (written.uid != target.uid || written.gid != target.gid ||
+                        written.permissions?.and(0xfff) != target.permissions?.and(0xfff)) throw java.io.IOException()
                 } finally { client.closeFile(output) }
             } finally { client.closeFile(source) }
             client.rm(temporary)
@@ -534,7 +554,13 @@ internal class RemoteFileClient {
         } catch (error: RemoteFileException) { throw error
         } catch (error: SourceChangedException) {
             throw error
+        } catch (error: MetadataPreservationException) { throw error
         } catch (error: AtomicReplaceUnavailableException) {
+            throw error
+        } catch (error: StagingSpaceException) {
+            // A download writes through the staging budget inside this block, so
+            // running out of room mid-transfer has to keep its own byte count
+            // instead of being normalized into a generic I/O failure.
             throw error
         } catch (error: SFTPException) { throw RemoteFileException(error.toFailure(), error)
         } catch (error: IOException) {

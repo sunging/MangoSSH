@@ -11,6 +11,7 @@ import java.util.UUID
 class RemoteFallbackInstrumentedTest {
     @Test fun ordinaryRenameCannotOverwriteUntilDirectOverwriteIsApproved() {
         val port = InstrumentationRegistry.getArguments().getString("fixtureFallbackPort")?.toIntOrNull()
+        if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
         assumeTrue(port != null)
         val connection = Connection("127.0.0.1", port!!)
         try {

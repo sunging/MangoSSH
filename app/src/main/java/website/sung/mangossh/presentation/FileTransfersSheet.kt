@@ -243,7 +243,7 @@ private fun TransferCard(
             if (transfer.kind == ScpTransferKind.DIRECTORY && totalItems != null) {
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "${transfer.completedItems} / $totalItems",
+                    text = stringResource(R.string.transfer_counts, transfer.completedItems, totalItems, transfer.skippedItems, transfer.failedItems),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -310,6 +310,8 @@ private fun TransferAction(
 private fun ScpTransferPhase.label(): String = when (this) {
     ScpTransferPhase.QUEUED -> stringResource(R.string.ui_queued)
     ScpTransferPhase.RUNNING -> stringResource(R.string.ui_transferring)
+    ScpTransferPhase.VERIFYING -> stringResource(R.string.transfer_verifying)
+    ScpTransferPhase.COMMITTING -> stringResource(R.string.transfer_committing)
     ScpTransferPhase.PAUSED -> stringResource(R.string.ui_paused)
     ScpTransferPhase.COMPLETED -> stringResource(R.string.ui_completed)
     ScpTransferPhase.FAILED -> stringResource(R.string.ui_failed)

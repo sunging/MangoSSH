@@ -96,6 +96,7 @@ enum class SessionEndMessageKind {
 
 enum class PortForwardRuntimePhase {
     STARTING,
+    STOPPING,
     ACTIVE,
     FAILED,
     STOPPED,
@@ -118,7 +119,7 @@ internal fun failPortForwardsForSession(
 ): List<PortForwardRuntimeState> = states.map { state ->
     if (
         state.sessionId == sessionId &&
-        (state.phase == PortForwardRuntimePhase.STARTING || state.phase == PortForwardRuntimePhase.ACTIVE)
+        (state.phase == PortForwardRuntimePhase.STARTING || state.phase == PortForwardRuntimePhase.ACTIVE || state.phase == PortForwardRuntimePhase.STOPPING)
     ) {
         state.copy(phase = PortForwardRuntimePhase.FAILED, detail = detail)
     } else {
@@ -134,6 +135,8 @@ enum class ScpTransferDirection {
 enum class ScpTransferPhase {
     QUEUED,
     RUNNING,
+    VERIFYING,
+    COMMITTING,
 
     /** Stopped at a chunk boundary by the user; [ScpTransferState.transferredBytes] is the resume offset. */
     PAUSED,
@@ -179,6 +182,8 @@ data class ScpTransferState(
     /** Relative path of the entry a directory transfer is currently moving. */
     val currentItem: String? = null,
     val completedItems: Int = 0,
+    val skippedItems: Int = 0,
+    val failedItems: Int = 0,
     val totalItems: Int? = null,
     /**
      * False once the connection that owns this transfer is gone. Resuming and
@@ -191,7 +196,7 @@ data class ScpTransferState(
 
 /** True while the transfer is queued or moving bytes. */
 val ScpTransferState.isActive: Boolean
-    get() = phase == ScpTransferPhase.QUEUED || phase == ScpTransferPhase.RUNNING
+    get() = phase == ScpTransferPhase.QUEUED || phase == ScpTransferPhase.RUNNING || phase == ScpTransferPhase.VERIFYING || phase == ScpTransferPhase.COMMITTING
 
 /** True once the transfer reached a terminal phase and holds no connection. */
 val ScpTransferState.isFinished: Boolean
@@ -200,13 +205,13 @@ val ScpTransferState.isFinished: Boolean
         phase == ScpTransferPhase.CANCELLED
 
 val ScpTransferState.canPause: Boolean
-    get() = isActive && controllable
+    get() = isActive && phase != ScpTransferPhase.COMMITTING && controllable
 
 val ScpTransferState.canResume: Boolean
     get() = phase == ScpTransferPhase.PAUSED && controllable
 
 val ScpTransferState.canCancel: Boolean
-    get() = isActive || phase == ScpTransferPhase.PAUSED
+    get() = (isActive && phase != ScpTransferPhase.COMMITTING) || phase == ScpTransferPhase.PAUSED
 
 /** Retrying re-runs the original request from the start, so it needs the local document. */
 val ScpTransferState.canRetry: Boolean

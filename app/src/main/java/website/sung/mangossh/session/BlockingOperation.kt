@@ -19,6 +19,7 @@ internal class BlockingOperation(private val idleMillis: Long = 30_000L) : Trans
     @Volatile private var timedOut = false
     @Volatile private var awaitingDecision = false
     private val localResources = mutableSetOf<Closeable>()
+    private val closing = mutableMapOf<Closeable, java.util.concurrent.Future<*>>()
     private val timer = scheduler.scheduleWithFixedDelay({
         if (!awaitingDecision && !stopped.get() && System.nanoTime() - lastProgress >= TimeUnit.MILLISECONDS.toNanos(idleMillis)) {
             timedOut = true
@@ -36,7 +37,20 @@ internal class BlockingOperation(private val idleMillis: Long = 30_000L) : Trans
         val accepted = synchronized(lock) { if (stopped.get()) false else { localResources += resource; true } }
         if (!accepted) { resource.close(); throw java.io.InterruptedIOException() }
     }
-    override fun releaseLocal(resource: Closeable) { synchronized(lock) { localResources.remove(resource) }; resource.close() }
+    override fun releaseLocal(resource: Closeable) {
+        val future = synchronized(lock) { closing.getOrPut(resource) { closers.submit { resource.close() } } }
+        try {
+            while (true) {
+                try { future.get(100, TimeUnit.MILLISECONDS); break }
+                catch (_: java.util.concurrent.TimeoutException) {
+                    if (!shouldContinue()) throw java.io.InterruptedIOException()
+                } catch (error: java.util.concurrent.ExecutionException) {
+                    throw (error.cause ?: error)
+                }
+            }
+            if (!shouldContinue()) throw java.io.InterruptedIOException()
+        } finally { synchronized(lock) { localResources.remove(resource); closing.remove(resource) } }
+    }
     override fun own(session: Session): Boolean {
         val accepted = synchronized(lock) { if (stopped.get()) false else { channels += session; true } }
         if (!accepted) session.abort()
@@ -49,7 +63,7 @@ internal class BlockingOperation(private val idleMillis: Long = 30_000L) : Trans
         timer.cancel(false)
         val owned = synchronized(lock) { channels.toList().also { channels.clear() } }
         owned.forEach { runCatching { it.abort() } }
-        val local = synchronized(lock) { localResources.toList().also { localResources.clear() } }
+        val local = synchronized(lock) { localResources.filterNot { it in closing }.also { localResources.clear() } }
         local.forEach { resource -> closers.execute { runCatching { resource.close() } } }
     }
 

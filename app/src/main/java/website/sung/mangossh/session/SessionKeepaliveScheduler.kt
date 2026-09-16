@@ -35,17 +35,24 @@ internal class SessionKeepaliveScheduler(
      */
     private val backgroundMultiplier: () -> Int = { DEFAULT_BACKGROUND_MULTIPLIER },
     private val foregroundWait: suspend (Long) -> Unit = { delay(it) },
+    private val now: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     /** Matches `runSshKeepaliveLoop`'s `waitForNextKeepalive` seam. */
     suspend fun waitForNextKeepalive(foregroundIntervalMillis: Long, multiplier: Int = backgroundMultiplier()) {
+        val started = now()
         if (appForeground.value) {
-            foregroundWait(foregroundIntervalMillis)
-            return
+            val elapsed = CompletableDeferred<Boolean>()
+            coroutineScope {
+                val timer = launch { foregroundWait(foregroundIntervalMillis); elapsed.complete(true) }
+                val background = launch { appForeground.first { !it }; elapsed.complete(false) }
+                try { elapsed.await() } finally { timer.cancel(); background.cancel() }
+            }
+            if (elapsed.await()) return
         }
 
         val fired = CompletableDeferred<Unit>()
         val cancelAlarm = alarm.schedule(
-            backgroundInterval(foregroundIntervalMillis, multiplier),
+            (backgroundInterval(foregroundIntervalMillis, multiplier) - (now() - started)).coerceAtLeast(0),
         ) {
             fired.complete(Unit)
         }
