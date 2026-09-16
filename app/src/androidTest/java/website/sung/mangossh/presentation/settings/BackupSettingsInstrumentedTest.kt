@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.core.app.ActivityOptionsCompat
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
@@ -356,12 +357,18 @@ class BackupSettingsInstrumentedTest {
         val localized = context.createConfigurationContext(configuration)
         compose.setContent {
             val registryOwner = requireNotNull(LocalActivityResultRegistryOwner.current)
-            CompositionLocalProvider(LocalContext provides localized, LocalConfiguration provides configuration,
-                LocalActivityResultRegistryOwner provides registryOwner,
-                LocalDensity provides Density(LocalDensity.current.density, fontScale)) {
-                MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
-                    Surface(Modifier.width(width.dp).height(height.dp)) {
-                        BackupSettingsPage(BackupSettingsState(VaultStatus.Ready, WebDavConfig("", "", "")), callbacks())
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                // Fit the requested dp viewport on the physical device instead of letting
+                // parent constraints silently clamp it and select a different breakpoint.
+                val viewportDensity = Density(minOf(LocalDensity.current.density,
+                    constraints.maxWidth.toFloat() / width, constraints.maxHeight.toFloat() / height), fontScale)
+                CompositionLocalProvider(LocalContext provides localized, LocalConfiguration provides configuration,
+                    LocalActivityResultRegistryOwner provides registryOwner,
+                    LocalDensity provides viewportDensity) {
+                    MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+                        Surface(Modifier.width(width.dp).height(height.dp)) {
+                            BackupSettingsPage(BackupSettingsState(VaultStatus.Ready, WebDavConfig("", "", "")), callbacks())
+                        }
                     }
                 }
             }
