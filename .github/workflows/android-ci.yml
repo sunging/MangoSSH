@@ -12,6 +12,11 @@ on:
       - main
       - develop
   workflow_dispatch:
+    inputs:
+      run_device_tests:
+        description: Run both distributions against the emulator and disposable SSH fixtures
+        type: boolean
+        default: true
 
 # The workflow only needs to read this repository. Artifact uploads do not need
 # extra repository permissions.
@@ -182,10 +187,9 @@ jobs:
   instrumented-tests:
     name: Run instrumented tests on an emulator
     # Booting an emulator is the slowest signal in this workflow, so it gates
-    # proposed changes only: a commit reaching main has already passed this job
-    # on its pull request. The verify job still compiles the instrumented tests
-    # on every event.
-    if: github.event_name == 'pull_request'
+    # pull requests automatically and manual acceptance runs by default.
+    # The verify job still compiles instrumented tests on every event.
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_device_tests)
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -216,6 +220,11 @@ jobs:
 
       # The tests only need a device new enough to install the app (minSdk 26);
       # this runs on a stable released image rather than the compileSdk preview.
+      - name: Prepare disposable SSH fixtures
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ssh-fixture-venv"
+          "$RUNNER_TEMP/ssh-fixture-venv/bin/pip" install paramiko==4.0.0
+
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -225,7 +234,7 @@ jobs:
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: ./gradlew --no-daemon :app:connectedGithubDebugAndroidTest :app:connectedFdroidDebugAndroidTest :third_party:termlib:connectedDebugAndroidTest
+          script: bash tools/run-device-regressions.sh
 
       - name: Upload instrumented test report
         if: failure()

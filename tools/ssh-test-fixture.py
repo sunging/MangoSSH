@@ -5,6 +5,7 @@ memory; all files are inside TemporaryDirectory. Forwarding is restricted to thi
 fixture's own loopback listener. Run with --port and use adb reverse for devices.
 """
 import argparse
+import signal
 import sys
 import os
 import socket
@@ -23,6 +24,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=22349)
 parser.add_argument("--wsl-tmux", action="store_true")
 parser.add_argument("--no-posix-rename", action="store_true")
+parser.add_argument("--reject-metadata", action="store_true")
+parser.add_argument("--stall-forward-cancel", action="store_true")
 args = parser.parse_args()
 tmux_socket = "mangossh-fixture-" + uuid.uuid4().hex
 key = paramiko.RSAKey.generate(2048)
@@ -50,7 +53,7 @@ class Files(paramiko.SFTPServerInterface):
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def open(self, path, flags, attr):
         try:
-            fd = os.open(self.local(path), flags | os.O_BINARY, 0o600)
+            fd = os.open(self.local(path), flags | getattr(os, "O_BINARY", 0), 0o600)
             stream = os.fdopen(fd, "r+b" if flags & os.O_RDWR else "wb" if flags & os.O_WRONLY else "rb", buffering=0)
             handle = paramiko.SFTPHandle(flags)
             handle.readfile = stream
@@ -70,6 +73,7 @@ class Files(paramiko.SFTPServerInterface):
         try: os.replace(self.local(old), self.local(new)); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def chattr(self, path, attr):
+        if args.reject_metadata: return paramiko.SFTP_PERMISSION_DENIED
         try: paramiko.SFTPServer.set_file_attr(str(self.local(path)), attr); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def mkdir(self, path, attr):
@@ -146,6 +150,9 @@ class Server(paramiko.ServerInterface):
             finally: channel.shutdown_write()
         threading.Thread(target=execute, daemon=True).start()
         return True
+    def check_port_forward_request(self, address, port): return port
+    def cancel_port_forward_request(self, address, port):
+        if args.stall_forward_cancel: threading.Event().wait(60)
     def check_auth_none(self, username): return paramiko.AUTH_SUCCESSFUL
     def get_allowed_auths(self, username): return "none"
     def check_channel_request(self, kind, chanid):
@@ -184,6 +191,10 @@ def serve(client):
                 threading.Thread(target=relay, args=(peer, channel), daemon=True).start()
     except (OSError, EOFError, paramiko.SSHException): pass
     finally: transport.close()
+
+def terminate(signum, frame):
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, terminate)
 
 listener = socket.socket()
 listener.bind(("127.0.0.1", args.port))
