@@ -35,6 +35,8 @@ class SessionKeepaliveSchedulerTest {
                 cancel
             },
             backgroundMultiplier = { multiplier },
+            // This test measures multiplier changes, not wall-clock scheduling latency.
+            now = { 0L },
         )
 
         scheduler.waitForNextKeepalive(30_000L)
@@ -71,6 +73,7 @@ class SessionKeepaliveSchedulerTest {
                 fire = onFire
                 { cancelled = true }
             },
+            now = { 0L },
         )
 
         val job = launch { scheduler.waitForNextKeepalive(30_000L) }
