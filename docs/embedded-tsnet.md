@@ -25,7 +25,7 @@ The reproducible bridge build pins:
 - Go `1.26.7`;
 - Eclipse Temurin JDK `17.0.19+10` for the gomobile build;
 - Android NDK `27.3.13750724` (r27d);
-- `tailscale.com v1.102.3`;
+- `tailscale.com v1.102.4`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
 
 Local-development download scripts verify the published Go SHA-256, Temurin
@@ -34,9 +34,21 @@ those toolchains to be supplied by the build environment and fail before any
 download is attempted. The complete Go module source graph is committed under
 `native/tsnetbridge/vendor`. In addition to `go.sum`, both patched Tailscale
 source files have pinned pre-patch and post-patch SHA-256 values.
-`tools/patches/tailscale-v1.102.3-tsnet-no-logtail.patch` is applied with
-`git apply --check`; a source mismatch, skipped hunk, or unexpected patched
-result stops both the test and production builds.
+The vendor tree already includes
+`tools/patches/tailscale-v1.102.4-tsnet-no-logtail.patch`, so ordinary `go test`
+and source analysis see the same network-refresh API as Android builds.
+The production build verifies the patched hashes, reverses the patch in its
+disposable copy to verify the upstream hashes, then reapplies it with
+`git apply --check`. The bridge test separately downloads pristine upstream
+source and checks the same patch and hashes before testing both source paths.
+A source mismatch, skipped hunk, or unexpected result stops the build.
+
+`tools/lib/tsnet-version.sh` pins the upstream tag and commit and provides the
+linker stamps consumed by Tailscale's `version.Long()` and `version.Short()`.
+Both report `1.102.4`, including in the GOPATH gomobile build where Go module
+build information is absent. The upstream commit is stamped separately;
+the MangoSSH source and patch retain the local changes' provenance. Stamped
+version tests run with the same flags before binding the Android libraries.
 
 The audited patch is deliberately narrow. It disables creation of the raw
 logtail buffer when no-support logging is disabled, routes the loopback SOCKS5

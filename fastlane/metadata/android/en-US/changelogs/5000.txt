@@ -3,3 +3,4 @@ Customize terminal shortcuts, save pinch-to-zoom size, and toggle immersive mode
 Improve terminal scrolling, Esc handling, and tmux interaction.
 Edit hosts in an inline multi-page flow with clearer save failures.
 Improve SSH workflows, background efficiency, session reliability, and safe file transfers.
+Update embedded Tailscale to 1.102.4 and fix its reported version.
