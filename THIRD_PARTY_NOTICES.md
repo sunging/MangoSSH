@@ -1,5 +1,17 @@
 # Third-party notices
 
+## cbssh
+
+[cbssh 0.4.2](https://github.com/connectbot/cbssh/tree/v0.4.2), commit
+`9811f5a321c1afd88721498cdd7a5201c0c4abc0`, is vendored as source under
+`third_party/cbssh`. Its protocol codecs are generated from the pinned Kaitai
+definitions during the JDK 17 build. Source archive SHA-256, import mapping and
+local patches are recorded in `third_party/cbssh/README.md`.
+
+The Apache License, Version 2.0 is retained in `third_party/cbssh/LICENSE` and
+packaged as `assets/licenses/Apache-2.0-cbssh.txt`. SLF4J uses its no-output
+provider because upstream protocol diagnostics may contain sensitive data.
+
 ## ConnectBot SSH library
 
 The fixed `org.connectbot:sshlib:2.2.48` source artifact is vendored under

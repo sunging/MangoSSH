@@ -26,3 +26,5 @@ rootProject.name = "MangoSSH"
 include(":app")
 include(":third_party:termlib")
 include(":third_party:sshlib")
+include(":third_party:cbssh")
+include(":third_party:cbssh:protocol")
