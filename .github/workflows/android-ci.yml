@@ -74,6 +74,8 @@ jobs:
             :third_party:termlib:lintDebug \
             :third_party:termlib:assembleDebugAndroidTest \
             :third_party:sshlib:test \
+            :third_party:cbssh:test \
+            :third_party:cbssh:protocol:test \
             :app:assembleGithubRelease \
             :app:assembleFdroidRelease
 
