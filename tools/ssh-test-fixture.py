@@ -39,6 +39,7 @@ root = Path(workspace.name).resolve()
 authentication_password = uuid.uuid4().hex
 authentication_otp = uuid.uuid4().hex
 authentication_keys = set()
+authentication_metadata = None
 
 if args.native_tools:
     # Generate every credential inside this disposable fixture. No private material is vendored or logged.
@@ -66,8 +67,8 @@ if args.native_tools:
             keygen(arguments)
             entries.append(dict(plain="/" + plain.name, encrypted="/" + encrypted.name,
                                 passphrase=passphrase, public=" ".join(public[:2])))
-    (root / "fixture-auth.json").write_text(json.dumps(dict(entries=entries,
-        password=authentication_password, otp=authentication_otp)))
+    authentication_metadata = json.dumps(dict(entries=entries,
+        password=authentication_password, otp=authentication_otp)).encode()
 
 def linux_command(*words):
     """Keep Linux CI tools direct while preserving the Windows/WSL fixture adapter."""
@@ -155,6 +156,15 @@ class Server(paramiko.ServerInterface):
             listener.close()
         self.listeners.clear()
     def check_channel_exec_request(self, channel, command):
+        if command == b"fixture-auth" and authentication_metadata is not None:
+            def credentials():
+                try:
+                    channel.sendall(authentication_metadata)
+                    channel.send_exit_status(0)
+                    channel.shutdown_write()
+                except (OSError, EOFError): pass
+            threading.Thread(target=credentials, daemon=True).start()
+            return True
         if command == b"fixture-output":
             def output():
                 try:

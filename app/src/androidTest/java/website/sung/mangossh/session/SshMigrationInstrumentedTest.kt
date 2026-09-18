@@ -25,13 +25,19 @@ class SshMigrationInstrumentedTest {
     }
     private suspend fun text(connection: SshConnection, path: String): String =
         requireNotNull(RemoteFileClient().readTextPreview(connection, path, 64 * 1024)).text
+    private suspend fun metadata(connection: SshConnection): JSONObject = connection.openChannel().use { channel ->
+        channel.execute("fixture-auth")
+        val data = withContext(Dispatchers.IO) { BoundedProtocolReader.bytes(channel.stdout, 64 * 1024) }
+        assertEquals(0, withTimeout(5_000) { channel.exitCode() })
+        JSONObject(data.toString(Charsets.UTF_8))
+    }
 
     @Test fun opensshAndPemKeysKeepPublicIdentityAndEncryptedBytes() = runBlocking<Unit> {
         val port = port()
         val source = connect(port)
         try {
             assertTrue(source.authenticate("fixture", object : SshCredentials {}))
-            val entries = JSONObject(text(source, "/fixture-auth.json")).getJSONArray("entries")
+            val entries = metadata(source).getJSONArray("entries")
             assertEquals(9, entries.length())
             val manager = SshKeyManager()
             for (index in 0 until entries.length()) {
@@ -68,7 +74,7 @@ class SshMigrationInstrumentedTest {
         val source = connect(port)
         try {
             assertTrue(source.authenticate("fixture", object : SshCredentials {}))
-            val answers = JSONObject(text(source, "/fixture-auth.json"))
+            val answers = metadata(source)
             for (otp in listOf(false, true)) {
                 val connection = connect(port)
                 try {
