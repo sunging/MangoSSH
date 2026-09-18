@@ -46,6 +46,11 @@ No upstream version changes are inferred from local modifications.
   is blocked. The application bounds the stop request independently.
 - Cipher registry and PEM writer: remove 3DES transport and DES/3DES private-key
   encryption implementations; neither can be enabled through library options.
+- Extension negotiation: accept server EXT_INFO based on our `ext-info-c`
+  offer, independently of the server's willingness to receive client extensions.
+- Channel shutdown: discard crossed packets after local CLOSE, keep the channel
+  registered until peer CLOSE, and isolate failed forwarding sockets from their
+  shared connection and the application's uncaught exception handler.
 
 Tests imported from the same revision cover protocol serialization, SFTP
 framing, attributes, dispatch and client operations, plus connection close.

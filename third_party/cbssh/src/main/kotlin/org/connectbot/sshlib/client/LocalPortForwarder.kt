@@ -127,6 +127,10 @@ internal class LocalPortForwarder(
         }
         forwarder.start()
         transferred = true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // A refused or concurrently closed channel belongs to this socket only.
         } finally { if (!transferred) socket.close() }
     }
 

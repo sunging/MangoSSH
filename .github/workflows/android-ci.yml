@@ -243,10 +243,14 @@ jobs:
           script: bash tools/run-device-regressions.sh
 
       - name: Upload instrumented test report
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: MangoSSH-instrumented-test-report-${{ github.sha }}
-          path: app/build/reports/androidTests/connected
+          path: |
+            app/build/reports/androidTests/connected
+            app/build/outputs/androidTest-results/connected/**/TEST-*.xml
+            third_party/termlib/build/reports/androidTests/connected
+            third_party/termlib/build/outputs/androidTest-results/connected/**/TEST-*.xml
           if-no-files-found: warn
           retention-days: 14

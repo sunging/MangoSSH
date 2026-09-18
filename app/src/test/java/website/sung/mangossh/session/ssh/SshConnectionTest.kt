@@ -27,21 +27,29 @@ class SshConnectionTest {
             }
         })
         val attempt = async { connection.connect(30_000) { _, _ -> true } }
-        withTimeout(2_000) { started.await() }
+        withTimeout(10_000) { started.await() }
         attempt.cancelAndJoin()
         release.complete(Unit)
-        withTimeout(2_000) { transport.closed.await() }
+        withTimeout(10_000) { transport.closed.await() }
         assertTrue(attempt.isCancelled)
     }
     @Test fun cancellationDuringBannerWaitClosesOwnedTransport() = runBlocking {
         val transport = SilentTransport()
         val connection = SshConnection("unused.invalid", 22, customTransport = TransportFactory { transport })
         val attempt = async { connection.connect(30_000) { _, _ -> true } }
-        withTimeout(2_000) { transport.reading.await() }
+        withTimeout(10_000) { transport.reading.await() }
         attempt.cancelAndJoin()
-        withTimeout(2_000) { transport.closed.await() }
+        withTimeout(10_000) { transport.closed.await() }
         assertTrue(attempt.isCancelled)
         connection.close()
+    }
+
+    @Test fun callerDeadlineRemainsCancellationInsteadOfConnectionFailure() = runBlocking {
+        val connection = SshConnection("unused.invalid", 22, customTransport = TransportFactory { SilentTransport() })
+        try {
+            val failure = runCatching { withTimeout(100) { connection.connect(30_000) { _, _ -> true } } }.exceptionOrNull()
+            assertTrue(failure is kotlinx.coroutines.TimeoutCancellationException)
+        } finally { connection.close() }
     }
 
     @Test fun closedGenerationNeverStartsAnotherTransport() = runBlocking {

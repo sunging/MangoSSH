@@ -140,6 +140,10 @@ internal class DynamicPortForwarder(
         }
         forwarder.start()
         transferred = true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Do not let one failed CONNECT escape as an uncaught application exception.
         } finally { if (!transferred) socket.close() }
     }
 

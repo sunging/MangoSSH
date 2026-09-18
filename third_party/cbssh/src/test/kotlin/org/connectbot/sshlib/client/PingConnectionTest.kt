@@ -121,6 +121,28 @@ class PingConnectionTest {
     }
 
     @Test
+    fun `server extensions are accepted without an ext-info-s offer`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val (clientTransport, serverTransport) = PipedTransport.create()
+        val server = FakeSshServer(serverTransport, backgroundScope, dispatcher)
+        server.advertiseExtInfo = true
+        server.advertisePing = true
+        server.kexAlgorithms = "curve25519-sha256"
+        server.start()
+        val connection = SshConnection(
+            transport = clientTransport,
+            hostKeyVerifier = acceptAllVerifier,
+            rekeyIntervalMs = Long.MAX_VALUE,
+            rekeyBytesLimit = Long.MAX_VALUE,
+            coroutineDispatcher = dispatcher,
+        )
+        try {
+            assertIs<ConnectResult.Success>(connectInBackground(connection, backgroundScope, dispatcher))
+            assertIs<PingResult.Success>(connection.ping())
+        } finally { connection.close() }
+    }
+
+    @Test
     fun `opaque chaff pong does not terminate packet processing`() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val (clientTransport, serverTransport) = PipedTransport.create()

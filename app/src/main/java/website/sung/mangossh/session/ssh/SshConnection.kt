@@ -187,6 +187,7 @@ internal class SshConnection(
             }
         } catch (error: Exception) {
             close()
+            currentCoroutineContext().ensureActive()
             if (error is kotlinx.coroutines.TimeoutCancellationException) throw SshFailure(SshFailure.Category.CONNECT)
             throw error
         }
@@ -237,6 +238,7 @@ internal class SshConnection(
             }
         } catch (error: Exception) {
             close()
+            currentCoroutineContext().ensureActive()
             if (error is kotlinx.coroutines.TimeoutCancellationException) throw SshFailure(SshFailure.Category.KEEPALIVE)
             throw error
         }

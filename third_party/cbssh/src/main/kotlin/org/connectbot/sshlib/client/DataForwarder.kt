@@ -138,12 +138,10 @@ internal class DataForwarder(
         releaseSocket()
         tcpRead.cancel()
         scope.launch {
+            // Retain CLOSE_SENT in the registry until the peer acknowledges CLOSE.
+            // Removing it here would make in-flight replies terminate sibling channels.
             try { kotlinx.coroutines.withTimeoutOrNull(1_000) { sshChannel.close() } }
-            finally {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                    kotlinx.coroutines.withTimeoutOrNull(1_000) { sshChannel.onDisconnected() }
-                }
-            }
+            catch (_: Exception) { /* Connection teardown owns remaining protocol state. */ }
         }
     }
 }

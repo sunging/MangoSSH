@@ -63,7 +63,7 @@ class AndroidKeystoreVaultInstrumentedTest {
             vault.write(VaultSnapshot(schemaVersion = 5))
             val original = context.filesDir.listFiles()!!.single().readBytes()
             val migrated = vault.read()!!
-            assertEquals(6, migrated.schemaVersion)
+            assertEquals(7, migrated.schemaVersion)
             org.junit.Assert.assertArrayEquals(original, context.noBackupFilesDir.listFiles()!!.single().readBytes())
             vault.write(migrated)
             org.junit.Assert.assertArrayEquals(original, context.noBackupFilesDir.listFiles()!!.single().readBytes())

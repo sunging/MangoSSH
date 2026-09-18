@@ -1591,10 +1591,8 @@ class SshConnection(
     }
 
     private fun processServerExtInfo(extInfo: SshMsgExtInfo) {
-        if (!serverAdvertisesExtInfo) {
-            logger.warn("Ignoring SSH_MSG_EXT_INFO because server did not advertise ext-info-s")
-            return
-        }
+        // Our ext-info-c offer authorizes the server's extensions (RFC 8308).
+        // ext-info-s only authorizes extensions in the opposite direction.
         if (serverExtInfoReceivedCount >= 2) {
             logger.warn("Ignoring unexpected extra SSH_MSG_EXT_INFO from server")
             return

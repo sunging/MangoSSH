@@ -527,7 +527,9 @@ internal class SshChannelStateMachine(
                 requiresAuthenticatedConnection = event.requiresAuthenticatedConnection,
             )
         }.onTriggered {
-            it.event.action(SshChannelAcceptedTransition(id, effects, event.origin))
+            // CLOSE_SENT accepts and discards in-flight packets. Empty effects must
+            // not invoke stream delivery after its local owner has cancelled it.
+            if (effects.isNotEmpty()) it.event.action(SshChannelAcceptedTransition(id, effects, event.origin))
         }
     }
 
