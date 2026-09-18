@@ -123,13 +123,7 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
 
     suspend fun trustHostKey(hostKey: TrustedHostKey) = mutate { snapshot ->
         snapshot.copy(
-            knownHosts = snapshot.knownHosts
-                .filterNot {
-                    it.hostname == hostKey.hostname &&
-                        it.port == hostKey.port &&
-                        it.algorithm == hostKey.algorithm
-                }
-                .plus(hostKey),
+            knownHosts = replaceTrustedHostKey(snapshot.knownHosts, hostKey),
         )
     }
 

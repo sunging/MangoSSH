@@ -3,6 +3,8 @@ package website.sung.mangossh.session
 import android.content.Context
 import android.net.Uri
 import website.sung.mangossh.R
+import website.sung.mangossh.data.vault.isTrustedHostKey
+import website.sung.mangossh.data.vault.sameHostKeySlot
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshAgent
 import website.sung.mangossh.session.ssh.SshAgentIdentity
@@ -1263,7 +1265,7 @@ class SshSessionController internal constructor(
                 prepareDirectRoute(hop, managed, connection)
             } else connection.useJump(previous)
             val preferences = hop.overrides.resolve(managed.defaultPreferences)
-            connection.connect((preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, hop, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connection.connect(preferences.connectTimeoutSeconds * 1_000L + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, hop, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
             if (!authenticate(connection, sessionId, hop, snapshot)) throw SshAuthenticationException()
             if (!managed.lifecycle.isOpen) throw CancellationException()
             previous = connection
@@ -1838,9 +1840,9 @@ class SshSessionController internal constructor(
             val encoded = Base64.getEncoder().encodeToString(hostKey)
             val fingerprint = hostKeyFingerprint(hostKey)
             val known = knownHosts.filter { it.hostname == hostname && it.port == port }
-            if (known.any { it.algorithm == algorithm && it.keyBlobBase64 == encoded }) return true
+            if (isTrustedHostKey(known, hostname, port, algorithm, encoded)) return true
 
-            val previous = known.firstOrNull { it.algorithm == algorithm }
+            val previous = known.firstOrNull { it.sameHostKeySlot(hostname, port, algorithm) }
             MangoLog.info(MangoLogEvent.SSH_HOST_KEY_PROMPTED)
             val accepted = requestPrompt(
                 SessionPrompt.HostKeyVerification(
@@ -1855,7 +1857,7 @@ class SshSessionController internal constructor(
                 ),
             )?.firstOrNull() == TRUST_APPROVAL
             if (accepted) {
-                // This runs on trilead's key-exchange thread. Persisting the
+                // This runs inside the owned key-exchange operation. Persisting the
                 // trust decision is a convenience for the next connection, so a
                 // vault write failure must not become an exception thrown into
                 // the protocol stack; the user already approved this key.
