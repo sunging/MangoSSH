@@ -70,6 +70,7 @@ internal data class HostEditorDraft(
     val position: Int = 0,
     val lastConnectedAtEpochMillis: Long = 0,
     val connectionCount: Int = 0,
+    val legacySshAlgorithms: Boolean = false,
 ) : Serializable {
     /** Summaries identify invalid hidden fields as well as errors on the basic form. */
     fun invalidPages(keyIds: Set<String>, snippetIds: Set<String>, hosts: List<ConnectionProfile>): Set<HostEditorPage> = buildSet {
@@ -90,6 +91,7 @@ internal data class HostEditorDraft(
         overrides = overrides, agentPolicy = agentPolicy, requireReauthentication = reauthenticate,
         workspace = workspace, jumpProfileIds = jumpIds, favorite = favorite, position = position,
         lastConnectedAtEpochMillis = lastConnectedAtEpochMillis, connectionCount = connectionCount,
+        legacySshAlgorithms = legacySshAlgorithms,
     )
 
     companion object {
@@ -97,7 +99,7 @@ internal data class HostEditorDraft(
             HostEditorDraft(it.id, it.label, it.hostname, it.username, it.port.toString(), it.protocol, it.route,
                 it.authentication, it.keyId, it.startupSnippetId, it.agentForwarding, it.overrides, it.agentPolicy,
                 it.requireReauthentication, it.workspace, it.jumpProfileIds, it.favorite, it.position,
-                it.lastConnectedAtEpochMillis, it.connectionCount)
+                it.lastConnectedAtEpochMillis, it.connectionCount, it.legacySshAlgorithms)
         } ?: HostEditorDraft()
     }
 }

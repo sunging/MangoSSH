@@ -12,15 +12,6 @@ The Apache License, Version 2.0 is retained in `third_party/cbssh/LICENSE` and
 packaged as `assets/licenses/Apache-2.0-cbssh.txt`. SLF4J uses its no-output
 provider because upstream protocol diagnostics may contain sensitive data.
 
-## ConnectBot SSH library
-
-The fixed `org.connectbot:sshlib:2.2.48` source artifact is vendored under
-`third_party/sshlib` from https://github.com/connectbot/trilead-ssh2.
-Its source artifact SHA-256 and local patch inventory are in that module's README.
-The BSD 3-Clause license is retained in `third_party/sshlib/LICENSE.txt` and
-packaged at `assets/licenses/BSD-3-Clause-ConnectBot-SSH.txt`. Dependencies keep
-the published versions; no cryptographic algorithms are replaced.
-
 ## OkHttp and Okio
 
 WebDAV uses [OkHttp 5.3.0](https://github.com/square/okhttp) and its

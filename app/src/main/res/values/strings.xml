@@ -1,4 +1,7 @@
 <resources>
+    <string name="host_legacy_ssh_algorithms">Legacy SSH compatibility</string>
+    <string name="host_legacy_ssh_algorithms_description">Allow RSA/SHA-1, DH group14/GEX SHA-1, AES-CBC and HMAC-SHA1 after modern algorithms for this host. Enable only for older servers. Connection failures never enable this automatically.</string>
+    <string name="ssh_dsa_unsupported">DSA keys can be exported and backed up but cannot be imported or used to authenticate. Replace this key with RSA, ECDSA or Ed25519.</string>
     <string name="app_name">MangoSSH</string>
     <string name="active_sessions_channel">Active SSH sessions</string>
     <string name="active_sessions_channel_description">MangoSSH is maintaining user-initiated SSH sessions and port forwards.</string>

@@ -60,7 +60,7 @@ Run from the repository root using JDK 17:
 gradlew.bat :app:testGithubDebugUnitTest :app:testFdroidDebugUnitTest
 gradlew.bat :app:lintGithubDebug :app:lintFdroidDebug :app:assembleGithubDebug :app:assembleFdroidDebug
 gradlew.bat :app:assembleGithubDebugAndroidTest :app:assembleFdroidDebugAndroidTest
-gradlew.bat :third_party:termlib:testDebugUnitTest :third_party:termlib:lintDebug :third_party:termlib:assembleDebugAndroidTest :third_party:sshlib:test
+gradlew.bat :third_party:termlib:testDebugUnitTest :third_party:termlib:lintDebug :third_party:termlib:assembleDebugAndroidTest :third_party:cbssh:test :third_party:cbssh:protocol:test
 ```
 
 The instrumented tests need a device or emulator to run

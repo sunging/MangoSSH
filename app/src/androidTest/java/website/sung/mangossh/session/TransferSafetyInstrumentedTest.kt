@@ -8,7 +8,8 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
-import com.trilead.ssh2.Connection
+import website.sung.mangossh.session.ssh.SshConnection
+import website.sung.mangossh.session.ssh.SshCredentials
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import org.junit.Assert.*
@@ -88,7 +89,7 @@ class TransferSafetyInstrumentedTest {
         override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<out String>?) = error("Unexpected update")
     }
 
-    private fun fixture(block: suspend (Connection, Documents, FileTransferManager) -> Unit) = runBlocking {
+    private fun fixture(block: suspend (SshConnection, Documents, FileTransferManager) -> Unit) = runBlocking {
         val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
         if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
         assumeTrue(port != null)
@@ -102,16 +103,16 @@ class TransferSafetyInstrumentedTest {
             override fun getContentResolver() = resolver
             override fun getCacheDir() = staging
         }
-        val connection = Connection("127.0.0.1", port!!)
+        val connection = SshConnection("127.0.0.1", port!!)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
-            connection.connect({ _, _, _, _ -> true }, 5_000, 5_000)
-            assertTrue(connection.authenticateWithNone("fixture"))
+            connection.connect(10_000) { _, _ -> true }
+            assertTrue(connection.authenticate("fixture", object : SshCredentials {}))
             val manager = FileTransferManager(context, scope, RemoteFileClient(), { connection }, {})
             withTimeout(20_000) { block(connection, provider, manager) }
         } finally {
             scope.coroutineContext[Job]!!.cancelAndJoin()
-            connection.abort()
+            connection.close()
             root.deleteRecursively()
             staging.deleteRecursively()
         }
@@ -240,8 +241,8 @@ class TransferSafetyInstrumentedTest {
         manager.pause(id); provider.blockReads = false; provider.allowRead.countDown()
         manager.transfers.first { it.single().phase == ScpTransferPhase.PAUSED }
         if (remove) {
-            val client = com.trilead.ssh2.SFTPv3Client(connection)
-            try { client.rm("/$targetName") } finally { client.close() }
+            val client = connection.openFiles()
+            try { client.remove("/$targetName") } finally { client.close() }
         } else BlockingOperation().use { files.upload(connection, "external change".byteInputStream(), "/", targetName, 0, 15, 1024, it) { _, _ -> } }
         manager.resume(id)
         val repeated = manager.conflicts.first { it.any { question -> question.id != first.id } }.single()

@@ -33,6 +33,7 @@ seq:
       '"x11"': channel_request_x11
       '"env"': channel_request_env
       '"shell"': channel_request_shell
+      '"auth-agent-req@openssh.com"': channel_request_shell
       '"exec"': channel_request_exec
       '"subsystem"': channel_request_subsystem
       '"window-change"': channel_request_window_change

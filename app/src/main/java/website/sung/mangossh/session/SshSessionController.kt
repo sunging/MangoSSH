@@ -3,15 +3,12 @@ package website.sung.mangossh.session
 import android.content.Context
 import android.net.Uri
 import website.sung.mangossh.R
-import com.trilead.ssh2.AuthAgentCallback
-import com.trilead.ssh2.Connection
-import com.trilead.ssh2.DynamicPortForwarder
-import com.trilead.ssh2.InteractiveCallback
-import com.trilead.ssh2.LocalPortForwarder
-import com.trilead.ssh2.ServerHostKeyVerifier
-import com.trilead.ssh2.Session
-import com.trilead.ssh2.UserAuthBannerCallback
-import com.trilead.ssh2.crypto.PublicKeyUtils
+import website.sung.mangossh.session.ssh.SshConnection
+import website.sung.mangossh.session.ssh.SshAgent
+import website.sung.mangossh.session.ssh.SshAgentIdentity
+import website.sung.mangossh.session.ssh.SshForward
+import website.sung.mangossh.session.ssh.SshKeyCodec
+import website.sung.mangossh.session.ssh.SshChannel
 import java.io.InputStream
 import java.net.InetSocketAddress
 import java.security.KeyPair
@@ -199,7 +196,7 @@ class SshSessionController internal constructor(
                 try {
                     val connection = if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection else managed.connection
                     if (connection != null) {
-                        try { connection.ping(15_000L); managed.lastConfirmedNanos = System.nanoTime() }
+                        try { connection.keepalive(); managed.lastConfirmedNanos = System.nanoTime() }
                         catch (error: Exception) {
                             if (managed.protocol == ConnectionProtocol.MOSH) invalidateMoshSshFeatureConnection(id, managed, connection)
                             else finishSession(id, managed, SessionEndReason.CONNECTION_LOST, error)
@@ -236,7 +233,7 @@ class SshSessionController internal constructor(
     fun connect(profile: ConnectionProfile): String {
         val sessionId = UUID.randomUUID().toString()
         val managed = ManagedSession(
-            connection = Connection(profile.hostname, profile.port),
+            connection = SshConnection(profile.hostname, profile.port, profile.legacySshAlgorithms),
             profile = profile,
             defaultPreferences = connectionPreferencesStore.current(),
             initialSnapshot = vault.snapshot.value,
@@ -323,7 +320,7 @@ class SshSessionController internal constructor(
     private fun connectWithoutShell(profile: ConnectionProfile, kind: SessionKind): String {
         val sessionId = UUID.randomUUID().toString()
         val managed = ManagedSession(
-            connection = Connection(profile.hostname, profile.port),
+            connection = SshConnection(profile.hostname, profile.port, profile.legacySshAlgorithms),
             profile = profile,
             defaultPreferences = connectionPreferencesStore.current(),
             initialSnapshot = vault.snapshot.value,
@@ -396,7 +393,7 @@ class SshSessionController internal constructor(
         install(managed, writer, { it.close() }) { managed.writer = it }
         val sizes = TerminalResizeQueue(scope) { columns, rows ->
             when (managed.protocol) {
-                ConnectionProtocol.SSH -> managed.session?.resizePTY(columns, rows, 0, 0)
+                ConnectionProtocol.SSH -> managed.session?.resize(columns, rows)
                 ConnectionProtocol.MOSH -> managed.moshProcess?.resize(columns, rows)
             }
         }
@@ -862,12 +859,12 @@ class SshSessionController internal constructor(
         step { managed.keepaliveJob?.cancel() }
         step { managed.sshFeatureKeepaliveJob?.cancel() }
         step { managed.readerJobs.toList().forEach(Job::cancel) }
-        step { managed.connection.abort() }
+        step { managed.connection.close() }
         val jumps = synchronized(managed.lifecycle.lock) { managed.jumpConnections.toList().asReversed().also { managed.jumpConnections.clear() } }
-        jumps.forEach { connection -> step { connection.abort(); connection.close() } }
-        step { managed.sshFeatureConnection?.abort() }
+        jumps.forEach { connection -> step { connection.close() } }
+        step { managed.sshFeatureConnection?.close() }
         step { closePortForwards(sessionId, managed) }
-        step { managed.session?.abort() }
+        step { managed.session?.close() }
         step {
             managed.moshProcess?.let { process ->
                 if (reason == SessionEndReason.USER_REQUEST) {
@@ -976,21 +973,15 @@ class SshSessionController internal constructor(
         val connection = managed.connection
         try {
             prepareConnectionRoute(profile, managed)
-            connection.addUserAuthBanner(
-                UserAuthBannerCallback { banner, _ ->
+            connection.banner = { banner ->
                     publishNotice(sessionId, "\r\n[MangoSSH] ${banner.sanitizeRemoteBanner()}\r\n")
-                },
-            )
+                }
             updateSession(
                 sessionId,
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect(
-                HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                managed.preferences.connectTimeoutSeconds * 1_000,
-                KEY_EXCHANGE_TIMEOUT_MILLIS,
-            )
+            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, profile, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
 
             updateSession(
                 sessionId,
@@ -1003,7 +994,7 @@ class SshSessionController internal constructor(
             }
             MangoLog.info(MangoLogEvent.SSH_AUTH_SUCCEEDED)
 
-            val session = connection.openSession()
+            val session = connection.openChannel()
             // Host-key verification and authentication can take minutes, so the
             // session may already have been torn down. Storing the channel now
             // would attach a live resource to a ManagedSession nobody will ever
@@ -1013,13 +1004,10 @@ class SshSessionController internal constructor(
                 return
             }
             if (!install(managed, session, { it.close() }) { managed.session = it }) return
-            session.requestPTY(
+            session.pty(
                 managed.preferences.sshTerminalType.termValue,
                 INITIAL_COLUMNS,
                 INITIAL_ROWS,
-                0,
-                0,
-                ByteArray(0),
             )
             if (profile.agentForwarding) {
                 val grant = website.sung.mangossh.security.AgentGrant(profile.agentPolicy, accessState)
@@ -1035,7 +1023,8 @@ class SshSessionController internal constructor(
                         }
                     },
                 )
-                val enabled = session.requestAuthAgentForwarding(agent)
+                connection.enableAgent(agent)
+                val enabled = session.requestAgentForwarding()
                 if (!enabled) {
                     publishLocalizableNotice(
                         sessionId,
@@ -1044,7 +1033,7 @@ class SshSessionController internal constructor(
                 }
             }
             val workspaceId = prepareWorkspace(sessionId, managed, connection)
-            if (workspaceId == null) session.startShell() else session.execCommand(TmuxWorkspaces.attachCommand(workspaceId))
+            if (workspaceId == null) session.shell() else session.execute(TmuxWorkspaces.attachCommand(workspaceId))
 
             if (sessionsById[sessionId] !== managed) return
 
@@ -1095,11 +1084,7 @@ class SshSessionController internal constructor(
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect(
-                HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                managed.preferences.connectTimeoutSeconds * 1_000,
-                KEY_EXCHANGE_TIMEOUT_MILLIS,
-            )
+            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, profile, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
 
             updateSession(
                 sessionId,
@@ -1145,21 +1130,15 @@ class SshSessionController internal constructor(
         val connection = managed.connection
         try {
             prepareConnectionRoute(profile, managed)
-            connection.addUserAuthBanner(
-                UserAuthBannerCallback { banner, _ ->
+            connection.banner = { banner ->
                     publishNotice(sessionId, "\r\n[MangoSSH] ${banner.sanitizeRemoteBanner()}\r\n")
-                },
-            )
+                }
             updateSession(
                 sessionId,
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect(
-                HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                managed.preferences.connectTimeoutSeconds * 1_000,
-                KEY_EXCHANGE_TIMEOUT_MILLIS,
-            )
+            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, profile, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
             updateSession(
                 sessionId,
                 TerminalSessionPhase.AUTHENTICATING,
@@ -1253,6 +1232,7 @@ class SshSessionController internal constructor(
     /** Returns only fixed localized wording for failure categories that need clarification. */
     private fun connectionFailureMessage(error: Throwable): SessionEndMessageKind? = when (error) {
         is SshAuthenticationException -> SessionEndMessageKind.AUTHENTICATION_FAILED
+        is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> SessionEndMessageKind.DSA_KEY_UNSUPPORTED
         is MoshBootstrapException -> SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED
         is MoshRuntimeException -> SessionEndMessageKind.MOSH_RUNTIME_MISSING
         is TsnetEnrollmentRequiredException -> SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED
@@ -1269,34 +1249,33 @@ class SshSessionController internal constructor(
         require(profile.id !in profile.jumpProfileIds && profile.jumpProfileIds.distinct().size == profile.jumpProfileIds.size)
         val snapshot = managed.initialSnapshot
         val sessionId = sessionsById.entries.firstOrNull { it.value === managed }?.key ?: throw CancellationException()
-        var previous: Connection? = null
+        var previous: SshConnection? = null
         for (id in profile.jumpProfileIds) {
             val hop = snapshot.profiles.single { it.id == id }
             require(hop.protocol == ConnectionProtocol.SSH && hop.jumpProfileIds.isEmpty())
-            val connection = Connection(hop.hostname, hop.port)
-            if (!install(managed, connection, { it.abort(); it.close() }) { managed.jumpConnections += it }) throw CancellationException()
-            connection.addConnectionMonitor { error -> cleanupScope.launch {
+            val connection = SshConnection(hop.hostname, hop.port, hop.legacySshAlgorithms)
+            if (!install(managed, connection, { it.close(); it.close() }) { managed.jumpConnections += it }) throw CancellationException()
+            connection.monitor { error -> cleanupScope.launch {
                 finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
             } }
             if (previous == null) {
                 managed.configuredRoute = hop.route
                 prepareDirectRoute(hop, managed, connection)
-            } else connection.setProxyData(JumpProxyData(previous))
+            } else connection.useJump(previous)
             val preferences = hop.overrides.resolve(managed.defaultPreferences)
-            connection.connect(HostKeyVerifier(sessionId, hop, snapshot.knownHosts),
-                preferences.connectTimeoutSeconds * 1_000, KEY_EXCHANGE_TIMEOUT_MILLIS)
+            connection.connect((preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, hop, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
             if (!authenticate(connection, sessionId, hop, snapshot)) throw SshAuthenticationException()
             if (!managed.lifecycle.isOpen) throw CancellationException()
             previous = connection
         }
-        managed.connection.setProxyData(JumpProxyData(requireNotNull(previous)))
+        managed.connection.useJump(requireNotNull(previous))
     }
 
     /** Attaches tsnet's authenticated loopback SOCKS5 transport before SSH connects. */
     private suspend fun prepareDirectRoute(
         profile: ConnectionProfile,
         managed: ManagedSession,
-        connection: Connection,
+        connection: SshConnection,
     ) {
         if (profile.route != ConnectionRoute.TSNET) return
         val lease = embeddedTsnetManager.acquire()
@@ -1310,10 +1289,10 @@ class SshSessionController internal constructor(
             finishSession(sessionsById.entries.firstOrNull { it.value === managed }?.key ?: return@launchOwned,
                 managed, SessionEndReason.CONNECTION_LOST)
         }
-        connection.setProxyData(lease.proxyData)
+        connection.useSocketRoute(lease.proxyData)
     }
 
-    private fun authenticate(connection: Connection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean =
+    private suspend fun authenticate(connection: SshConnection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean =
         SshAuthentication(keyManager, ::requestAuthentication).authenticate(connection, sessionId, profile, snapshot)
 
     /**
@@ -1350,7 +1329,7 @@ class SshSessionController internal constructor(
      * job is started; [runSshKeepaliveLoop] requires a positive interval.
      */
     private fun startSshKeepalive(sessionId: String, managed: ManagedSession) {
-        managed.connection.addConnectionMonitor { reason ->
+        managed.connection.monitor { reason ->
             cleanupScope.launch { finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, reason) }
         }
         val keepaliveSeconds = managed.preferences.keepaliveSeconds
@@ -1359,7 +1338,7 @@ class SshSessionController internal constructor(
             runSshKeepaliveLoop(
                 intervalMillis = keepaliveSeconds * 1_000L,
                 isSessionActive = { sessionsById[sessionId] === managed },
-                sendKeepalive = { managed.connection.ping(15_000L); managed.lastConfirmedNanos = System.nanoTime() },
+                sendKeepalive = { managed.connection.keepalive(); managed.lastConfirmedNanos = System.nanoTime() },
                 onFailure = { error ->
                     MangoLog.warn(MangoLogEvent.SSH_KEEPALIVE_FAILED, error)
                     finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
@@ -1385,9 +1364,9 @@ class SshSessionController internal constructor(
     private fun attachMoshSshFeatureConnection(
         sessionId: String,
         managed: ManagedSession,
-        connection: Connection,
+        connection: SshConnection,
     ) {
-        connection.addConnectionMonitor { reason ->
+        connection.monitor { reason ->
             // The transport thread must not run teardown that closes channels
             // and sockets, so hand the invalidation to the session scope.
             scope.launch {
@@ -1408,7 +1387,7 @@ class SshSessionController internal constructor(
                             managed.sshFeatureConnection === connection
                         }
                 },
-                sendKeepalive = { connection.ping(15_000L); managed.lastConfirmedNanos = System.nanoTime() },
+                sendKeepalive = { connection.keepalive(); managed.lastConfirmedNanos = System.nanoTime() },
                 onFailure = { error ->
                     if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
                         MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)
@@ -1501,7 +1480,7 @@ class SshSessionController internal constructor(
         sessionsById[sessionId]?.writer?.send(text.encodeToByteArray())
     }
 
-    private fun createPortForward(connection: Connection, rule: PortForwardRule): ManagedPortForward {
+    private suspend fun createPortForward(connection: SshConnection, rule: PortForwardRule): ManagedPortForward {
         require(rule.bindPort in 1..65535) { "Invalid listen port" }
         val bindAddress = InetSocketAddress(rule.bindHost.ifBlank { "127.0.0.1" }, rule.bindPort)
         return when (rule.type) {
@@ -1562,7 +1541,7 @@ class SshSessionController internal constructor(
      * text; raw server lines are never surfaced because a valid line contains
      * the sensitive Mosh key.
      */
-    private fun prepareWorkspace(sessionId: String, managed: ManagedSession, connection: Connection): String? = try {
+    private suspend fun prepareWorkspace(sessionId: String, managed: ManagedSession, connection: SshConnection): String? = try {
         TmuxWorkspaces.prepare(connection, managed.profile.workspace)
     } catch (_: WorkspaceUnavailableException) {
         val accepted = requestPrompt(SessionPrompt.Authentication(UUID.randomUUID().toString(), sessionId,
@@ -1592,11 +1571,11 @@ class SshSessionController internal constructor(
         TmuxWorkspaces.list(requireSshFeatureConnection(sessionId))
     }
 
-    private fun bootstrapMosh(connection: Connection, workspaceId: String?): MoshBootstrap = BlockingOperation(30_000L).use { operation ->
-        val session = connection.openSession()
+    private suspend fun bootstrapMosh(connection: SshConnection, workspaceId: String?): MoshBootstrap = BlockingOperation(30_000L).use { operation ->
+        val session = connection.openChannel()
         if (!operation.own(session)) throw MoshBootstrapException()
         try {
-            session.execCommand(MOSH_SERVER_COMMAND + (workspaceId?.let { " -- " + TmuxWorkspaces.attachCommand(it) } ?: ""))
+            session.execute(MOSH_SERVER_COMMAND + (workspaceId?.let { " -- " + TmuxWorkspaces.attachCommand(it) } ?: ""))
             BoundedProtocolReader.lines(session.stdout, MAX_MOSH_BOOTSTRAP_LINES, 4096, 32 * 1024,
                 MoshBootstrapParser::parse) ?: throw MoshBootstrapException()
         } finally {
@@ -1612,7 +1591,7 @@ class SshSessionController internal constructor(
      * a fresh authentication when that companion was lost. The reconnect does
      * not alter the Mosh terminal phase or launch another remote Mosh server.
      */
-    private suspend fun requireSshFeatureConnection(sessionId: String): Connection {
+    private suspend fun requireSshFeatureConnection(sessionId: String): SshConnection {
         val managed = requireNotNull(sessionsById[sessionId]) { "The SSH session is not open" }
         if (managed.protocol != ConnectionProtocol.MOSH) return managed.connection
 
@@ -1632,13 +1611,13 @@ class SshSessionController internal constructor(
      * whichever of the two notices first detaches the companion, and the next
      * caller re-authenticates.
      */
-    private fun currentHealthyMoshSshFeatureConnection(
+    private suspend fun currentHealthyMoshSshFeatureConnection(
         sessionId: String,
         managed: ManagedSession,
-    ): Connection? {
+    ): SshConnection? {
         val connection = synchronized(managed.sshFeatureLock) { managed.sshFeatureConnection } ?: return null
         return try {
-            connection.ping(15_000L)
+            connection.keepalive()
             managed.lastConfirmedNanos = System.nanoTime()
             connection
         } catch (error: Exception) {
@@ -1669,25 +1648,21 @@ class SshSessionController internal constructor(
     }
 
     /** Re-authenticates a lost Mosh companion through the route held by the terminal session. */
-    private fun reconnectMoshSshFeatureConnection(
+    private suspend fun reconnectMoshSshFeatureConnection(
         sessionId: String,
         managed: ManagedSession,
-    ): Connection {
+    ): SshConnection {
         check(sessionsById[sessionId] === managed) { "The Mosh session is not open" }
         val snapshot = vault.snapshot.value
         val profile = companionProfile(managed, snapshot)
-        val connection = Connection(profile.hostname, profile.port)
+        val connection = SshConnection(profile.hostname, profile.port, profile.legacySshAlgorithms)
         val pending = adoptPendingConnection(managed.lifecycle, connection, cleanupScope)
         MangoLog.info(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_STARTED)
         try {
             if (profile.route == ConnectionRoute.TSNET) {
-                connection.setProxyData(requireNotNull(managed.tsnetLease).proxyData)
+                connection.useSocketRoute(requireNotNull(managed.tsnetLease).proxyData)
             }
-            connection.connect(
-                HostKeyVerifier(sessionId, profile, snapshot.knownHosts),
-                managed.preferences.connectTimeoutSeconds * 1_000,
-                KEY_EXCHANGE_TIMEOUT_MILLIS,
-            )
+            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, profile, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
             if (!authenticate(connection, sessionId, profile, snapshot)) {
                 throw SshAuthenticationException()
             }
@@ -1712,7 +1687,7 @@ class SshSessionController internal constructor(
                 synchronized(managed.sshFeatureLock) {
                     if (managed.sshFeatureConnection === connection) managed.sshFeatureConnection = null
                 }
-                connection.abort()
+                connection.close()
                 cleanupScope.launch { runCatching { connection.close() } }
             }
             MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_FAILED, error)
@@ -1728,7 +1703,7 @@ class SshSessionController internal constructor(
     private fun invalidateMoshSshFeatureConnection(
         sessionId: String,
         managed: ManagedSession,
-        connection: Connection,
+        connection: SshConnection,
     ): Boolean {
         if (managed.protocol != ConnectionProtocol.MOSH) return false
         val detail = context.appString(R.string.port_forward_mosh_companion_disconnected)
@@ -1756,11 +1731,11 @@ class SshSessionController internal constructor(
         return true
     }
 
-    private fun collectServerResourceReport(connection: Connection): String = BlockingOperation(15_000L).use { operation ->
-        val session = connection.openSession()
+    private suspend fun collectServerResourceReport(connection: SshConnection): String = BlockingOperation(15_000L).use { operation ->
+        val session = connection.openChannel()
         check(operation.own(session))
         try {
-            session.execCommand(RESOURCE_COMMAND)
+            session.execute(RESOURCE_COMMAND)
             BoundedProtocolReader.bytes(session.stdout, 32 * 1024).toString(Charsets.UTF_8).trim()
                 .ifBlank { context.appString(R.string.resource_report_empty) }
         } finally {
@@ -1853,8 +1828,8 @@ class SshSessionController internal constructor(
         private val sessionId: String,
         private val profile: ConnectionProfile,
         private val knownHosts: List<TrustedHostKey>,
-    ) : ServerHostKeyVerifier {
-        override fun verifyServerHostKey(
+    ) {
+        fun verifyServerHostKey(
             hostname: String,
             port: Int,
             algorithm: String,
@@ -1904,7 +1879,7 @@ class SshSessionController internal constructor(
 
     /** Holds one terminal transport and resources that must close together. */
     private class ManagedSession(
-        val connection: Connection,
+        val connection: SshConnection,
         val profile: ConnectionProfile,
         val defaultPreferences: website.sung.mangossh.domain.ConnectionPreferences,
         val initialSnapshot: VaultSnapshot,
@@ -1914,7 +1889,7 @@ class SshSessionController internal constructor(
         val preferences = profile.overrides.resolve(defaultPreferences)
         /** Guards companion replacement and forward attachment as one lifecycle boundary. */
         val lifecycle = SessionLifecycle()
-        val jumpConnections = mutableListOf<Connection>()
+        val jumpConnections = mutableListOf<SshConnection>()
         @Volatile var lastConfirmedNanos = 0L
         @Volatile var configuredRoute = profile.route
         val sshFeatureLock = lifecycle.lock
@@ -1930,7 +1905,7 @@ class SshSessionController internal constructor(
          * For Mosh this may be detached and replaced without ending the PTY.
          */
         private val sshFeatures = SshFeatureConnection(lifecycle, connection)
-        var sshFeatureConnection: Connection?
+        var sshFeatureConnection: SshConnection?
             get() = sshFeatures.current
             set(value) { sshFeatures.current = value }
 
@@ -1948,7 +1923,7 @@ class SshSessionController internal constructor(
         var sshFeatureKeepaliveJob: Job? = null
 
         @Volatile
-        var session: Session? = null
+        var session: SshChannel? = null
 
         @Volatile
         var moshProcess: MoshPtyProcess? = null
@@ -1975,70 +1950,43 @@ class SshSessionController internal constructor(
     private sealed interface ManagedPortForward {
         fun close()
 
-        class Local(private val delegate: LocalPortForwarder) : ManagedPortForward {
+        class Local(private val delegate: SshForward) : ManagedPortForward {
             override fun close() = delegate.close()
         }
 
-        class Dynamic(private val delegate: DynamicPortForwarder) : ManagedPortForward {
+        class Dynamic(private val delegate: SshForward) : ManagedPortForward {
             override fun close() = delegate.close()
         }
 
         class Remote(
-            private val connection: Connection,
+            private val connection: SshConnection,
             private val remotePort: Int,
         ) : ManagedPortForward {
             override fun close() = connection.cancelRemotePortForwarding(remotePort)
         }
     }
 
+    /** Retains the host allowlist and checks the session grant before and after user approval. */
     private class VaultSshAgent(
         keys: List<StoredSshKey>,
-        private val keyManager: SshKeyManager,
+        keyManager: SshKeyManager,
         private val authorized: () -> Boolean,
         private val authorizeSignature: () -> Boolean,
-    ) : AuthAgentCallback {
-        private val identities: Map<String, AgentIdentity> = buildMap {
-            keys.filterNot(StoredSshKey::requiresPassphrase).forEach { key ->
-                runCatching {
-                    val keyPair = keyManager.decodeKeyPair(key)
-                    val blob = PublicKeyUtils.extractPublicKeyBlob(keyPair.public)
-                    put(Base64.getEncoder().encodeToString(blob), AgentIdentity(key.label, blob, keyPair))
-                }
-            }
+    ) : SshAgent {
+        private val keys = keys.filter { !it.requiresPassphrase && it.algorithm != "ssh-dss" }.mapNotNull { stored ->
+            runCatching { keyManager.decodeKeyPair(stored).let { pair -> Triple(stored.label, SshKeyCodec.publicKey(pair).publicKeyBlob, pair) } }.getOrNull()
         }
-
-        override fun retrieveIdentities(): Map<String, ByteArray> =
-            if (authorized()) identities.values.associate { identity -> identity.label to identity.publicKeyBlob } else emptyMap()
-
-        override fun addIdentity(keyPair: KeyPair, comment: String, confirmUse: Boolean, lifetime: Int): Boolean = false
-
-        override fun removeIdentity(publicKey: ByteArray): Boolean = false
-
-        override fun removeAllIdentities(): Boolean = false
-
-        override fun getKeyPair(publicKey: ByteArray): KeyPair? =
-            identities[Base64.getEncoder().encodeToString(publicKey)]?.keyPair
-                ?.takeIf { authorized() && authorizeSignature() && authorized() }
-
-        override fun isAgentLocked(): Boolean = !authorized()
-
-        override fun setAgentLock(lockPassphrase: String): Boolean = false
-
-        override fun requestAgentUnlock(lockPassphrase: String): Boolean = false
-
-        private data class AgentIdentity(
-            val label: String,
-            val publicKeyBlob: ByteArray,
-            val keyPair: KeyPair,
-        )
+        override fun identities(): List<SshAgentIdentity> = if (authorized()) keys.map { SshAgentIdentity(it.first, it.second) } else emptyList()
+        override fun keyForSignature(publicKey: ByteArray): KeyPair? = keys.firstOrNull { it.second.contentEquals(publicKey) }?.third
+            ?.takeIf { authorized() && authorizeSignature() && authorized() }
     }
-
     private fun hostKeyFingerprint(hostKey: ByteArray): String = "SHA256:" +
         Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(hostKey))
 
     private fun Throwable.toSafeMessage(): String = when (this) {
         is SshAuthenticationException -> context.appString(R.string.session_ended_authentication_failed)
         is KeyPassphraseRequiredException -> context.appString(R.string.message_key_passphrase_required)
+        is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> context.appString(R.string.ssh_dsa_unsupported)
         else -> context.appString(R.string.session_ended_connection_lost)
     }
 

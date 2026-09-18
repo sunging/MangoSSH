@@ -83,6 +83,7 @@ data class EndedTerminalRecord(
 enum class SessionEndMessageKind {
     INPUT_OVERFLOW,
     AUTHENTICATION_FAILED,
+    DSA_KEY_UNSUPPORTED,
     MOSH_BOOTSTRAP_FAILED,
     MOSH_RUNTIME_MISSING,
     TSNET_ENROLLMENT_REQUIRED,

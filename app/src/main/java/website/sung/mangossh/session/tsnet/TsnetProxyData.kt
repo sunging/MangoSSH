@@ -1,6 +1,6 @@
 package website.sung.mangossh.session.tsnet
 
-import com.trilead.ssh2.ProxyData
+import website.sung.mangossh.session.ssh.SshSocketRoute
 import java.io.EOFException
 import java.io.IOException
 import java.net.InetSocketAddress
@@ -17,12 +17,13 @@ internal class TsnetProxyData(
     private val loopbackAddress: String,
     private val secret: String,
     private val failureReporter: (MangoLogEvent) -> Unit = { MangoLog.warn(it) },
-) : ProxyData {
+) : SshSocketRoute {
     @Throws(IOException::class)
-    override fun openConnection(hostname: String, port: Int, connectTimeout: Int): Socket {
+    override fun openSocket(hostname: String, port: Int, connectTimeout: Int, register: (Socket) -> Unit): Socket {
         val socket = Socket()
         var failureEvent = MangoLogEvent.TSNET_PROXY_LOOPBACK_FAILED
         try {
+            register(socket)
             require(port in 1..65535)
             val proxy = parseLoopbackAddress(loopbackAddress)
             socket.connect(proxy, connectTimeout)

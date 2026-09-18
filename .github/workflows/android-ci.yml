@@ -73,7 +73,6 @@ jobs:
             :third_party:termlib:testDebugUnitTest \
             :third_party:termlib:lintDebug \
             :third_party:termlib:assembleDebugAndroidTest \
-            :third_party:sshlib:test \
             :third_party:cbssh:test \
             :third_party:cbssh:protocol:test \
             :app:assembleGithubRelease \
@@ -90,6 +89,9 @@ jobs:
           done
           AAPT2="$build_tools_dir/aapt2" \
             bash tools/check-fdroid-apk.sh app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk
+          python3 tools/check-ssh-migration.py \
+            app/build/outputs/apk/github/debug/app-github-debug.apk \
+            app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk
 
       # This is continuous delivery of an installable debug artifact. Tagged
       # production releases are signed by the dedicated release workflow.

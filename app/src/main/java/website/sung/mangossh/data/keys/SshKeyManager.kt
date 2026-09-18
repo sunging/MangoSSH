@@ -1,19 +1,9 @@
 package website.sung.mangossh.data.keys
 
-import com.trilead.ssh2.crypto.OpenSSHKeyDecoder
-import com.trilead.ssh2.crypto.OpenSSHKeyEncoder
-import com.trilead.ssh2.crypto.PEMDecoder
-import com.trilead.ssh2.crypto.PublicKeyUtils
-import com.trilead.ssh2.crypto.keys.Ed25519KeyPairGenerator
-import com.trilead.ssh2.crypto.keys.Ed25519PrivateKey
-import com.trilead.ssh2.crypto.keys.Ed25519PublicKey
+import website.sung.mangossh.session.ssh.SshKeyCodec
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
-import java.security.interfaces.ECPrivateKey
-import java.security.interfaces.ECPublicKey
-import java.security.interfaces.RSAPrivateCrtKey
-import java.security.interfaces.RSAPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.util.Base64
 import java.util.UUID
@@ -41,7 +31,7 @@ class SshKeyManager {
     fun generateKey(type: SshKeyGenerationType, label: String): StoredSshKey {
         val normalizedLabel = label.ifBlank { type.defaultLabel }
         val keyPair = when (type) {
-            SshKeyGenerationType.ED25519 -> Ed25519KeyPairGenerator().generateKeyPair()
+            SshKeyGenerationType.ED25519 -> SshKeyCodec.generateEd25519()
             SshKeyGenerationType.ECDSA_P256 -> generateEcKeyPair("secp256r1")
             SshKeyGenerationType.ECDSA_P384 -> generateEcKeyPair("secp384r1")
             SshKeyGenerationType.ECDSA_P521 -> generateEcKeyPair("secp521r1")
@@ -49,29 +39,7 @@ class SshKeyManager {
             SshKeyGenerationType.RSA_3072 -> generateRsaKeyPair(3072)
             SshKeyGenerationType.RSA_4096 -> generateRsaKeyPair(4096)
         }
-        val privateKeyPem = when (type) {
-            SshKeyGenerationType.ED25519 -> OpenSSHKeyEncoder.exportOpenSSHEd25519(
-                keyPair.private as Ed25519PrivateKey,
-                keyPair.public as Ed25519PublicKey,
-                normalizedLabel,
-            )
-            SshKeyGenerationType.ECDSA_P256,
-            SshKeyGenerationType.ECDSA_P384,
-            SshKeyGenerationType.ECDSA_P521,
-            -> OpenSSHKeyEncoder.exportOpenSSHEC(
-                keyPair.private as ECPrivateKey,
-                keyPair.public as ECPublicKey,
-                normalizedLabel,
-            )
-            SshKeyGenerationType.RSA_2048,
-            SshKeyGenerationType.RSA_3072,
-            SshKeyGenerationType.RSA_4096,
-            -> OpenSSHKeyEncoder.exportOpenSSHRSA(
-                keyPair.private as RSAPrivateCrtKey,
-                keyPair.public as RSAPublicKey,
-                normalizedLabel,
-            )
-        }
+        val privateKeyPem = SshKeyCodec.encodePrivate(keyPair)
         return recordFrom(
             id = UUID.randomUUID().toString(),
             label = normalizedLabel,
@@ -92,6 +60,7 @@ class SshKeyManager {
     ): StoredSshKey {
         val normalized = privateKeyPem.replace("\r\n", "\n").trim().plus("\n")
         require(normalized.contains("PRIVATE KEY")) { "The selected data is not a private key." }
+        if (SshKeyCodec.isDsa(normalized)) throw UnsupportedDsaKeyException()
         val encrypted = isPassphraseProtected(normalized)
         if (encrypted && passphrase.isNullOrEmpty()) {
             throw KeyPassphraseRequiredException()
@@ -109,39 +78,17 @@ class SshKeyManager {
     }
 
     fun decodeKeyPair(key: StoredSshKey, passphrase: String? = null): KeyPair {
+        if (key.algorithm == "ssh-dss") throw UnsupportedDsaKeyException()
         if (key.requiresPassphrase && passphrase.isNullOrEmpty()) {
             throw KeyPassphraseRequiredException()
         }
         return decodeKeyPair(key.privateKeyPem, passphrase)
     }
 
-    fun isPassphraseProtected(privateKeyPem: String): Boolean {
-        return if (privateKeyPem.contains("BEGIN OPENSSH PRIVATE KEY")) {
-            OpenSSHKeyDecoder.isEncrypted(openSshPayload(privateKeyPem))
-        } else {
-            PEMDecoder.isPEMEncrypted(PEMDecoder.parsePEM(privateKeyPem.toCharArray()))
-        }
-    }
+    fun isPassphraseProtected(privateKeyPem: String): Boolean = SshKeyCodec.isEncrypted(privateKeyPem)
 
     private fun decodeKeyPair(privateKeyPem: String, passphrase: String?): KeyPair =
-        if (privateKeyPem.contains("BEGIN OPENSSH PRIVATE KEY")) {
-            OpenSSHKeyDecoder.decode(openSshPayload(privateKeyPem), passphrase)
-        } else {
-            PEMDecoder.decode(privateKeyPem.toCharArray(), passphrase)
-        }
-
-    private fun openSshPayload(privateKeyPem: String): ByteArray {
-        val encoded = privateKeyPem
-            .lineSequence()
-            .filterNot { line -> line.trimStart().startsWith("-----") }
-            .joinToString(separator = "") { line -> line.trim() }
-        require(encoded.isNotBlank()) { "OpenSSH private key payload is empty" }
-        return try {
-            Base64.getDecoder().decode(encoded)
-        } catch (error: IllegalArgumentException) {
-            throw IllegalArgumentException("OpenSSH private key is not valid Base64", error)
-        }
-    }
+        SshKeyCodec.decodePrivate(privateKeyPem, passphrase)
 
     private fun generateEcKeyPair(curveName: String): KeyPair =
         KeyPairGenerator.getInstance("EC").apply {
@@ -160,8 +107,9 @@ class SshKeyManager {
         privateKeyPem: String,
         requiresPassphrase: Boolean,
     ): StoredSshKey {
-        val publicKey = PublicKeyUtils.toAuthorizedKeysFormat(keyPair.public, label)
-        val blob = PublicKeyUtils.extractPublicKeyBlob(keyPair.public)
+        val encoded = SshKeyCodec.publicKey(keyPair)
+        val publicKey = encoded.algorithmName + " " + Base64.getEncoder().encodeToString(encoded.publicKeyBlob) + " " + label
+        val blob = encoded.publicKeyBlob
         val fingerprint = "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(
             MessageDigest.getInstance("SHA-256").digest(blob),
         )
@@ -178,3 +126,6 @@ class SshKeyManager {
 }
 
 class KeyPassphraseRequiredException : IllegalArgumentException("The private key requires a passphrase.")
+
+/** Historical DSA records remain serializable/exportable, but never enter authentication. */
+class UnsupportedDsaKeyException : IllegalArgumentException("DSA authentication is unsupported.")

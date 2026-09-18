@@ -43,6 +43,7 @@ internal class DataForwarder(
     private val sshChannel: ForwardingChannel,
     private val tcpRead: ByteReadChannel,
     private val tcpWrite: ByteWriteChannel,
+    private val releaseSocket: () -> Unit = {},
 ) {
     companion object {
         private val logger = LoggerFactory.getLogger(DataForwarder::class.java)
@@ -115,6 +116,7 @@ internal class DataForwarder(
     }
 
     private suspend fun cleanup() {
+        releaseSocket()
         try {
             tcpWrite.flushAndClose()
         } catch (_: Exception) {}
@@ -128,5 +130,20 @@ internal class DataForwarder(
 
     suspend fun stop() {
         job?.cancelAndJoin()
+    }
+
+    /** Cancels ownership immediately even when the stopping caller is already cancelled. */
+    fun abort() {
+        job?.cancel()
+        releaseSocket()
+        tcpRead.cancel()
+        scope.launch {
+            try { kotlinx.coroutines.withTimeoutOrNull(1_000) { sshChannel.close() } }
+            finally {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    kotlinx.coroutines.withTimeoutOrNull(1_000) { sshChannel.onDisconnected() }
+                }
+            }
+        }
     }
 }

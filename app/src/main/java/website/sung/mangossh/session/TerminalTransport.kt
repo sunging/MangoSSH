@@ -86,7 +86,7 @@ internal class TerminalTransport(
 }
 
 /** Coalesces size requests while preserving the most recent dimensions across slow resizes. */
-internal class TerminalResizeQueue(scope: CoroutineScope, private val resize: (Int, Int) -> Unit) {
+internal class TerminalResizeQueue(scope: CoroutineScope, private val resize: suspend (Int, Int) -> Unit) {
     private val sizes = Channel<Pair<Int, Int>>(Channel.CONFLATED)
     private val job = scope.launch { for ((columns, rows) in sizes) runCatching { resize(columns, rows) } }
     fun offer(columns: Int, rows: Int) { if (columns > 0 && rows > 0) sizes.trySend(columns to rows) }

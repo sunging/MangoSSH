@@ -1,4 +1,7 @@
 <resources>
+    <string name="host_legacy_ssh_algorithms">兼容旧版 SSH 算法</string>
+    <string name="host_legacy_ssh_algorithms_description">为此主机在现代算法之后允许 RSA/SHA-1、DH group14/GEX SHA-1、AES-CBC 和 HMAC-SHA1。仅在连接旧服务器时启用；连接失败不会自动开启。</string>
+    <string name="ssh_dsa_unsupported">DSA 密钥可导出和备份，但不能新导入或用于认证。请更换为 RSA、ECDSA 或 Ed25519 密钥。</string>
     <string name="app_name">MangoSSH</string>
     <string name="active_sessions_channel">活动 SSH 会话</string>
     <string name="active_sessions_channel_description">MangoSSH 正在维持用户发起的 SSH 会话和端口转发。</string>

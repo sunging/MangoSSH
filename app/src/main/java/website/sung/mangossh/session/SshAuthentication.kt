@@ -1,95 +1,50 @@
 package website.sung.mangossh.session
 
-import com.trilead.ssh2.Connection
-import com.trilead.ssh2.InteractiveCallback
+import kotlinx.coroutines.CancellationException
+import website.sung.mangossh.session.ssh.SshConnection
+import website.sung.mangossh.session.ssh.SshCredentials
+import website.sung.mangossh.session.ssh.SshPromptField
 import website.sung.mangossh.data.keys.SshKeyManager
 import website.sung.mangossh.data.vault.VaultSnapshot
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 
-/** Blocking authentication runs on the connection dispatcher; prompts remain owned by its lifecycle. */
+/** Only configured credentials may be offered; cancelling a prompt cancels its authentication. */
 internal class SshAuthentication(private val keyManager: SshKeyManager,
     private val prompt: (String, SessionPromptText, SessionPromptText?, List<AuthenticationField>) -> List<String>?) {
-    private fun requestAuthentication(sessionId: String, title: SessionPromptText,
-        instruction: SessionPromptText?, fields: List<AuthenticationField>) = prompt(sessionId, title, instruction, fields)
-
-    fun authenticate(
-        connection: Connection,
-        sessionId: String,
-        profile: ConnectionProfile,
-        snapshot: VaultSnapshot,
-    ): Boolean {
-        if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH && connection.authenticateWithNone(profile.username)) {
-            return true
-        }
-        return when (profile.authentication) {
-        AuthenticationMethod.PASSWORD -> {
-            val password = requestAuthentication(
-                sessionId = sessionId,
-                title = SessionPromptText.App(SessionPromptTextKind.PASSWORD_TITLE, profile.label),
-                instruction = SessionPromptText.App(SessionPromptTextKind.PASSWORD_INSTRUCTION),
-                fields = listOf(
-                    AuthenticationField(
-                        SessionPromptText.App(SessionPromptTextKind.PASSWORD_FIELD),
-                        echo = false,
-                    ),
-                ),
-            )?.firstOrNull() ?: return false
-            connection.authenticateWithPassword(profile.username, password)
-        }
-
-        AuthenticationMethod.PRIVATE_KEY -> {
-            val key = profile.keyId?.let { keyId -> snapshot.keys.firstOrNull { it.id == keyId } }
-                ?: throw SshAuthenticationException()
-            val passphrase = if (key.requiresPassphrase) {
-                requestAuthentication(
-                    sessionId = sessionId,
-                    title = SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, key.label),
-                    instruction = SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
-                    fields = listOf(
-                        AuthenticationField(
-                            SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD),
-                            echo = false,
-                        ),
-                    ),
-                )?.firstOrNull() ?: return false
-            } else {
-                null
+    suspend fun authenticate(connection: SshConnection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean {
+        if (profile.authentication == AuthenticationMethod.PRIVATE_KEY &&
+            snapshot.keys.any { it.id == profile.keyId && it.algorithm == "ssh-dss" })
+            throw website.sung.mangossh.data.keys.UnsupportedDsaKeyException()
+        return connection.authenticate(profile.username, object : SshCredentials {
+            override suspend fun password(): String? {
+                if (profile.authentication != AuthenticationMethod.PASSWORD) return null
+                return ask(SessionPromptText.App(SessionPromptTextKind.PASSWORD_TITLE, profile.label),
+                    SessionPromptText.App(SessionPromptTextKind.PASSWORD_INSTRUCTION),
+                    listOf(AuthenticationField(SessionPromptText.App(SessionPromptTextKind.PASSWORD_FIELD), false))).single()
             }
-            connection.authenticateWithPublicKey(
-                profile.username,
-                keyManager.decodeKeyPair(key, passphrase),
-            )
-        }
-
-        AuthenticationMethod.KEYBOARD_INTERACTIVE,
-        AuthenticationMethod.TAILSCALE_SSH,
-        -> connection.authenticateWithKeyboardInteractive(
-            profile.username,
-            InteractiveCallback { name, instruction, numberOfPrompts, prompts, echo ->
-                val fields = (0 until numberOfPrompts).map { index ->
-                    AuthenticationField(SessionPromptText.Verbatim(prompts[index]), echo[index])
-                }
-                requestAuthentication(
-                    sessionId = sessionId,
-                    title = name.takeIf(String::isNotBlank)
-                        ?.let(SessionPromptText::Verbatim)
-                        ?: SessionPromptText.App(
-                            if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH) {
-                                SessionPromptTextKind.TAILSCALE_LOGIN_TITLE
-                            } else {
-                                SessionPromptTextKind.INTERACTIVE_LOGIN_TITLE
-                            },
-                        ),
-                    instruction = instruction.takeIf(String::isNotBlank)
-                        ?.let(SessionPromptText::Verbatim),
-                    fields = fields,
-                )?.takeIf { it.size == numberOfPrompts }?.toTypedArray() ?: emptyArray()
-            },
-        )
-        }
+            override suspend fun key(): java.security.KeyPair? {
+                if (profile.authentication != AuthenticationMethod.PRIVATE_KEY) return null
+                val stored = snapshot.keys.firstOrNull { it.id == profile.keyId } ?: throw SshAuthenticationException()
+                if (stored.algorithm == "ssh-dss") throw website.sung.mangossh.data.keys.UnsupportedDsaKeyException()
+                val passphrase = if (stored.requiresPassphrase) ask(
+                    SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, stored.label),
+                    SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
+                    listOf(AuthenticationField(SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD), false))).single() else null
+                return keyManager.decodeKeyPair(stored, passphrase)
+            }
+            override suspend fun interactive(name: String, instruction: String, fields: List<SshPromptField>): List<String>? {
+                if (profile.authentication !in setOf(AuthenticationMethod.KEYBOARD_INTERACTIVE, AuthenticationMethod.TAILSCALE_SSH)) return null
+                return ask(name.takeIf(String::isNotBlank)?.let(SessionPromptText::Verbatim) ?: SessionPromptText.App(
+                    if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH) SessionPromptTextKind.TAILSCALE_LOGIN_TITLE
+                    else SessionPromptTextKind.INTERACTIVE_LOGIN_TITLE),
+                    instruction.takeIf(String::isNotBlank)?.let(SessionPromptText::Verbatim),
+                    fields.map { AuthenticationField(SessionPromptText.Verbatim(it.text), it.echo) })
+            }
+            private fun ask(title: SessionPromptText, instruction: SessionPromptText?, fields: List<AuthenticationField>): List<String> =
+                prompt(sessionId, title, instruction, fields)?.takeIf { it.size == fields.size } ?: throw CancellationException("Authentication cancelled")
+        })
     }
-
 }
 
 /** Sanitized authentication failure; never retains credentials or remote responses. */

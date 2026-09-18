@@ -1,7 +1,7 @@
 package website.sung.mangossh.session
 
-import com.trilead.ssh2.ChannelCondition
-import com.trilead.ssh2.Connection
+
+import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.domain.TmuxWorkspace
 import website.sung.mangossh.domain.WorkspaceMode
 
@@ -10,7 +10,7 @@ data class RemoteWorkspace(val id: String, val name: String)
 
 /** Optional tmux management uses bounded exec channels, never an interactive terminal's input. */
 internal object TmuxWorkspaces {
-    fun list(connection: Connection): List<RemoteWorkspace> {
+    suspend fun list(connection: SshConnection): List<RemoteWorkspace> {
         requireAvailable(connection)
         val result = command(connection, "tmux list-sessions -F '#{session_id}\\t#{session_name}'")
         if (result.second != 0) return emptyList()
@@ -24,7 +24,7 @@ internal object TmuxWorkspaces {
     }
 
     /** Resolves a configured startup to an exact remote session ID before opening the PTY. */
-    fun prepare(connection: Connection, workspace: TmuxWorkspace): String? {
+    suspend fun prepare(connection: SshConnection, workspace: TmuxWorkspace): String? {
         require(workspace.isValid())
         return when (workspace.mode) {
             WorkspaceMode.DISABLED -> null
@@ -44,7 +44,7 @@ internal object TmuxWorkspaces {
     }
 
     /** The trailing colon identifies a session within a pane target; = disables prefix matching. */
-    private fun findByExactName(connection: Connection, name: String): String? {
+    private suspend fun findByExactName(connection: SshConnection, name: String): String? {
         val result = command(connection, "tmux display-message -p -t ${quote("=$name:")} '#{session_id}'")
         return result.first.trim().takeIf { result.second == 0 && validId(it) }
     }
@@ -54,18 +54,17 @@ internal object TmuxWorkspaces {
         return "tmux attach-session -t ${quote(id)}"
     }
 
-    private fun requireAvailable(connection: Connection) {
+    private suspend fun requireAvailable(connection: SshConnection) {
         if (command(connection, "tmux -V").second != 0) throw WorkspaceUnavailableException()
     }
 
-    private fun command(connection: Connection, command: String): Pair<String, Int?> = BlockingOperation(15_000).use { operation ->
-        val session = connection.openSession()
+    private suspend fun command(connection: SshConnection, command: String): Pair<String, Int?> = BlockingOperation(15_000).use { operation ->
+        val session = connection.openChannel()
         check(operation.own(session))
         try {
-            session.execCommand(command)
+            session.execute(command)
             val output = BoundedProtocolReader.bytes(session.stdout, 32 * 1024).toString(Charsets.UTF_8)
-            session.waitForCondition(ChannelCondition.EXIT_STATUS or ChannelCondition.CLOSED, 15_000)
-            output to session.exitStatus
+            output to kotlinx.coroutines.withTimeout(15_000) { session.exitCode() }
         } finally { operation.release(session) }
     }
 

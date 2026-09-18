@@ -1,6 +1,6 @@
 package website.sung.mangossh.session
 
-import com.trilead.ssh2.Session
+
 import java.io.Closeable
 import java.net.SocketTimeoutException
 import java.util.concurrent.Executors
@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class BlockingOperation(private val idleMillis: Long = 30_000L) : TransferControl, Closeable {
     private val lock = Any()
-    private val channels = mutableSetOf<Session>()
+    private val channels = mutableSetOf<Closeable>()
     private val stopped = AtomicBoolean(false)
     @Volatile private var lastProgress = System.nanoTime()
     @Volatile private var timedOut = false
@@ -51,18 +51,18 @@ internal class BlockingOperation(private val idleMillis: Long = 30_000L) : Trans
             if (!shouldContinue()) throw java.io.InterruptedIOException()
         } finally { synchronized(lock) { localResources.remove(resource); closing.remove(resource) } }
     }
-    override fun own(session: Session): Boolean {
+    override fun own(session: Closeable): Boolean {
         val accepted = synchronized(lock) { if (stopped.get()) false else { channels += session; true } }
-        if (!accepted) session.abort()
+        if (!accepted) session.close()
         return accepted
     }
-    override fun release(session: Session) { synchronized(lock) { channels.remove(session) }; session.abort() }
+    override fun release(session: Closeable) { synchronized(lock) { channels.remove(session) }; session.close() }
 
     override fun close() {
         if (!stopped.compareAndSet(false, true)) return
         timer.cancel(false)
         val owned = synchronized(lock) { channels.toList().also { channels.clear() } }
-        owned.forEach { runCatching { it.abort() } }
+        owned.forEach { runCatching { it.close() } }
         val local = synchronized(lock) { localResources.filterNot { it in closing }.also { localResources.clear() } }
         local.forEach { resource -> closers.execute { runCatching { resource.close() } } }
     }

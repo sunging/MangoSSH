@@ -438,6 +438,12 @@ class SessionChannel internal constructor(
         }
     }
 
+    override suspend fun requestAgentForwarding(): Boolean = performSendRequest {
+        connection.beginChannelRequest(_remoteChannelNumber, "auth-agent-req@openssh.com", wantReply = true) { msg ->
+            msg.setRequestSpecificFields(ChannelRequestShell().apply { _check() })
+        }
+    }
+
     override suspend fun requestExec(command: String): Boolean = performSendRequest {
         logger.debug("Requesting exec on channel $localChannelNumber: $command")
         connection.beginChannelRequest(

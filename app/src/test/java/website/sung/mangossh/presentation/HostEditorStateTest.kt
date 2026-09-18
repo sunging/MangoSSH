@@ -10,7 +10,7 @@ class HostEditorStateTest {
         authentication = AuthenticationMethod.PASSWORD, favorite = true, position = 8, connectionCount = 12, lastConnectedAtEpochMillis = 123)
 
     @Test fun editingRetainsEveryExistingProfileField() {
-        val source = host().copy(agentForwarding = true, agentPolicy = HostAgentPolicy(listOf("key"), true, 60),
+        val source = host().copy(legacySshAlgorithms = true, agentForwarding = true, agentPolicy = HostAgentPolicy(listOf("key"), true, 60),
             requireReauthentication = true, overrides = HostConnectionOverrides(20, 60, 8, SshTerminalType.VT100),
             workspace = TmuxWorkspace(WorkspaceMode.CREATE_OR_ATTACH, "work"), jumpProfileIds = listOf("jump"))
         assertEquals(source.copy(label = "changed"), HostEditorDraft.from(source).copy(label = "changed").toProfileDraft().toProfile())

@@ -47,6 +47,7 @@ data class ConnectionProfile(
     val position: Int = 0,
     val lastConnectedAtEpochMillis: Long = 0L,
     val connectionCount: Int = 0,
+    val legacySshAlgorithms: Boolean = false,
 ) {
     val endpoint: String
         get() = if (port == 22) hostname else "$hostname:$port"
@@ -75,6 +76,7 @@ data class ConnectionProfileDraft(
     val position: Int = 0,
     val lastConnectedAtEpochMillis: Long = 0L,
     val connectionCount: Int = 0,
+    val legacySshAlgorithms: Boolean = false,
 ) {
     /** Verifies only local form constraints; network reachability is checked at connection time. */
     fun isValid(): Boolean = hostname.isNotBlank() && username.isNotBlank() && port in 1..65535
@@ -109,5 +111,6 @@ data class ConnectionProfileDraft(
         position = position,
         lastConnectedAtEpochMillis = lastConnectedAtEpochMillis,
         connectionCount = connectionCount,
+        legacySshAlgorithms = legacySshAlgorithms,
     )
 }

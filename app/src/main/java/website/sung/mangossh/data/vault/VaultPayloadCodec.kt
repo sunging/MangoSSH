@@ -13,7 +13,7 @@ internal object VaultPayloadCodec {
     /** JSON coercions must not turn malformed booleans, numbers or collections into defaults. */
     private fun validateTypes(root: JSONObject) {
         val integers = setOf("schemaVersion", "port", "position", "connectionCount", "lastConnectedAtEpochMillis", "createdAtEpochMillis", "trustedAtEpochMillis", "bindPort", "destinationPort", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "authorizationSeconds")
-        val booleans = setOf("agentForwarding", "favorite", "requiresPassphrase", "appendNewline", "startOnConnect", "confirmEachSignature", "requireReauthentication")
+        val booleans = setOf("legacySshAlgorithms", "agentForwarding", "favorite", "requiresPassphrase", "appendNewline", "startOnConnect", "confirmEachSignature", "requireReauthentication")
         val arrays = setOf("profiles", "keys", "knownHosts", "snippets", "portForwards")
         fun checkObject(value: JSONObject, top: Boolean) {
             value.keys().forEach { name ->
@@ -61,6 +61,7 @@ internal object VaultPayloadCodec {
                         put("keyId", profile.keyId ?: JSONObject.NULL)
                         put("startupSnippetId", profile.startupSnippetId ?: JSONObject.NULL)
                         put("agentForwarding", profile.agentForwarding)
+                        put("legacySshAlgorithms", profile.legacySshAlgorithms)
                         put("overrides", JSONObject().apply {
                             put("connectTimeoutSeconds", profile.overrides.connectTimeoutSeconds ?: JSONObject.NULL)
                             put("keepaliveSeconds", profile.overrides.keepaliveSeconds ?: JSONObject.NULL)
@@ -213,6 +214,7 @@ internal object VaultPayloadCodec {
                     keyId = value.optionalString("keyId"),
                     startupSnippetId = value.optionalString("startupSnippetId"),
                     agentForwarding = value.optBoolean("agentForwarding", false),
+                    legacySshAlgorithms = value.optBoolean("legacySshAlgorithms", false),
                     overrides = value.optJSONObject("overrides")?.let { policy ->
                         HostConnectionOverrides(policy.nullableInt("connectTimeoutSeconds"), policy.nullableInt("keepaliveSeconds"),
                             policy.nullableInt("backgroundMultiplier"), policy.optionalString("terminalType")?.let(SshTerminalType::valueOf))

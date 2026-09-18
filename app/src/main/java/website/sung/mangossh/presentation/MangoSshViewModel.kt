@@ -95,6 +95,7 @@ internal fun resolveSessionEndMessage(
 internal fun SessionEndMessageKind.toUiText(): UiText = uiText(
     when (this) {
         SessionEndMessageKind.AUTHENTICATION_FAILED -> R.string.session_ended_authentication_failed
+        SessionEndMessageKind.DSA_KEY_UNSUPPORTED -> R.string.ssh_dsa_unsupported
         SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED -> R.string.mosh_bootstrap_failed
         SessionEndMessageKind.MOSH_RUNTIME_MISSING -> R.string.mosh_runtime_missing
         SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED -> R.string.embedded_tsnet_enrollment_required
@@ -1065,7 +1066,9 @@ class MangoSshViewModel @JvmOverloads constructor(
                 }
                 .onFailure { error ->
                     _userMessage.value = uiText(
-                        if (error is KeyPassphraseRequiredException) {
+                        if (error is website.sung.mangossh.data.keys.UnsupportedDsaKeyException) {
+                            R.string.ssh_dsa_unsupported
+                        } else if (error is KeyPassphraseRequiredException) {
                             R.string.message_key_passphrase_required
                         } else {
                             R.string.message_key_import_failed

@@ -2,7 +2,7 @@ package website.sung.mangossh.session
 
 import android.content.Context
 import android.net.Uri
-import com.trilead.ssh2.Connection
+import website.sung.mangossh.session.ssh.SshConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,7 +57,7 @@ internal class FileTransferManager(
     private val context: Context,
     private val scope: CoroutineScope,
     private val remoteFiles: RemoteFileClient,
-    private val connectionOf: suspend (String) -> Connection,
+    private val connectionOf: suspend (String) -> SshConnection,
     private val onSessionIdle: (String) -> Unit,
 ) {
     private val stagingBudget = StagingBudget(availableBytes = { android.os.StatFs(context.cacheDir.absolutePath).availableBytes })
@@ -358,7 +358,7 @@ internal class FileTransferManager(
     }
 
     /** Scans have a total sixty-second budget; byte transfers resume the thirty-second idle budget. */
-    private fun <T> scan(handle: TransferHandle, action: () -> T): T {
+    private suspend fun <T> scan(handle: TransferHandle, action: suspend () -> T): T {
         handle.operation?.close()
         val scan = BlockingOperation(60_000)
         handle.operation = scan
@@ -393,7 +393,7 @@ internal class FileTransferManager(
     }
 
     /** Approval survives pause; the final document is not created or opened for writing until commit. */
-    private suspend fun stagedDownload(runId: String, handle: TransferHandle, connection: Connection,
+    private suspend fun stagedDownload(runId: String, handle: TransferHandle, connection: SshConnection,
         path: String, identity: SourceIdentity, destination: Uri?, offset: Long,
         createDestination: (() -> Uri)? = null, lookupDestination: (() -> Uri?)? = null,
         progress: (Long, Long?) -> Unit): Long {
@@ -476,7 +476,7 @@ internal class FileTransferManager(
         update(runId) { it.copy(phase = ScpTransferPhase.COMMITTING) }
     }
 
-    private fun markSkipped(runId: String, handle: TransferHandle, path: String) {
+    private suspend fun markSkipped(runId: String, handle: TransferHandle, path: String) {
         handle.localTemps[path]?.let { temporary ->
             if (temporary.delete()) handle.localTemps.remove(path)
             stagingBudget.release(temporary)
@@ -527,7 +527,7 @@ internal class FileTransferManager(
     }
 
     /** Each resumed file keeps the exact target the user approved, separately from task-wide policy. */
-    private suspend fun stagedUpload(runId: String, handle: TransferHandle, connection: Connection,
+    private suspend fun stagedUpload(runId: String, handle: TransferHandle, connection: SshConnection,
         source: Uri, identity: SourceIdentity, directory: String, name: String, offset: Long,
         progress: (Long, Long?) -> Unit): Long {
         markRunning(runId)
@@ -908,7 +908,7 @@ internal class FileTransferManager(
 
         @Volatile var exactBytes = 0L
         @Volatile var operation: BlockingOperation? = null
-        var connection: Connection? = null
+        var connection: SshConnection? = null
         var sourceIdentity: SourceIdentity? = null
         var remoteWalk: RemoteTreeWalk? = null
         var localWalk: LocalTreeWalk? = null

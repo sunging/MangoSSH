@@ -1,8 +1,9 @@
 package website.sung.mangossh.session
 
 import androidx.test.platform.app.InstrumentationRegistry
-import com.trilead.ssh2.Connection
-import com.trilead.ssh2.SFTPv3Client
+import website.sung.mangossh.session.ssh.SshConnection
+import website.sung.mangossh.session.ssh.SshCredentials
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -10,16 +11,16 @@ import java.util.UUID
 
 /** Opt-in fixture tests: only an explicitly supplied loopback port is ever contacted. */
 class RemoteSafetyInstrumentedTest {
-    private fun fixture(block: (Connection, Int) -> Unit) {
+    private fun fixture(block: suspend (SshConnection, Int) -> Unit) = runBlocking<Unit> {
         val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
         if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
         assumeTrue("Run the disposable tools/ssh-test-fixture.py with adb reverse", port != null)
-        val connection = Connection("127.0.0.1", port!!)
+        val connection = SshConnection("127.0.0.1", port!!)
         try {
-            connection.connect({ _, _, _, _ -> true }, 5_000, 5_000)
-            assertTrue(connection.authenticateWithNone("fixture"))
+            connection.connect(10_000) { _, _ -> true }
+            assertTrue(connection.authenticate("fixture", object : SshCredentials {}))
             block(connection, port)
-        } finally { connection.abort() }
+        } finally { connection.close() }
     }
 
     @Test fun verifiedTemporaryReplacesLongerTargetAndEditorDetectsSameSizeChange() = fixture { connection, _ ->
@@ -27,7 +28,7 @@ class RemoteSafetyInstrumentedTest {
         BlockingOperation().use { control ->
             val name = UUID.randomUUID().toString()
             val path = "/$name"
-            fun put(bytes: ByteArray) = files.upload(connection, bytes.inputStream(), "/", name, 0L,
+            suspend fun put(bytes: ByteArray) = files.upload(connection, bytes.inputStream(), "/", name, 0L,
                 bytes.size.toLong(), 1024L, control) { _, _ -> }
             put(ByteArray(200) { 65 })
             val target = files.inspectTarget(connection, path, control)
@@ -45,42 +46,42 @@ class RemoteSafetyInstrumentedTest {
             try { files.saveEditable(connection, source, "draft", null, false, control); fail("Conflict accepted") }
             catch (_: SourceChangedException) { }
             assertEquals("other\r\n", files.readEditable(connection, path, control).text)
-            val cleanup = SFTPv3Client(connection)
-            try { cleanup.rm(path) } finally { cleanup.close() }
+            val cleanup = connection.openFiles()
+            try { cleanup.remove(path) } finally { cleanup.close() }
         }
     }
 
     @Test fun directTcpipJumpCarriesSftpAndClosingItPreservesFirstHop() = fixture { first, port ->
-        val final = Connection("127.0.0.1", port)
-        final.setProxyData(JumpProxyData(first))
+        val final = SshConnection("127.0.0.1", port)
+        final.useJump(first)
         try {
-            final.connect({ _, _, _, _ -> true }, 5_000, 5_000)
-            assertTrue(final.authenticateWithNone("fixture"))
+            final.connect(10_000) { _, _ -> true }
+            assertTrue(final.authenticate("fixture", object : SshCredentials {}))
             assertTrue(RemoteFileClient().resolveHome(final).startsWith("/"))
-        } finally { final.abort() }
-        first.ping(5_000L)
+        } finally { final.close() }
+        first.keepalive()
         assertTrue(RemoteFileClient().resolveHome(first).startsWith("/"))
     }
 
     @Test fun fourHopSftpAndRejectedNextHopReleaseWithoutClosingIndependentConnection() = fixture { first, port ->
-        val carriers = mutableListOf<Connection>()
+        val carriers = mutableListOf<SshConnection>()
         try {
             repeat(4) {
-                val next = Connection("127.0.0.1", port)
-                next.setProxyData(JumpProxyData(carriers.lastOrNull() ?: first))
+                val next = SshConnection("127.0.0.1", port)
+                next.useJump(carriers.lastOrNull() ?: first)
                 carriers += next
-                next.connect({ _, _, _, _ -> true }, 5_000, 5_000)
-                assertTrue(next.authenticateWithNone("fixture"))
+                next.connect(10_000) { _, _ -> true }
+                assertTrue(next.authenticate("fixture", object : SshCredentials {}))
             }
             assertTrue(RemoteFileClient().resolveHome(carriers.last()).startsWith("/"))
-            val rejected = Connection("127.0.0.1", port + 1)
-            rejected.setProxyData(JumpProxyData(carriers.last()))
+            val rejected = SshConnection("127.0.0.1", port + 1)
+            rejected.useJump(carriers.last())
             try {
-                assertThrows(java.io.IOException::class.java) { rejected.connect({ _, _, _, _ -> true }, 5_000, 5_000) }
-            } finally { rejected.abort() }
-            carriers.last().ping(5_000)
-        } finally { carriers.asReversed().forEach { it.abort() } }
-        first.ping(5_000)
+                assertSuspendingThrows(java.io.IOException::class.java) { rejected.connect(10_000) { _, _ -> true } }
+            } finally { rejected.close() }
+            carriers.last().keepalive()
+        } finally { carriers.asReversed().forEach { it.close() } }
+        first.keepalive()
     }
 
     @Test fun isolatedTmuxCreateListAndAttachSelection() = fixture { connection, _ ->
@@ -103,15 +104,15 @@ class RemoteSafetyInstrumentedTest {
         assertNotEquals(longer, created)
         assertEquals(created, TmuxWorkspaces.prepare(connection, workspace))
         assertEquals(1, TmuxWorkspaces.list(connection).count { it.name == name })
-        assertThrows(WorkspaceUnavailableException::class.java) {
+        assertSuspendingThrows(WorkspaceUnavailableException::class.java) {
             TmuxWorkspaces.prepare(connection, workspace.copy(mode = website.sung.mangossh.domain.WorkspaceMode.CREATE))
         }
     }
 
     @Test fun nativeMoshReceivesOutputResizesAndReapsThroughSingleWriter() = fixture { connection, _ ->
         assumeTrue(InstrumentationRegistry.getArguments().getString("fixtureMosh") == "true")
-        val session = connection.openSession()
-        session.execCommand("fixture-mosh")
+        val session = connection.openChannel()
+        session.execute("fixture-mosh")
         val bootstrap = requireNotNull(BoundedProtocolReader.lines(session.stdout, 20, 4096, 32768, MoshBootstrapParser::parse))
         // Carry datagrams through the fixture channel because Windows/WSL does not forward localhost UDP.
         val udp = java.net.DatagramSocket(0, java.net.InetAddress.getByName("127.0.0.1"))
@@ -158,7 +159,7 @@ class RemoteSafetyInstrumentedTest {
                     val count = try { process.input.read(buffer) } catch (_: java.io.IOException) { -1 }
                     if (count < 0) {
                         val output = bytes.toString("UTF-8").lowercase()
-                        val categories = listOf("locale", "permission denied", "no such file", "connection", "exiting", "closed", "terminal", "mosh-client", "usage", "key").filter(output::contains)
+                        val categories = listOf("locale", "permission denied", "no such file", "SshConnection", "exiting", "closed", "terminal", "mosh-client", "usage", "key").filter(output::contains)
                         throw AssertionError("Native exit categories=$categories byteCount=${bytes.size()}")
                     }
                     bytes.write(buffer, 0, count)
@@ -175,19 +176,19 @@ class RemoteSafetyInstrumentedTest {
             writer.close()
             scope.coroutineContext[kotlinx.coroutines.Job]!!.cancel()
             udp.close()
-            session.abort()
+            session.close()
             executor.shutdownNow()
             directory.deleteRecursively()
         }
     }
 
     @Test fun cancellingOwnedSftpDoesNotCloseSharedSsh() = fixture { connection, _ ->
-        val session = connection.openSession()
+        val session = connection.openChannel()
         val control = BlockingOperation()
         assertTrue(control.own(session))
         control.close()
         assertFalse(control.shouldContinue())
-        connection.ping(5_000L)
+        connection.keepalive()
         assertTrue(RemoteFileClient().resolveHome(connection).startsWith("/"))
     }
 }

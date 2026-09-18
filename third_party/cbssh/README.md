@@ -38,6 +38,12 @@ No upstream version changes are inferred from local modifications.
 - `SshKeys`: expose encryption inspection and Android-compatible Ed25519 key
   generation without registering a global provider.
 - `Base64Compat`: use `java.util.Base64` consistently; MangoSSH requires API 26.
+- `SshSession` / `SessionChannel` / channel-request codec: expose the standard
+  `auth-agent-req@openssh.com` request so the application can request forwarding
+  after installing its identity allowlist, consent and session-binding policy.
+- Forwarders: release listener selectors and owned sockets on cancellation,
+  and abort local forwarding resources even when sending remote cancellation
+  is blocked. The application bounds the stop request independently.
 
 Tests imported from the same revision cover protocol serialization, SFTP
 framing, attributes, dispatch and client operations, plus connection close.

@@ -38,7 +38,7 @@ class TsnetProxyDataTest {
         }
 
         val proxiedSocket = TsnetProxyData("127.0.0.1:${server.localPort}", "random-secret")
-            .openConnection("lab.example.ts.net", 22, 3_000)
+            .openSocket("lab.example.ts.net", 22, 3_000) {}
         assertEquals(0, proxiedSocket.soTimeout)
         proxiedSocket.close()
         assertEquals("lab.example.ts.net" to 22, request.take())
@@ -70,7 +70,7 @@ class TsnetProxyDataTest {
         }
 
         TsnetProxyData("127.0.0.1:${server.localPort}", "runtime-only")
-            .openConnection("test-peer", 22, 50)
+            .openSocket("test-peer", 22, 50) {}
             .close()
 
         worker.join(3_000)
@@ -83,7 +83,7 @@ class TsnetProxyDataTest {
         var failureEvent: MangoLogEvent? = null
         val error = assertThrows(java.io.IOException::class.java) {
             TsnetProxyData("public.example:1234", "do-not-leak") { failureEvent = it }
-                .openConnection("private-target", 22, 100)
+                .openSocket("private-target", 22, 100) {}
         }
         assertEquals(MangoLogEvent.TSNET_PROXY_LOOPBACK_FAILED, failureEvent)
         assertEquals("Embedded tsnet proxy connection failed", error.message)
@@ -116,7 +116,7 @@ class TsnetProxyDataTest {
         val error = assertThrows(java.io.IOException::class.java) {
             TsnetProxyData("127.0.0.1:${server.localPort}", "runtime-only") {
                 failureEvent = it
-            }.openConnection("private-target", 22, 3_000)
+            }.openSocket("private-target", 22, 3_000) {}
         }
 
         assertEquals(MangoLogEvent.TSNET_PROXY_HOST_UNREACHABLE, failureEvent)

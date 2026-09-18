@@ -40,6 +40,7 @@ internal class DynamicPortForwarder(
     private val connection: SshConnection,
     private val socks5Handler: Socks5Handler,
     private val serverSocket: ServerSocket,
+    private val selectorManager: SelectorManager,
     override val boundHost: String,
     override val boundPort: Int,
 ) : PortForwarder {
@@ -53,7 +54,8 @@ internal class DynamicPortForwarder(
             authenticator: Socks5Authenticator? = null,
         ): DynamicPortForwarder {
             val selectorManager = SelectorManager(Dispatchers.IO)
-            val serverSocket = aSocket(selectorManager).tcp().bind(bindAddress.hostString, bindAddress.port)
+            val serverSocket = try { aSocket(selectorManager).tcp().bind(bindAddress.hostString, bindAddress.port) }
+            catch (error: Exception) { selectorManager.close(); throw error }
             val actualAddress = serverSocket.localAddress.toJavaAddress() as InetSocketAddress
 
             val handler = Socks5Handler(authenticator)
@@ -62,6 +64,7 @@ internal class DynamicPortForwarder(
                 connection,
                 handler,
                 serverSocket,
+                selectorManager,
                 actualAddress.hostString,
                 actualAddress.port,
             )
@@ -92,6 +95,8 @@ internal class DynamicPortForwarder(
     }
 
     private suspend fun handleConnection(socket: Socket) {
+        var transferred = false
+        try {
         val readChannel = socket.openReadChannel()
         val writeChannel = socket.openWriteChannel(autoFlush = false)
 
@@ -128,19 +133,26 @@ internal class DynamicPortForwarder(
             return
         }
 
-        val forwarder = DataForwarder(scope, sshChannel, readChannel, writeChannel)
-        synchronized(dataForwarders) { dataForwarders.add(forwarder) }
+        val forwarder = DataForwarder(scope, sshChannel, readChannel, writeChannel) { socket.close() }
+        synchronized(dataForwarders) {
+            if (!_isActive) { forwarder.abort(); return }
+            dataForwarders.add(forwarder)
+        }
         forwarder.start()
+        transferred = true
+        } finally { if (!transferred) socket.close() }
     }
 
     override suspend fun stop() {
         if (!_isActive) return
         _isActive = false
 
-        acceptJob?.cancelAndJoin()
+        acceptJob?.cancel()
+        serverSocket.close()
+        selectorManager.close()
         synchronized(dataForwarders) {
             dataForwarders.toList()
-        }.forEach { it.stop() }
+        }.forEach { it.abort() }
 
         try {
             serverSocket.close()

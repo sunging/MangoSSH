@@ -88,11 +88,16 @@ internal class RemotePortForwarder(
 
         var registeredChannel: ForwardingChannel? = null
         var confirmationSent = false
+        var ownedSocket: io.ktor.network.sockets.Socket? = null
+        var ownedSelector: SelectorManager? = null
         try {
             val localChannelNumber = connection.allocateChannelNumber()
 
             val selectorManager = SelectorManager(Dispatchers.IO)
-            val socket = aSocket(selectorManager).tcp().connect(localHost, localPort)
+            ownedSelector = selectorManager
+            val socket = try { aSocket(selectorManager).tcp().connect(localHost, localPort) }
+            catch (error: Exception) { selectorManager.close(); throw error }
+            ownedSocket = socket
 
             val fwdChannel = ForwardingChannel(
                 connection,
@@ -117,9 +122,14 @@ internal class RemotePortForwarder(
             val readChannel = socket.openReadChannel()
             val writeChannel = socket.openWriteChannel(autoFlush = false)
 
-            val forwarder = DataForwarder(scope, fwdChannel, readChannel, writeChannel)
-            synchronized(dataForwarders) { dataForwarders.add(forwarder) }
+            val forwarder = DataForwarder(scope, fwdChannel, readChannel, writeChannel) { socket.close(); selectorManager.close() }
+            synchronized(dataForwarders) {
+                if (!_isActive) { forwarder.abort(); return }
+                dataForwarders.add(forwarder)
+            }
             forwarder.start()
+            ownedSocket = null
+            ownedSelector = null
         } catch (e: Exception) {
             registeredChannel?.let { channel ->
                 connection.unregisterForwardingChannel(channel)
@@ -134,6 +144,9 @@ internal class RemotePortForwarder(
                     languageTag = "",
                 )
             }
+        } finally {
+            ownedSocket?.close()
+            ownedSelector?.close()
         }
     }
 
@@ -143,10 +156,13 @@ internal class RemotePortForwarder(
 
         val key = "$remoteBindAddress:$remoteBindPort"
         connection.unregisterRemoteForwarder(key)
-        connection.sendCancelTcpipForward(remoteBindAddress, remoteBindPort)
-
-        synchronized(dataForwarders) {
-            dataForwarders.toList()
-        }.forEach { it.stop() }
+        try {
+            connection.sendCancelTcpipForward(remoteBindAddress, remoteBindPort)
+        } finally {
+            // A blocked cancellation packet must not retain local forwarding sockets.
+            synchronized(dataForwarders) {
+                dataForwarders.toList()
+            }.forEach { it.abort() }
+        }
     }
 }

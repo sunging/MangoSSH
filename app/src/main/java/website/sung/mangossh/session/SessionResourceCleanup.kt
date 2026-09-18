@@ -1,6 +1,6 @@
 package website.sung.mangossh.session
 
-import com.trilead.ssh2.Connection
+import website.sung.mangossh.session.ssh.SshConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -10,10 +10,10 @@ internal fun closeForwardInBackground(scope: CoroutineScope, close: () -> Unit, 
     scope.launch(Dispatchers.IO) { completed(runCatching(close).exceptionOrNull()) }
 
 /** Registers before connect, so teardown can interrupt a socket even while the peer has not sent its banner. */
-internal fun adoptPendingConnection(lifecycle: SessionLifecycle, connection: Connection, cleanup: CoroutineScope): Any {
+internal fun adoptPendingConnection(lifecycle: SessionLifecycle, connection: SshConnection, cleanup: CoroutineScope): Any {
     val token = Any()
     if (!lifecycle.adopt(token) {
-            connection.abort()
+            connection.close()
             cleanup.launch(Dispatchers.IO) { runCatching { connection.close() } }
         }) throw java.io.InterruptedIOException()
     return token

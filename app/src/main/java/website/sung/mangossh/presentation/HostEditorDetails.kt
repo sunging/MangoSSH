@@ -186,6 +186,11 @@ private fun AdvancedDetail(controller: HostEditorController, defaults: Connectio
     val value = draft.overrides
     HostEditorFootnote(stringResource(R.string.host_policy_snapshot))
     MangoPreferenceGroup {
+        SettingsSwitchRow(stringResource(R.string.host_legacy_ssh_algorithms), draft.legacySshAlgorithms,
+            { controller.draft = draft.copy(legacySshAlgorithms = it) }, Modifier.testTag("host_editor_legacy_algorithms"))
+    }
+    HostEditorFootnote(stringResource(R.string.host_legacy_ssh_algorithms_description))
+    MangoPreferenceGroup {
         NumberOverride(R.string.host_policy_timeout, defaults.connectTimeoutSeconds, value.connectTimeoutSeconds, ConnectionPreferences.CONNECT_TIMEOUT_CHOICES, "timeout") {
             controller.draft = draft.copy(overrides = value.copy(connectTimeoutSeconds = it))
         }

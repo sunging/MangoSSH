@@ -28,6 +28,7 @@ tool_mode.add_argument("--native-tools", action="store_true", help="Run isolated
 parser.add_argument("--no-posix-rename", action="store_true")
 parser.add_argument("--reject-metadata", action="store_true")
 parser.add_argument("--stall-forward-cancel", action="store_true")
+parser.add_argument("--legacy-algorithms", action="store_true")
 args = parser.parse_args()
 tmux_socket = "mangossh-fixture-" + uuid.uuid4().hex
 key = paramiko.RSAKey.generate(2048)
@@ -109,7 +110,16 @@ class Sftp(paramiko.SFTPServer):
         return struct.unpack(">I", data[:4])[0]
 
 class Server(paramiko.ServerInterface):
-    def __init__(self): self.forward = set()
+    def __init__(self, transport):
+        self.forward = set()
+        self.transport = transport
+        self.listeners = {}
+    def close(self):
+        for listener in list(self.listeners.values()):
+            try: listener.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
+            listener.close()
+        self.listeners.clear()
     def check_channel_exec_request(self, channel, command):
         if tools_enabled and command == b"fixture-mosh":
             def start_mosh():
@@ -163,9 +173,33 @@ class Server(paramiko.ServerInterface):
             finally: channel.shutdown_write()
         threading.Thread(target=execute, daemon=True).start()
         return True
-    def check_port_forward_request(self, address, port): return port
+    def check_port_forward_request(self, address, port):
+        if address != "127.0.0.1" or port not in (22500, 22354): return False
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try: listener.bind((address, port)); listener.listen(4)
+        except OSError: listener.close(); return False
+        self.listeners[port] = listener
+        def accept():
+            while self.transport.is_active():
+                client = None
+                try:
+                    client, origin = listener.accept()
+                    channel = self.transport.open_forwarded_tcpip_channel((address, port), origin)
+                    threading.Thread(target=relay, args=(client, channel), daemon=True).start()
+                    threading.Thread(target=relay, args=(channel, client), daemon=True).start()
+                except (OSError, EOFError, paramiko.SSHException):
+                    if client: client.close()
+                    break
+        threading.Thread(target=accept, daemon=True).start()
+        return port
     def cancel_port_forward_request(self, address, port):
         if args.stall_forward_cancel: threading.Event().wait(60)
+        listener = self.listeners.pop(port, None)
+        if listener:
+            try: listener.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
+            listener.close()
     def check_auth_none(self, username): return paramiko.AUTH_SUCCESSFUL
     def get_allowed_auths(self, username): return "none"
     def check_channel_request(self, kind, chanid):
@@ -187,10 +221,16 @@ def relay(source, destination):
 
 def serve(client):
     transport = paramiko.Transport(client)
+    server = Server(transport)
     try:
+        if args.legacy_algorithms:
+            algorithms = transport.get_security_options()
+            algorithms.kex = ("diffie-hellman-group14-sha1",)
+            algorithms.key_types = ("ssh-rsa",)
+            algorithms.ciphers = ("aes128-cbc",)
+            algorithms.digests = ("hmac-sha1",)
         transport.add_server_key(key)
         transport.set_subsystem_handler("sftp", Sftp, Files)
-        server = Server()
         transport.start_server(server=server)
         channels = []
         while transport.is_active():
@@ -203,7 +243,7 @@ def serve(client):
                 threading.Thread(target=relay, args=(channel, peer), daemon=True).start()
                 threading.Thread(target=relay, args=(peer, channel), daemon=True).start()
     except (OSError, EOFError, paramiko.SSHException): pass
-    finally: transport.close()
+    finally: server.close(); transport.close()
 
 def terminate(signum, frame):
     raise SystemExit(0)

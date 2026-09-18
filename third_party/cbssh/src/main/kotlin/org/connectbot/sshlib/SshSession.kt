@@ -73,6 +73,8 @@ interface SshSession : AutoCloseable {
     ): Boolean
 
     suspend fun requestShell(): Boolean
+    /** Request OpenSSH agent forwarding on this session before starting a shell. */
+    suspend fun requestAgentForwarding(): Boolean = false
 
     /**
      * Request execution of a command on this session channel (RFC 4254 section 6.5).
