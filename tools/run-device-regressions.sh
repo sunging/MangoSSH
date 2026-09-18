@@ -23,7 +23,7 @@ for mode in normal fallback metadata cancel legacy; do
   sudo "$python" tools/ssh-test-fixture.py --port "$port" "${options[@]}" >"$RUNNER_TEMP/fixture-$mode.log" 2>&1 &
   pids+=("$!")
   "$python" -c 'import socket,time,sys
-for attempt in range(100):
+for attempt in range(300):
  try:
   socket.create_connection(("127.0.0.1", int(sys.argv[1])), .2).close(); break
  except OSError: time.sleep(.1)

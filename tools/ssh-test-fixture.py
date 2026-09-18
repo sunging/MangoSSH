@@ -16,6 +16,8 @@ import subprocess
 import shlex
 import uuid
 import re
+import json
+import shutil
 from pathlib import Path
 import paramiko
 from paramiko.sftp import CMD_INIT, CMD_VERSION
@@ -34,6 +36,38 @@ tmux_socket = "mangossh-fixture-" + uuid.uuid4().hex
 key = paramiko.RSAKey.generate(2048)
 workspace = tempfile.TemporaryDirectory(prefix="mangossh-ssh-test-")
 root = Path(workspace.name).resolve()
+authentication_password = uuid.uuid4().hex
+authentication_otp = uuid.uuid4().hex
+authentication_keys = set()
+
+if args.native_tools:
+    # Generate every credential inside this disposable fixture. No private material is vendored or logged.
+    entries = []
+    for kind, bits in (("rsa", 2048), ("ecdsa", 256), ("ecdsa", 384), ("ecdsa", 521), ("ed25519", 256)):
+        base = root / (kind + str(bits))
+        def keygen(arguments):
+            result = subprocess.run(["ssh-keygen", "-q"] + arguments, capture_output=True, timeout=30)
+            if result.returncode: raise RuntimeError("Ephemeral key generation failed")
+        keygen(["-t", kind, "-b", str(bits), "-N", "", "-C", "", "-f", str(base)])
+        public = Path(str(base) + ".pub").read_text().strip().split()
+        import base64
+        authentication_keys.add(base64.b64decode(public[1]))
+        for format_name in (("openssh", "pem") if kind != "ed25519" else ("openssh",)):
+            plain = root / (base.name + "-" + format_name)
+            shutil.copyfile(base, plain)
+            plain.chmod(0o600)
+            if format_name == "pem": keygen(["-p", "-m", "PEM", "-P", "", "-N", "", "-f", str(plain)])
+            encrypted = root / (plain.name + "-encrypted")
+            shutil.copyfile(plain, encrypted)
+            encrypted.chmod(0o600)
+            passphrase = uuid.uuid4().hex
+            arguments = ["-p", "-P", "", "-N", passphrase, "-f", str(encrypted)]
+            if format_name == "pem": arguments.extend(["-m", "PEM"])
+            keygen(arguments)
+            entries.append(dict(plain="/" + plain.name, encrypted="/" + encrypted.name,
+                                passphrase=passphrase, public=" ".join(public[:2])))
+    (root / "fixture-auth.json").write_text(json.dumps(dict(entries=entries,
+        password=authentication_password, otp=authentication_otp)))
 
 def linux_command(*words):
     """Keep Linux CI tools direct while preserving the Windows/WSL fixture adapter."""
@@ -121,6 +155,18 @@ class Server(paramiko.ServerInterface):
             listener.close()
         self.listeners.clear()
     def check_channel_exec_request(self, channel, command):
+        if command == b"fixture-output":
+            def output():
+                try:
+                    for _ in range(32):
+                        channel.sendall(b"o" * 16384)
+                        channel.sendall_stderr(b"e" * 8192)
+                    channel.send_exit_status(0)
+                    channel.shutdown_write()
+                    channel.close()
+                except (OSError, EOFError): pass
+            threading.Thread(target=output, daemon=True).start()
+            return True
         if tools_enabled and command == b"fixture-mosh":
             def start_mosh():
                 relay = None
@@ -200,8 +246,21 @@ class Server(paramiko.ServerInterface):
             try: listener.shutdown(socket.SHUT_RDWR)
             except OSError: pass
             listener.close()
-    def check_auth_none(self, username): return paramiko.AUTH_SUCCESSFUL
-    def get_allowed_auths(self, username): return "none"
+    def check_auth_none(self, username):
+        return paramiko.AUTH_FAILED if username in ("fixture-password", "fixture-otp", "fixture-key") else paramiko.AUTH_SUCCESSFUL
+    def get_allowed_auths(self, username):
+        return {"fixture-password": "password", "fixture-otp": "keyboard-interactive", "fixture-key": "publickey"}.get(username, "none")
+    def check_auth_password(self, username, password):
+        return paramiko.AUTH_SUCCESSFUL if username == "fixture-password" and password == authentication_password else paramiko.AUTH_FAILED
+    def check_auth_interactive(self, username, submethods):
+        if username != "fixture-otp": return paramiko.AUTH_FAILED
+        return paramiko.InteractiveQuery("", "", ("Code", False))
+    def check_auth_interactive_response(self, responses):
+        return paramiko.AUTH_SUCCESSFUL if responses == [authentication_otp] else paramiko.AUTH_FAILED
+    def check_auth_publickey(self, username, key):
+        return paramiko.AUTH_SUCCESSFUL if username == "fixture-key" and key.asbytes() in authentication_keys else paramiko.AUTH_FAILED
+    def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes): return True
+    def check_channel_window_change_request(self, channel, width, height, pixelwidth, pixelheight): return True
     def check_channel_request(self, kind, chanid):
         return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
     def check_channel_direct_tcpip_request(self, chanid, origin, destination):

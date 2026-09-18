@@ -227,7 +227,7 @@ jobs:
       - name: Prepare disposable SSH fixtures
         run: |
           sudo apt-get update
-          sudo apt-get install --yes tmux mosh
+          sudo apt-get install --yes tmux mosh openssh-client
           python3 -m venv "$RUNNER_TEMP/ssh-fixture-venv"
           "$RUNNER_TEMP/ssh-fixture-venv/bin/pip" install paramiko==4.0.0
 
