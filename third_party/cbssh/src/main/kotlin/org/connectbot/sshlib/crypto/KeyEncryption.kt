@@ -35,29 +35,16 @@ internal object KeyEncryption {
         cipherName: String,
     ): ByteArray {
         val (jcaCipher, keySize) = when (cipherName.uppercase()) {
-            "DES-EDE3-CBC" -> "DESede/CBC/NoPadding" to 24
-            "DES-CBC" -> "DES/CBC/NoPadding" to 8
             "AES-128-CBC" -> AES_CBC_NO_PADDING to 16
             "AES-192-CBC" -> AES_CBC_NO_PADDING to 24
             "AES-256-CBC" -> AES_CBC_NO_PADDING to 32
             else -> throw SshException("Unsupported PEM cipher: $cipherName")
         }
 
-        val keyAlgorithm = when {
-            jcaCipher.startsWith("DESede") -> "DESede"
-            jcaCipher.startsWith("DES") -> "DES"
-            else -> "AES"
-        }
-
-        val blockSize = when {
-            jcaCipher.startsWith("DES") -> 8
-            else -> 16
-        }
-
-        val padded = addPkcs7Padding(data, blockSize)
+        val padded = addPkcs7Padding(data, 16)
         val key = KeyDecryption.generateKeyFromPasswordSaltWithMD5(password, salt, keySize)
         val cipher = Cipher.getInstance(jcaCipher)
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, keyAlgorithm), IvParameterSpec(salt))
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(salt))
         return cipher.doFinal(padded)
     }
 

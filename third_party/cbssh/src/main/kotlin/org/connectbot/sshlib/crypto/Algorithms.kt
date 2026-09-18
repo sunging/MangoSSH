@@ -90,14 +90,6 @@ internal enum class CipherEntry(
         false,
         { key, iv, enc -> EncryptionInstance.Cipher(AesCbcCipher(key, iv, enc)) },
     ),
-    TRIPLE_DES_CBC(
-        "3des-cbc",
-        24,
-        8,
-        8,
-        false,
-        { key, iv, enc -> EncryptionInstance.Cipher(TripleDesCbcCipher(key, iv, enc)) },
-    ),
     ;
 
     internal fun create(key: ByteArray, iv: ByteArray, forEncryption: Boolean): EncryptionInstance = factory(key, iv, forEncryption)

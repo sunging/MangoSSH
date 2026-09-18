@@ -44,6 +44,8 @@ No upstream version changes are inferred from local modifications.
 - Forwarders: release listener selectors and owned sockets on cancellation,
   and abort local forwarding resources even when sending remote cancellation
   is blocked. The application bounds the stop request independently.
+- Cipher registry and PEM writer: remove 3DES transport and DES/3DES private-key
+  encryption implementations; neither can be enabled through library options.
 
 Tests imported from the same revision cover protocol serialization, SFTP
 framing, attributes, dispatch and client operations, plus connection close.
