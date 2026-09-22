@@ -25,6 +25,7 @@ import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -32,6 +33,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -530,17 +532,35 @@ class SshConnection(
                     observedKex.await()
                 }
 
-                var written = false
-                writeMutex.withLock {
+                writeMutex.lock()
+                val emission = try {
                     checkTransportOpen()
                     if (isAllowedDuringKex(messageType) || kexCompletion.isCompleted) {
                         beforeWrite()
-                        packetIO.writePacket(messageType, payload)
-                        afterWrite()
-                        written = true
+                        // Encryption advances cipher state before the transport accepts the
+                        // bytes, so a started packet must finish even if its caller is
+                        // cancelled. Only closing the transport may interrupt it; the
+                        // emitting job owns the lock until the packet is out.
+                        connectionScope.async(NonCancellable, start = CoroutineStart.UNDISPATCHED) {
+                            try {
+                                packetIO.writePacket(messageType, payload)
+                                afterWrite()
+                            } finally {
+                                writeMutex.unlock()
+                            }
+                        }
+                    } else {
+                        writeMutex.unlock()
+                        null
                     }
+                } catch (failure: Throwable) {
+                    writeMutex.unlock()
+                    throw failure
                 }
-                if (written) return
+                if (emission != null) {
+                    emission.await()
+                    return
+                }
             }
         }
 

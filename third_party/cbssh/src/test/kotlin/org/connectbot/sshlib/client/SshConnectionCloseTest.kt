@@ -122,6 +122,68 @@ class SshConnectionCloseTest {
         }
     }
 
+    @Test
+    fun `cancelling a writer inside the transport keeps the encrypted stream usable`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val (pipedClient, serverTransport) = PipedTransport.create()
+        val clientTransport = GatedTransport(pipedClient)
+        val server = FakeSshServer(serverTransport, backgroundScope, dispatcher)
+        server.start()
+        val parent = SshConnection(
+            transport = clientTransport,
+            hostKeyVerifier = object : HostKeyVerifier {
+                override suspend fun verify(key: org.connectbot.sshlib.PublicKey): Boolean = true
+            },
+            coroutineDispatcher = dispatcher,
+        )
+        try {
+            val connecting = backgroundScope.async(dispatcher) { parent.connect() }
+            assertEquals(ConnectResult.Success, connecting.await())
+            val authentication = backgroundScope.async(dispatcher) { parent.authenticatePassword("jump", "password") }
+            server.awaitUserauthRequest()
+            server.sendUserauthSuccess()
+            assertIs<AuthResult.Success>(authentication.await())
+
+            val opening = backgroundScope.async(dispatcher) {
+                parent.openDirectTcpipChannel("target", 22, "127.0.0.1", 0)
+            }
+            val open = server.awaitChannelOpen()
+            server.sendChannelOpenConfirmation(open.senderChannel().toInt(), senderChannel = 7)
+            val channel = requireNotNull(opening.await())
+
+            val gate = CompletableDeferred<Unit>()
+            clientTransport.gate = gate
+            val cancelled = backgroundScope.async(dispatcher) { channel.sendData("first".toByteArray()) }
+            clientTransport.reachedGate.await()
+            cancelled.cancel()
+            yield()
+            gate.complete(Unit)
+
+            channel.sendData("second".toByteArray())
+            val delivered = kotlinx.coroutines.withTimeout(5_000) {
+                buildList {
+                    while (lastOrNull() != "second") add(server.awaitChannelData().data().data().decodeToString())
+                }
+            }
+            assertEquals("second", delivered.last())
+        } finally {
+            parent.close()
+        }
+    }
+
+    private class GatedTransport(private val delegate: Transport) : Transport by delegate {
+        @Volatile var gate: CompletableDeferred<Unit>? = null
+        val reachedGate = CompletableDeferred<Unit>()
+
+        override suspend fun write(data: ByteArray) {
+            gate?.let {
+                reachedGate.complete(Unit)
+                it.await()
+            }
+            delegate.write(data)
+        }
+    }
+
     private fun connection(transport: Transport, dispatcher: CoroutineDispatcher) = SshConnection(
         transport = transport,
         hostKeyVerifier = object : HostKeyVerifier {
