@@ -13,6 +13,9 @@ class DisabledCiphersTest {
             assertFailsWith<SshException> {
                 KeyEncryption.encryptPem(ByteArray(16), ByteArray(0), ByteArray(8), name)
             }
+            assertFailsWith<SshException> {
+                KeyDecryption.decryptPem(ByteArray(16), ByteArray(0), ByteArray(8), name)
+            }
         }
     }
 }

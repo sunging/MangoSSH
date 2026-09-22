@@ -6,6 +6,13 @@ import org.connectbot.sshlib.SshSigning
 
 /** Key codec boundary keeps library-specific key classes out of persistence and UI code. */
 internal object SshKeyCodec {
+    /** Inspect only format headers; never decrypt or rewrite a historical record. */
+    fun hasDisabledEncryption(pem: String): Boolean = pem.lineSequence().any { raw ->
+        val line = raw.trim()
+        line == "-----BEGIN ENCRYPTED PRIVATE KEY-----" ||
+            (line.startsWith("DEK-Info:", ignoreCase = true) &&
+                line.substringAfter(':').trim().substringBefore(',').uppercase() in setOf("DES-CBC", "DES-EDE3-CBC"))
+    }
     fun generateEd25519(): KeyPair = SshKeys.generateEd25519KeyPair()
     fun encodePrivate(key: KeyPair): String = SshKeys.encodeOpenSshPrivateKey(key)
     fun decodePrivate(pem: String, passphrase: String?): KeyPair = SshKeys.decodePemPrivateKey(pem, passphrase)

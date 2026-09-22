@@ -16,6 +16,9 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
         if (profile.authentication == AuthenticationMethod.PRIVATE_KEY &&
             snapshot.keys.any { it.id == profile.keyId && it.algorithm == "ssh-dss" })
             throw website.sung.mangossh.data.keys.UnsupportedDsaKeyException()
+        if (profile.authentication == AuthenticationMethod.PRIVATE_KEY) {
+            snapshot.keys.firstOrNull { it.id == profile.keyId }?.let { keyManager.requireSupportedEncryption(it.privateKeyPem) }
+        }
         return connection.authenticate(profile.username, object : SshCredentials {
             override suspend fun password(): String? {
                 if (profile.authentication != AuthenticationMethod.PASSWORD) return null

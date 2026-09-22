@@ -1,4 +1,5 @@
 <resources>
+    <string name="ssh_key_encryption_unsupported">DES/3DES-encrypted PEM and encrypted PKCS#8 keys are no longer supported. Existing records can still be backed up and exported. Convert the exported key to an AES-encrypted OpenSSH key using a trusted external tool, then import it again.</string>
     <string name="host_legacy_ssh_algorithms">Legacy SSH compatibility</string>
     <string name="host_legacy_ssh_algorithms_description">Allow RSA/SHA-1, DH group14/GEX SHA-1, AES-CBC and HMAC-SHA1 after modern algorithms for this host. Enable only for older servers. Connection failures never enable this automatically.</string>
     <string name="ssh_dsa_unsupported">DSA keys can be exported and backed up but cannot be imported or used to authenticate. Replace this key with RSA, ECDSA or Ed25519.</string>

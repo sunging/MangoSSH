@@ -61,6 +61,7 @@ class SshKeyManager {
         val normalized = privateKeyPem.replace("\r\n", "\n").trim().plus("\n")
         require(normalized.contains("PRIVATE KEY")) { "The selected data is not a private key." }
         if (SshKeyCodec.isDsa(normalized)) throw UnsupportedDsaKeyException()
+        requireSupportedEncryption(normalized)
         val encrypted = isPassphraseProtected(normalized)
         if (encrypted && passphrase.isNullOrEmpty()) {
             throw KeyPassphraseRequiredException()
@@ -79,6 +80,7 @@ class SshKeyManager {
 
     fun decodeKeyPair(key: StoredSshKey, passphrase: String? = null): KeyPair {
         if (key.algorithm == "ssh-dss") throw UnsupportedDsaKeyException()
+        requireSupportedEncryption(key.privateKeyPem)
         if (key.requiresPassphrase && passphrase.isNullOrEmpty()) {
             throw KeyPassphraseRequiredException()
         }
@@ -86,6 +88,11 @@ class SshKeyManager {
     }
 
     fun isPassphraseProtected(privateKeyPem: String): Boolean = SshKeyCodec.isEncrypted(privateKeyPem)
+
+    /** Fail before prompting for credentials, including agent and saved-key authentication. */
+    fun requireSupportedEncryption(privateKeyPem: String) {
+        if (SshKeyCodec.hasDisabledEncryption(privateKeyPem)) throw UnsupportedKeyEncryptionException()
+    }
 
     private fun decodeKeyPair(privateKeyPem: String, passphrase: String?): KeyPair =
         SshKeyCodec.decodePrivate(privateKeyPem, passphrase)
@@ -129,3 +136,6 @@ class KeyPassphraseRequiredException : IllegalArgumentException("The private key
 
 /** Historical DSA records remain serializable/exportable, but never enter authentication. */
 class UnsupportedDsaKeyException : IllegalArgumentException("DSA authentication is unsupported.")
+
+/** Disabled key containers remain exportable without attempting to decrypt their contents. */
+class UnsupportedKeyEncryptionException : IllegalArgumentException("Private key encryption format is unsupported.")

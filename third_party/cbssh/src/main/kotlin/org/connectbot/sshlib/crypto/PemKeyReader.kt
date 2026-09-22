@@ -70,10 +70,7 @@ internal object PemKeyReader {
 
             PemType.PKCS8 -> readPkcs8(ps.data)
 
-            PemType.ENCRYPTED_PKCS8 -> {
-                val password = passphrase ?: throw SshException("PKCS#8 key is encrypted, but no passphrase was specified")
-                readPkcs8(Pkcs8Encryption.decrypt(ps.data, password))
-            }
+            PemType.ENCRYPTED_PKCS8 -> throw SshException("Encrypted PKCS#8 is unsupported; convert to OpenSSH externally")
         }
     }
 

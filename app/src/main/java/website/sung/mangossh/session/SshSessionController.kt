@@ -1235,6 +1235,7 @@ class SshSessionController internal constructor(
     private fun connectionFailureMessage(error: Throwable): SessionEndMessageKind? = when (error) {
         is SshAuthenticationException -> SessionEndMessageKind.AUTHENTICATION_FAILED
         is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> SessionEndMessageKind.DSA_KEY_UNSUPPORTED
+        is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException -> SessionEndMessageKind.KEY_ENCRYPTION_UNSUPPORTED
         is MoshBootstrapException -> SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED
         is MoshRuntimeException -> SessionEndMessageKind.MOSH_RUNTIME_MISSING
         is TsnetEnrollmentRequiredException -> SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED
@@ -1989,6 +1990,7 @@ class SshSessionController internal constructor(
         is SshAuthenticationException -> context.appString(R.string.session_ended_authentication_failed)
         is KeyPassphraseRequiredException -> context.appString(R.string.message_key_passphrase_required)
         is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> context.appString(R.string.ssh_dsa_unsupported)
+        is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException -> context.appString(R.string.ssh_key_encryption_unsupported)
         else -> context.appString(R.string.session_ended_connection_lost)
     }
 

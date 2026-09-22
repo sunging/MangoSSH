@@ -105,8 +105,7 @@ internal object PemKeyWriter {
         return if (password == null) {
             wrapPem("PRIVATE KEY", der, null)
         } else {
-            val encrypted = Pkcs8Encryption.encrypt(der, password)
-            wrapPem("ENCRYPTED PRIVATE KEY", encrypted, null)
+            throw SshException("Encrypted PKCS#8 is unsupported; use OpenSSH encoding")
         }
     }
 

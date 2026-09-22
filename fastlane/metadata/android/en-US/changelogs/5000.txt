@@ -1,5 +1,5 @@
 Preview and merge backup restores; recover local and WebDAV history.
-Customize terminal shortcuts, saved zoom and immersive mode; improve scrolling, Esc and tmux.
-Simplify host editing and preserve drafts on save failure.
-Migrate SSH to cbssh 0.4.2; improve sessions and safe transfers. Add per-host legacy algorithm opt-in. DSA keys remain exportable but cannot be imported or used for authentication.
+Customize terminal shortcuts, zoom and immersive controls; improve scrolling and host editing.
+Migrate SSH to cbssh 0.4.2 with safer sessions/transfers and an explicit legacy-algorithm switch.
+DSA and DES/3DES-encrypted PEM or encrypted PKCS#8 keys remain exportable but cannot authenticate; convert unsupported encryption externally.
 Update embedded Tailscale to 1.102.4 and fix its reported version.
