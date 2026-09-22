@@ -24,12 +24,17 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
+import org.connectbot.sshlib.AuthResult
+import org.connectbot.sshlib.ConnectResult
 import org.connectbot.sshlib.HostKeyVerifier
+import org.connectbot.sshlib.PingResult
+import org.connectbot.sshlib.transport.PipedTransport
 import org.connectbot.sshlib.transport.Transport
 import org.connectbot.sshlib.transport.TransportException
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SshConnectionCloseTest {
@@ -80,6 +85,41 @@ class SshConnectionCloseTest {
             connection.sendChannelClose(recipientChannel = 0)
         }
         assertEquals(0, transport.writeCalls)
+    }
+
+    @Test
+    fun `rejected direct tcpip channel does not close its jump connection`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val (clientTransport, serverTransport) = PipedTransport.create()
+        val server = FakeSshServer(serverTransport, backgroundScope, dispatcher)
+        server.start()
+        val verifier = object : HostKeyVerifier {
+            override suspend fun verify(key: org.connectbot.sshlib.PublicKey): Boolean = true
+        }
+        val parent = SshConnection(
+            transport = clientTransport,
+            hostKeyVerifier = verifier,
+            coroutineDispatcher = dispatcher,
+        )
+        try {
+            val connectingParent = backgroundScope.async(dispatcher) { parent.connect() }
+            yield()
+            assertEquals(ConnectResult.Success, connectingParent.await())
+            val authentication = backgroundScope.async(dispatcher) { parent.authenticatePassword("jump", "password") }
+            server.awaitUserauthRequest()
+            server.sendUserauthSuccess()
+            assertIs<AuthResult.Success>(authentication.await())
+
+            val opening = backgroundScope.async(dispatcher) {
+                parent.openDirectTcpipChannel("unreachable", 22, "127.0.0.1", 0)
+            }
+            val open = server.awaitChannelOpen()
+            server.sendChannelOpenFailure(open.senderChannel().toInt())
+            assertEquals(null, opening.await())
+            assertIs<PingResult.Success>(parent.ping())
+        } finally {
+            parent.close()
+        }
     }
 
     private fun connection(transport: Transport, dispatcher: CoroutineDispatcher) = SshConnection(

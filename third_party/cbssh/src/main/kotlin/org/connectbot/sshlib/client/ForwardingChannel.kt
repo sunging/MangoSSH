@@ -18,6 +18,7 @@
 package org.connectbot.sshlib.client
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.launch
@@ -58,7 +59,16 @@ internal class ForwardingChannel(
                 _incomingData.send(data)
                 val adjust = window.releaseLocal(data.size)
                 if (inboundDeliveryOpen) {
-                    connection.sendWindowAdjust(remoteChannelNumber, adjust)
+                    try {
+                        connection.sendWindowAdjust(remoteChannelNumber, adjust)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        // A concurrent channel/connection close must not escape this
+                        // forwarding worker and affect the shared SSH session.
+                        inboundDeliveryOpen = false
+                        logger.debug("Unable to return forwarding window credit", failure)
+                    }
                 }
             }
         } finally {

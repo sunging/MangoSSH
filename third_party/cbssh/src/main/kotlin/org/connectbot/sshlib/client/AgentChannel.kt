@@ -18,6 +18,7 @@
 package org.connectbot.sshlib.client
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -50,7 +51,16 @@ internal class AgentChannel(
     private val requestWorker: Job = scope.launch {
         for (data in requests) {
             val response = handler.handleRequest(data)
-            connection.sendWindowAdjust(remoteChannelNumber, window.releaseLocal(data.size))
+            try {
+                connection.sendWindowAdjust(remoteChannelNumber, window.releaseLocal(data.size))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                // Agent responses belong to this channel; a closed transport must not
+                // surface as an uncaught failure in the shared connection scope.
+                logger.debug("Unable to return agent window credit", failure)
+                continue
+            }
 
             logger.debug("Sending agent response (${response.size} bytes)")
             sendData(response)

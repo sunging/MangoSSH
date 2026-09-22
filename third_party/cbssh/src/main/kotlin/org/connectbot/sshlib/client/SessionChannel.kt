@@ -18,6 +18,7 @@
 package org.connectbot.sshlib.client
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -153,7 +154,16 @@ class SessionChannel internal constructor(
                 output.send(value)
                 val adjust = window.releaseLocal(sizeOf(value))
                 if (inboundDeliveryOpen) {
-                    connection.sendWindowAdjust(_remoteChannelNumber, adjust)
+                    try {
+                        connection.sendWindowAdjust(_remoteChannelNumber, adjust)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        // The connection may close between delivering data and returning
+                        // window credit. This channel's delivery must not fail its siblings.
+                        inboundDeliveryOpen = false
+                        logger.debug("Unable to return session window credit", failure)
+                    }
                 }
             }
         } finally {

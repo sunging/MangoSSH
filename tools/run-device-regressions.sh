@@ -31,6 +31,7 @@ else: raise SystemExit("Fixture failed to start")' "$port"
   adb reverse "tcp:$port" "tcp:$port"
 done
 adb reverse tcp:22354 tcp:22354
+set +e
 ./gradlew --no-daemon :app:connectedGithubDebugAndroidTest :app:connectedFdroidDebugAndroidTest :third_party:termlib:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.fixturePort=22349 \
   -Pandroid.testInstrumentationRunnerArguments.fixtureFallbackPort=22350 \
@@ -41,6 +42,13 @@ adb reverse tcp:22354 tcp:22354
   -Pandroid.testInstrumentationRunnerArguments.fixtureOwnership=true \
   -Pandroid.testInstrumentationRunnerArguments.fixtureTmux=true \
   -Pandroid.testInstrumentationRunnerArguments.fixtureMosh=true
+gradle_status=$?
+set -e
+report_status=0
 "$python" tools/check-regression-results.py \
   app/build/outputs/androidTest-results/connected \
-  third_party/termlib/build/outputs/androidTest-results/connected
+  third_party/termlib/build/outputs/androidTest-results/connected || report_status=$?
+if (( gradle_status != 0 )); then
+  exit "$gradle_status"
+fi
+exit "$report_status"
