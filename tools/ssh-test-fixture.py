@@ -241,7 +241,7 @@ class Server(paramiko.ServerInterface):
                 client = None
                 try:
                     client, origin = listener.accept()
-                    channel = self.transport.open_forwarded_tcpip_channel((address, port), origin)
+                    channel = self.transport.open_forwarded_tcpip_channel(origin, (address, port))
                     threading.Thread(target=relay, args=(client, channel), daemon=True).start()
                     threading.Thread(target=relay, args=(channel, client), daemon=True).start()
                 except (OSError, EOFError, paramiko.SSHException):

@@ -140,6 +140,10 @@ class KtorTcpTransport internal constructor(
 
             readChannel = socket!!.openReadChannel()
             writeChannel = socket!!.openWriteChannel(autoFlush = false)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            selectorManager?.close()
+            selectorManager = null
+            throw cancelled
         } catch (e: TransportException) {
             selectorManager?.close()
             selectorManager = null
@@ -218,6 +222,8 @@ class KtorTcpTransport internal constructor(
             val buffer = ByteArray(count)
             channel.readFully(buffer, 0, count)
             return buffer
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             throw TransportException("Failed to read $count bytes", e)
         }
@@ -229,6 +235,8 @@ class KtorTcpTransport internal constructor(
         try {
             channel.writeFully(data, 0, data.size)
             channel.flush()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             throw TransportException("Failed to write ${data.size} bytes", e)
         }

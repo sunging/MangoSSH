@@ -62,6 +62,8 @@ internal class ForwardingChannelTransport(
     override suspend fun write(data: ByteArray) {
         try {
             channel.sendData(data)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             throw TransportException("Write failed: ${e.message}", e)
         }

@@ -46,6 +46,12 @@ No upstream version changes are inferred from local modifications.
   is blocked. The application bounds the stop request independently.
 - Cipher registry and PEM writer: remove 3DES transport and DES/3DES private-key
   encryption implementations; neither can be enabled through library options.
+- Key decoding: remove DES/3DES PEM decryption and encrypted PKCS#8 support.
+  MangoSSH preserves historical records for backup/export and asks users to
+  convert these containers externally; it never rewrites saved private keys.
+- Ed25519 signatures: use the existing Tink implementation for raw keys on
+  Android without registering a global JCA provider. Transport adapters propagate
+  coroutine cancellation rather than wrapping it as a transport failure.
 - Extension negotiation: accept server EXT_INFO based on our `ext-info-c`
   offer, independently of the server's willingness to receive client extensions.
 - Channel shutdown: discard crossed packets after local CLOSE, keep the channel

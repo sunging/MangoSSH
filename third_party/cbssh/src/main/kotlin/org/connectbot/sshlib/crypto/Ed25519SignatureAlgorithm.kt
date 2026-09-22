@@ -22,8 +22,10 @@ import org.connectbot.sshlib.protocol.SshEd25519SignatureBlob
 import org.connectbot.sshlib.protocol.SshPublicKey
 import org.connectbot.sshlib.protocol.SshSignature
 import java.security.PrivateKey
-import java.security.Signature
-import java.security.spec.X509EncodedKeySpec
+import java.security.spec.PKCS8EncodedKeySpec
+import org.connectbot.sshlib.crypto.ed25519.Ed25519PrivateKey
+import com.google.crypto.tink.subtle.Ed25519Sign
+import com.google.crypto.tink.subtle.Ed25519Verify
 
 internal object Ed25519SignatureAlgorithm : SshSignatureAlgorithm {
     private val ED25519_OID = byteArrayOf(0x2b, 0x65, 0x70) // 1.3.101.112
@@ -32,29 +34,18 @@ internal object Ed25519SignatureAlgorithm : SshSignatureAlgorithm {
         val keyBlob = pubKey.keyBlob() as SshEd25519PublicKeyBlob
         val rawKey = keyBlob.key().data()
 
-        val x509Key = encodeDer {
-            sequence {
-                sequence {
-                    objectIdentifier(ED25519_OID)
-                }
-                bitString(rawKey)
-            }
-        }
-        val keySpec = X509EncodedKeySpec(x509Key)
-        val jcaKey = RawKeyFactory.generatePublic("Ed25519", keySpec)
-
         val sigBlob = sig.signatureBlob() as SshEd25519SignatureBlob
-        val verifier = Signature.getInstance("Ed25519")
-        verifier.initVerify(jcaKey)
-        verifier.update(data)
-        return verifier.verify(sigBlob.signature().data())
+        return try {
+            Ed25519Verify(rawKey).verify(sigBlob.signature().data(), data)
+            true
+        } catch (_: java.security.GeneralSecurityException) { false }
     }
 
     override fun sign(algorithmName: String, privateKey: PrivateKey, data: ByteArray): ByteArray {
-        val signer = Signature.getInstance("Ed25519")
-        signer.initSign(privateKey)
-        signer.update(data)
-        val sigBytes = signer.sign()
+        // Android raw-key decoding may use our fallback key class even when a
+        // platform Signature provider exists but cannot consume that key type.
+        val seed = Ed25519PrivateKey(PKCS8EncodedKeySpec(privateKey.encoded)).getSeed()
+        val sigBytes = try { Ed25519Sign(seed).sign(data) } finally { seed.fill(0) }
         return encodeSshString("ssh-ed25519".toByteArray(Charsets.US_ASCII)) +
             encodeSshString(sigBytes)
     }

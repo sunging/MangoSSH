@@ -59,7 +59,7 @@ class SshMigrationInstrumentedTest {
                     }
                     val connection = connect(port)
                     try {
-                        assertTrue("Public-key authentication failed", connection.authenticate("fixture-key", object : SshCredentials {
+                        assertTrue("Public-key authentication failed for format index $index, encrypted=$encrypted", connection.authenticate("fixture-key", object : SshCredentials {
                             override suspend fun key() = manager.decodeKeyPair(record, passphrase)
                         }))
                     } finally { connection.close() }
