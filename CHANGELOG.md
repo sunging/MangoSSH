@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.5.0](https://github.com/sunging/MangoSSH/compare/v0.4.2...v0.5.0) (2026-09-23)
+
+
+### Features
+
+* **backup:** add previewed restore and recovery history ([b44c435](https://github.com/sunging/MangoSSH/commit/b44c4351a32c3cd49bb9fa18df24a3e46df6d196))
+* improve session reliability and SSH workflows ([282fb4e](https://github.com/sunging/MangoSSH/commit/282fb4ec3e40ae2faca8765bd843e6a2a0cc013c))
+* prepare MangoSSH 0.5.0 with cbssh ([#20](https://github.com/sunging/MangoSSH/issues/20)) ([7b1ff00](https://github.com/sunging/MangoSSH/commit/7b1ff008d0f0c86f1585794d52e7b635767cdf5e))
+* rework host editor into inline multi-page flow ([2d82292](https://github.com/sunging/MangoSSH/commit/2d82292187d400db7feddc0b9788beba3af6310e))
+* **session:** release the wake lock and stretch keepalives in the background ([be8e785](https://github.com/sunging/MangoSSH/commit/be8e785654ecc81f6f808ab4c579c17e7923f486))
+* **ssh:** replace legacy SSH implementation with cbssh ([e806094](https://github.com/sunging/MangoSSH/commit/e806094a1dddf224b32159bbcbf02c7e42172a0f))
+* **terminal:** forward swipes to full-screen programs over tmux ([252f83a](https://github.com/sunging/MangoSSH/commit/252f83afed838490aa9b87d446ed861fb984c674))
+* **terminal:** improve shortcut toolbar layout ([0bd2b1b](https://github.com/sunging/MangoSSH/commit/0bd2b1bbb7dedd5c8178e897b5f9bfea0ed5efb8))
+* **terminal:** persist pinch-to-zoom and add immersive chrome toggle ([ced2bf9](https://github.com/sunging/MangoSSH/commit/ced2bf91a42b47c953f59cdae9c8250bb8d88ae1))
+* **terminal:** reach bar visibility toggles from the selection menu ([ee4aef2](https://github.com/sunging/MangoSSH/commit/ee4aef2594458125468e35b04d7b12597efc3b00))
+
+
+### Bug Fixes
+
+* **keys:** disable unsupported encrypted private key formats ([cf37f29](https://github.com/sunging/MangoSSH/commit/cf37f2931a045074179649b1c7ef58b895fdc33b))
+* report success only after a write commits ([4e0dd00](https://github.com/sunging/MangoSSH/commit/4e0dd00c008f5439de608ae2789c7d8e36aec7d1))
+* **session:** re-send terminal size to the PTY once the transport opens ([4b1d7d2](https://github.com/sunging/MangoSSH/commit/4b1d7d2fffa6efe08d8fa887c297596767ed7ff1))
+* **ssh:** finish started packets when their writer is cancelled ([3ed7901](https://github.com/sunging/MangoSSH/commit/3ed79017480d2598494f6e20b8227aade17d3cb5))
+* **ssh:** isolate forwarding shutdown and accept server extensions ([e175dde](https://github.com/sunging/MangoSSH/commit/e175dde92c2937014809230bbd3cba6401af256a))
+* **ssh:** isolate window credit from channel closure ([77f231f](https://github.com/sunging/MangoSSH/commit/77f231f03ec47cf6556548a8c50bf40a78696392))
+* **ssh:** preserve trusted RSA host identities across migration ([fc08caa](https://github.com/sunging/MangoSSH/commit/fc08caaa68c660f5a092791bc6a6f5303c07c0ef))
+* **ssh:** remove weak transport and key export ciphers ([8b44413](https://github.com/sunging/MangoSSH/commit/8b4441332eb0e976c0c71f0cf0d9226e86b4e6ae))
+* **ssh:** repair Android signing and forwarding regressions ([27073e7](https://github.com/sunging/MangoSSH/commit/27073e7807ac1d5c4246b1044017d574dd734744))
+* stop terminal swipes from sending arrow keys ([c9760d4](https://github.com/sunging/MangoSSH/commit/c9760d451a0fe66d0a3db4b8ea44132668e62098))
+* **terminal:** route Esc to the shell instead of leaving the session ([d2f5e2f](https://github.com/sunging/MangoSSH/commit/d2f5e2fb88c4ebe5b544e374ea577b49d6956ace))
+* **termlib:** keep a terminal Esc from becoming a Back navigation ([ca5aa27](https://github.com/sunging/MangoSSH/commit/ca5aa27c9a0fb090f01fabd96b86c6e019b63a6b))
+* **test:** keep temporary SSH credentials in memory ([bf5dbb4](https://github.com/sunging/MangoSSH/commit/bf5dbb42e9567584c30bca3c70167252df1ec2f5))
+* **tsnet:** upgrade to 1.102.4 and stamp embedded builds ([9283191](https://github.com/sunging/MangoSSH/commit/9283191a6c7fe314cc494868d37b40cf7bfb0947))
+
+
+### Performance Improvements
+
+* **termlib:** coalesce background snapshots and batch foreground drawing ([d4a40d6](https://github.com/sunging/MangoSSH/commit/d4a40d68ee4d0bfd5e4c560d85ca025722433f5a))
+* **tsnet:** slow the status poll once the node is running ([d36ca10](https://github.com/sunging/MangoSSH/commit/d36ca1069df5b993c10d2eef110b7defd6ad2ad3))
+
+
+### Miscellaneous Chores
+
+* **release:** prepare 0.5.0 release metadata ([c90bd02](https://github.com/sunging/MangoSSH/commit/c90bd022288deab37c95b51d04bb37b9ab447452))
+
 ## [0.4.2](https://github.com/sunging/MangoSSH/compare/v0.4.1...v0.4.2) (2026-09-05)
 
 
