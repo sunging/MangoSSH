@@ -250,7 +250,8 @@ class HostEditorInstrumentedTest {
         } }
         compose.onNodeWithTag("host_editor_label").assertIsNotFocused()
         compose.onNodeWithTag("host_editor_label").performClick().performTextInput(" updated")
-        compose.onNodeWithTag("host_editor_label").assertIsFocused().assertTextContains(" updated")
+        val label = compose.onNodeWithTag("host_editor_label").assertIsFocused()
+        assertEquals("Example updated", label.fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
         compose.onNodeWithTag("host_editor_save").assertIsDisplayed()
         capture("phone-after-typing")
     }
