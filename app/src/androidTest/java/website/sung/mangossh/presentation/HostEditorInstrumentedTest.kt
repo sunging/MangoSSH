@@ -1,6 +1,10 @@
 package website.sung.mangossh.presentation
 
 import android.graphics.Bitmap
+import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.provider.Settings
+import android.view.KeyEvent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -44,6 +48,10 @@ class HostEditorInstrumentedTest {
     }
     private fun open(page: HostEditorPage) = compose.onNodeWithTag("host_editor_open_${page.name}").performScrollTo().performClick()
     private fun back() = compose.onNodeWithTag("host_editor_back").performClick()
+    private fun shell(command: String) {
+        val output = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+        ParcelFileDescriptor.AutoCloseInputStream(output).use { it.readBytes() }
+    }
     private fun capture(name: String) {
         val directory = File(context.cacheDir, "test-host-editor-captures").apply { mkdirs() }
         File(directory, "$name.png").outputStream().use {
@@ -237,17 +245,27 @@ class HostEditorInstrumentedTest {
     }
 
     @Test fun phoneDialogDoesNotAutofocusAndKeepsSaveAboveKeyboard() {
-        compose.setContent { MaterialTheme {
-            HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, {}, { _, _ -> })
-        } }
-        compose.onNodeWithTag("host_editor_label").assertIsNotFocused()
-        val initialHeight = compose.onNodeWithTag("host_editor").getUnclippedBoundsInRoot().let { (it.bottom - it.top).value }
-        compose.onNodeWithTag("host_editor_label").performClick().performTextInput(" updated")
-        compose.waitUntil(5_000) {
-            compose.onNodeWithTag("host_editor").getUnclippedBoundsInRoot().let { (it.bottom - it.top).value } < initialHeight - 80
+        val setting = "show_ime_with_hard_keyboard"
+        val previous = Settings.Secure.getString(context.contentResolver, setting)
+        require(previous == null || previous == "0" || previous == "1")
+        // CI exposes a hardware keyboard; this test needs the soft IME to verify the dialog inset.
+        shell("settings put secure $setting 1")
+        try {
+            compose.setContent { MaterialTheme {
+                HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, {}, { _, _ -> })
+            } }
+            compose.onNodeWithTag("host_editor_label").assertIsNotFocused()
+            val initialHeight = compose.onNodeWithTag("host_editor").getUnclippedBoundsInRoot().let { (it.bottom - it.top).value }
+            compose.onNodeWithTag("host_editor_label").performClick().performTextInput(" updated")
+            compose.waitUntil(10_000) {
+                compose.onNodeWithTag("host_editor").getUnclippedBoundsInRoot().let { (it.bottom - it.top).value } < initialHeight - 80
+            }
+            compose.onNodeWithTag("host_editor_save").assertIsDisplayed()
+            capture("phone-keyboard")
+        } finally {
+            if (previous == null) shell("settings delete secure $setting")
+            else shell("settings put secure $setting $previous")
         }
-        compose.onNodeWithTag("host_editor_save").assertIsDisplayed()
-        capture("phone-keyboard")
     }
 
     @Test fun systemBackFromDialogDetailReturnsToMain() {
@@ -256,7 +274,11 @@ class HostEditorInstrumentedTest {
             HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, { dismissed = true }, { _, _ -> })
         } }
         open(HostEditorPage.ADVANCED)
-        androidx.test.espresso.Espresso.pressBack()
+        // Espresso selects the Activity root, which has no focus while the Dialog owns the window.
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val whenPressed = SystemClock.uptimeMillis()
+        assertTrue(automation.injectInputEvent(KeyEvent(whenPressed, whenPressed, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0), true))
+        assertTrue(automation.injectInputEvent(KeyEvent(whenPressed, whenPressed, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0), true))
         compose.onNodeWithTag("host_editor_save").assertIsDisplayed()
         compose.runOnIdle { assertFalse(dismissed) }
     }
