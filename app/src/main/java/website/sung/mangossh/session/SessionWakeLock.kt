@@ -20,9 +20,16 @@ internal class SessionWakeLock(
 ) {
     private var required = false
 
-    /** Applies a complete work snapshot, not a per-session reference increment. */
-    fun update(hasSessions: Boolean, foregroundOwned: Boolean) {
-        val nextRequired = hasSessions && foregroundOwned
+    /**
+     * Applies a complete work snapshot, not a per-session reference increment.
+     *
+     * The lease is held only while a live session is on screen. Once the app is
+     * backgrounded ([uiForeground] false) the lock is released so the SoC can
+     * suspend; keepalives then run off [SessionKeepaliveScheduler]'s Doze-tolerant
+     * alarm instead of a CPU-bound `delay`.
+     */
+    fun update(hasSessions: Boolean, foregroundOwned: Boolean, uiForeground: Boolean = true) {
+        val nextRequired = hasSessions && foregroundOwned && uiForeground
         if (nextRequired == required) return
         required = nextRequired
         if (required) {
@@ -48,7 +55,7 @@ internal class SessionWakeLock(
 
     /** Stops renewal eligibility before releasing; repeated cleanup is harmless. */
     fun close() {
-        update(hasSessions = false, foregroundOwned = false)
+        update(hasSessions = false, foregroundOwned = false, uiForeground = false)
     }
 
     private fun releaseSafely() {

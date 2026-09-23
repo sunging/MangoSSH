@@ -7,12 +7,13 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PROJECT_DIR/tools/lib/linux-host.sh"
 mangossh_require_linux_x86_64
 mangossh_require_commands \
-    bash chmod cp find flock git grep install mkdir rm python3 sha256sum
+    bash cat chmod cp find flock git grep install mkdir rm python3 sha256sum
 BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
 TOOLS_DIR="$PROJECT_DIR/.tools"
 GO_VERSION="1.26.7"
 JDK_VERSION="17.0.19+10"
-TAILSCALE_VERSION="v1.102.3"
+# shellcheck source=tools/lib/tsnet-version.sh
+source "$PROJECT_DIR/tools/lib/tsnet-version.sh"
 TAILSCALE_TSNET_GO_SHA256="6a8d6cc7deae3006729ef688ed5d33770284e04699f2dd040bc52c08de667ca5"
 TAILSCALE_SOCKS5_GO_SHA256="e2fa5c1aca0cc1ca63417c8515acaaa800d13862fde48bfa4a576d844307d6f4"
 TAILSCALE_TSNET_PATCHED_SHA256="5e432071e90d527f105fe984c9aa4e81fa5e8b119b3cad76541628cc929abfae"
@@ -22,11 +23,11 @@ NDK_REVISION="27.3.13750724"
 STRICT_OFFLINE="${MANGOSSH_OFFLINE_BUILD:-0}"
 GO_ROOT="${MANGOSSH_GO_ROOT:-${GOROOT:-$TOOLS_DIR/go/$GO_VERSION}}"
 GOBIN="${MANGOSSH_GOBIN:-$TOOLS_DIR/go-bin/$GO_VERSION}"
-WORK_DIR="/tmp/mangossh-tsnetbridge-v1.102.3"
-WORK_LOCK="/tmp/mangossh-tsnetbridge-v1.102.3.lock"
+WORK_DIR="/tmp/mangossh-tsnetbridge-v1.102.4"
+WORK_LOCK="/tmp/mangossh-tsnetbridge-v1.102.4.lock"
 OUTPUT_DIR="$PROJECT_DIR/app/build/generated/tsnet"
 OUTPUT_AAR="$OUTPUT_DIR/mangossh-tsnet.aar"
-PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.102.3-tsnet-no-logtail.patch"
+PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.102.4-tsnet-no-logtail.patch"
 VENDOR_DIR="$BRIDGE_DIR/vendor"
 
 ANDROID_SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
@@ -59,6 +60,10 @@ grep -Fqx "# golang.org/x/mobile $GOMOBILE_VERSION" "$VENDOR_DIR/modules.txt" ||
 }
 grep -Fqx "# tailscale.com $TAILSCALE_VERSION" "$VENDOR_DIR/modules.txt" || {
     printf 'Vendored Tailscale source does not match %s.\n' "$TAILSCALE_VERSION" >&2
+    exit 1
+}
+[[ "$(cat "$VENDOR_DIR/tailscale.com/VERSION.txt")" == "${TAILSCALE_VERSION#v}" ]] || {
+    printf 'Vendored Tailscale version does not match linker stamps.\n' >&2
     exit 1
 }
 export PATH="$GO_ROOT/bin:$GOBIN:$PATH"
@@ -122,7 +127,7 @@ gobind_tool="$(go tool -n gobind)"
 popd >/dev/null
 
 case "$WORK_DIR" in
-    /tmp/mangossh-tsnetbridge-v1.102.3) ;;
+    /tmp/mangossh-tsnetbridge-v1.102.4) ;;
     *) printf 'Unsafe tsnet work path: %s\n' "$WORK_DIR" >&2; exit 1 ;;
 esac
 exec 9>"$WORK_LOCK"
@@ -142,13 +147,19 @@ find "$BRIDGE_WORK_DIR/vendor" -type f -exec chmod 0644 {} +
 pushd "$BRIDGE_WORK_DIR" >/dev/null
 TAILSCALE_MODULE_DIR="$BRIDGE_WORK_DIR/vendor/tailscale.com"
 case "$TAILSCALE_MODULE_DIR" in
-    /tmp/mangossh-tsnetbridge-v1.102.3/gopath/src/website.sung.mangossh/tsnetbridge/vendor/tailscale.com) ;;
+    /tmp/mangossh-tsnetbridge-v1.102.4/gopath/src/website.sung.mangossh/tsnetbridge/vendor/tailscale.com) ;;
     *) printf 'Unsafe Tailscale module path: %s\n' "$TAILSCALE_MODULE_DIR" >&2; exit 1 ;;
 esac
 [[ -d "$TAILSCALE_MODULE_DIR" ]] || {
     printf 'Unable to locate vendored Tailscale module.\n' >&2
     exit 1
 }
+printf '%s  %s\n%s  %s\n' \
+    "$TAILSCALE_TSNET_PATCHED_SHA256" "$TAILSCALE_MODULE_DIR/tsnet/tsnet.go" \
+    "$TAILSCALE_SOCKS5_PATCHED_SHA256" "$TAILSCALE_MODULE_DIR/net/socks5/socks5.go" |
+    sha256sum --check --status -
+git -C "$TAILSCALE_MODULE_DIR" apply --reverse --check "$PATCH_FILE"
+git -C "$TAILSCALE_MODULE_DIR" apply --reverse "$PATCH_FILE"
 printf '%s  %s\n%s  %s\n' \
     "$TAILSCALE_TSNET_GO_SHA256" \
     "$TAILSCALE_MODULE_DIR/tsnet/tsnet.go" \
@@ -164,6 +175,8 @@ printf '%s  %s\n%s  %s\n' \
     "$TAILSCALE_SOCKS5_PATCHED_SHA256" \
     "$TAILSCALE_MODULE_DIR/net/socks5/socks5.go" |
     sha256sum --check --status -
+# Also exercise ordinary module/vendor compilation, as used by source analyzers.
+go test ./...
 go list -deps -json ./... > "$WORK_DIR/modules.json"
 python3 "$PROJECT_DIR/tools/generate-tsnet-notices.py" \
     "$WORK_DIR/modules.json" \
@@ -173,13 +186,18 @@ python3 "$PROJECT_DIR/tools/generate-tsnet-notices.py" \
 
 # gomobile creates a temporary module and runs `go mod tidy` for each target
 # when invoked from module mode. GOPATH mode is deliberately used for the bind
-# step so every import resolves through the package-local vendor tree without
+# step so every import resolves through the copied, audited source tree without
 # network access or a generated module cache.
 cp -a "$BRIDGE_WORK_DIR/vendor/." "$GOPATH_ROOT/src/"
+# Resolve each dependency at its canonical import path. Keeping a package-local
+# vendor tree in GOPATH mode gives version a vendor-prefixed linker symbol,
+# causing the upstream -X version stamps to be silently ignored.
+rm -rf -- "$BRIDGE_WORK_DIR/vendor"
+TAILSCALE_MODULE_DIR="$GOPATH_ROOT/src/tailscale.com"
 export GO111MODULE=off
 export GOPATH="$GOPATH_ROOT"
 export GOFLAGS="-trimpath"
-go test ./...
+go test -tags mangossh_versioncheck -ldflags "$TAILSCALE_LDFLAGS" ./...
 
 UNSTRIPPED_AAR="$WORK_DIR/mangossh-tsnet-unstripped.aar"
 "$GOBIN/gomobile" bind \
@@ -187,7 +205,7 @@ UNSTRIPPED_AAR="$WORK_DIR/mangossh-tsnet-unstripped.aar"
     -androidapi 26 \
     -trimpath \
     -tags "ts_omit_cachenetmap,ts_omit_netlog" \
-    -ldflags "-linkmode=external -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384 -buildid=" \
+    -ldflags "$TAILSCALE_LDFLAGS -linkmode=external -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384 -buildid=" \
     -o "$UNSTRIPPED_AAR" .
 popd >/dev/null
 

@@ -60,6 +60,7 @@ Run from the repository root using JDK 17:
 gradlew.bat :app:testGithubDebugUnitTest :app:testFdroidDebugUnitTest
 gradlew.bat :app:lintGithubDebug :app:lintFdroidDebug :app:assembleGithubDebug :app:assembleFdroidDebug
 gradlew.bat :app:assembleGithubDebugAndroidTest :app:assembleFdroidDebugAndroidTest
+gradlew.bat :third_party:termlib:testDebugUnitTest :third_party:termlib:lintDebug :third_party:termlib:assembleDebugAndroidTest :third_party:cbssh:test :third_party:cbssh:protocol:test
 ```
 
 The instrumented tests need a device or emulator to run
@@ -71,11 +72,17 @@ a composable or a constructor an instrumented test touches. CI compiles them
 on every event and runs them on an emulator for pull requests; without the
 compile step the `androidTest` source set silently stops building.
 
-CI runs on `main` and `develop`. Besides the debug APK it builds a
-release-signed `MangoSSH-ci-<sha>.apk` on every run and uploads it as a
-workflow artifact for testing. That artifact is not a release: only the
-`main`-only release workflow tags, publishes, and produces the reproducible
-F-Droid-compatible signature.
+CI validates both distributions and the terminal/SSH modules without signing
+secrets. Protected `main`/`develop` pushes sign the verified unsigned APK artifacts
+in the separate `ci-signing` environment, using SDK tools without repository
+checkout or Gradle. PR validation never receives signing secrets. Only the
+`main` release workflow publishes releases.
+
+For an existing developer emulator, audit tests for isolated files, preferences,
+and Keystore aliases before execution. Compare installed/APK/Studio debug
+certificates, install with data-preserving replacement, then invoke instrumentation
+explicitly. Never clear target data, uninstall the target, or bypass certificate
+or version checks. Do not use an unaudited connected-test installer on user data.
 
 For native code, also validate the ABI assets, ELF interpreter/dependencies,
 and a debug APK package inspection. Every packaged `PT_LOAD` segment must have

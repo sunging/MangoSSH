@@ -2,37 +2,48 @@ package website.sung.mangossh.presentation
 
 import androidx.compose.ui.res.stringResource
 
+import android.app.Activity
 import android.content.ClipData
 import android.graphics.Typeface
+import android.os.Build
+import android.view.WindowManager
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.isImeVisible
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,25 +57,34 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.filter
@@ -81,6 +101,7 @@ import website.sung.mangossh.domain.TerminalBehavior
 import website.sung.mangossh.domain.TerminalFont
 import website.sung.mangossh.domain.TerminalShortcutAction
 import website.sung.mangossh.domain.TerminalShortcutConfig
+import website.sung.mangossh.domain.TerminalSpecialKey
 import website.sung.mangossh.ui.theme.terminalChromeColorScheme
 
 /**
@@ -90,7 +111,7 @@ import website.sung.mangossh.ui.theme.terminalChromeColorScheme
  * composable, so leaving this screen keeps the remote session and scrollback
  * intact while foreground-service ownership continues in the background.
  */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun TerminalSessionScreen(
     session: TerminalSessionState,
@@ -104,9 +125,15 @@ fun TerminalSessionScreen(
     onRequestResources: () -> Unit,
     onOpenFileBrowser: () -> Unit,
     onRequestLeave: () -> Unit,
+    sessionFontSizeSp: Int?,
+    onSessionFontSizeChange: (Int) -> Unit,
+    onReconnect: () -> Unit = {},
+    onWorkspaces: () -> Unit = {},
+    onDiagnostics: () -> Unit = {},
 ) {
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
+    val activity = context as? Activity
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val terminalFocusRequester = remember(session.id) { FocusRequester() }
@@ -120,6 +147,31 @@ fun TerminalSessionScreen(
     var showSoftKeyboard by remember(session.id) { mutableStateOf(isOpen) }
     var keyboardShowRequest by remember(session.id) { mutableIntStateOf(0) }
     var showResourceReport by remember(session.id) { mutableStateOf(false) }
+
+    // Chrome visibility: immersive hides both bars and the system bars at once; the two
+    // per-element toggles are independent of it so a user can, say, keep the shortcut bar
+    // while hiding just the title bar. They are reachable from two long-press menus: the
+    // title bar's own fullscreen button, and the terminal's text-selection overflow menu —
+    // the latter stays reachable even after the title bar itself is hidden, so it doubles
+    // as the way back.
+    var immersive by rememberSaveable(session.id) { mutableStateOf(false) }
+    var topBarVisible by rememberSaveable(session.id) { mutableStateOf(true) }
+    var shortcutBarVisible by rememberSaveable(session.id) { mutableStateOf(true) }
+    var chromeMenuExpanded by remember(session.id) { mutableStateOf(false) }
+    val showTopBar = topBarVisible && !immersive
+    val showShortcutBar = shortcutBarVisible && !immersive
+
+    // The floating exit-immersive button fades to a low alpha after a few idle seconds so
+    // it doesn't linger over live terminal output, but stays tappable at any alpha.
+    var immersiveExitFaded by remember(session.id) { mutableStateOf(false) }
+    LaunchedEffect(immersive) {
+        immersiveExitFaded = false
+        if (immersive) {
+            delay(IMMERSIVE_EXIT_FADE_DELAY_MS)
+            immersiveExitFaded = true
+        }
+    }
+
     val pasteFromClipboard: () -> Unit = {
         scope.launch {
             val text = clipboard.getClipEntry()
@@ -157,6 +209,42 @@ fun TerminalSessionScreen(
         onDispose { view.keepScreenOn = false }
     }
 
+    // Immersive mode hides the system status/navigation bars themselves, on top of this
+    // screen's own title and shortcut bars. Bars remain swipe-revealable (transient), and
+    // are unconditionally restored on dispose so leaving this screen never leaves the rest
+    // of the app with hidden system bars.
+    DisposableEffect(activity, view, immersive) {
+        val controller = activity?.window?.let { WindowInsetsControllerCompat(it, view) }
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (immersive) {
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+
+    // Let immersive mode draw all the way under the display cutout too; restore whatever
+    // cutout mode this window had before immersive mode changed it.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        DisposableEffect(activity, immersive) {
+            val window = activity?.window
+            val previousCutoutMode = window?.attributes?.layoutInDisplayCutoutMode
+            if (window != null && immersive) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+            onDispose {
+                if (window != null && previousCutoutMode != null) {
+                    window.attributes = window.attributes.apply {
+                        layoutInDisplayCutoutMode = previousCutoutMode
+                    }
+                }
+            }
+        }
+    }
+
     LaunchedEffect(terminalEmulator, colorScheme) {
         terminalEmulator.applyColorScheme(
             ansiColors = colorScheme.ansiColors.toIntArray(),
@@ -186,56 +274,173 @@ fun TerminalSessionScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .imePadding(),
+                    // ime and navigationBars overlap at the bottom of the window; padding
+                    // for both separately would double-count that overlap whenever the
+                    // keyboard is open. union() takes the larger of the two instead.
+                    .windowInsetsPadding(
+                        WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom),
+                    )
+                    // The title bar below draws into the status bar itself and consumes this
+                    // inset when shown. Hidden (by the user, or by immersive mode already
+                    // zeroing the inset), the terminal needs it back so its first row isn't
+                    // drawn under the status bar / notch.
+                    .let { base ->
+                        if (showTopBar) {
+                            base
+                        } else {
+                            base.windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                        }
+                    }
+                    // Catch an Esc that bubbled up unconsumed because focus was on the top bar
+                    // or the shortcut chips rather than the terminal, before the platform can
+                    // turn it into Back/Menu/Home. Down dispatches the key; both edges are
+                    // consumed so no fallback is synthesized.
+                    .onKeyEvent { event ->
+                        if (consumesUnhandledEscape(event.nativeKeyEvent.keyCode, isOpen)) {
+                            if (event.type == KeyEventType.KeyDown) {
+                                dispatchTerminalShortcut(
+                                    action = TerminalShortcutAction.SpecialKey(TerminalSpecialKey.ESCAPE),
+                                    modifierState = terminalModifierState,
+                                    terminalEmulator = terminalEmulator,
+                                    onPaste = pasteFromClipboard,
+                                )
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    },
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(session.title, style = MaterialTheme.typography.titleSmall)
+                if (showTopBar) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("terminal_title_bar")
+                            // The background is drawn outside the inset padding so it extends
+                            // into the status bar, making the bar read as one continuous
+                            // surface instead of a blank strip sitting above a separate one.
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .windowInsetsPadding(
+                                WindowInsets.statusBars.union(WindowInsets.displayCutout)
+                                    .only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                            )
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
-                            text = "${session.endpoint} · ${session.phase.label()}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = "${session.title} · ${session.endpoint} · ${session.phase.label()}",
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(start = 4.dp),
                         )
-                    }
-                    IconButton(onClick = onRequestLeave) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.ui_back_to_hosts),
-                        )
-                    }
-                    IconButton(
-                        onClick = onOpenFileBrowser,
-                        enabled = isOpen,
-                    ) {
-                        Icon(
-                            Icons.Outlined.FolderOpen,
-                            contentDescription = stringResource(R.string.ui_remote_files),
-                        )
-                    }
-                    IconButton(
-                        onClick = {
-                            showResourceReport = true
-                            onRequestResources()
-                        },
-                        enabled = isOpen,
-                    ) {
-                        Icon(Icons.Outlined.Storage, contentDescription = stringResource(R.string.ui_server_resources))
+                        IconButton(
+                            modifier = Modifier.size(40.dp),
+                            onClick = onRequestLeave,
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = stringResource(R.string.ui_back_to_hosts),
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        IconButton(
+                            modifier = Modifier.size(40.dp),
+                            onClick = onOpenFileBrowser,
+                            enabled = isOpen,
+                        ) {
+                            Icon(
+                                Icons.Outlined.FolderOpen,
+                                contentDescription = stringResource(R.string.ui_remote_files),
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        IconButton(
+                            modifier = Modifier.size(40.dp),
+                            onClick = {
+                                showResourceReport = true
+                                onRequestResources()
+                            },
+                            enabled = isOpen,
+                        ) {
+                            Icon(
+                                Icons.Outlined.Storage,
+                                contentDescription = stringResource(R.string.ui_server_resources),
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Box {
+                            // IconButton has no onLongClick, so this button is a plain clickable
+                            // Box instead: a tap toggles immersive mode, a long press opens a
+                            // menu to show/hide the title and shortcut bars independently, or
+                            // reset a pinch-to-zoom result. The same two bar toggles are also
+                            // reachable from the terminal's text-selection menu (see the
+                            // Terminal() call below), which stays reachable even once this bar
+                            // is hidden.
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .testTag("terminal_immersive_toggle")
+                                    .clip(CircleShape)
+                                    .combinedClickable(
+                                        onClick = { immersive = !immersive },
+                                        onLongClick = { chromeMenuExpanded = true },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = if (immersive) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen,
+                                    contentDescription = stringResource(
+                                        if (immersive) R.string.terminal_exit_immersive_mode else R.string.terminal_enter_immersive_mode,
+                                    ),
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = chromeMenuExpanded,
+                                onDismissRequest = { chromeMenuExpanded = false },
+                            ) {
+                                DropdownMenuItem(text = { Text(stringResource(R.string.connection_diagnostics)) }, onClick = { chromeMenuExpanded = false; onDiagnostics() })
+                                if (isOpen) DropdownMenuItem(text = { Text(stringResource(R.string.host_policy_workspace)) }, onClick = { chromeMenuExpanded = false; onWorkspaces() })
+                                if (session.phase == TerminalSessionPhase.CLOSED) DropdownMenuItem(text = { Text(stringResource(R.string.terminal_reconnect)) }, onClick = { chromeMenuExpanded = false; onReconnect() })
+                                ChromeVisibilityMenuItems(
+                                    titleBarShown = showTopBar,
+                                    shortcutBarShown = showShortcutBar,
+                                    tagPrefix = "terminal_menu",
+                                    onSetTitleBarShown = { shown ->
+                                        topBarVisible = shown
+                                        chromeMenuExpanded = false
+                                    },
+                                    onSetShortcutBarShown = { shown ->
+                                        shortcutBarVisible = shown
+                                        chromeMenuExpanded = false
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    modifier = Modifier.testTag("terminal_menu_reset_zoom"),
+                                    text = { Text(stringResource(R.string.terminal_reset_zoom)) },
+                                    onClick = {
+                                        onSessionFontSizeChange(appearance.fontSizeSp)
+                                        chromeMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
 
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        // In landscape a side notch/cutout sits inside the terminal area
+                        // itself (there is no title bar there to absorb it); keep text off it.
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)),
+                ) {
                     key(appearance.font, appearance.fontSizeSp) {
                         Terminal(
                             terminalEmulator = terminalEmulator,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxSize().testTag("terminal_surface"),
                             typeface = terminalTypeface,
                             initialFontSize = appearance.fontSizeSp.sp,
                             backgroundColor = Color(colorScheme.defaultBackgroundArgb),
@@ -271,17 +476,77 @@ fun TerminalSessionScreen(
                             rightAltMode = behavior.rightAltMode.toTermlib(),
                             delKeyMode = behavior.delKeyMode.toTermlib(),
                             maxZoomScale = behavior.maxPinchZoomScale,
+                            fontSizeOverride = sessionFontSizeSp?.sp,
+                            onFontSizeCommit = { onSessionFontSizeChange(it.value.roundToInt()) },
+                            // A reachable way back once the title bar is hidden: this menu
+                            // does not depend on any chrome being visible.
+                            selectionMenuExtras = { dismiss ->
+                                ChromeVisibilityMenuItems(
+                                    titleBarShown = showTopBar,
+                                    shortcutBarShown = showShortcutBar,
+                                    tagPrefix = "terminal_selection_menu",
+                                    onSetTitleBarShown = { shown ->
+                                        if (shown) immersive = false
+                                        topBarVisible = shown
+                                        dismiss()
+                                    },
+                                    onSetShortcutBarShown = { shown ->
+                                        if (shown) immersive = false
+                                        shortcutBarVisible = shown
+                                        dismiss()
+                                    },
+                                )
+                            },
                         )
+                    }
+
+                    // Immersive mode hides the button that opened it along with the rest of
+                    // the chrome; this is the way back. It fades to a low, still-tappable
+                    // alpha after a few seconds so it does not linger over live output.
+                    if (immersive) {
+                        val exitAlpha by animateFloatAsState(
+                            targetValue = if (immersiveExitFaded) IMMERSIVE_EXIT_FADED_ALPHA else 1f,
+                            label = "immersiveExitAlpha",
+                        )
+                        IconButton(
+                            onClick = { immersive = false },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .testTag("terminal_immersive_exit")
+                                .padding(8.dp)
+                                .alpha(exitAlpha)
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f)),
+                        ) {
+                            Icon(
+                                Icons.Outlined.FullscreenExit,
+                                contentDescription = stringResource(R.string.terminal_exit_immersive_mode),
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
                     }
                 }
 
-                TerminalKeyBar(
-                    enabled = isOpen,
-                    config = shortcutConfig,
-                    terminalEmulator = terminalEmulator,
-                    modifierState = terminalModifierState,
-                    onPaste = pasteFromClipboard,
-                )
+                if (showShortcutBar) {
+                    key(session.id, terminalEmulator) {
+                        TerminalShortcutBar(
+                            enabled = isOpen,
+                            config = shortcutConfig,
+                            activeModifiers = terminalModifierState.activeModifiers,
+                            onAction = { item ->
+                                dispatchTerminalShortcut(item.action, terminalModifierState, terminalEmulator, pasteFromClipboard)
+                            },
+                            onStartRepeat = { item ->
+                                val repeatedAction = captureTerminalShortcutRepeat(item.action, terminalModifierState)
+                                val dispatch: () -> Unit = {
+                                    dispatchTerminalShortcut(repeatedAction, terminalModifierState, terminalEmulator, pasteFromClipboard)
+                                }
+                                dispatch
+                            },
+                        )
+                    }
+                }
             }
         }
 
@@ -309,6 +574,45 @@ fun TerminalSessionScreen(
     }
 }
 
+/**
+ * The two bar-visibility toggles shared between the title bar's long-press menu and the
+ * terminal's text-selection overflow menu. [tagPrefix] keeps each caller's testTags distinct
+ * (`"${tagPrefix}_toggle_title_bar"` / `"${tagPrefix}_toggle_shortcut_bar"`). Labels reflect
+ * the bar's current actual visibility, not the underlying preference alone, so a caller in
+ * immersive mode still sees an accurate "show" label rather than an inert "hide" one.
+ */
+@Composable
+private fun ColumnScope.ChromeVisibilityMenuItems(
+    titleBarShown: Boolean,
+    shortcutBarShown: Boolean,
+    tagPrefix: String,
+    onSetTitleBarShown: (Boolean) -> Unit,
+    onSetShortcutBarShown: (Boolean) -> Unit,
+) {
+    DropdownMenuItem(
+        modifier = Modifier.testTag("${tagPrefix}_toggle_title_bar"),
+        text = {
+            Text(
+                stringResource(
+                    if (titleBarShown) R.string.terminal_hide_title_bar else R.string.terminal_show_title_bar,
+                ),
+            )
+        },
+        onClick = { onSetTitleBarShown(!titleBarShown) },
+    )
+    DropdownMenuItem(
+        modifier = Modifier.testTag("${tagPrefix}_toggle_shortcut_bar"),
+        text = {
+            Text(
+                stringResource(
+                    if (shortcutBarShown) R.string.terminal_hide_shortcut_bar else R.string.terminal_show_shortcut_bar,
+                ),
+            )
+        },
+        onClick = { onSetShortcutBarShown(!shortcutBarShown) },
+    )
+}
+
 /** Maps a bundled appearance option to its packaged Android font resource. */
 internal fun TerminalFont.fontResourceId(): Int = when (this) {
     TerminalFont.CASCADIA_MONO_PL -> R.font.cascadia_mono_pl_regular
@@ -317,59 +621,8 @@ internal fun TerminalFont.fontResourceId(): Int = when (this) {
 }
 
 private const val IME_REOPEN_RESET_DELAY_MS = 50L
-
-@Composable
-private fun TerminalKeyBar(
-    enabled: Boolean,
-    config: TerminalShortcutConfig,
-    terminalEmulator: TerminalEmulator,
-    modifierState: TerminalModifierState,
-    onPaste: () -> Unit,
-) {
-    val visibleItems = config.items.filter { it.visible }
-    if (visibleItems.isEmpty()) return
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        visibleItems.forEach { item ->
-            val click = {
-                dispatchTerminalShortcut(
-                    action = item.action,
-                    modifierState = modifierState,
-                    terminalEmulator = terminalEmulator,
-                    onPaste = onPaste,
-                )
-            }
-            val modifierAction = item.action as? TerminalShortcutAction.Modifier
-            if (modifierAction != null) {
-                FilterChip(
-                    selected = modifierState.isActive(modifierAction.modifier),
-                    onClick = click,
-                    enabled = enabled,
-                    label = { Text(item.displayLabel()) },
-                )
-            } else {
-                AssistChip(
-                    onClick = click,
-                    enabled = enabled,
-                    label = { Text(item.displayLabel()) },
-                    leadingIcon = if (item.action == TerminalShortcutAction.Paste) {
-                        { Icon(Icons.Outlined.ContentPaste, contentDescription = null) }
-                    } else {
-                        null
-                    },
-                )
-            }
-        }
-        Spacer(Modifier.width(2.dp))
-    }
-}
+private const val IMMERSIVE_EXIT_FADE_DELAY_MS = 3_000L
+private const val IMMERSIVE_EXIT_FADED_ALPHA = 0.18f
 
 /** Returns the localized, application-owned label for a live session phase. */
 @Composable

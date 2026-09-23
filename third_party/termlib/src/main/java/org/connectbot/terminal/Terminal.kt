@@ -42,6 +42,7 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -52,6 +53,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -112,16 +114,38 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
 import androidx.compose.ui.input.key.KeyEvent as ComposeKeyEvent
 
 private val DRAW_TEXT_BUFFER = ThreadLocal.withInitial { CharArray(1) }
 private val CURLY_UNDERLINE_PATH = ThreadLocal.withInitial { Path() }
+
+/**
+ * Reusable per-row scratch buffer for batched glyph runs. Grown on demand and
+ * kept per draw thread; the terminal never has more columns than fit here in
+ * practice, and [ensureRunBuffer] resizes if it ever does.
+ */
+private val DRAW_RUN_BUFFER = ThreadLocal.withInitial { CharArray(256) }
+
+private fun ensureRunBuffer(minLength: Int): CharArray {
+    val existing = DRAW_RUN_BUFFER.get()!!
+    if (existing.size >= minLength) return existing
+    val grown = CharArray(Integer.highestOneBit(minLength - 1) * 2)
+    DRAW_RUN_BUFFER.set(grown)
+    return grown
+}
 
 /**
  * Gesture type for unified gesture handling state machine.
@@ -143,6 +167,13 @@ private const val CURSOR_BLINK_RATE_MS = 500L
  * Amount of time to wait for second touch to detect multitouch gesture in milliseconds.
  */
 private const val WAIT_FOR_SECOND_TOUCH_MS = 40L
+
+/**
+ * Upper bound on wheel/arrow ticks forwarded to the remote program from a single
+ * pointer event. A fast swipe still advances the internal step counter by its
+ * full amount, so this only caps the burst rate, not the total.
+ */
+private const val MAX_REMOTE_SCROLL_STEPS_PER_EVENT = 8
 
 /**
  * Text selection magnifier loupe size in dp.
@@ -308,8 +339,20 @@ private const val DOUBLE_UNDERLINE_SPACING = 2f
  * @param selectionForegroundColor Foreground color for selected text (default: Black)
  * @param delKeyMode How the backspace/delete keys should map to terminal characters
  * @param onInterceptKey Optional callback to intercept raw Compose KeyEvents before the terminal emulator handles them. Return true to consume the event.
+ * @param selectionMenuExtras Optional extra items appended (below a divider) to the selection
+ *                            overflow menu, for host-app entries such as chrome visibility
+ *                            toggles. Receives a `dismiss` callback that clears the current
+ *                            selection and closes the menu — the only way a caller can do so,
+ *                            since this composable does not expose a [SelectionController] by
+ *                            default.
  * @param minZoomScale Minimum pinch-to-zoom multiplier applied on top of the rendered font size. Defaults to 0.5x.
  * @param maxZoomScale Maximum pinch-to-zoom multiplier applied on top of the rendered font size. Defaults to 3x.
+ * @param fontSizeOverride When non-null, overrides [initialFontSize] as the starting font size. Used by
+ *                         a host to restore a font size a prior pinch-to-zoom gesture committed for this
+ *                         session, surviving navigation away from and back to the terminal.
+ * @param onFontSizeCommit Invoked with the new font size when a pinch-to-zoom gesture ends and persists
+ *                         its result. Pinch-to-zoom is otherwise a transient visual effect; this callback
+ *                         is how a host observes and persists the committed outcome.
  */
 @Composable
 fun Terminal(
@@ -339,6 +382,9 @@ fun Terminal(
     onInterceptKey: ((ComposeKeyEvent) -> Boolean)? = null,
     minZoomScale: Float = MIN_ZOOM_SCALE,
     maxZoomScale: Float = MAX_ZOOM_SCALE,
+    fontSizeOverride: TextUnit? = null,
+    onFontSizeCommit: ((TextUnit) -> Unit)? = null,
+    selectionMenuExtras: (@Composable ColumnScope.(dismiss: () -> Unit) -> Unit)? = null,
 ) {
     if (LocalInspectionMode.current) {
         TerminalPreview(modifier, backgroundColor, foregroundColor)
@@ -373,6 +419,9 @@ fun Terminal(
         delKeyMode = delKeyMode,
         minZoomScale = minZoomScale,
         maxZoomScale = maxZoomScale,
+        fontSizeOverride = fontSizeOverride,
+        onFontSizeCommit = onFontSizeCommit,
+        selectionMenuExtras = selectionMenuExtras,
     )
 }
 
@@ -412,6 +461,9 @@ internal fun TerminalWithAccessibility(
     delKeyMode: DelKeyMode = DelKeyMode.Delete,
     minZoomScale: Float = MIN_ZOOM_SCALE,
     maxZoomScale: Float = MAX_ZOOM_SCALE,
+    fontSizeOverride: TextUnit? = null,
+    onFontSizeCommit: ((TextUnit) -> Unit)? = null,
+    selectionMenuExtras: (@Composable ColumnScope.(dismiss: () -> Unit) -> Unit)? = null,
 ) {
     if (terminalEmulator !is TerminalEmulatorImpl) {
         Box(
@@ -428,6 +480,7 @@ internal fun TerminalWithAccessibility(
     val currentOnTerminalTap by rememberUpdatedState(onTerminalTap)
     val currentOnHyperlinkClick by rememberUpdatedState(onHyperlinkClick)
     val currentOnInterceptKey by rememberUpdatedState(onInterceptKey)
+    val currentOnFontSizeCommit by rememberUpdatedState(onFontSizeCommit)
 
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -457,7 +510,17 @@ internal fun TerminalWithAccessibility(
     var isZooming by remember(terminalEmulator) { mutableStateOf(false) }
     var isUserScrolling by remember(terminalEmulator) { mutableStateOf(false) }
     var isDraggingHandle by remember(terminalEmulator) { mutableStateOf(false) }
-    var calculatedFontSize by remember(terminalEmulator) { mutableStateOf(initialFontSize) }
+    var calculatedFontSize by remember(terminalEmulator) { mutableStateOf(fontSizeOverride ?: initialFontSize) }
+
+    // A host-driven override (e.g. a "reset zoom" action) arrives as a new fontSizeOverride
+    // value rather than a new terminalEmulator, so it would otherwise never reach the
+    // `remember` above. A gesture's own commit already updates calculatedFontSize directly
+    // and typically round-trips back here as an equal value, so this is a no-op then.
+    LaunchedEffect(fontSizeOverride) {
+        if (fontSizeOverride != null && fontSizeOverride != calculatedFontSize) {
+            calculatedFontSize = fontSizeOverride
+        }
+    }
 
     // Magnifying glass state
     var showMagnifier by remember(terminalEmulator) { mutableStateOf(false) }
@@ -481,6 +544,23 @@ internal fun TerminalWithAccessibility(
 
     // Keep reference to ImeInputView for controlling IME
     var imeInputView by remember { mutableStateOf<ImeInputView?>(null) }
+
+    // With a hardware keyboard and the soft keyboard hidden, the 1.dp ImeInputView never takes
+    // Android focus (showIme()/requestFocus() only runs when the IME should be visible). Without
+    // a focus target inside the terminal subtree, key events are never delivered to
+    // onPreviewKeyEvent and the platform rewrites an unconsumed Esc into Back. Give the terminal
+    // Box its own focus requester and claim focus whenever the IME is not driving focus.
+    val hardwareKeyFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(keyboardEnabled, shouldShowIme) {
+        if (keyboardEnabled && !shouldShowIme) {
+            delay(UI_SETTLE_DELAY_MS)
+            try {
+                hardwareKeyFocusRequester.requestFocus()
+            } catch (_: IllegalStateException) {
+                // Focus requester not attached to the composition yet; ignore.
+            }
+        }
+    }
 
     // Cleanup IME when component is disposed
     DisposableEffect(imeInputView) {
@@ -532,23 +612,31 @@ internal fun TerminalWithAccessibility(
         }
     }
 
-    // Cursor blink animation
-    LaunchedEffect(screenState) {
-        snapshotFlow {
-            val s = screenState.snapshot
-            Triple(s.cursorVisible, s.cursorBlink, s.cursorRow to s.cursorCol)
-        }.collectLatest { (visible, blink, _) ->
-            if (visible) {
-                cursorBlinkVisible = true
-                if (blink) {
-                    // Show cursor immediately when it moves or becomes visible
-                    while (true) {
-                        delay(CURSOR_BLINK_RATE_MS)
-                        cursorBlinkVisible = !cursorBlinkVisible
+    // Cursor blink animation.
+    //
+    // Gated on RESUMED so a remote program that requests a blinking cursor does
+    // not drive a 2 Hz state write (and full-window redraw) while the app is
+    // backgrounded. On resume the cursor is shown immediately, then blinking
+    // restarts.
+    val blinkLifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(screenState, blinkLifecycleOwner) {
+        blinkLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            snapshotFlow {
+                val s = screenState.snapshot
+                Triple(s.cursorVisible, s.cursorBlink, s.cursorRow to s.cursorCol)
+            }.collectLatest { (visible, blink, _) ->
+                if (visible) {
+                    cursorBlinkVisible = true
+                    if (blink) {
+                        // Show cursor immediately when it moves or becomes visible
+                        while (true) {
+                            delay(CURSOR_BLINK_RATE_MS)
+                            cursorBlinkVisible = !cursorBlinkVisible
+                        }
                     }
+                } else {
+                    cursorBlinkVisible = false
                 }
-            } else {
-                cursorBlinkVisible = false
             }
         }
     }
@@ -811,8 +899,10 @@ internal fun TerminalWithAccessibility(
             }
             .then(
                 if (keyboardEnabled) {
+                    // A key-input modifier must sit *above* the focus target it serves, so
+                    // .onPreviewKeyEvent precedes .focusable() here.
                     Modifier
-                        .focusable()
+                        .focusRequester(hardwareKeyFocusRequester)
                         .onPreviewKeyEvent { event ->
                             // In Review Mode, let accessibility system handle navigation keys
                             if (isReviewMode) {
@@ -838,6 +928,7 @@ internal fun TerminalWithAccessibility(
                                 keyboardHandler.onKeyEvent(event)
                             }
                         }
+                        .focusable()
                 } else {
                     Modifier
                 },
@@ -909,6 +1000,21 @@ internal fun TerminalWithAccessibility(
                 .collect {
                     // Only auto-scroll if user was already at bottom
                     if (screenState.scrollbackPosition == 0) {
+                        screenState.scrollToBottom()
+                        scrollOffset.snapTo(0f)
+                    }
+                }
+        }
+
+        // Entering the alternate screen (tmux, vim, less, ...) leaves any stale
+        // primary scrollback behind the active view. Snap back to the bottom so a
+        // swipe there cannot pan history the user can no longer see. Remote
+        // scrolling requires mouse tracking; otherwise swipes do nothing. Observed via a
+        // flow so the composable body does not resubscribe on every snapshot.
+        LaunchedEffect(screenState) {
+            snapshotFlow { screenState.snapshot.isAltScreen }
+                .collect { isAltScreen ->
+                    if (isAltScreen && screenState.scrollbackPosition != 0) {
                         screenState.scrollToBottom()
                         scrollOffset.snapTo(0f)
                     }
@@ -1086,6 +1192,9 @@ internal fun TerminalWithAccessibility(
                         val multiTouchTimeout = down.uptimeMillis + WAIT_FOR_SECOND_TOUCH_MS
                         var panAccumulator = Offset.Zero
                         var initialScrollOffset = 0f
+                        // Wheel ticks already forwarded to the remote program
+                        // this gesture while mouse tracking is active.
+                        var emittedRemoteScrollSteps = 0
 
                         // 4. Main event loop
                         try {
@@ -1154,24 +1263,49 @@ internal fun TerminalWithAccessibility(
                                     }
 
                                     GestureType.Scroll -> {
-                                        // Update scroll offset using total pan from the start of the gesture
-                                        // to avoid stuttering from stale scrollOffset.value.
-                                        val currentMaxScroll =
-                                            screenState.snapshot.scrollback.size * baseCharHeight
-                                        val newOffset = (initialScrollOffset + panAccumulator.y)
-                                            .coerceIn(0f, currentMaxScroll)
+                                        val snapshot = screenState.snapshot
+                                        if (snapshot.mouseTrackingActive) {
+                                            // Preserve the touch location in wheel reports. Never
+                                            // substitute arrow keys: they target the focused input
+                                            // regardless of where the user actually swiped.
+                                            // Finger moving down means "show older content" = wheel up.
+                                            val totalSteps = (panAccumulator.y / baseCharHeight).toInt()
+                                            val delta = totalSteps - emittedRemoteScrollSteps
+                                            if (delta != 0) {
+                                                val scrollUp = delta > 0
+                                                val burst = min(
+                                                    abs(delta),
+                                                    MAX_REMOTE_SCROLL_STEPS_PER_EVENT,
+                                                )
+                                                val col = (change.position.x / baseCharWidth).toInt()
+                                                    .coerceIn(0, snapshot.cols - 1)
+                                                val row = (change.position.y / baseCharHeight).toInt()
+                                                    .coerceIn(0, snapshot.rows - 1)
+                                                repeat(burst) {
+                                                    terminalEmulator.sendMouseWheel(scrollUp, row, col)
+                                                }
+                                                emittedRemoteScrollSteps += delta
+                                            }
+                                        } else if (!snapshot.isAltScreen) {
+                                            // Update scroll offset using total pan from the start of the gesture
+                                            // to avoid stuttering from stale scrollOffset.value.
+                                            val currentMaxScroll =
+                                                snapshot.scrollback.size * baseCharHeight
+                                            val newOffset = (initialScrollOffset + panAccumulator.y)
+                                                .coerceIn(0f, currentMaxScroll)
 
-                                        // Cancel any ongoing scroll or fling and snap to the new position.
-                                        // Using launch with cancel ensures the latest snap always wins.
-                                        scrollJob?.cancel()
-                                        scrollJob = launch {
-                                            scrollOffset.snapTo(newOffset)
+                                            // Cancel any ongoing scroll or fling and snap to the new position.
+                                            // Using launch with cancel ensures the latest snap always wins.
+                                            scrollJob?.cancel()
+                                            scrollJob = launch {
+                                                scrollOffset.snapTo(newOffset)
+                                            }
+
+                                            // Update terminal buffer scrollback position
+                                            val scrolledLines =
+                                                (newOffset / baseCharHeight).toInt()
+                                            screenState.scrollBy(scrolledLines - screenState.scrollbackPosition)
                                         }
-
-                                        // Update terminal buffer scrollback position
-                                        val scrolledLines =
-                                            (newOffset / baseCharHeight).toInt()
-                                        screenState.scrollBy(scrolledLines - screenState.scrollbackPosition)
                                     }
 
                                     else -> {}
@@ -1207,11 +1341,22 @@ internal fun TerminalWithAccessibility(
                                     val gestureZoom = event.calculateZoom()
                                     val gesturePan = event.calculatePan()
 
+                                    // Clamp the transient scale so it can never carry the
+                                    // eventually-committed font size past min/maxFontSize,
+                                    // on top of the gesture's own min/maxZoomScale range.
+                                    val lowerBound = max(
+                                        minZoomScale,
+                                        minFontSize.value / calculatedFontSize.value,
+                                    )
+                                    val upperBound = min(
+                                        maxZoomScale,
+                                        maxFontSize.value / calculatedFontSize.value,
+                                    )
                                     val oldScale = zoomScale
                                     val newScale =
                                         (oldScale * gestureZoom).coerceIn(
-                                            minZoomScale,
-                                            maxZoomScale,
+                                            lowerBound,
+                                            upperBound,
                                         )
 
                                     zoomOffset += gesturePan
@@ -1221,10 +1366,19 @@ internal fun TerminalWithAccessibility(
                                 }
                             }
 
-                            // Gesture ended - reset
+                            // Gesture ended - fold the transient scale into the persistent
+                            // font size instead of discarding it, so pinch-to-zoom actually
+                            // changes the terminal's row/column layout (and the remote pty
+                            // size) rather than only its on-screen appearance.
+                            val committedFontSize =
+                                commitZoomFontSize(calculatedFontSize, zoomScale, minFontSize, maxFontSize)
                             isZooming = false
                             zoomScale = 1f
                             zoomOffset = Offset.Zero
+                            if (committedFontSize != calculatedFontSize) {
+                                calculatedFontSize = committedFontSize
+                                currentOnFontSizeCommit?.invoke(committedFontSize)
+                            }
 
                             return@awaitEachGesture
                         }
@@ -1235,18 +1389,26 @@ internal fun TerminalWithAccessibility(
 
                         when (gestureType) {
                             GestureType.Scroll -> {
-                                // Apply fling animation
-                                val velocity = velocityTracker.calculateVelocity()
-                                scrollJob?.cancel()
-                                scrollJob = launch {
-                                    scrollOffset.animateDecay(
-                                        initialVelocity = velocity.y,
-                                        animationSpec = splineBasedDecay(density),
-                                    ) {
-                                        // Update terminal buffer during animation
-                                        val scrolledLines =
-                                            (value / baseCharHeight).toInt()
-                                        screenState.scrollBy(scrolledLines - screenState.scrollbackPosition)
+                                val snapshot = screenState.snapshot
+                                // Only local history has inertia. Mouse reports stop on
+                                // release, and alternate-screen swipes without tracking
+                                // must neither send input nor reveal stale primary history.
+                                val canScrollLocalHistory =
+                                    !snapshot.mouseTrackingActive && !snapshot.isAltScreen
+                                if (canScrollLocalHistory) {
+                                    // Apply fling animation
+                                    val velocity = velocityTracker.calculateVelocity()
+                                    scrollJob?.cancel()
+                                    scrollJob = launch {
+                                        scrollOffset.animateDecay(
+                                            initialVelocity = velocity.y,
+                                            animationSpec = splineBasedDecay(density),
+                                        ) {
+                                            // Update terminal buffer during animation
+                                            val scrolledLines =
+                                                (value / baseCharHeight).toInt()
+                                            screenState.scrollBy(scrolledLines - screenState.scrollbackPosition)
+                                        }
                                     }
                                 }
                             }
@@ -1324,6 +1486,27 @@ internal fun TerminalWithAccessibility(
                     autoDetectUrls = terminalEmulator.autoDetectUrls,
                 )
 
+                // Cursor is a separate Canvas so the 500 ms blink toggle
+                // invalidates only this one-drawRect layer, not the whole
+                // selection/compose overlay below.
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val snapshot = screenState.snapshot
+                    if (snapshot.cursorVisible && screenState.scrollbackPosition == 0 && cursorBlinkVisible) {
+                        drawCursor(
+                            row = snapshot.cursorRow,
+                            col = snapshot.cursorCol,
+                            charWidth = baseCharWidth,
+                            charHeight = baseCharHeight,
+                            foregroundColor = foregroundColor,
+                            backgroundColor = backgroundColor,
+                            cursorShape = snapshot.cursorShape,
+                            pendingDeadChar = composeController.pendingDeadChar,
+                            charBaseline = baseCharBaseline,
+                            textPaint = textPaint,
+                        )
+                    }
+                }
+
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val snapshot = screenState.snapshot
 
@@ -1347,22 +1530,6 @@ internal fun TerminalWithAccessibility(
                                 selectedOnly = true,
                             )
                         }
-                    }
-
-                    // Draw cursor (only when viewing current screen, not scrollback)
-                    if (snapshot.cursorVisible && screenState.scrollbackPosition == 0 && cursorBlinkVisible) {
-                        drawCursor(
-                            row = snapshot.cursorRow,
-                            col = snapshot.cursorCol,
-                            charWidth = baseCharWidth,
-                            charHeight = baseCharHeight,
-                            foregroundColor = foregroundColor,
-                            backgroundColor = backgroundColor,
-                            cursorShape = snapshot.cursorShape,
-                            pendingDeadChar = composeController.pendingDeadChar,
-                            charBaseline = baseCharBaseline,
-                            textPaint = textPaint,
-                        )
                     }
 
                     // Draw compose mode overlay
@@ -1585,6 +1752,13 @@ internal fun TerminalWithAccessibility(
                                         // Keep menu open for easy cycling
                                     },
                                 )
+                                if (selectionMenuExtras != null) {
+                                    HorizontalDivider()
+                                    selectionMenuExtras {
+                                        selectionManager.clearSelection()
+                                        overflowMenuExpanded = false
+                                    }
+                                }
                             }
                         }
                     }
@@ -1614,8 +1788,8 @@ internal fun TerminalWithAccessibility(
                 },
                 modifier = Modifier
                     .size(1.dp)
-                    .focusable()
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .focusable(),
             )
         }
     }
@@ -1639,7 +1813,10 @@ private fun TerminalRows(
     val density = LocalDensity.current
     val rowHeight = with(density) { charHeight.toDp() }
     val snapshot = screenState.snapshot
-    val hyperlinkMasks = remember(snapshot.sequenceNumber, screenState.scrollbackPosition, autoDetectUrls) {
+    // Keyed on contentVersion, which only advances when the visible lines or
+    // scrollback actually change — snapshot.sequenceNumber advances on every
+    // snapshot (including cursor-only moves) and so never let this cache hit.
+    val hyperlinkMasks = remember(screenState.contentVersion, screenState.scrollbackPosition, autoDetectUrls) {
         if (!autoDetectUrls) {
             emptyList()
         } else {
@@ -1653,7 +1830,10 @@ private fun TerminalRows(
 
     for (row in 0 until snapshot.rows) {
         val line = screenState.getVisibleLine(row)
-        key(row, line.lastModified, line.semanticSegments, screenState.scrollbackPosition) {
+        // TerminalLine equality is content-based (lastModified is excluded), so an
+        // unchanged row keeps a stable key and this block skips entirely; only a
+        // row whose cells or segments actually changed rebuilds.
+        key(row, line, screenState.scrollbackPosition) {
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1697,98 +1877,202 @@ private fun DrawScope.drawLine(
     selectedOnly: Boolean = false,
 ) {
     val y = row * charHeight
+    val baseline = y + charBaseline
+    val cells = line.cells
+    val count = cells.size
+
+    // O(cols) reverse scan hoisted out of the per-cell loop: isCellSelected needs
+    // the last non-blank column to reject trailing whitespace, and recomputing it
+    // per cell would make selection rendering O(cols^2) per row.
+    val selectionLastContentCol =
+        if (selectionManager != null) selectionManager.lastContentCol(line) else Int.MAX_VALUE
+
+    var col = 0
     var x = 0f
-
-    line.cells.forEachIndexed { col, cell ->
+    while (col < count) {
+        val cell = cells[col]
         val cellWidth = charWidth * cell.width
+        val isSelected = selectionManager?.isCellSelected(row, col, selectionLastContentCol) == true
 
-        // Check if this cell is selected
-        val isSelected = selectionManager?.isCellSelected(row, col, line) == true
         if (selectedOnly && !isSelected) {
             x += cellWidth
-            return@forEachIndexed
+            col++
+            continue
         }
 
-        // Check if this cell is part of a hyperlink
-        val isHyperlink = hyperlinkMask?.getOrNull(col) ?: (line.getHyperlinkUrlAt(col, autoDetectUrls) != null)
+        val isHyperlink = hyperlinkMask?.getOrNull(col)
+            ?: (line.getHyperlinkUrlAt(col, autoDetectUrls) != null)
 
-        // Determine colors (handle reverse video and selection)
-        val baseFgColor = if (cell.reverse) cell.bgColor else cell.fgColor
-        val bgColor = if (cell.reverse) cell.fgColor else cell.bgColor
+        // A cell wider than one column, carrying combining marks, or with a
+        // decoration that must line up with a single glyph (underline / strike /
+        // hyperlink) keeps the exact per-cell path.
+        val plain = cell.width == 1 &&
+            cell.combiningChars.isEmpty() &&
+            cell.underline == 0 &&
+            !cell.strike &&
+            !isHyperlink
 
-        // Draw background (with selection highlight)
-        val finalBgColor = if (isSelected) selectionBackgroundColor else bgColor
-        if (finalBgColor != defaultBg || isSelected) {
-            drawRect(
-                color = finalBgColor,
-                topLeft = Offset(x, y),
-                size = Size(cellWidth, charHeight),
+        if (!plain) {
+            drawSingleCell(
+                cell = cell,
+                x = x,
+                y = y,
+                charWidth = charWidth,
+                charHeight = charHeight,
+                charBaseline = charBaseline,
+                textPaint = textPaint,
+                underlinePaint = underlinePaint,
+                defaultBg = defaultBg,
+                isSelected = isSelected,
+                isHyperlink = isHyperlink,
+                selectionBackgroundColor = selectionBackgroundColor,
+                selectionForegroundColor = selectionForegroundColor,
             )
+            x += cellWidth
+            col++
+            continue
         }
 
-        // Draw character
-        if ((cell.char != ' ' && cell.char != '\u0000') || cell.combiningChars.isNotEmpty()) {
-            // Force high contrast for text on the selection background
-            val fgColor = if (isSelected) selectionForegroundColor else baseFgColor
+        // Extend a run of plain cells that share every visual attribute, then
+        // emit one background rect and one drawText for the whole run.
+        val runFg = if (cell.reverse) cell.bgColor else cell.fgColor
+        val runBg = if (cell.reverse) cell.fgColor else cell.bgColor
+        val buffer = ensureRunBuffer(count - col)
+        var end = col
+        var length = 0
+        var hasGlyph = false
+        while (end < count) {
+            val c = cells[end]
+            if (c.width != 1 || c.combiningChars.isNotEmpty() ||
+                c.underline != 0 || c.strike ||
+                c.bold != cell.bold || c.italic != cell.italic || c.reverse != cell.reverse
+            ) {
+                break
+            }
+            val cSelected = selectionManager?.isCellSelected(row, end, selectionLastContentCol) == true
+            if (cSelected != isSelected) break
+            val cHyperlink = hyperlinkMask?.getOrNull(end)
+                ?: (line.getHyperlinkUrlAt(end, autoDetectUrls) != null)
+            if (cHyperlink) break
+            val cFg = if (c.reverse) c.bgColor else c.fgColor
+            val cBg = if (c.reverse) c.fgColor else c.bgColor
+            if (cFg != runFg || cBg != runBg) break
 
-            // Configure text paint for this cell
+            val ch = c.char
+            val isBlank = ch == ' ' || ch == Char(0)
+            buffer[length] = if (isBlank) ' ' else ch
+            if (!isBlank) hasGlyph = true
+            length++
+            end++
+        }
+
+        val runWidth = charWidth * length
+        val finalBg = if (isSelected) selectionBackgroundColor else runBg
+        if (finalBg != defaultBg || isSelected) {
+            drawRect(color = finalBg, topLeft = Offset(x, y), size = Size(runWidth, charHeight))
+        }
+        if (hasGlyph) {
+            val fgColor = if (isSelected) selectionForegroundColor else runFg
             textPaint.color = fgColor.toArgb()
             textPaint.isFakeBoldText = cell.bold
             textPaint.textSkewX = if (cell.italic) -0.25f else 0f
-            // Underline if cell has underline OR if it's a hyperlink
-            textPaint.isUnderlineText = cell.underline == 1 || isHyperlink
-            textPaint.isStrikeThruText = cell.strike
-
-            // Draw text
-            if (cell.combiningChars.isEmpty()) {
-                val textBuffer = DRAW_TEXT_BUFFER.get()!!
-                textBuffer[0] = cell.char
-                drawContext.canvas.nativeCanvas.drawText(
-                    textBuffer,
-                    0,
-                    1,
-                    x,
-                    y + charBaseline,
-                    textPaint,
-                )
-            } else {
-                val text = buildString {
-                    append(cell.char)
-                    cell.combiningChars.forEach { append(it) }
-                }
-                drawContext.canvas.nativeCanvas.drawText(
-                    text,
-                    x,
-                    y + charBaseline,
-                    textPaint,
-                )
-            }
-
-            // Draw double underline if needed
-            if (cell.underline == 2) {
-                drawDoubleUnderline(
-                    x = x,
-                    y = y + charBaseline,
-                    width = cellWidth,
-                    color = fgColor,
-                    paint = underlinePaint,
-                )
-            }
-
-            // Draw curly underline if needed
-            if (cell.underline == 3) {
-                drawCurlyUnderline(
-                    x = x,
-                    y = y + charBaseline,
-                    width = cellWidth,
-                    charWidth = charWidth,
-                    color = fgColor,
-                    paint = underlinePaint,
-                )
-            }
+            textPaint.isUnderlineText = false
+            textPaint.isStrikeThruText = false
+            drawContext.canvas.nativeCanvas.drawText(buffer, 0, length, x, baseline, textPaint)
         }
 
-        x += cellWidth
+        x += runWidth
+        col = end
+    }
+}
+
+/**
+ * Per-cell draw path for cells that cannot join a batched run: wide (CJK) cells,
+ * cells with combining marks, and cells whose underline / strike / hyperlink
+ * decoration must align to exactly one glyph. Behaviour is identical to the
+ * original per-cell loop.
+ */
+private fun DrawScope.drawSingleCell(
+    cell: TerminalLine.Cell,
+    x: Float,
+    y: Float,
+    charWidth: Float,
+    charHeight: Float,
+    charBaseline: Float,
+    textPaint: TextPaint,
+    underlinePaint: Paint,
+    defaultBg: Color,
+    isSelected: Boolean,
+    isHyperlink: Boolean,
+    selectionBackgroundColor: Color,
+    selectionForegroundColor: Color,
+) {
+    val cellWidth = charWidth * cell.width
+    val baseFgColor = if (cell.reverse) cell.bgColor else cell.fgColor
+    val bgColor = if (cell.reverse) cell.fgColor else cell.bgColor
+
+    val finalBgColor = if (isSelected) selectionBackgroundColor else bgColor
+    if (finalBgColor != defaultBg || isSelected) {
+        drawRect(
+            color = finalBgColor,
+            topLeft = Offset(x, y),
+            size = Size(cellWidth, charHeight),
+        )
+    }
+
+    if ((cell.char != ' ' && cell.char != Char(0)) || cell.combiningChars.isNotEmpty()) {
+        val fgColor = if (isSelected) selectionForegroundColor else baseFgColor
+
+        textPaint.color = fgColor.toArgb()
+        textPaint.isFakeBoldText = cell.bold
+        textPaint.textSkewX = if (cell.italic) -0.25f else 0f
+        textPaint.isUnderlineText = cell.underline == 1 || isHyperlink
+        textPaint.isStrikeThruText = cell.strike
+
+        if (cell.combiningChars.isEmpty()) {
+            val textBuffer = DRAW_TEXT_BUFFER.get()!!
+            textBuffer[0] = cell.char
+            drawContext.canvas.nativeCanvas.drawText(
+                textBuffer,
+                0,
+                1,
+                x,
+                y + charBaseline,
+                textPaint,
+            )
+        } else {
+            val text = buildString {
+                append(cell.char)
+                cell.combiningChars.forEach { append(it) }
+            }
+            drawContext.canvas.nativeCanvas.drawText(
+                text,
+                x,
+                y + charBaseline,
+                textPaint,
+            )
+        }
+
+        if (cell.underline == 2) {
+            drawDoubleUnderline(
+                x = x,
+                y = y + charBaseline,
+                width = cellWidth,
+                color = fgColor,
+                paint = underlinePaint,
+            )
+        }
+
+        if (cell.underline == 3) {
+            drawCurlyUnderline(
+                x = x,
+                y = y + charBaseline,
+                width = cellWidth,
+                charWidth = charWidth,
+                color = fgColor,
+                paint = underlinePaint,
+            )
+        }
     }
 }
 
@@ -2511,5 +2795,14 @@ private fun findOptimalFontSize(
     // Return the largest size that fits
     return minSizeCurrent.coerceIn(minSize, maxSize)
 }
+
+/**
+ * Folds a pinch-to-zoom gesture's transient [scale] into the terminal's persistent
+ * font size, rounding to the nearest whole sp so repeated small gestures converge
+ * instead of oscillating on floating-point remainders, then clamps to the
+ * configured [min]/[max] font size.
+ */
+internal fun commitZoomFontSize(current: TextUnit, scale: Float, min: TextUnit, max: TextUnit): TextUnit =
+    (current.value * scale).roundToInt().coerceIn(min.value.toInt(), max.value.toInt()).sp
 
 private fun charsPerDimension(pixels: Int, charPixels: Float) = (pixels / charPixels).toInt().coerceAtLeast(1)

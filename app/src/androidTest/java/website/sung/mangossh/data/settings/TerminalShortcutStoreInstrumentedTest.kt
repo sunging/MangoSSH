@@ -30,6 +30,7 @@ class TerminalShortcutStoreInstrumentedTest {
                     ),
                     TerminalShortcutItem("text", TerminalShortcutAction.Text("status\n"), "Status", visible = false),
                 ),
+                rowCount = 1,
             )
             TerminalShortcutStore(context).save(custom)
             assertEquals(custom, TerminalShortcutStore(context).config.value)

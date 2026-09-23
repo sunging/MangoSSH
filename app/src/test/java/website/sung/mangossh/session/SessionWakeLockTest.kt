@@ -86,6 +86,33 @@ class SessionWakeLockTest {
     }
 
     @Test
+    fun backgroundingTheUiReleasesTheLockEvenWhileSessionsRun() {
+        val fixture = Fixture()
+        fixture.open()
+        assertTrue(fixture.held)
+
+        fixture.owner.update(hasSessions = true, foregroundOwned = true, uiForeground = false)
+        fixture.owner.renew()
+
+        assertFalse(fixture.held)
+        assertEquals(1, fixture.releases)
+        assertEquals(1, fixture.acquisitions.size)
+    }
+
+    @Test
+    fun returningToForegroundReacquiresForTheSameSession() {
+        val fixture = Fixture()
+        fixture.open()
+        fixture.owner.update(hasSessions = true, foregroundOwned = true, uiForeground = false)
+
+        fixture.owner.update(hasSessions = true, foregroundOwned = true, uiForeground = true)
+
+        assertTrue(fixture.held)
+        assertEquals(2, fixture.acquisitions.size)
+        assertEquals(1, fixture.releases)
+    }
+
+    @Test
     fun losingForegroundOwnershipReleasesImmediately() {
         val fixture = Fixture()
         fixture.open()

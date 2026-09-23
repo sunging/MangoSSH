@@ -29,7 +29,6 @@ import androidx.compose.ui.graphics.Color
 internal data class TerminalLine(
     val row: Int,
     val cells: List<Cell>,
-    val lastModified: Long = System.nanoTime(),
     val semanticSegments: List<SemanticSegment> = emptyList(),
     /**
      * True if this line ended with a soft wrap (visual line break due to terminal width),
@@ -41,6 +40,14 @@ internal data class TerminalLine(
      */
     val softWrapped: Boolean = false,
 ) {
+    /**
+     * Monotonic construction marker, used only as a stable list key for the
+     * accessibility overlay. Deliberately excluded from [equals]/[hashCode] (it
+     * is not a constructor component) so two lines with identical content and
+     * segments compare equal: that is what lets the renderer skip redrawing an
+     * unchanged row after `updateLine` rebuilds it.
+     */
+    val lastModified: Long = System.nanoTime()
     /**
      * Get the text content of this line as a string.
      */

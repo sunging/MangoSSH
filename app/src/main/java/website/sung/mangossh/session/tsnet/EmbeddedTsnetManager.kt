@@ -1,5 +1,7 @@
 package website.sung.mangossh.session.tsnet
 
+import kotlinx.coroutines.async
+
 import android.content.Context
 import java.io.Closeable
 import java.io.File
@@ -79,8 +81,11 @@ internal class EmbeddedTsnetManager(
     private var backend: EmbeddedTsnetBackend? = null
     private var backendToken: Any? = null
     private var runtimeStarting = false
-    private var activeLeases = 0
-    private var pendingAcquires = 0
+    private val leases = linkedMapOf<Long, EmbeddedTsnetLease>()
+    private var nextLeaseId = 0L
+    private val activeLeases: Int get() = leases.size
+    private val pendingRequests = mutableMapOf<Any, kotlinx.coroutines.CompletableDeferred<Unit>>()
+    private val pendingAcquires: Int get() = pendingRequests.size
     private var enrollmentHold = false
     private var foregroundFailureGeneration = 0L
     private var enrolledIdentity = false
@@ -135,8 +140,10 @@ internal class EmbeddedTsnetManager(
 
     suspend fun acquire(): EmbeddedTsnetLease {
         var shouldStart = false
+        val requestId = Any()
+        val retired = kotlinx.coroutines.CompletableDeferred<Unit>()
         mutex.withLock {
-            pendingAcquires += 1
+            pendingRequests[requestId] = retired
             if (backend == null && !runtimeStarting) {
                 runtimeStarting = true
                 shouldStart = true
@@ -144,33 +151,47 @@ internal class EmbeddedTsnetManager(
         }
         try {
             if (shouldStart) startRuntime(null)
-            val ready = withTimeout(START_TIMEOUT_MILLIS) {
-                status.first {
-                    it.phase == EmbeddedTsnetPhase.ACTIVE ||
-                        (
-                            it.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN &&
-                                it.authKeyAllowed
-                            ) ||
-                        it.phase == EmbeddedTsnetPhase.FAILED
+            val ready = kotlinx.coroutines.coroutineScope {
+                val waiting = async {
+                    withTimeout(START_TIMEOUT_MILLIS) {
+                        status.first {
+                            it.phase == EmbeddedTsnetPhase.ACTIVE ||
+                                (it.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN && it.authKeyAllowed) ||
+                                it.phase == EmbeddedTsnetPhase.FAILED
+                        }
+                    }
                 }
+                try {
+                    kotlinx.coroutines.selects.select {
+                        retired.onAwait { throw TsnetEnrollmentRequiredException() }
+                        waiting.onAwait { it }
+                    }
+                } finally { waiting.cancel() }
             }
             if (ready.phase != EmbeddedTsnetPhase.ACTIVE) {
                 throw TsnetEnrollmentRequiredException()
             }
             return mutex.withLock {
+                if (retired.isCompleted) throw TsnetEnrollmentRequiredException()
                 val current = backend ?: throw TsnetEnrollmentRequiredException()
-                pendingAcquires -= 1
-                activeLeases += 1
-                updateStatusLocked(EmbeddedTsnetPhase.ACTIVE)
-                EmbeddedTsnetLease(
+                if (_status.value.phase != EmbeddedTsnetPhase.ACTIVE) throw TsnetEnrollmentRequiredException()
+                val proxy = TsnetProxyData(current.socksAddress(), current.socksSecret())
+                val leaseId = ++nextLeaseId
+                val lease = EmbeddedTsnetLease(
                     manager = this,
                     backend = current,
-                    proxyData = TsnetProxyData(current.socksAddress(), current.socksSecret()),
+                    leaseId = leaseId,
+                    generation = requireNotNull(backendToken),
+                    proxyData = proxy,
                 )
+                pendingRequests.remove(requestId)
+                leases[leaseId] = lease
+                updateStatusLocked(EmbeddedTsnetPhase.ACTIVE)
+                lease
             }
         } catch (error: Exception) {
             val close = mutex.withLock {
-                if (pendingAcquires > 0) pendingAcquires -= 1
+                pendingRequests.remove(requestId)
                 detachIfIdleLocked()
             }
             close?.let(::closeBackend)
@@ -247,12 +268,9 @@ internal class EmbeddedTsnetManager(
                 foregroundFailureGeneration += 1
                 runtimeStarting = false
                 enrollmentHold = false
+                invalidateLeasesLocked(backendToken)
                 backendToken = null
-                val detached = if (activeLeases == 0 && pendingAcquires == 0) {
-                    backend.also { backend = null }
-                } else {
-                    null
-                }
+                val detached = backend.also { backend = null }
                 updateStatusLocked(EmbeddedTsnetPhase.FAILED)
                 detached
             }
@@ -305,11 +323,17 @@ internal class EmbeddedTsnetManager(
                     hostname = stateStore.nodeName(),
                     store = stateStore,
                     listener = listener,
-                )
+                ).let { delegate ->
+                    object : EmbeddedTsnetBackend by delegate {
+                        private val closed = AtomicBoolean(false)
+                        override fun close() { if (closed.compareAndSet(false, true)) delegate.close() }
+                    }
+                }
             }
         } catch (error: Exception) {
             mutex.withLock {
                 if (foregroundFailureGeneration == failureGeneration) {
+                    invalidateLeasesLocked(backendToken)
                     runtimeStarting = false
                     enrollmentHold = false
                     updateStatusLocked(EmbeddedTsnetPhase.FAILED)
@@ -349,12 +373,13 @@ internal class EmbeddedTsnetManager(
         } catch (error: Exception) {
             val close = mutex.withLock {
                 if (backend === created) {
+                    invalidateLeasesLocked(backendToken)
                     backend = null
                     backendToken = null
+                    runtimeStarting = false
+                    enrollmentHold = false
+                    updateStatusLocked(EmbeddedTsnetPhase.FAILED)
                 }
-                runtimeStarting = false
-                enrollmentHold = false
-                updateStatusLocked(EmbeddedTsnetPhase.FAILED)
                 created
             }
             closeBackend(close)
@@ -402,6 +427,7 @@ internal class EmbeddedTsnetManager(
                 }
                 "stopped" -> {
                     close = backend
+                    invalidateLeasesLocked(backendToken)
                     backend = null
                     backendToken = null
                     runtimeStarting = false
@@ -410,6 +436,7 @@ internal class EmbeddedTsnetManager(
                 }
                 else -> {
                     close = backend
+                    invalidateLeasesLocked(backendToken)
                     backend = null
                     backendToken = null
                     runtimeStarting = false
@@ -462,17 +489,28 @@ internal class EmbeddedTsnetManager(
         runCatching { value.close() }
     }
 
-    private suspend fun release(leaseBackend: EmbeddedTsnetBackend) {
+    /** Settles leases only in the generation being retired; callbacks are not executed in this lock. */
+    private fun invalidateLeasesLocked(generation: Any?) {
+        foregroundFailureGeneration++
+        pendingRequests.values.forEach { it.complete(Unit) }
+        pendingRequests.clear()
+        val invalid = leases.values.filter { it.generation === generation }
+        invalid.forEach { leases.remove(it.leaseId); it.invalidate() }
+    }
+
+    private suspend fun release(leaseId: Long, generation: Any) {
         val close = mutex.withLock {
-            if (activeLeases > 0 && backend === leaseBackend) activeLeases -= 1
-            updateStatusLocked(if (activeLeases > 0) EmbeddedTsnetPhase.ACTIVE else idlePhase())
+            val lease = leases[leaseId] ?: return
+            if (lease.generation !== generation) return
+            leases.remove(leaseId)
+            updateStatusLocked(if (backend != null) _status.value.phase else idlePhase())
             detachIfIdleLocked()
         }
         close?.let(::closeBackend)
     }
 
-    internal fun releaseAsync(leaseBackend: EmbeddedTsnetBackend) {
-        scope.launch { release(leaseBackend) }
+    internal fun releaseAsync(leaseId: Long, generation: Any) {
+        scope.launch { release(leaseId, generation) }
     }
 
     private companion object {
@@ -484,15 +522,29 @@ internal class EmbeddedTsnetManager(
 internal class EmbeddedTsnetLease(
     private val manager: EmbeddedTsnetManager,
     private val backend: EmbeddedTsnetBackend,
+    val leaseId: Long,
+    val generation: Any,
     val proxyData: TsnetProxyData,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val relays = mutableSetOf<EmbeddedTsnetUdpRelay>()
+    private val invalidation = kotlinx.coroutines.CompletableDeferred<Unit>()
+    val invalidated: kotlinx.coroutines.Deferred<Unit> get() = invalidation
+
+    /** Signals loss without running blocking relay cleanup while the manager holds its mutex. */
+    internal fun invalidate() { invalidation.complete(Unit) }
 
     @Synchronized
     fun startUdpRelay(host: String, port: Int): EmbeddedTsnetUdpRelay {
-        check(!closed.get())
-        return backend.startUdpRelay(host, port).also(relays::add)
+        check(!closed.get() && !invalidation.isCompleted)
+        val delegate = backend.startUdpRelay(host, port)
+        val relay = object : EmbeddedTsnetUdpRelay {
+            private val released = AtomicBoolean(false)
+            override val localPort: Int get() = delegate.localPort
+            override fun close() { if (released.compareAndSet(false, true)) delegate.close() }
+        }
+        if (invalidation.isCompleted) { relay.close(); error("Embedded node stopped") }
+        return relay.also(relays::add)
     }
 
     @Synchronized
@@ -500,6 +552,6 @@ internal class EmbeddedTsnetLease(
         if (!closed.compareAndSet(false, true)) return
         relays.toList().forEach { runCatching { it.close() } }
         relays.clear()
-        manager.releaseAsync(backend)
+        manager.releaseAsync(leaseId, generation)
     }
 }

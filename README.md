@@ -70,6 +70,13 @@ only changes that currently displayed terminal for its lifetime. Font and
 palette licenses, versions, and SHA-256 values are recorded in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+## Backup and restore
+
+Encrypted file backups and WebDAV downloads support previewed merges, explicit
+replacement, local recovery points and remote history. Passphrases can optionally
+be remembered on the device. See [backup and restore](docs/backup-and-restore.md)
+for conflict rules, version compatibility and WebDAV requirements.
+
 ## Native Mosh build
 
 On a glibc-compatible Linux x86_64 host, run the following from the repository
@@ -169,12 +176,13 @@ GitHub App credential is required. A manual run validates signing and uploads
 an Actions artifact, but never creates a tag or publishes a GitHub Release.
 
 Android CI runs on `main` and `develop`, for both pushes and pull requests.
-Every CI run also builds and uploads a release-signed
-`MangoSSH-ci-<commit>.apk` artifact for testing, using the same keystore as
-published releases so it installs over them. It is deliberately named apart
-from the `MangoSSH-<tag>.apk` release assets the in-app updater consumes, and
-it is skipped rather than failed when the signing secrets are unavailable, as
-they always are for a fork's pull request.
+Validation builds both unsigned release packages without signing secrets. On
+protected `main`/`develop` pushes, a separate `ci-signing` environment job signs
+those same-run artifacts using SDK tools, without checkout or Gradle execution.
+Configure that environment to admit only those protected branches and hold the
+four Android signing secrets. PRs never enter the signing job. Signed test APKs
+remain `MangoSSH-ci-<commit>.apk` artifacts, distinct from published releases;
+missing signing secrets skip delivery. See [CI isolation](docs/ci-signing.md).
 
 Validate the current version, localized notes, and an optional tag locally:
 
@@ -222,9 +230,16 @@ The expected external source layout is selected by
 zlib/      v1.3.1
 protobuf/  v29.1, including its submodules
 ncurses/   v6.4
-gmp/       v6.2.1
 nettle/    nettle_3.10_release_20240616
 ```
+
+The Mosh build applies `tools/patches/mosh4android-no-gmp.patch` after the
+offline-source patch. It drops the upstream GMP build and configures Nettle
+with `--disable-public-key`, while `--disable-mini-gmp` keeps mini-GMP
+explicitly at its default off state. Mosh uses only Nettle AES, so neither GMP
+nor Hogweed is needed. This does not change the separate SSH or tsnet
+cryptography. Previously published releases and their fdroiddata recipes retain
+their original source requirements.
 
 `MANGOSSH_GO_SOURCE`, `MANGOSSH_MOSH_DEPS_DIR`, `JAVA_HOME`, `ANDROID_HOME`,
 and `ANDROID_NDK_HOME` complete the environment contract. The source-build

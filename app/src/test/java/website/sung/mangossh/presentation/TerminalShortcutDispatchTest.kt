@@ -12,6 +12,22 @@ import website.sung.mangossh.domain.TerminalSpecialKey
 
 class TerminalShortcutDispatchTest {
     @Test
+    fun holdKeepsItsCapturedModifiersButNextIndependentInputDoesNot() {
+        val state = TerminalModifierState()
+        state.toggle(TerminalModifier.CTRL)
+        state.toggle(TerminalModifier.SHIFT)
+        val arrow = TerminalShortcutAction.SpecialKey(TerminalSpecialKey.LEFT)
+        val heldAction = captureTerminalShortcutRepeat(arrow, state)
+        repeat(4) {
+            assertEquals(listOf(Output.Key(5, VTermKey.LEFT)), capture(heldAction, state).events)
+            assertTrue(state.activeModifiers.isEmpty())
+        }
+        assertEquals(listOf(Output.Key(0, VTermKey.LEFT)), capture(arrow, state).events)
+        assertFalse(TerminalShortcutAction.SpecialKey(TerminalSpecialKey.PAGE_UP).isRepeatableArrow())
+        assertFalse(heldAction.isRepeatableArrow())
+    }
+
+    @Test
     fun modifierButtonsToggleAndAllSevenCombinationsApplyOnce() {
         val combinations = listOf(
             setOf(TerminalModifier.CTRL),
@@ -84,6 +100,27 @@ class TerminalShortcutDispatchTest {
         assertEquals(1, pasteOutput.pasteCount)
         assertTrue(pasteOutput.events.isEmpty())
         assertTrue(state.activeModifiers.isEmpty())
+    }
+
+    @Test
+    fun unhandledEscapeIsClaimedForAnOpenSessionOnly() {
+        val escape = android.view.KeyEvent.KEYCODE_ESCAPE
+
+        assertTrue(consumesUnhandledEscape(escape, sessionOpen = true))
+        assertFalse(consumesUnhandledEscape(escape, sessionOpen = false))
+    }
+
+    @Test
+    fun unhandledNonEscapeKeysAreLeftForFocusTraversal() {
+        listOf(
+            android.view.KeyEvent.KEYCODE_TAB,
+            android.view.KeyEvent.KEYCODE_DPAD_UP,
+            android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+            android.view.KeyEvent.KEYCODE_ENTER,
+            android.view.KeyEvent.KEYCODE_BACK,
+        ).forEach { keyCode ->
+            assertFalse(consumesUnhandledEscape(keyCode, sessionOpen = true))
+        }
     }
 
     private fun capture(action: TerminalShortcutAction, state: TerminalModifierState): Captured {

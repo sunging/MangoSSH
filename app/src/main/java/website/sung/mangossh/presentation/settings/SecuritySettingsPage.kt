@@ -79,6 +79,15 @@ internal fun SecuritySettingsPage(
         if (lock.pinConfigured) {
             item {
                 MangoPreferenceGroup {
+                    SettingsChoiceRow(label = stringResource(R.string.reauthentication_title),
+                        options = website.sung.mangossh.security.ReauthenticationMode.entries,
+                        selected = lock.reauthentication,
+                        optionLabel = { stringResource(when (it) {
+                            website.sung.mangossh.security.ReauthenticationMode.DISABLED -> R.string.host_policy_disabled
+                            website.sung.mangossh.security.ReauthenticationMode.EVERY_ACTION -> R.string.reauthentication_every_action
+                            website.sung.mangossh.security.ReauthenticationMode.FIVE_MINUTES -> R.string.reauthentication_five_minutes
+                        }) }, onSelect = callbacks.onSetReauthentication,
+                        supportingText = stringResource(R.string.reauthentication_scope))
                     SettingsSwitchRow(
                         title = stringResource(R.string.ui_allow_biometric_unlock),
                         checked = lock.biometricEnabled,

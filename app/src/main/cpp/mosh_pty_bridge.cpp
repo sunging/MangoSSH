@@ -309,7 +309,9 @@ Java_website_sung_mangossh_session_MoshPtyNative_requestStop(
     JNIEnv* /* env */,
     jobject /* thiz */,
     jint pid) {
-    if (pid > 0 && kill(static_cast<pid_t>(pid), SIGTERM) == -1 && errno != ESRCH) {
+    // Kotlin already gives the authenticated quit sequence its bounded grace period.
+    // This is the final reclamation step: a stalled client must not ignore termination.
+    if (pid > 0 && kill(static_cast<pid_t>(pid), SIGKILL) == -1 && errno != ESRCH) {
         logWarn("mosh.pty.stop_failed");
         return;
     }

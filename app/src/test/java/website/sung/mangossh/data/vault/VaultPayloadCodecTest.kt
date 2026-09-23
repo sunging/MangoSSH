@@ -9,6 +9,26 @@ import website.sung.mangossh.domain.ConnectionRoute
 
 class VaultPayloadCodecTest {
     @Test
+    fun schemaSevenPreservesExplicitLegacyChoiceAndDefaultsOldPayloadsToFalse() {
+        val enabled = VaultSnapshot(profiles = listOf(profile(ConnectionRoute.DIRECT).copy(legacySshAlgorithms = true)))
+        assertEquals(true, VaultPayloadCodec.decode(VaultPayloadCodec.encode(enabled)).profiles.single().legacySshAlgorithms)
+        val old = payloadObject(ConnectionRoute.DIRECT).apply {
+            put("schemaVersion", 6)
+            getJSONArray("profiles").getJSONObject(0).remove("legacySshAlgorithms")
+        }
+        val migrated = VaultPayloadCodec.decode(old.toString().encodeToByteArray())
+        assertEquals(7, migrated.schemaVersion)
+        assertEquals(false, migrated.profiles.single().legacySshAlgorithms)
+    }
+
+    @Test
+    fun rejectsNonBooleanLegacyChoice() {
+        val malformed = payloadObject(ConnectionRoute.DIRECT).apply {
+            getJSONArray("profiles").getJSONObject(0).put("legacySshAlgorithms", "true")
+        }
+        assertThrows(Exception::class.java) { VaultPayloadCodec.decode(malformed.toString().encodeToByteArray()) }
+    }
+    @Test
     fun schemaFourRoundTripsEmbeddedTsnet() {
         val snapshot = VaultSnapshot(
             profiles = listOf(profile(ConnectionRoute.TSNET)),

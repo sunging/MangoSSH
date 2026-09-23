@@ -21,6 +21,18 @@ internal data class ThirdPartyNotice(
  */
 internal val thirdPartyNotices = listOf(
     ThirdPartyNotice(
+        name = "OkHttp",
+        license = "Apache-2.0",
+        url = "https://github.com/square/okhttp",
+        licenseAsset = "licenses/Apache-2.0-ConnectBot-Terminal.txt",
+    ),
+    ThirdPartyNotice(
+        name = "Okio",
+        license = "Apache-2.0",
+        url = "https://github.com/square/okio",
+        licenseAsset = "licenses/Apache-2.0-ConnectBot-Terminal.txt",
+    ),
+    ThirdPartyNotice(
         name = "ConnectBot mosh4android (mosh-client)",
         license = "GPL-3.0-or-later",
         url = "https://github.com/connectbot/mosh4android",

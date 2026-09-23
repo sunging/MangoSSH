@@ -17,14 +17,14 @@ import javax.crypto.SecretKey
  * The file is authenticated before any JSON is parsed and AtomicFile prevents a
  * partially written vault from replacing a usable one.
  */
-class AndroidKeystoreVault(context: Context) {
+class AndroidKeystoreVault(context: Context, private val keyAlias: String = KEY_ALIAS) {
     private val appContext = context.applicationContext
     private val vaultFile = File(appContext.filesDir, VAULT_FILE_NAME)
     private val atomicFile = AtomicFile(vaultFile)
 
     @Synchronized
     fun read(): VaultSnapshot? {
-        if (!vaultFile.exists()) return null
+        if (!vaultFile.exists() && !File(vaultFile.path + ".bak").exists()) return null
         val encoded = atomicFile.readFully()
         val input = DataInputStream(ByteArrayInputStream(encoded))
         val magic = ByteArray(MAGIC.size)
@@ -46,7 +46,18 @@ class AndroidKeystoreVault(context: Context) {
             associatedData = ASSOCIATED_DATA,
         )
         return try {
-            VaultPayloadCodec.decode(plaintext)
+            val snapshot = VaultPayloadCodec.decode(plaintext)
+            val originalVersion = org.json.JSONObject(plaintext.decodeToString()).getInt("schemaVersion")
+            if (originalVersion < VaultSnapshot.CURRENT_SCHEMA_VERSION) {
+                // Preserve the already encrypted original before any later schema-6 mutation.
+                val recovery = AtomicFile(File(appContext.noBackupFilesDir, "vault-upgrade-recovery-v$originalVersion.bin"))
+                if (!recovery.baseFile.exists()) {
+                    val output = recovery.startWrite()
+                    try { output.write(encoded); recovery.finishWrite(output) }
+                    catch (error: Throwable) { recovery.failWrite(output); throw error }
+                }
+            }
+            snapshot
         } finally {
             plaintext.fill(0)
         }
@@ -55,8 +66,8 @@ class AndroidKeystoreVault(context: Context) {
     @Synchronized
     fun write(snapshot: VaultSnapshot) {
         val plaintext = VaultPayloadCodec.encode(snapshot)
-        require(plaintext.size <= MAX_PLAINTEXT_SIZE) { "Vault payload is too large" }
         try {
+            if (plaintext.size > MAX_PLAINTEXT_SIZE) throw BackupException(BackupFailure.TOO_LARGE)
             val payload = AesGcmCipher.encrypt(
                 key = getOrCreateKey(),
                 plaintext = plaintext,
@@ -85,13 +96,13 @@ class AndroidKeystoreVault(context: Context) {
 
     private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        val existing = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
+        val existing = keyStore.getKey(keyAlias, null) as? SecretKey
         if (existing != null) return existing
 
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
+                keyAlias,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
             )
                 .setKeySize(256)

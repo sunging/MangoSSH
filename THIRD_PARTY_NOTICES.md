@@ -1,5 +1,25 @@
 # Third-party notices
 
+## cbssh
+
+[cbssh 0.4.2](https://github.com/connectbot/cbssh/tree/v0.4.2), commit
+`9811f5a321c1afd88721498cdd7a5201c0c4abc0`, is vendored as source under
+`third_party/cbssh`. Its protocol codecs are generated from the pinned Kaitai
+definitions during the JDK 17 build. Source archive SHA-256, import mapping and
+local patches are recorded in `third_party/cbssh/README.md`.
+
+The Apache License, Version 2.0 is retained in `third_party/cbssh/LICENSE` and
+packaged as `assets/licenses/Apache-2.0-cbssh.txt`. SLF4J uses its no-output
+provider because upstream protocol diagnostics may contain sensitive data.
+
+## OkHttp and Okio
+
+WebDAV uses [OkHttp 5.3.0](https://github.com/square/okhttp) and its
+[Okio 3.16.2](https://github.com/square/okio) dependency, published by Square.
+Both use the Apache License, Version 2.0. The full license is shared with the
+existing APK asset `assets/licenses/Apache-2.0-ConnectBot-Terminal.txt`.
+Matching MockWebServer artifacts are used only in tests.
+
 ## Mosh for Android
 
 MangoSSH packages the native `mosh-client` executable from the
@@ -17,13 +37,16 @@ branch.
   `27.3.13750724`; `tools/fetch-android-ndk.sh` obtains that NDK into the
   ignored project-local `.tools` directory.
 
-The upstream Android build script uses its declared zlib, protobuf, ncurses,
-GMP, and nettle tags. F-Droid supplies those exact source trees through its
+The MangoSSH Android build uses the declared zlib, protobuf, ncurses, and
+nettle tags. F-Droid supplies those exact source trees through its
 source-library mechanism, and MangoSSH applies
 `tools/patches/mosh4android-offline-sources.patch` so its network-isolated build
-never downloads compiler binaries or dependency source. Do not replace the
-packaged binary with an unverifiable build or remove the source submodule,
-license text, build patch, or this notice.
+never downloads compiler binaries or dependency source. The subsequent
+`tools/patches/mosh4android-no-gmp.patch` removes the upstream GMP build and
+configures Nettle with `--disable-public-key`, keeping mini-GMP at its default
+off state. Mosh only uses Nettle AES; GMP and Hogweed are not required. Do not
+replace the packaged binary with an unverifiable build or remove the source
+submodule, license text, build patch, or this notice.
 
 ## ConnectBot terminal library
 
@@ -46,14 +69,14 @@ MangoSSH's terminal rendering is [ConnectBot termlib
 ## Tailscale tsnet
 
 MangoSSH builds an outbound-only gomobile bridge against
-[`tailscale.com` v1.102.3](https://github.com/tailscale/tailscale/tree/v1.102.3).
+[`tailscale.com` v1.102.4](https://github.com/tailscale/tailscale/tree/v1.102.4).
 Tailscale is distributed under the BSD 3-Clause license. The packages linked
 into the bridge are committed as vendored Go source so F-Droid can rebuild the
 AAR without network access.
 
 - Exact module checksums are recorded in `native/tsnetbridge/go.sum`, and the
   matching source is under `native/tsnetbridge/vendor`.
-- `tools/patches/tailscale-v1.102.3-tsnet-no-logtail.patch` disables creation
+- `tools/patches/tailscale-v1.102.4-tsnet-no-logtail.patch` disables creation
   and upload of tsnet's raw logtail buffer; the build fails if the patch no
   longer applies exactly.
 - The bridge is built with `ts_omit_netlog`, so upstream's logtail-backed

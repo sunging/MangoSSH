@@ -1,187 +1,194 @@
 package website.sung.mangossh.data.sync
 
-import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import java.nio.charset.StandardCharsets
-import java.util.Base64
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import okhttp3.Credentials
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.w3c.dom.Element
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import javax.xml.parsers.DocumentBuilderFactory
+import website.sung.mangossh.data.vault.BackupException
+import website.sung.mangossh.data.vault.BackupFailure
+import website.sung.mangossh.data.vault.BackupHistoryEntry
+import website.sung.mangossh.data.vault.PortableVaultCodec
 import website.sung.mangossh.data.vault.WebDavConfig
-import website.sung.mangossh.core.MangoLog
-import website.sung.mangossh.core.MangoLogEvent
 
-/** Minimal HTTPS WebDAV PUT/GET client for encrypted portable vault blobs. */
-class WebDavClient {
-    /** Uploads an already-encrypted portable vault; endpoint and credentials are never logged. */
-    suspend fun upload(config: WebDavConfig, encryptedBlob: ByteArray): WebDavResult =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                if (encryptedBlob.size !in 1..MAX_TRANSFER_BYTES) {
-                    throw WebDavClientException(WebDavFailureReason.INVALID_BACKUP_SIZE)
-                }
-                withConnection(config, "PUT") { connection ->
-                    connection.doOutput = true
-                    connection.setFixedLengthStreamingMode(encryptedBlob.size)
-                    connection.outputStream.use { it.write(encryptedBlob) }
-                    val code = connection.responseCode
-                    if (code !in 200..299) {
-                        throw WebDavClientException(WebDavFailureReason.HTTP_STATUS, code)
-                    }
-                }
-            }.fold(
-                onSuccess = {
-                    MangoLog.info(MangoLogEvent.WEBDAV_UPLOAD_SUCCEEDED)
-                    WebDavResult.Success
-                },
-                onFailure = { error ->
-                    MangoLog.warn(MangoLogEvent.WEBDAV_UPLOAD_FAILED, error)
-                    error.toWebDavFailure()
-                },
-            )
+/** Opaque remote ciphertext and the validator returned by the same GET response. */
+internal class RemoteBackup(val bytes: ByteArray, val etag: String?)
+
+/** Distinguishes transport I/O from local storage errors without retaining URLs or response text. */
+internal class WebDavTransportException : java.io.IOException()
+
+/** The coordinator can exercise network failure paths without contacting a user server. */
+internal interface BackupRemoteTransport {
+    fun download(config: WebDavConfig): RemoteBackup?
+    fun history(config: WebDavConfig): List<BackupHistoryEntry>
+    fun readHistory(config: WebDavConfig, id: String): RemoteBackup
+    fun archive(config: WebDavConfig, backup: RemoteBackup)
+    fun publish(config: WebDavConfig, bytes: ByteArray, etag: String?)
+    fun verifyConditionalWrites(config: WebDavConfig)
+    fun prune(config: WebDavConfig)
+}
+
+/** Bounded HTTPS WebDAV transport. Credentials and response bodies are never logged. */
+internal class WebDavClient(
+    private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
+        .retryOnConnectionFailure(false).build(),
+    private val allowHttpForTests: Boolean = false,
+) : BackupRemoteTransport {
+    fun validate(config: WebDavConfig) { url(config) }
+
+    override fun download(config: WebDavConfig): RemoteBackup? = get(config, url(config))
+
+    override fun history(config: WebDavConfig): List<BackupHistoryEntry> {
+        val directory = historyUrl(config)
+        val body = "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/></d:prop></d:propfind>".encodeToByteArray()
+        request(config, directory, "PROPFIND", body, mapOf("Depth" to "1")).use { response ->
+            if (response.code == 404) return emptyList()
+            if (response.code != 207) throw BackupException(BackupFailure.UNSAFE_SERVER)
+            val bytes = bounded(response, 1024 * 1024)
+            return parseHistory(bytes, directory)
         }
-
-    /** Downloads a bounded encrypted vault blob; its contents stay opaque to this HTTP layer. */
-    suspend fun download(config: WebDavConfig): WebDavDownloadResult = withContext(Dispatchers.IO) {
-        runCatching {
-            withConnection(config, "GET") { connection ->
-                val code = connection.responseCode
-                if (code != HttpURLConnection.HTTP_OK) {
-                    throw WebDavClientException(WebDavFailureReason.HTTP_STATUS, code)
-                }
-                val length = connection.contentLengthLong
-                // Chunked WebDAV responses legitimately report an unknown (-1) length.
-                // The stream is still bounded by readLimited below.
-                if (length > MAX_TRANSFER_BYTES.toLong()) {
-                    throw WebDavClientException(WebDavFailureReason.RESPONSE_TOO_LARGE)
-                }
-                connection.inputStream.use(::readLimited)
-            }
-        }.fold(
-            onSuccess = {
-                MangoLog.info(MangoLogEvent.WEBDAV_DOWNLOAD_SUCCEEDED)
-                WebDavDownloadResult.Success(it)
-            },
-            onFailure = { error ->
-                MangoLog.warn(MangoLogEvent.WEBDAV_DOWNLOAD_FAILED, error)
-                error.toWebDavDownloadFailure()
-            },
-        )
     }
 
-    private inline fun <T> withConnection(
-        config: WebDavConfig,
-        method: String,
-        block: (HttpURLConnection) -> T,
-    ): T {
-        val connection = open(config, method)
-        return try {
-            block(connection)
+    override fun readHistory(config: WebDavConfig, id: String): RemoteBackup {
+        require(HISTORY_NAME.matches(id))
+        return get(config, historyUrl(config).newBuilder().addPathSegment(id).build())
+            ?: throw BackupException(BackupFailure.NETWORK)
+    }
+
+    /** Archive first; failed preservation must never lead to a head overwrite. */
+    override fun archive(config: WebDavConfig, backup: RemoteBackup) {
+        val directory = historyUrl(config)
+        request(config, directory, "MKCOL").use {
+            if (it.code !in listOf(201, 405)) throw BackupException(BackupFailure.UNSAFE_SERVER)
+        }
+        val name = "mssh-${System.currentTimeMillis()}-${UUID.randomUUID()}.mssh"
+        put(config, directory.newBuilder().addPathSegment(name).build(), backup.bytes, null)
+    }
+
+    override fun publish(config: WebDavConfig, bytes: ByteArray, etag: String?) = put(config, url(config), bytes, etag)
+
+    /** Probe only a disposable owned object; a server ignoring conditions must never receive a head PUT. */
+    override fun verifyConditionalWrites(config: WebDavConfig) {
+        val directory = historyUrl(config)
+        request(config, directory, "MKCOL").use {
+            if (it.code !in listOf(201, 405)) throw BackupException(BackupFailure.UNSAFE_SERVER)
+        }
+        val probe = directory.newBuilder().addPathSegment(".probe-${UUID.randomUUID()}").build()
+        val bytes = UUID.randomUUID().toString().encodeToByteArray()
+        put(config, probe, bytes, null)
+        try {
+            listOf(mapOf("If-None-Match" to "*"), mapOf("If-Match" to "\"unmatched-${UUID.randomUUID()}\"")).forEach { condition ->
+                request(config, probe, "PUT", bytes, condition).use {
+                    if (it.code != 412) throw BackupException(BackupFailure.UNSAFE_SERVER)
+                }
+            }
         } finally {
-            connection.disconnect()
+            try { request(config, probe, "DELETE").close() } catch (_: java.io.IOException) { /* Probe is not a backup. */ }
         }
     }
 
-    private fun open(config: WebDavConfig, method: String): HttpURLConnection {
-        val remoteUrl = remoteUrl(config)
-        return (remoteUrl.openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = CONNECT_TIMEOUT_MILLIS
-            readTimeout = READ_TIMEOUT_MILLIS
-            useCaches = false
-            instanceFollowRedirects = false
-            setRequestProperty("Content-Type", "application/octet-stream")
-            setRequestProperty("Accept", "application/octet-stream")
-            setRequestProperty("Authorization", basicAuthorization(config.username, config.password))
-        }
-    }
-
-    private fun remoteUrl(config: WebDavConfig): URL {
-        val endpoint = config.endpoint.trim().trimEnd('/')
-        if (!endpoint.startsWith("https://")) {
-            throw WebDavClientException(WebDavFailureReason.INVALID_CONFIGURATION)
-        }
-        val remoteName = config.remoteFileName.trim().trimStart('/')
-        if (
-            remoteName.isEmpty() ||
-            remoteName.contains("..") ||
-            remoteName.any { it == '?' || it == '#' || it == '\\' || it.isISOControl() }
-        ) {
-            throw WebDavClientException(WebDavFailureReason.INVALID_CONFIGURATION)
-        }
-        return URL("$endpoint/$remoteName")
-    }
-
-    private fun basicAuthorization(username: String, password: String): String {
-        val value = Base64.getEncoder().encodeToString(
-            "$username:$password".toByteArray(StandardCharsets.UTF_8),
-        )
-        return "Basic $value"
-    }
-
-    private fun readLimited(input: java.io.InputStream): ByteArray {
-        val output = ByteArrayOutputStream()
-        val buffer = ByteArray(8 * 1024)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            if (output.size() + count > MAX_TRANSFER_BYTES) {
-                throw WebDavClientException(WebDavFailureReason.RESPONSE_TOO_LARGE)
+    /** Only recognized immutable history files in this exact target directory may be deleted. */
+    override fun prune(config: WebDavConfig) {
+        history(config).drop(10).forEach { entry ->
+            request(config, historyUrl(config).newBuilder().addPathSegment(entry.id).build(), "DELETE").use {
+                if (!it.isSuccessful && it.code != 404) throw BackupException(BackupFailure.PARTIAL)
             }
-            output.write(buffer, 0, count)
         }
-        return output.toByteArray()
     }
 
-    private companion object {
-        const val CONNECT_TIMEOUT_MILLIS = 15_000
-        const val READ_TIMEOUT_MILLIS = 30_000
-        const val MAX_TRANSFER_BYTES = 16 * 1024 * 1024
+    private fun put(config: WebDavConfig, target: HttpUrl, bytes: ByteArray, etag: String?) {
+        if (bytes.size !in 1..PortableVaultCodec.MAX_FILE_BYTES) throw BackupException(BackupFailure.TOO_LARGE)
+        val condition = if (etag == null) mapOf("If-None-Match" to "*") else {
+            if (!strongEtag(etag)) throw BackupException(BackupFailure.UNSAFE_SERVER)
+            mapOf("If-Match" to etag)
+        }
+        request(config, target, "PUT", bytes, condition).use {
+            if (it.code == 412) throw BackupException(BackupFailure.CHANGED)
+            if (!it.isSuccessful) throw BackupException(BackupFailure.NETWORK)
+        }
     }
-}
 
-/** Sanitized WebDAV failure category safe to expose without credentials or remote response bodies. */
-enum class WebDavFailureReason {
-    INVALID_CONFIGURATION,
-    INVALID_BACKUP_SIZE,
-    HTTP_STATUS,
-    RESPONSE_TOO_LARGE,
-    NETWORK,
-}
+    private fun get(config: WebDavConfig, target: HttpUrl): RemoteBackup? = request(config, target, "GET").use {
+        if (it.code == 404) return null
+        if (it.code != 200) throw BackupException(BackupFailure.NETWORK)
+        RemoteBackup(bounded(it, PortableVaultCodec.MAX_FILE_BYTES), it.header("ETag"))
+    }
 
-private class WebDavClientException(
-    val reason: WebDavFailureReason,
-    val statusCode: Int? = null,
-) : Exception()
+    private fun request(config: WebDavConfig, target: HttpUrl, method: String, bytes: ByteArray? = null, headers: Map<String, String> = emptyMap()): Response {
+        val contentType = if (method == "PROPFIND") "application/xml; charset=utf-8" else "application/octet-stream"
+        val body = bytes?.toRequestBody(contentType.toMediaType())
+            ?: if (method == "MKCOL") ByteArray(0).toRequestBody() else null
+        val request = Request.Builder().url(target).method(method, body)
+            .header("Authorization", Credentials.basic(config.username, config.password, Charsets.UTF_8))
+            .header("Accept", "application/octet-stream, application/xml")
+        headers.forEach { (name, value) -> request.header(name, value) }
+        return try { client.newCall(request.build()).execute() } catch (_: java.io.IOException) { throw WebDavTransportException() }
+    }
 
-private fun Throwable.failureParts(): Pair<WebDavFailureReason, Int?> =
-    (this as? WebDavClientException)?.let { it.reason to it.statusCode }
-        ?: (WebDavFailureReason.NETWORK to null)
+    private fun url(config: WebDavConfig): HttpUrl {
+        val base = config.endpoint.trim().trimEnd('/').toHttpUrl()
+        require((base.isHttps || allowHttpForTests) && base.username.isEmpty() && base.password.isEmpty() && base.query == null && base.fragment == null)
+        val segments = config.remoteFileName.split('/')
+        require(segments.isNotEmpty() && segments.all { it.isNotBlank() && it != "." && it != ".." && it.none { c -> c == '\\' || c == '?' || c == '#' || c == '%' || c.isISOControl() } })
+        return base.newBuilder().apply { segments.forEach(::addPathSegment) }.build()
+    }
 
-private fun Throwable.toWebDavFailure(): WebDavResult.Failure {
-    val (reason, statusCode) = failureParts()
-    return WebDavResult.Failure(reason, statusCode)
-}
+    private fun historyUrl(config: WebDavConfig): HttpUrl {
+        val current = url(config)
+        return current.newBuilder().removePathSegment(current.pathSegments.lastIndex)
+            .addPathSegment(".${current.pathSegments.last()}.history").addPathSegment("").build()
+    }
 
-private fun Throwable.toWebDavDownloadFailure(): WebDavDownloadResult.Failure {
-    val (reason, statusCode) = failureParts()
-    return WebDavDownloadResult.Failure(reason, statusCode)
-}
+    /** Reject off-origin and nested hrefs before deriving handles; XML cannot load external entities. */
+    internal fun parseHistory(bytes: ByteArray, directory: HttpUrl): List<BackupHistoryEntry> {
+        require(bytes.size <= 1024 * 1024)
+        val xml = bytes.toString(Charsets.UTF_8)
+        require(!xml.contains('\u0000') && !Regex("<!\\s*(DOCTYPE|ENTITY)", RegexOption.IGNORE_CASE).containsMatchIn(xml))
+        val factory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            isExpandEntityReferences = false
+        }
+        val document = factory.newDocumentBuilder().apply {
+            setEntityResolver { _, _ -> throw org.xml.sax.SAXException("External entities are prohibited") }
+            setErrorHandler(object : org.xml.sax.helpers.DefaultHandler() {
+                override fun error(e: org.xml.sax.SAXParseException) { throw e }
+                override fun fatalError(e: org.xml.sax.SAXParseException) { throw e }
+            })
+        }.parse(bytes.inputStream())
+        val responses = document.getElementsByTagNameNS("DAV:", "response")
+        require(responses.length <= 1000)
+        return (0 until responses.length).mapNotNull { index ->
+            val element = responses.item(index) as Element
+            val href = element.getElementsByTagNameNS("DAV:", "href").item(0)?.textContent ?: return@mapNotNull null
+            val target = directory.resolve(href) ?: return@mapNotNull null
+            if (target.scheme != directory.scheme || target.host != directory.host || target.port != directory.port || target.query != null || target.fragment != null) return@mapNotNull null
+            if (target.encodedPath.substringBeforeLast('/') + "/" != directory.encodedPath) return@mapNotNull null
+            val id = target.pathSegments.last()
+            if (!HISTORY_NAME.matches(id)) return@mapNotNull null
+            BackupHistoryEntry(id, id.removePrefix("mssh-").substringBefore('-').toLong(), true)
+        }.distinctBy { it.id }.sortedWith(compareByDescending<BackupHistoryEntry> { it.createdAt }.thenByDescending { it.id })
+    }
 
-sealed interface WebDavResult {
-    data object Success : WebDavResult
+    private fun bounded(response: Response, limit: Int): ByteArray {
+        if (response.body.contentLength() > limit) throw BackupException(BackupFailure.TOO_LARGE)
+        return try { response.body.byteStream().use { readLimited(it, limit) } }
+        catch (_: java.io.IOException) { throw WebDavTransportException() }
+    }
 
-    data class Failure(
-        val reason: WebDavFailureReason,
-        val statusCode: Int? = null,
-    ) : WebDavResult
-}
-
-sealed interface WebDavDownloadResult {
-    data class Success(val encryptedBlob: ByteArray) : WebDavDownloadResult
-
-    data class Failure(
-        val reason: WebDavFailureReason,
-        val statusCode: Int? = null,
-    ) : WebDavDownloadResult
+    companion object {
+        private val HISTORY_NAME = Regex("mssh-[0-9]{1,17}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.mssh")
+        fun strongEtag(value: String?): Boolean = value != null && value.length >= 2 && value.startsWith('"') && value.endsWith('"') && value.none { it.isISOControl() }
+        fun readLimited(input: java.io.InputStream, limit: Int = PortableVaultCodec.MAX_FILE_BYTES): ByteArray {
+            return website.sung.mangossh.data.vault.BackupLimits.readLimited(input, limit)
+        }
+    }
 }

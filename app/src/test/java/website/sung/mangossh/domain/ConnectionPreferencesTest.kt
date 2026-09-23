@@ -14,6 +14,28 @@ class ConnectionPreferencesTest {
         assertEquals(10, preferences.connectTimeoutSeconds)
         assertEquals(SshTerminalType.XTERM_256COLOR, preferences.sshTerminalType)
         assertEquals("xterm-256color", preferences.sshTerminalType.termValue)
+        assertEquals(4, preferences.backgroundKeepaliveMultiplier)
+    }
+
+    @Test
+    fun outOfRangeBackgroundKeepaliveMultiplierFallsBackToDefault() {
+        val tooSmall = ConnectionPreferences(backgroundKeepaliveMultiplier = 0).normalized()
+        val tooLarge = ConnectionPreferences(
+            backgroundKeepaliveMultiplier = ConnectionPreferences.MAX_BACKGROUND_KEEPALIVE_MULTIPLIER + 1,
+        ).normalized()
+
+        assertEquals(ConnectionPreferences.DEFAULT_BACKGROUND_KEEPALIVE_MULTIPLIER, tooSmall.backgroundKeepaliveMultiplier)
+        assertEquals(ConnectionPreferences.DEFAULT_BACKGROUND_KEEPALIVE_MULTIPLIER, tooLarge.backgroundKeepaliveMultiplier)
+    }
+
+    @Test
+    fun everyOfferedBackgroundKeepaliveMultiplierSurvivesNormalization() {
+        ConnectionPreferences.backgroundKeepaliveMultiplierChoices(3).forEach { multiplier ->
+            assertEquals(
+                multiplier,
+                ConnectionPreferences(backgroundKeepaliveMultiplier = multiplier).normalized().backgroundKeepaliveMultiplier,
+            )
+        }
     }
 
     @Test

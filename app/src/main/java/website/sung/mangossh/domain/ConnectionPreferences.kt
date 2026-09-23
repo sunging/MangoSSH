@@ -37,6 +37,13 @@ data class ConnectionPreferences(
     val connectTimeoutSeconds: Int = DEFAULT_CONNECT_TIMEOUT_SECONDS,
     /** SSH only; see [SshTerminalType]. */
     val sshTerminalType: SshTerminalType = SshTerminalType.DEFAULT,
+    /**
+     * How much longer the keepalive interval gets once the app is backgrounded
+     * and the session wake lock is released, expressed as a multiple of
+     * [keepaliveSeconds]. `1` keeps the foreground cadence. The scheduler still
+     * clamps the result to a 60–300 s window regardless of this value.
+     */
+    val backgroundKeepaliveMultiplier: Int = DEFAULT_BACKGROUND_KEEPALIVE_MULTIPLIER,
 ) {
     /**
      * Produces a safe persisted value when preferences are damaged or from a
@@ -48,6 +55,9 @@ data class ConnectionPreferences(
             ?: DEFAULT_KEEPALIVE_SECONDS,
         connectTimeoutSeconds = connectTimeoutSeconds.takeIf { it in MIN_CONNECT_TIMEOUT_SECONDS..MAX_CONNECT_TIMEOUT_SECONDS }
             ?: DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        backgroundKeepaliveMultiplier = backgroundKeepaliveMultiplier
+            .takeIf { it in MIN_BACKGROUND_KEEPALIVE_MULTIPLIER..MAX_BACKGROUND_KEEPALIVE_MULTIPLIER }
+            ?: DEFAULT_BACKGROUND_KEEPALIVE_MULTIPLIER,
     )
 
     companion object {
@@ -57,6 +67,19 @@ data class ConnectionPreferences(
 
         /** Discrete choices offered by the UI; `0` means "off". The store still accepts any in-range value. */
         val KEEPALIVE_CHOICES = listOf(0, 15, 30, 60, 120, 300)
+
+        const val MIN_BACKGROUND_KEEPALIVE_MULTIPLIER = 1
+        const val MAX_BACKGROUND_KEEPALIVE_MULTIPLIER = 16
+        const val DEFAULT_BACKGROUND_KEEPALIVE_MULTIPLIER = 4
+
+        /** Discrete choices offered by the UI. The store still accepts any in-range value. */
+        val BACKGROUND_KEEPALIVE_MULTIPLIER_CHOICES = listOf(1, 2, 4, 8)
+
+        /** [BACKGROUND_KEEPALIVE_MULTIPLIER_CHOICES] with the persisted [current] value merged in; see [keepaliveChoices]. */
+        fun backgroundKeepaliveMultiplierChoices(current: Int): List<Int> =
+            choicesIncludingCurrent(BACKGROUND_KEEPALIVE_MULTIPLIER_CHOICES, current) {
+                it in MIN_BACKGROUND_KEEPALIVE_MULTIPLIER..MAX_BACKGROUND_KEEPALIVE_MULTIPLIER
+            }
 
         const val MIN_CONNECT_TIMEOUT_SECONDS = 5
         const val MAX_CONNECT_TIMEOUT_SECONDS = 120

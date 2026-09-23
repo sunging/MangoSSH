@@ -91,9 +91,10 @@ val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
         rootProject.file("tools/fetch-go.sh"),
         rootProject.file("tools/fetch-jdk17.sh"),
         rootProject.file("tools/lib/linux-host.sh"),
+        rootProject.file("tools/lib/tsnet-version.sh"),
         rootProject.file("tools/generate-tsnet-notices.py"),
         rootProject.file("tools/normalize-tsnet-aar.py"),
-        rootProject.file("tools/patches/tailscale-v1.102.3-tsnet-no-logtail.patch"),
+        rootProject.file("tools/patches/tailscale-v1.102.4-tsnet-no-logtail.patch"),
     )
     inputs.property("androidSdkDirectory", androidSdkPath)
     outputs.file(embeddedTsnetAar)
@@ -318,6 +319,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(platform(libs.androidx.compose.bom))
@@ -325,11 +327,14 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
-    implementation(libs.connectbot.sshlib)
+    implementation(project(":third_party:cbssh"))
+    runtimeOnly("org.slf4j:slf4j-nop:2.0.18")
     implementation(project(":third_party:termlib"))
     implementation(libs.conscrypt.android)
     implementation(libs.androidx.biometric)
 
+    implementation(libs.okhttp)
+    testImplementation(libs.mockwebserver)
     testImplementation(libs.junit)
     testImplementation(libs.json)
     androidTestImplementation(platform(libs.androidx.compose.bom))

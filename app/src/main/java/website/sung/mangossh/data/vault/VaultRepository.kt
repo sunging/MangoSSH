@@ -14,9 +14,9 @@ import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 
 /** Coordinates encrypted vault reads and serialized mutations on the I/O dispatcher. */
-class VaultRepository(context: Context) {
-    private val storage = AndroidKeystoreVault(context)
+class VaultRepository(context: Context, private val storage: AndroidKeystoreVault = AndroidKeystoreVault(context)) {
     private val mutationMutex = Mutex()
+    private var revision = 0L
 
     private val _snapshot = MutableStateFlow(VaultSnapshot())
     val snapshot = _snapshot.asStateFlow()
@@ -31,6 +31,7 @@ class VaultRepository(context: Context) {
             MangoLog.info(MangoLogEvent.VAULT_OPEN_STARTED)
             try {
                 _snapshot.value = storage.read() ?: VaultSnapshot()
+                revision++
                 _status.value = VaultStatus.Ready
                 MangoLog.info(MangoLogEvent.VAULT_OPEN_SUCCEEDED)
             } catch (error: Exception) {
@@ -64,6 +65,14 @@ class VaultRepository(context: Context) {
             snapshot.profiles.plus(profile.copy(position = nextPosition))
         }
         snapshot.copy(profiles = profiles)
+    }
+
+    /** Saves the entire reviewed import atomically and validates all new references together. */
+    suspend fun importProfiles(profiles: List<ConnectionProfile>) = mutate { snapshot ->
+        val existingIds = snapshot.profiles.map { it.id }.toSet()
+        if (profiles.any { it.id in existingIds }) snapshot else snapshot.copy(
+            profiles = snapshot.profiles + profiles.mapIndexed { index, profile -> profile.copy(position = snapshot.profiles.size + index) },
+        )
     }
 
     suspend fun removeProfile(id: String) = mutate { snapshot ->
@@ -106,20 +115,15 @@ class VaultRepository(context: Context) {
         snapshot.copy(
             keys = snapshot.keys.filterNot { it.id == id },
             profiles = snapshot.profiles.map { profile ->
-                if (profile.keyId == id) profile.copy(keyId = null) else profile
+                profile.copy(keyId = profile.keyId.takeUnless { it == id },
+                    agentPolicy = profile.agentPolicy.copy(allowedKeyIds = profile.agentPolicy.allowedKeyIds?.filterNot { it == id }))
             },
         )
     }
 
     suspend fun trustHostKey(hostKey: TrustedHostKey) = mutate { snapshot ->
         snapshot.copy(
-            knownHosts = snapshot.knownHosts
-                .filterNot {
-                    it.hostname == hostKey.hostname &&
-                        it.port == hostKey.port &&
-                        it.algorithm == hostKey.algorithm
-                }
-                .plus(hostKey),
+            knownHosts = replaceTrustedHostKey(snapshot.knownHosts, hostKey),
         )
     }
 
@@ -148,41 +152,61 @@ class VaultRepository(context: Context) {
         snapshot.copy(webDavConfig = config)
     }
 
-    suspend fun exportPortable(passphrase: CharArray): ByteArray = withContext(Dispatchers.IO) {
-        mutationMutex.withLock {
-            check(_status.value is VaultStatus.Ready) { "Vault is not ready" }
-            PortableVaultCodec.encrypt(_snapshot.value, passphrase)
-        }
+    /** Reads a consistent revision and snapshot for an import preview. */
+    internal suspend fun backupSnapshot(): Pair<Long, VaultSnapshot> = mutationMutex.withLock {
+        if (_status.value !is VaultStatus.Ready) throw BackupException(BackupFailure.STORAGE)
+        revision to _snapshot.value
     }
 
-    suspend fun importPortable(bytes: ByteArray, passphrase: CharArray) = withContext(Dispatchers.IO) {
+    /** Saves recovery before the atomic vault write; stale previews never mutate storage. */
+    internal suspend fun commitImport(
+        expectedRevision: Long,
+        incoming: VaultSnapshot,
+        decision: ImportDecision,
+        local: BackupLocalStore,
+        allowed: () -> Boolean,
+    ): Boolean = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
-            check(_status.value is VaultStatus.Ready) { "Vault is not ready" }
-            val imported = PortableVaultCodec.decrypt(bytes, passphrase)
-            storage.write(imported)
-            _snapshot.value = imported
+            if (!allowed()) throw BackupException(BackupFailure.LOCKED)
+            if (_status.value !is VaultStatus.Ready) throw BackupException(BackupFailure.STORAGE)
+            if (revision != expectedRevision) return@withLock false
+            val merged = BackupMerger.merge(_snapshot.value, incoming, decision)
+            val encoded = VaultPayloadCodec.encode(merged)
+            try { if (encoded.size > 5 * 1024 * 1024) throw BackupException(BackupFailure.TOO_LARGE) } finally { encoded.fill(0) }
+            local.checkpoint(_snapshot.value)
+            if (!allowed()) throw BackupException(BackupFailure.LOCKED)
+            storage.write(merged)
+            _snapshot.value = merged
+            revision++
+            true
         }
     }
 
     /**
-     * Applies one mutation atomically and reports whether the encrypted write
-     * committed. The caller must not claim success when persistence failed:
-     * generated private keys are intentionally retained only after this method
-     * returns `true`.
+     * Validates references under the write lock and reports why a mutation could not commit.
+     * Only Success may acknowledge a save or retain a newly generated key. A failed write
+     * leaves the published snapshot and revision unchanged so the caller can preserve its draft.
      */
-    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot): Boolean = withContext(Dispatchers.IO) {
+    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot): VaultMutationResult = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
-            if (_status.value !is VaultStatus.Ready) return@withLock false
+            if (_status.value !is VaultStatus.Ready) return@withLock VaultMutationResult.NotReady
             val updated = transform(_snapshot.value)
+            val removedOrIncompatible = _snapshot.value.profiles.filter { old ->
+                val next = updated.profiles.firstOrNull { it.id == old.id }
+                next == null || next.protocol != website.sung.mangossh.domain.ConnectionProtocol.SSH || next.jumpProfileIds.isNotEmpty()
+            }.map { it.id }.toSet()
+            val dependents = updated.profiles.filter { it.jumpProfileIds.any(removedOrIncompatible::contains) }.map { it.id }
+            if (dependents.isNotEmpty()) return@withLock VaultMutationResult.ReferencedBy(dependents)
+            try { BackupValidator.validate(updated) } catch (_: BackupException) { return@withLock VaultMutationResult.Invalid }
             try {
                 storage.write(updated)
                 _snapshot.value = updated
+                revision++
                 MangoLog.info(MangoLogEvent.VAULT_WRITE_SUCCEEDED)
-                true
+                VaultMutationResult.Success
             } catch (error: Exception) {
-                _status.value = VaultStatus.Failed(VaultFailureReason.WRITE)
                 MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error)
-                false
+                VaultMutationResult.StorageFailure
             }
         }
     }

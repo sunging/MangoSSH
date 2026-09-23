@@ -22,13 +22,11 @@ import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -76,7 +74,7 @@ internal fun TerminalShortcutSettingsCard(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        ShortcutPreview(config.items.filter(TerminalShortcutItem::visible))
+        ShortcutPreview(config)
         Text(
             stringResource(R.string.terminal_shortcuts_warning),
             style = MaterialTheme.typography.bodySmall,
@@ -103,8 +101,8 @@ internal fun TerminalShortcutSettingsCard(
 }
 
 @Composable
-private fun ShortcutPreview(items: List<TerminalShortcutItem>) {
-    if (items.isEmpty()) {
+private fun ShortcutPreview(config: TerminalShortcutConfig) {
+    if (config.items.none(TerminalShortcutItem::visible)) {
         Text(
             stringResource(R.string.terminal_shortcuts_empty),
             style = MaterialTheme.typography.bodySmall,
@@ -112,14 +110,7 @@ private fun ShortcutPreview(items: List<TerminalShortcutItem>) {
         )
         return
     }
-    Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        items.forEach { item ->
-            AssistChip(onClick = {}, label = { Text(item.displayLabel()) })
-        }
-    }
+    TerminalShortcutBar(config = config)
 }
 
 @Composable
@@ -129,6 +120,7 @@ private fun TerminalShortcutEditorDialog(
     onSave: (TerminalShortcutConfig) -> Unit,
 ) {
     val draft = remember(initial) { mutableStateListOf<TerminalShortcutItem>().apply { addAll(initial.items) } }
+    var rowCount by remember(initial) { mutableStateOf(initial.rowCount) }
     var editingIndex by remember { mutableStateOf<Int?>(null) }
     var adding by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss) {
@@ -144,13 +136,18 @@ private fun TerminalShortcutEditorDialog(
                     modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (draft.isEmpty()) {
-                        Text(
-                            stringResource(R.string.terminal_shortcuts_empty),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Text(stringResource(R.string.terminal_shortcuts_rows), style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        (1..2).forEach { count ->
+                            FilterChip(
+                                selected = rowCount == count,
+                                onClick = { rowCount = count },
+                                label = { Text(stringResource(if (count == 1) R.string.terminal_shortcuts_one_row else R.string.terminal_shortcuts_two_rows)) },
+                                modifier = Modifier.testTag("terminal_shortcuts_rows_$count"),
+                            )
+                        }
                     }
+                    ShortcutPreview(TerminalShortcutConfig(draft.toList(), rowCount))
                     draft.forEachIndexed { index, item ->
                         ShortcutEditorRow(
                             item = item,
@@ -188,6 +185,7 @@ private fun TerminalShortcutEditorDialog(
                         onClick = {
                             draft.clear()
                             draft.addAll(TerminalShortcutConfig.defaults().items)
+                            rowCount = 2
                         },
                         modifier = Modifier.testTag("terminal_shortcuts_restore"),
                     ) {
@@ -202,7 +200,7 @@ private fun TerminalShortcutEditorDialog(
                         Text(stringResource(R.string.terminal_shortcuts_cancel))
                     }
                     Button(
-                        onClick = { onSave(TerminalShortcutConfig(draft.toList())) },
+                        onClick = { onSave(TerminalShortcutConfig(draft.toList(), rowCount)) },
                         modifier = Modifier.testTag("terminal_shortcuts_save"),
                     ) {
                         Text(stringResource(R.string.terminal_shortcuts_save))

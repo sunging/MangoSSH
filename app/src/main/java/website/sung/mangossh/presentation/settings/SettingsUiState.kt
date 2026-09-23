@@ -63,6 +63,7 @@ internal data class SecuritySettingsState(
 internal data class BackupSettingsState(
     val vaultStatus: VaultStatus,
     val webDavConfig: WebDavConfig?,
+    val operation: website.sung.mangossh.data.vault.BackupOperationState = website.sung.mangossh.data.vault.BackupOperationState(),
 )
 
 /** State shown on the Snippets detail page. */
@@ -133,6 +134,7 @@ internal data class ShortcutSettingsCallbacks(
 @Immutable
 internal data class ConnectionSettingsCallbacks(
     val onSetKeepaliveSeconds: (Int) -> Unit,
+    val onSetBackgroundKeepaliveMultiplier: (Int) -> Unit,
     val onSetConnectTimeoutSeconds: (Int) -> Unit,
     val onSetSshTerminalType: (SshTerminalType) -> Unit,
 )
@@ -144,22 +146,30 @@ internal data class SecuritySettingsCallbacks(
     val onSetBiometricEnabled: (Boolean) -> Unit,
     val onLockNow: () -> Unit,
     val onSetAutoLockDelay: (AppLockDelay) -> Unit,
+    val onSetReauthentication: (website.sung.mangossh.security.ReauthenticationMode) -> Unit = {},
 )
 
 @Immutable
 internal data class BackupSettingsCallbacks(
     val onSaveWebDav: (endpoint: String, username: String, password: String, remoteFileName: String) -> Unit,
     val onClearWebDav: () -> Unit,
-    val onPrepareExport: (String) -> Unit,
-    val onConsumeExport: () -> Unit,
-    val onImport: (ByteArray, String) -> Unit,
-    val onUpload: (String) -> Unit,
-    val onDownloadAndImport: (String) -> Unit,
+    val onPrepareExport: (String?, Boolean, Boolean) -> Unit,
+    val onWriteExport: (android.net.Uri?) -> Unit,
+    val onImport: (android.net.Uri, String?, Boolean) -> Unit,
+    val onUpload: (String?, Boolean) -> Unit,
+    val onDownloadAndImport: (String?, Boolean) -> Unit,
+    val onCommit: (website.sung.mangossh.data.vault.ImportDecision) -> Unit,
+    val onCancel: () -> Unit,
+    val onConfirmUpload: () -> Unit,
+    val onHistory: (Boolean) -> Unit,
+    val onRestore: (website.sung.mangossh.data.vault.BackupHistoryEntry, String?) -> Unit,
+    val onForget: (Boolean) -> Unit,
+    val onRefresh: () -> Unit,
 )
 
 @Immutable
 internal data class SnippetSettingsCallbacks(
-    val onSaveSnippet: (id: String?, label: String, script: String, appendNewline: Boolean) -> Unit,
+    val onSaveSnippet: (id: String?, label: String, script: String, appendNewline: Boolean, operation: website.sung.mangossh.presentation.EditorSaveOperation) -> Unit,
     val onRemoveSnippet: (String) -> Unit,
 )
 

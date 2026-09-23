@@ -38,10 +38,16 @@ data class ConnectionProfile(
     val keyId: String? = null,
     val startupSnippetId: String? = null,
     val agentForwarding: Boolean = false,
+    val overrides: HostConnectionOverrides = HostConnectionOverrides(),
+    val agentPolicy: HostAgentPolicy = HostAgentPolicy(),
+    val requireReauthentication: Boolean? = null,
+    val workspace: TmuxWorkspace = TmuxWorkspace(),
+    val jumpProfileIds: List<String> = emptyList(),
     val favorite: Boolean = false,
     val position: Int = 0,
     val lastConnectedAtEpochMillis: Long = 0L,
     val connectionCount: Int = 0,
+    val legacySshAlgorithms: Boolean = false,
 ) {
     val endpoint: String
         get() = if (port == 22) hostname else "$hostname:$port"
@@ -61,10 +67,16 @@ data class ConnectionProfileDraft(
     val keyId: String? = null,
     val startupSnippetId: String? = null,
     val agentForwarding: Boolean = false,
+    val overrides: HostConnectionOverrides = HostConnectionOverrides(),
+    val agentPolicy: HostAgentPolicy = HostAgentPolicy(),
+    val requireReauthentication: Boolean? = null,
+    val workspace: TmuxWorkspace = TmuxWorkspace(),
+    val jumpProfileIds: List<String> = emptyList(),
     val favorite: Boolean = false,
     val position: Int = 0,
     val lastConnectedAtEpochMillis: Long = 0L,
     val connectionCount: Int = 0,
+    val legacySshAlgorithms: Boolean = false,
 ) {
     /** Verifies only local form constraints; network reachability is checked at connection time. */
     fun isValid(): Boolean = hostname.isNotBlank() && username.isNotBlank() && port in 1..65535
@@ -90,9 +102,15 @@ data class ConnectionProfileDraft(
         keyId = keyId,
         startupSnippetId = startupSnippetId,
         agentForwarding = agentForwarding,
+        overrides = overrides,
+        agentPolicy = agentPolicy,
+        requireReauthentication = requireReauthentication,
+        workspace = workspace,
+        jumpProfileIds = jumpProfileIds,
         favorite = favorite,
         position = position,
         lastConnectedAtEpochMillis = lastConnectedAtEpochMillis,
         connectionCount = connectionCount,
+        legacySshAlgorithms = legacySshAlgorithms,
     )
 }

@@ -491,7 +491,7 @@ func (s *Server) Loopback() (addr string, proxyCred, localAPICred string, err er
 		s5l := logger.WithPrefix(s.logf, "socks5: ")
 		s5s := &socks5.Server{
 			Logf:     s5l,
-			Dialer:   s.dialer.UserDial,
+			Dialer:   s.Dial,
 			Username: "tsnet",
 			Password: s.proxyCred,
 		}
@@ -528,6 +528,14 @@ func (s *Server) Start() error {
 	hostinfo.SetPackage("tsnet")
 	s.initOnce.Do(s.doInit)
 	return s.initErr
+}
+
+// NotifyNetworkChange asks the Android polling monitor to refresh its
+// platform-provided interface snapshot. It is a no-op before startup.
+func (s *Server) NotifyNetworkChange() {
+	if s.netMon != nil {
+		s.netMon.InjectEvent()
+	}
 }
 
 // Up connects the server to the tailnet and waits until it is running.
@@ -1051,6 +1059,12 @@ func (s *Server) resolveAuthKey() (string, error) {
 }
 
 func (s *Server) startLogger(closePool *closeOnErrorPool, health *health.Tracker, tsLogf logger.Logf) error {
+	// Embedded Android clients opt out before Start. Avoid creating the
+	// logtail identity and raw on-disk filch buffer as well as disabling
+	// network upload.
+	if envknob.NoLogsNoSupport() {
+		return nil
+	}
 	if testenv.InTest() {
 		return nil
 	}

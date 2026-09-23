@@ -99,15 +99,24 @@ internal class KeyboardHandler(
         internal set
 
     /**
+     * Native key codes whose ACTION_DOWN this handler has consumed and whose ACTION_UP must
+     * therefore be consumed as well.
+     *
+     * Android's fallback-key mechanism (`Generic.kcm`) rewrites an *unconsumed* key into a
+     * different one: ESCAPE becomes BACK, Ctrl+ESCAPE becomes MENU, Alt/Meta+ESCAPE becomes
+     * HOME, and the numeric keypad becomes arrows/navigation while NumLock is off. The
+     * platform only synthesizes the fallback when the key's ACTION_UP is also reported
+     * unhandled. If the terminal swallows the down but not the up, a single Esc in the shell
+     * turns into a back navigation, so every consumed down is tracked here until its up.
+     */
+    private val consumedKeyCodes = HashSet<Int>()
+
+    /**
      * Process a Compose KeyEvent and send to terminal.
      * Returns true if the event was handled.
      */
     @Suppress("DEPRECATION")
     fun onKeyEvent(event: ComposeKeyEvent): Boolean {
-        if (onInterceptKey?.invoke(event) == true) {
-            return true
-        }
-
         val nativeEvent = event.nativeKeyEvent
         if (nativeEvent.action == AndroidKeyEvent.ACTION_MULTIPLE &&
             nativeEvent.keyCode == AndroidKeyEvent.KEYCODE_UNKNOWN
@@ -119,10 +128,29 @@ internal class KeyboardHandler(
             }
         }
 
-        if (event.type != KeyEventType.KeyDown) {
-            return false
+        // Consume the up (or a cancelled repeat) of any key whose down we consumed, so the
+        // platform never gets to substitute a fallback key for it.
+        val keyCode = nativeEvent.keyCode
+        if (event.type != KeyEventType.KeyDown ||
+            (nativeEvent.flags and AndroidKeyEvent.FLAG_CANCELED) != 0
+        ) {
+            return consumedKeyCodes.remove(keyCode)
         }
 
+        if (onInterceptKey?.invoke(event) == true) {
+            consumedKeyCodes.add(keyCode)
+            return true
+        }
+
+        val handled = onKeyDown(event)
+        if (handled) {
+            consumedKeyCodes.add(keyCode)
+        }
+        return handled
+    }
+
+    @Suppress("DEPRECATION")
+    private fun onKeyDown(event: ComposeKeyEvent): Boolean {
         val key = event.key
         val ctrl = event.isCtrlPressed
         val shift = event.isShiftPressed

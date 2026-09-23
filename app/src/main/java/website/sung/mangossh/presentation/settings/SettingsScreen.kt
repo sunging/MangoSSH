@@ -49,7 +49,6 @@ internal val SETTINGS_TWO_PANE_MIN_WIDTH = 600.dp
 internal fun SettingsScreen(
     viewModel: MangoSshViewModel,
     state: SettingsScreenState,
-    portableExport: ByteArray?,
     callbacks: SettingsCallbacks,
     modifier: Modifier = Modifier,
 ) {
@@ -73,7 +72,6 @@ internal fun SettingsScreen(
                 SettingsDetail(
                     destination = selectedDestination ?: visible.first(),
                     state = state,
-                    portableExport = portableExport,
                     callbacks = callbacks,
                 )
             }
@@ -89,7 +87,6 @@ internal fun SettingsScreen(
         SettingsDetail(
             destination = selectedDestination,
             state = state,
-            portableExport = portableExport,
             callbacks = callbacks,
             modifier = modifier,
         )
@@ -162,7 +159,6 @@ private fun SettingsHub(
 private fun SettingsDetail(
     destination: SettingsDestination,
     state: SettingsScreenState,
-    portableExport: ByteArray?,
     callbacks: SettingsCallbacks,
     modifier: Modifier = Modifier,
 ) {
@@ -175,7 +171,7 @@ private fun SettingsDetail(
         SettingsDestination.SHORTCUTS -> ShortcutSettingsPage(state.shortcuts, callbacks.shortcuts, pageModifier)
         SettingsDestination.CONNECTION -> ConnectionSettingsPage(state.connection, callbacks.connection, pageModifier)
         SettingsDestination.SECURITY -> SecuritySettingsPage(state.security, callbacks.security, pageModifier)
-        SettingsDestination.BACKUP -> BackupSettingsPage(state.backup, portableExport, callbacks.backup, pageModifier)
+        SettingsDestination.BACKUP -> BackupSettingsPage(state.backup, callbacks.backup, pageModifier)
         SettingsDestination.SNIPPETS -> SnippetSettingsPage(state.snippets, callbacks.snippets, pageModifier)
         SettingsDestination.TSNET -> TsnetSettingsPage(state.tsnet, callbacks.tsnet, pageModifier)
         SettingsDestination.UPDATES -> UpdateSettingsPage(state.update, callbacks.update, pageModifier)

@@ -18,6 +18,8 @@ local.properties
 /app/release
 /third_party/tailscale/.cache
 /third_party/termlib/build/
+/third_party/cbssh/build/
+/third_party/cbssh/protocol/build/
 /.tools/
 /.fdroid/
 /native/tsnetbridge/.build/

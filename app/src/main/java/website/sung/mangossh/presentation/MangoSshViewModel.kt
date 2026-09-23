@@ -30,9 +30,6 @@ import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
 import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
-import website.sung.mangossh.data.sync.WebDavDownloadResult
-import website.sung.mangossh.data.sync.WebDavResult
-import website.sung.mangossh.data.sync.WebDavFailureReason
 import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.CommandSnippet
@@ -76,36 +73,6 @@ enum class AppSection {
     SETTINGS,
 }
 
-private fun WebDavResult.Failure.toUiText(upload: Boolean): UiText = webDavFailureText(
-    reason = reason,
-    statusCode = statusCode,
-    networkResource = if (upload) {
-        R.string.message_webdav_upload_failed
-    } else {
-        R.string.message_webdav_download_failed
-    },
-)
-
-private fun WebDavDownloadResult.Failure.toUiText(): UiText = webDavFailureText(
-    reason = reason,
-    statusCode = statusCode,
-    networkResource = R.string.message_webdav_download_failed,
-)
-
-private fun webDavFailureText(
-    reason: WebDavFailureReason,
-    statusCode: Int?,
-    @StringRes networkResource: Int,
-): UiText = when (reason) {
-    WebDavFailureReason.INVALID_CONFIGURATION -> uiText(R.string.message_webdav_invalid_configuration)
-    WebDavFailureReason.INVALID_BACKUP_SIZE -> uiText(R.string.message_webdav_invalid_backup_size)
-    WebDavFailureReason.HTTP_STATUS -> statusCode
-        ?.let { uiText(R.string.message_webdav_http_failed, it) }
-        ?: uiText(networkResource)
-    WebDavFailureReason.RESPONSE_TOO_LARGE -> uiText(R.string.message_webdav_response_too_large)
-    WebDavFailureReason.NETWORK -> uiText(networkResource)
-}
-
 /** One pending foreground-notification destination, retained across app unlock. */
 sealed interface SessionNavigationRequest {
     data object OpenSessions : SessionNavigationRequest
@@ -124,12 +91,16 @@ internal fun resolveSessionEndMessage(
     SessionEndReason.CONNECTION_FAILED -> uiText(R.string.session_ended_connection_failed)
 }
 
-private fun SessionEndMessageKind.toUiText(): UiText = uiText(
+/** Resolves only the fixed failure category, never remote exception text. */
+internal fun SessionEndMessageKind.toUiText(): UiText = uiText(
     when (this) {
         SessionEndMessageKind.AUTHENTICATION_FAILED -> R.string.session_ended_authentication_failed
+        SessionEndMessageKind.DSA_KEY_UNSUPPORTED -> R.string.ssh_dsa_unsupported
+        SessionEndMessageKind.KEY_ENCRYPTION_UNSUPPORTED -> R.string.ssh_key_encryption_unsupported
         SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED -> R.string.mosh_bootstrap_failed
         SessionEndMessageKind.MOSH_RUNTIME_MISSING -> R.string.mosh_runtime_missing
         SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED -> R.string.embedded_tsnet_enrollment_required
+        SessionEndMessageKind.INPUT_OVERFLOW -> R.string.session_input_overflow
         SessionEndMessageKind.FOREGROUND_SERVICE_UNAVAILABLE -> R.string.session_foreground_service_unavailable
     },
 )
@@ -140,7 +111,10 @@ private fun SessionEndMessageKind.toUiText(): UiText = uiText(
  * Secret-bearing input is passed directly to the vault/session layer and is
  * never copied into UI state beyond the lifetime required for the operation.
  */
-class MangoSshViewModel(application: Application) : AndroidViewModel(application) {
+class MangoSshViewModel @JvmOverloads constructor(
+    application: Application,
+    private val cryptoDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default,
+) : AndroidViewModel(application) {
     private val runtime = (application as MangoSshApplication).sessionRuntime
     private val vault = runtime.vault
     private val keyManager = runtime.keyManager
@@ -151,7 +125,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val terminalShortcutStore = runtime.terminalShortcuts
     private val appThemeStore = runtime.appTheme
     private val connectionPreferencesStore = runtime.connectionPreferences
-    private val webDavClient = WebDavClient()
+    internal val backupCoordinator = website.sung.mangossh.data.vault.BackupCoordinator(application, vault, viewModelScope, unlocked = { !_appLocked.value }, appVersion = { installedVersionName })
+    val backupOperation = backupCoordinator.state
     private val appLockStore = AppLockStore(application)
     private val updatePreferencesStore = runtime.updatePreferences
     private val updateManager = DistributionUpdateManager(
@@ -207,9 +182,26 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         .map { snapshot -> snapshot.portForwards.sortedBy { rule -> rule.bindPort } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val endedTerminals = sessionController.endedTerminals
+    fun diagnostics(sessionId: String) = sessionController.diagnostics(sessionId)
+    fun openWorkspace(sessionId: String, workspace: website.sung.mangossh.domain.TmuxWorkspace): String? {
+        val profileId = sessions.value.firstOrNull { it.id == sessionId }?.profileId
+        val required = vault.snapshot.value.profiles.firstOrNull { it.id == profileId }?.requireReauthentication
+        if (!authorizeSensitive(required) { openWorkspace(sessionId, workspace)?.let { _sessionNavigationRequest.value = SessionNavigationRequest.OpenSession(it) } }) return null
+        return sessionController.openWorkspace(sessionId, workspace)
+    }
+    suspend fun listWorkspaces(sessionId: String) = sessionController.listWorkspaces(sessionId)
+    fun clearEndedTerminals() = sessionController.clearEndedTerminals()
+    fun reconnectEnded(sessionId: String, allowStartupSnippet: Boolean): String? {
+        val ended = endedTerminals.value.firstOrNull { it.session.id == sessionId } ?: return null
+        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == ended.session.profileId } ?: return null
+        return connect(if (allowStartupSnippet) profile else profile.copy(startupSnippetId = null))
+    }
     val sessions = sessionController.sessions
     val activePortForwards = sessionController.portForwards
     val scpTransfers = sessionController.scpTransfers
+    val transferConflicts = sessionController.transferConflicts
+    fun resolveTransferConflict(id: String, decision: website.sung.mangossh.session.TransferConflictDecision) = sessionController.resolveTransferConflict(id, decision)
     val resourceSnapshots = sessionController.resourceSnapshots
     val sessionPrompts = sessionController.prompts
     val sessionEndedEvents = sessionController.sessionEndedEvents
@@ -234,12 +226,87 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     private val _userMessage = MutableStateFlow<UiText?>(null)
     val userMessage = _userMessage.asStateFlow()
 
-    private val _portableExport = MutableStateFlow<ByteArray?>(null)
-    val portableExport = _portableExport.asStateFlow()
+    /**
+     * Per-session font size committed by a pinch-to-zoom gesture on the terminal, keyed by
+     * session id. Device-local UI state only: never persisted across process death and
+     * cleared whenever the global [terminalAppearance] font size changes or the session ends.
+     */
+    private val _sessionFontSizeOverrides = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val sessionFontSizeOverrides = _sessionFontSizeOverrides.asStateFlow()
+
 
     private val _appLockConfiguration = MutableStateFlow(appLockStore.configuration())
     val appLockConfiguration = _appLockConfiguration.asStateFlow()
-    private val _appLocked = MutableStateFlow(_appLockConfiguration.value.pinConfigured)
+    private val _appLocked = runtime.accessState.locked
+    private val reauthenticationWindow = website.sung.mangossh.security.ReauthenticationWindow(runtime.accessState)
+    private val _reauthenticationPending = MutableStateFlow(false)
+    val reauthenticationPending = _reauthenticationPending.asStateFlow()
+    private var pendingSensitiveAction: (() -> Unit)? = null
+    private var approvedSensitiveAction = false
+    private var pendingSensitiveCancel: (() -> Unit)? = null
+
+    private fun authorizeSensitive(override: Boolean? = null, onCancelled: (() -> Unit)? = null, action: () -> Unit): Boolean {
+        if (_appLocked.value) { onCancelled?.invoke(); return false }
+        val mode = _appLockConfiguration.value.reauthentication
+        val required = override ?: (mode != website.sung.mangossh.security.ReauthenticationMode.DISABLED)
+        if (!required || approvedSensitiveAction ||
+            (mode == website.sung.mangossh.security.ReauthenticationMode.FIVE_MINUTES && reauthenticationWindow.isValid())) return true
+        if (!_appLockConfiguration.value.pinConfigured) {
+            _userMessage.value = uiText(R.string.message_app_pin_required)
+            onCancelled?.invoke()
+            return false
+        }
+        if (pendingSensitiveAction == null) {
+            pendingSensitiveAction = action
+            pendingSensitiveCancel = onCancelled
+            _reauthenticationPending.value = true
+        } else onCancelled?.invoke()
+        return false
+    }
+
+    fun cancelReauthentication() { pendingSensitiveAction = null; pendingSensitiveCancel?.invoke(); pendingSensitiveCancel = null; _reauthenticationPending.value = false }
+
+    /** The pending operation resumes only after the existing PBKDF2 verifier accepts the PIN. */
+    fun verifySensitiveAction(pin: String) {
+        if (_appLockBusy.value || pendingSensitiveAction == null) return
+        _appLockBusy.value = true
+        val generation = runtime.accessState.generation
+        val requestedAction = pendingSensitiveAction
+        val chars = pin.toCharArray()
+        viewModelScope.launch {
+            try {
+                val accepted = withContext(cryptoDispatcher) { appLockStore.verifyPin(chars) }
+                // A cancelled prompt cannot authorize a different action queued during slow derivation.
+                if (pendingSensitiveAction !== requestedAction) return@launch
+                if (accepted && generation == runtime.accessState.generation && !_appLocked.value) {
+                    reauthenticationWindow.grant()
+                    val action = pendingSensitiveAction
+                    pendingSensitiveCancel = null
+                    cancelReauthentication()
+                    approvedSensitiveAction = true
+                    try { action?.invoke() } finally { approvedSensitiveAction = false }
+                } else {
+                    val remaining = appLockStore.cooldownRemainingMillis()
+                    _userMessage.value = if (remaining > 0) uiText(R.string.message_pin_cooldown, (remaining + 999) / 1000)
+                        else uiText(R.string.message_pin_incorrect)
+                }
+            } finally { chars.fill('\u0000'); _appLockBusy.value = false }
+        }
+    }
+
+    fun setReauthentication(mode: website.sung.mangossh.security.ReauthenticationMode) {
+        if (!authorizeSensitive { setReauthentication(mode) }) return
+        appLockStore.setReauthentication(mode)
+        _appLockConfiguration.value = appLockStore.configuration()
+    }
+
+    fun prepareBackupExport(password: String?, remember: Boolean, includeConfig: Boolean) {
+        if (!authorizeSensitive { prepareBackupExport(password, remember, includeConfig) }) return
+        backupCoordinator.prepareExport(password, remember, includeConfig)
+    }
+
+    private val _appLockBusy = MutableStateFlow(false)
+    val appLockBusy = _appLockBusy.asStateFlow()
     val appLocked = _appLocked.asStateFlow()
 
     /** Elapsed-realtime timestamp set by [noteBackgrounded] and consumed by [evaluateAutoLock]. */
@@ -268,6 +335,44 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     internal fun closeSettingsDestination() {
         _settingsDestination.value = null
+    }
+
+    private val _remoteEditor = MutableStateFlow<RemoteEditorUiState?>(null)
+    internal val remoteEditor = _remoteEditor.asStateFlow()
+    private var editorLoading = false
+
+    fun editRemoteText(path: String) {
+        val sessionId = _remoteBrowser.value?.sessionId ?: return
+        if (editorLoading) return
+        editorLoading = true
+        viewModelScope.launch {
+            try {
+                val source = sessionController.readEditableText(sessionId, path)
+                _remoteEditor.value = RemoteEditorUiState(sessionId, source)
+            } catch (_: Exception) { _userMessage.value = uiText(R.string.editor_failure) }
+            finally { editorLoading = false }
+        }
+    }
+    fun changeRemoteDraft(text: String) { _remoteEditor.update { if (it?.busy == false) it.copy(draft = text) else it } }
+    fun closeRemoteEditor() { if (_remoteEditor.value?.busy != true) _remoteEditor.value = null }
+    fun reloadRemoteEditor() { _remoteEditor.value?.let { editRemoteText(it.source.path) } }
+    fun saveRemoteEditor(alternateName: String?, allowDirect: Boolean) {
+        val current = _remoteEditor.value ?: return
+        if (current.busy) return
+        _remoteEditor.value = current.copy(busy = true, conflict = false, needsDirectApproval = false, failed = false)
+        viewModelScope.launch {
+            try {
+                sessionController.saveEditableText(current.sessionId, current.source, current.draft, alternateName, allowDirect)
+                _remoteEditor.value = null
+                dismissRemotePreview()
+                refreshRemoteBrowser()
+                _userMessage.value = uiText(R.string.editor_saved)
+            } catch (_: website.sung.mangossh.session.SourceChangedException) {
+                _remoteEditor.value = current.copy(conflict = true)
+            } catch (_: website.sung.mangossh.session.AtomicReplaceUnavailableException) {
+                _remoteEditor.value = current.copy(needsDirectApproval = true)
+            } catch (_: Exception) { _remoteEditor.value = current.copy(failed = true) }
+        }
     }
 
     private val _remoteBrowser = MutableStateFlow<RemoteBrowserUiState?>(null)
@@ -301,6 +406,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                         )
                     }
                 }
+                clearSessionTerminalFontSize(event.sessionId)
             }
         }
         viewModelScope.launch { updateManager.initializeAfterUnlock(appLocked) }
@@ -312,13 +418,37 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         _settingsDestination.value = null
     }
 
-    fun saveHost(draft: ConnectionProfileDraft) {
-        if (!draft.isValid()) return
-        viewModelScope.launch { vault.upsertProfile(draft.toProfile()) }
+    /** The originating editor owns completion, including delayed reauthentication. */
+    fun saveHost(draft: ConnectionProfileDraft, operation: EditorSaveOperation = EditorSaveOperation()) {
+        if (!operation.begin()) return
+        fun persist() {
+            if (!operation.pending) return
+            if (!draft.isValid()) { operation.finish(uiText(R.string.vault_invalid)); return }
+            viewModelScope.launch { operation.finish(mutationError(vault.upsertProfile(draft.toProfile()))) }
+        }
+        if (authorizeSensitive(vault.snapshot.value.profiles.firstOrNull { it.id == draft.id }?.requireReauthentication,
+                onCancelled = operation::cancel) { persist() }) persist()
+    }
+
+    private fun mutationError(result: website.sung.mangossh.data.vault.VaultMutationResult): UiText? = when (result) {
+        website.sung.mangossh.data.vault.VaultMutationResult.Success -> null
+        is website.sung.mangossh.data.vault.VaultMutationResult.ReferencedBy -> uiText(R.string.vault_referenced,
+            result.profileIds.mapNotNull { id -> vault.snapshot.value.profiles.firstOrNull { it.id == id }?.label }.joinToString(", "))
+        website.sung.mangossh.data.vault.VaultMutationResult.Invalid -> uiText(R.string.vault_invalid)
+        website.sung.mangossh.data.vault.VaultMutationResult.NotReady -> uiText(R.string.vault_not_ready)
+        website.sung.mangossh.data.vault.VaultMutationResult.StorageFailure -> uiText(R.string.vault_write_failed)
+    }
+
+    fun importSshProfiles(profiles: List<ConnectionProfile>) {
+        if (!authorizeSensitive { importSshProfiles(profiles) }) return
+        viewModelScope.launch {
+            val saved = vault.importProfiles(profiles)
+            _userMessage.value = uiText(if (saved.isSuccess) R.string.ssh_config_saved else R.string.ssh_config_invalid)
+        }
     }
 
     fun removeHost(id: String) {
-        viewModelScope.launch { vault.removeProfile(id) }
+        viewModelScope.launch { _userMessage.value = mutationError(vault.removeProfile(id)) }
     }
 
     fun retryVault() {
@@ -360,7 +490,8 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Starts the selected SSH or Mosh profile and returns its ephemeral session identifier. */
-    fun connect(profile: ConnectionProfile): String {
+    fun connect(profile: ConnectionProfile): String? {
+        if (!authorizeSensitive(profile.requireReauthentication) { connect(profile)?.let { _sessionNavigationRequest.value = SessionNavigationRequest.OpenSession(it) } }) return null
         viewModelScope.launch { vault.recordProfileConnection(profile.id, System.currentTimeMillis()) }
         return sessionController.connect(profile)
     }
@@ -395,6 +526,18 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     /** Persists a global base font size used whenever a terminal display is composed. */
     fun setTerminalFontSize(fontSizeSp: Int) {
         terminalAppearanceStore.setFontSize(fontSizeSp)
+        // A new global base size supersedes any session's pinch-to-zoom result.
+        _sessionFontSizeOverrides.value = emptyMap()
+    }
+
+    /** Remembers a session's pinch-to-zoom result; does not touch the global [terminalAppearance]. */
+    fun setSessionTerminalFontSize(sessionId: String, fontSizeSp: Int) {
+        _sessionFontSizeOverrides.update { it + (sessionId to fontSizeSp) }
+    }
+
+    /** Drops a session's pinch-to-zoom override, returning it to the global base font size. */
+    fun clearSessionTerminalFontSize(sessionId: String) {
+        _sessionFontSizeOverrides.update { it - sessionId }
     }
 
     /** Applies a bundled terminal palette to existing and future sessions. */
@@ -413,6 +556,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun resetTerminalAppearance() {
         terminalAppearanceStore.reset()
         sessionController.applyTerminalAppearance(terminalAppearanceStore.current())
+        _sessionFontSizeOverrides.value = emptyMap()
     }
 
     /** Persists the complete ordered floating shortcut layout for this device. */
@@ -460,6 +604,11 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         connectionPreferencesStore.setKeepaliveSeconds(seconds)
     }
 
+    /** Takes effect on the next background transition of any session, no reconnect needed. */
+    fun setConnectionBackgroundKeepaliveMultiplier(multiplier: Int) {
+        connectionPreferencesStore.setBackgroundKeepaliveMultiplier(multiplier)
+    }
+
     /** Applied to connections opened after this call. */
     fun setConnectionTimeoutSeconds(seconds: Int) {
         connectionPreferencesStore.setConnectTimeoutSeconds(seconds)
@@ -496,30 +645,31 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     /** Maps a lifecycle event to resource-backed wording, keeping orderly exits silent. */
     fun sessionEndMessage(event: SessionEndedEvent): UiText? = resolveSessionEndMessage(event)
 
-    fun savePortForward(rule: PortForwardRule) {
+    fun savePortForward(rule: PortForwardRule, operation: EditorSaveOperation = EditorSaveOperation()) {
+        if (!operation.begin()) return
         val isDestinationValid = rule.type == website.sung.mangossh.data.vault.PortForwardType.DYNAMIC ||
             (!rule.destinationHost.isNullOrBlank() && rule.destinationPort in 1..65535)
         if (rule.bindPort !in 1..65535 || !isDestinationValid) {
-            _userMessage.value = uiText(R.string.message_port_forward_incomplete)
+            operation.finish(uiText(R.string.message_port_forward_incomplete))
             return
         }
         viewModelScope.launch {
-            vault.upsertPortForward(rule)
-            _userMessage.value = uiText(R.string.message_port_forward_saved)
+            operation.finish(mutationError(vault.upsertPortForward(rule)))
         }
     }
 
     fun removePortForward(ruleId: String) {
-        viewModelScope.launch { vault.removePortForward(ruleId) }
+        viewModelScope.launch { _userMessage.value = mutationError(vault.removePortForward(ruleId)) }
     }
 
-    fun saveSnippet(id: String?, label: String, script: String, appendNewline: Boolean) {
+    fun saveSnippet(id: String?, label: String, script: String, appendNewline: Boolean, operation: EditorSaveOperation = EditorSaveOperation()) {
+        if (!operation.begin()) return
         if (label.isBlank() || script.isBlank()) {
-            _userMessage.value = uiText(R.string.message_snippet_required)
+            operation.finish(uiText(R.string.message_snippet_required))
             return
         }
         viewModelScope.launch {
-            vault.upsertSnippet(
+            val result = vault.upsertSnippet(
                 CommandSnippet(
                     id = id ?: UUID.randomUUID().toString(),
                     label = label.trim(),
@@ -527,12 +677,12 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                     appendNewline = appendNewline,
                 ),
             )
-            _userMessage.value = uiText(R.string.message_snippet_saved)
+            operation.finish(mutationError(result))
         }
     }
 
     fun removeSnippet(id: String) {
-        viewModelScope.launch { vault.removeSnippet(id) }
+        viewModelScope.launch { _userMessage.value = mutationError(vault.removeSnippet(id)) }
     }
 
     fun startPortForward(sessionId: String, rule: PortForwardRule) {
@@ -544,6 +694,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
      * require a terminal session for the same host.
      */
     fun startPortForwardOnNewConnection(profile: ConnectionProfile, rule: PortForwardRule) {
+        if (!authorizeSensitive(profile.requireReauthentication) { startPortForwardOnNewConnection(profile, rule) }) return
         runCatching { sessionController.startPortForwardOnNewConnection(profile, rule) }
             .onFailure {
                 _userMessage.value = uiText(R.string.session_ended_connection_failed)
@@ -586,6 +737,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
      * when the browser closes, once any transfer it started has finished.
      */
     fun openRemoteBrowserForProfile(profile: ConnectionProfile) {
+        if (!authorizeSensitive(profile.requireReauthentication) { openRemoteBrowserForProfile(profile) }) return
         val existing = _remoteBrowser.value
         if (existing != null && existing.ownsSession && existing.profileId == profile.id) return
         closeRemoteBrowser()
@@ -850,16 +1002,44 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         sessionController.respondToPrompt(prompt.requestId, values)
     }
 
+    private val _keyOperationBusy = MutableStateFlow(false)
+    val keyOperationBusy = _keyOperationBusy.asStateFlow()
+
+    /** Performs a selected private-key export only after the configured access check. */
+    fun exportPrivateKey(id: String, destination: Uri) {
+        if (_keyOperationBusy.value || !authorizeSensitive { exportPrivateKey(id, destination) }) return
+        val key = vault.snapshot.value.keys.firstOrNull { it.id == id } ?: return
+        val authorizationGeneration = runtime.accessState.generation
+        _keyOperationBusy.value = true
+        viewModelScope.launch {
+            try {
+                withContext(cryptoDispatcher) {
+                    check(!runtime.accessState.locked.value && authorizationGeneration == runtime.accessState.generation)
+                    val bytes = key.privateKeyPem.encodeToByteArray()
+                    try {
+                        getApplication<Application>().contentResolver.openOutputStream(destination, "wt")?.use { it.write(bytes) }
+                            ?: throw java.io.IOException()
+                    } finally { bytes.fill(0) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) { _userMessage.value = uiText(R.string.message_key_export_failed)
+            } finally { _keyOperationBusy.value = false }
+        }
+    }
+
     /** Generates the selected key type away from the main dispatcher and saves it encrypted. */
     fun generateKey(type: SshKeyGenerationType, label: String) {
+        if (_keyOperationBusy.value || !authorizeSensitive { generateKey(type, label) }) return
+        _keyOperationBusy.value = true
         viewModelScope.launch {
+          try {
             runCatching {
-                withContext(Dispatchers.Default) {
+                withContext(cryptoDispatcher) {
                     keyManager.generateKey(type, label)
                 }
             }
                 .onSuccess {
-                    _userMessage.value = if (vault.upsertKey(it)) {
+                    _userMessage.value = if (vault.upsertKey(it).isSuccess) {
                         uiText(R.string.message_key_generated, it.label)
                     } else {
                         uiText(R.string.message_vault_save_failed)
@@ -868,14 +1048,18 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                 .onFailure {
                     _userMessage.value = uiText(R.string.message_key_generation_failed)
                 }
+          } finally { _keyOperationBusy.value = false }
         }
     }
 
     fun importPrivateKey(label: String, contents: String, passphrase: String?) {
+        if (_keyOperationBusy.value || !authorizeSensitive { importPrivateKey(label, contents, passphrase) }) return
+        _keyOperationBusy.value = true
         viewModelScope.launch {
-            runCatching { keyManager.importPrivateKey(label, contents, passphrase) }
+          try {
+            runCatching { withContext(cryptoDispatcher) { keyManager.importPrivateKey(label, contents, passphrase) } }
                 .onSuccess {
-                    _userMessage.value = if (vault.upsertKey(it)) {
+                    _userMessage.value = if (vault.upsertKey(it).isSuccess) {
                         uiText(R.string.message_key_imported, it.label)
                     } else {
                         uiText(R.string.message_vault_save_failed)
@@ -883,18 +1067,24 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
                 }
                 .onFailure { error ->
                     _userMessage.value = uiText(
-                        if (error is KeyPassphraseRequiredException) {
+                        if (error is website.sung.mangossh.data.keys.UnsupportedDsaKeyException) {
+                            R.string.ssh_dsa_unsupported
+                        } else if (error is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException) {
+                            R.string.ssh_key_encryption_unsupported
+                        } else if (error is KeyPassphraseRequiredException) {
                             R.string.message_key_passphrase_required
                         } else {
                             R.string.message_key_import_failed
                         },
                     )
                 }
+          } finally { _keyOperationBusy.value = false }
         }
     }
 
     fun removeKey(id: String) {
-        viewModelScope.launch { vault.removeKey(id) }
+        if (!authorizeSensitive { removeKey(id) }) return
+        viewModelScope.launch { _userMessage.value = mutationError(vault.removeKey(id)) }
     }
 
     fun dismissUserMessage() {
@@ -963,107 +1153,51 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
             _userMessage.value = uiText(R.string.message_webdav_fields_required)
             return
         }
+        val config = WebDavConfig(normalizedEndpoint, username.trim(), password, normalizedFileName)
+        if (runCatching { WebDavClient().validate(config) }.isFailure) {
+            _userMessage.value = uiText(R.string.message_webdav_invalid_configuration)
+            return
+        }
         viewModelScope.launch {
-            vault.saveWebDavConfig(
-                WebDavConfig(
-                    endpoint = normalizedEndpoint,
-                    username = username.trim(),
-                    password = password,
-                    remoteFileName = normalizedFileName,
-                ),
-            )
-            _userMessage.value = uiText(R.string.message_webdav_saved)
+            val saved = vault.saveWebDavConfig(config)
+            _userMessage.value = uiText(if (saved.isSuccess) R.string.message_webdav_saved else R.string.backup_error_storage)
+            backupCoordinator.refreshPasswords()
         }
     }
 
     fun clearWebDavConfig() {
-        viewModelScope.launch { vault.saveWebDavConfig(null) }
-    }
-
-    fun preparePortableExport(passphrase: String) {
         viewModelScope.launch {
-            runCatching { vault.exportPortable(passphrase.toCharArray()) }
-                .onSuccess { blob ->
-                    _portableExport.value = blob
-                    _userMessage.value = uiText(R.string.message_choose_backup_destination)
-                }
-                .onFailure {
-                    _userMessage.value = uiText(R.string.message_backup_create_missing_passphrase)
-                }
-        }
-    }
-
-    fun consumePortableExport() {
-        _portableExport.value = null
-    }
-
-    fun importPortable(bytes: ByteArray, passphrase: String) {
-        viewModelScope.launch {
-            runCatching { vault.importPortable(bytes, passphrase.toCharArray()) }
-                .onSuccess { _userMessage.value = uiText(R.string.message_backup_imported) }
-                .onFailure { _userMessage.value = uiText(R.string.message_backup_import_failed) }
-        }
-    }
-
-    fun uploadWebDav(passphrase: String) {
-        viewModelScope.launch {
-            val config = vault.snapshot.value.webDavConfig
-            if (config == null) {
-                _userMessage.value = uiText(R.string.message_webdav_configure_first)
-                return@launch
-            }
-            val blob = runCatching { vault.exportPortable(passphrase.toCharArray()) }.getOrElse {
-                _userMessage.value = uiText(R.string.message_backup_create_failed)
-                return@launch
-            }
-            when (val result = webDavClient.upload(config, blob)) {
-                WebDavResult.Success -> _userMessage.value = uiText(R.string.message_webdav_upload_complete)
-                is WebDavResult.Failure -> _userMessage.value = result.toUiText(upload = true)
-            }
-        }
-    }
-
-    fun downloadWebDavAndImport(passphrase: String) {
-        viewModelScope.launch {
-            val config = vault.snapshot.value.webDavConfig
-            if (config == null) {
-                _userMessage.value = uiText(R.string.message_webdav_configure_first)
-                return@launch
-            }
-            when (val result = webDavClient.download(config)) {
-                is WebDavDownloadResult.Failure -> _userMessage.value = result.toUiText()
-                is WebDavDownloadResult.Success -> {
-                    runCatching { vault.importPortable(result.encryptedBlob, passphrase.toCharArray()) }
-                        .onSuccess { _userMessage.value = uiText(R.string.message_webdav_import_complete) }
-                        .onFailure { _userMessage.value = uiText(R.string.message_webdav_import_failed) }
-                }
-            }
+            if (vault.saveWebDavConfig(null).isSuccess) backupCoordinator.refreshPasswords()
         }
     }
 
     /** Converts the PIN briefly to a mutable array so it can be cleared after the verifier is stored. */
     fun configureAppPin(pin: String) {
+        if (!authorizeSensitive { configureAppPin(pin) }) return
+        if (_appLockBusy.value) return
+        _appLockBusy.value = true
+        val generation = runtime.accessState.generation
         val chars = pin.toCharArray()
-        try {
-            appLockStore.setPin(chars)
-            _appLockConfiguration.value = appLockStore.configuration()
-            _appLocked.value = false
-            _userMessage.value = uiText(R.string.message_app_lock_enabled)
-        } catch (_: IllegalArgumentException) {
-            _userMessage.value = uiText(
-                R.string.message_pin_invalid,
-                AppLockStore.MIN_PIN_LENGTH,
-                AppLockStore.MAX_PIN_LENGTH,
-            )
-        } finally {
-            chars.fill('\u0000')
+        viewModelScope.launch {
+            try {
+                withContext(cryptoDispatcher) { appLockStore.setPin(chars) }
+                _appLockConfiguration.value = appLockStore.configuration()
+                if (generation == runtime.accessState.generation) runtime.accessState.setLocked(false)
+                _userMessage.value = uiText(R.string.message_app_lock_enabled)
+            } catch (_: IllegalArgumentException) {
+                _userMessage.value = uiText(R.string.message_pin_invalid, AppLockStore.MIN_PIN_LENGTH, AppLockStore.MAX_PIN_LENGTH)
+            } finally {
+                chars.fill('\u0000')
+                _appLockBusy.value = false
+            }
         }
     }
 
     fun clearAppLock() {
+        if (!authorizeSensitive { clearAppLock() }) return
         appLockStore.clear()
         _appLockConfiguration.value = appLockStore.configuration()
-        _appLocked.value = false
+        runtime.accessState.setLocked(false)
         _userMessage.value = uiText(R.string.message_app_lock_disabled)
     }
 
@@ -1081,7 +1215,11 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
 
     /** Locks immediately, regardless of the configured auto-lock delay. Used by the explicit "Lock now" action. */
     fun lockForBackground() {
-        if (_appLockConfiguration.value.pinConfigured) _appLocked.value = true
+        if (_appLockConfiguration.value.pinConfigured) {
+            runtime.accessState.setLocked(true)
+            cancelReauthentication()
+            backupCoordinator.cancel()
+        }
     }
 
     /**
@@ -1095,7 +1233,9 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         backgroundedAtElapsedMillis = nowElapsedMillis
         val configuration = _appLockConfiguration.value
         if (configuration.pinConfigured && shouldLockWhenBackgrounded(configuration.autoLockDelay)) {
-            _appLocked.value = true
+            runtime.accessState.setLocked(true)
+            cancelReauthentication()
+            backupCoordinator.cancel()
         }
     }
 
@@ -1116,26 +1256,40 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
         if (configuration.pinConfigured &&
             shouldLockOnResume(configuration.autoLockDelay, backgroundedAt, nowElapsedMillis)
         ) {
-            _appLocked.value = true
+            runtime.accessState.setLocked(true)
+            cancelReauthentication()
+            backupCoordinator.cancel()
         }
         backgroundedAtElapsedMillis = null
     }
 
+    /** Mirrors actual screen visibility without pausing protocol processing. */
+    fun setVisibleTerminal(sessionId: String?) = sessionController.setVisibleTerminal(sessionId)
+
     fun unlockWithPin(pin: String) {
+        if (_appLockBusy.value) return
+        _appLockBusy.value = true
+        val generation = runtime.accessState.generation
         val chars = pin.toCharArray()
-        try {
-            if (appLockStore.verifyPin(chars)) {
-                _appLocked.value = false
-            } else {
-                _userMessage.value = uiText(R.string.message_pin_incorrect)
+        viewModelScope.launch {
+            try {
+                val accepted = withContext(cryptoDispatcher) { appLockStore.verifyPin(chars) }
+                if (accepted && generation == runtime.accessState.generation) {
+                    runtime.accessState.setLocked(false)
+                } else {
+                    val remaining = appLockStore.cooldownRemainingMillis()
+                    _userMessage.value = if (remaining > 0) uiText(R.string.message_pin_cooldown, (remaining + 999) / 1000)
+                        else uiText(R.string.message_pin_incorrect)
+                }
+            } finally {
+                chars.fill('\u0000')
+                _appLockBusy.value = false
             }
-        } finally {
-            chars.fill('\u0000')
         }
     }
 
     fun unlockWithBiometrics() {
-        if (_appLockConfiguration.value.biometricEnabled) _appLocked.value = false
+        if (_appLockConfiguration.value.biometricEnabled) runtime.accessState.setLocked(false)
     }
 
     fun checkForUpdates() = updateManager.checkNow()
@@ -1164,6 +1318,7 @@ class MangoSshViewModel(application: Application) : AndroidViewModel(application
     fun releasePageUrl(): String? = updateManager.releasePageUrl()
 
     override fun onCleared() {
+        backupCoordinator.cancel()
         updateManager.close()
     }
 }

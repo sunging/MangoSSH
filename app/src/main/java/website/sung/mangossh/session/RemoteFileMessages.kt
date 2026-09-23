@@ -13,11 +13,18 @@ sealed interface RemoteFileMessage {
     data object TransferSessionClosed : RemoteFileMessage
     data object ResumeRestarted : RemoteFileMessage
     data class LinksSkipped(val count: Int) : RemoteFileMessage
+    data object SourceChanged : RemoteFileMessage
+    data object MetadataFailure : RemoteFileMessage
+    data object CommitFailure : RemoteFileMessage
+    data class InsufficientSpace(val requiredBytes: Long) : RemoteFileMessage
     data object IoFailure : RemoteFileMessage
 }
 
 /** Maps a throwable to a category without retaining library or server text. */
 internal fun Throwable.toRemoteFileMessage(): RemoteFileMessage = when (this) {
+    is MetadataPreservationException -> RemoteFileMessage.MetadataFailure
+    is StagingSpaceException -> RemoteFileMessage.InsufficientSpace(requiredBytes)
+    is SourceChangedException -> RemoteFileMessage.SourceChanged
     is RemoteFileException -> RemoteFileMessage.Failure(failure)
     is LocalDocumentException -> RemoteFileMessage.LocalDocumentFailure
     is TransferTreeTooLargeException -> RemoteFileMessage.TreeTooLarge

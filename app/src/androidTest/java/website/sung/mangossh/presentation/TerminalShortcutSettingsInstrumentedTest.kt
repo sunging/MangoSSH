@@ -25,6 +25,26 @@ class TerminalShortcutSettingsInstrumentedTest {
     val composeRule = createComposeRule()
 
     @Test
+    fun rowSelectionIsDraftUntilSavedAndRestoresWithDefaults() {
+        var config by mutableStateOf(TerminalShortcutConfig(emptyList()))
+        composeRule.setContent {
+            MaterialTheme { TerminalShortcutSettingsCard(config = config, onSave = { config = it }) }
+        }
+        composeRule.onNodeWithTag("terminal_shortcuts_customize").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_rows_1").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_cancel").performClick()
+        composeRule.runOnIdle { assertEquals(2, config.rowCount) }
+        composeRule.onNodeWithTag("terminal_shortcuts_customize").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_rows_1").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_save").performClick()
+        composeRule.runOnIdle { assertEquals(1, config.rowCount) }
+        composeRule.onNodeWithTag("terminal_shortcuts_customize").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_restore").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_save").performClick()
+        composeRule.runOnIdle { assertEquals(TerminalShortcutConfig.defaults(), config) }
+    }
+
+    @Test
     fun addsCtrlAltChordAndCommitsOnlyWhenOuterEditorSaves() {
         var config by mutableStateOf(TerminalShortcutConfig(emptyList()))
         composeRule.setContent {

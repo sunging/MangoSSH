@@ -21,12 +21,30 @@ import website.sung.mangossh.data.tsnet.EmbeddedTsnetStateStore
 
 @RunWith(AndroidJUnit4::class)
 class EmbeddedTsnetManagerInstrumentedTest {
+    private val directories = mutableListOf<java.io.File>()
+    private val scopes = mutableListOf<kotlinx.coroutines.CoroutineScope>()
+    private fun isolatedScope() = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).also { scopes += it }
+    private fun isolatedContext(): android.content.Context {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = java.io.File(base.cacheDir, "tsnet-manager-test-${java.util.UUID.randomUUID()}").apply { mkdirs() }
+        directories += directory
+        return object : android.content.ContextWrapper(base) {
+            override fun getApplicationContext(): android.content.Context = this
+            override fun getNoBackupFilesDir(): java.io.File = directory
+        }
+    }
+    @org.junit.After fun removeTestDirectories() = runBlocking {
+        scopes.forEach { scope -> scope.coroutineContext[kotlinx.coroutines.Job]?.let { it.cancel(); it.join() } }
+        directories.forEach { it.deleteRecursively() }
+    }
+
     @Test
     fun concurrentLeasesShareOneBackendAndFinalCloseStopsIt() = runBlocking {
         val state = FakeStateStore(enrolled = true)
         val factory = FakeBackendFactory()
         val manager = EmbeddedTsnetManager(
-            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            context = isolatedContext(),
+            scope = isolatedScope(),
             stateStore = state,
             backendFactory = factory,
             foregroundStarter = {},
@@ -51,7 +69,8 @@ class EmbeddedTsnetManagerInstrumentedTest {
         val state = FakeStateStore(enrolled = true)
         val factory = FakeBackendFactory(transientLoginBeforeRunning = true)
         val manager = EmbeddedTsnetManager(
-            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            context = isolatedContext(),
+            scope = isolatedScope(),
             stateStore = state,
             backendFactory = factory,
             foregroundStarter = {},
@@ -75,7 +94,8 @@ class EmbeddedTsnetManagerInstrumentedTest {
         val state = FakeStateStore(enrolled = false)
         val factory = FakeBackendFactory()
         val manager = EmbeddedTsnetManager(
-            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            context = isolatedContext(),
+            scope = isolatedScope(),
             stateStore = state,
             backendFactory = factory,
             foregroundStarter = {},
@@ -95,7 +115,8 @@ class EmbeddedTsnetManagerInstrumentedTest {
         lateinit var manager: EmbeddedTsnetManager
         var phaseAtServiceLaunch: EmbeddedTsnetPhase? = null
         manager = EmbeddedTsnetManager(
-            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            context = isolatedContext(),
+            scope = isolatedScope(),
             stateStore = FakeStateStore(enrolled = false),
             backendFactory = FakeBackendFactory(),
             foregroundStarter = { phaseAtServiceLaunch = manager.status.value.phase },
@@ -110,7 +131,8 @@ class EmbeddedTsnetManagerInstrumentedTest {
     fun enrollmentRollsBackWhenForegroundServiceCannotStart() = runBlocking {
         val factory = FakeBackendFactory()
         val manager = EmbeddedTsnetManager(
-            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            context = isolatedContext(),
+            scope = isolatedScope(),
             stateStore = FakeStateStore(enrolled = false),
             backendFactory = factory,
             foregroundStarter = { throw IllegalStateException() },
@@ -128,7 +150,8 @@ class EmbeddedTsnetManagerInstrumentedTest {
     fun foregroundPromotionFailureStopsEnrollmentRuntime() = runBlocking {
         val factory = FakeBackendFactory(remainWaitingForLogin = true)
         val manager = EmbeddedTsnetManager(
-            context = InstrumentationRegistry.getInstrumentation().targetContext,
+            context = isolatedContext(),
+            scope = isolatedScope(),
             stateStore = FakeStateStore(enrolled = false),
             backendFactory = factory,
             foregroundStarter = {},
@@ -151,7 +174,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
 
     @Test
     fun androidNetworkSnapshotUsesPlatformInterfaces() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = isolatedContext()
         val snapshot = JSONObject(AndroidTsnetNetworkStateSource(context).snapshotJson())
         val interfaces = snapshot.getJSONArray("interfaces")
 
@@ -163,8 +186,29 @@ class EmbeddedTsnetManagerInstrumentedTest {
         assertTrue(snapshot.has("defaultGateway"))
     }
 
+    @Test fun oldBackendFailureAndReleaseCannotRetireNewLease() = runBlocking {
+        val factory = FakeBackendFactory()
+        val manager = EmbeddedTsnetManager(context = isolatedContext(), scope = isolatedScope(),
+            stateStore = FakeStateStore(true), backendFactory = factory, foregroundStarter = {})
+        val old = manager.acquire()
+        factory.listeners[0].onStatus("failed", "")
+        withTimeout(5_000) { old.invalidated.await() }
+        withTimeout(5_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.FAILED } }
+        val fresh = manager.acquire()
+        old.close()
+        old.close()
+        factory.listeners[0].onStatus("stopped", "")
+        val sibling = manager.acquire()
+        assertEquals(2, manager.status.value.activeSessions)
+        assertFalse(fresh.invalidated.isCompleted)
+        fresh.close()
+        sibling.close()
+        withTimeout(5_000) { while (factory.closed.get() != 2) delay(10) }
+        assertEquals(0, manager.status.value.activeSessions)
+    }
+
     private class FakeStateStore(enrolled: Boolean) : EmbeddedTsnetStateStore {
-        val values = linkedMapOf<String, ByteArray>()
+        val values = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
 
         init {
             if (enrolled) values["__marker"] = byteArrayOf(1)
@@ -178,7 +222,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
 
         override fun nodeName(): String = "mangossh-android-00000000"
 
-        override fun hasEnrolledIdentity(): Boolean = "__marker" in values
+        override fun hasEnrolledIdentity(): Boolean = values.containsKey("__marker")
 
         override fun markEnrolled() {
             values["__marker"] = byteArrayOf(1)
@@ -193,6 +237,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
         private val transientLoginBeforeRunning: Boolean = false,
         private val remainWaitingForLogin: Boolean = false,
     ) : EmbeddedTsnetBackendFactory {
+        val listeners = java.util.concurrent.CopyOnWriteArrayList<StatusListener>()
         val created = AtomicInteger()
         val closed = AtomicInteger()
         val authKeyWasNonEmpty = AtomicBoolean()
@@ -203,6 +248,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
             store: StateStore,
             listener: StatusListener,
         ): EmbeddedTsnetBackend {
+            listeners += listener
             created.incrementAndGet()
             return object : EmbeddedTsnetBackend {
                 override fun start(authKey: String) {
