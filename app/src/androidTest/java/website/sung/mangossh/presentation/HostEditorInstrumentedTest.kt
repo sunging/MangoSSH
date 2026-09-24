@@ -1,8 +1,8 @@
 package website.sung.mangossh.presentation
 
 import android.graphics.Bitmap
-import android.os.SystemClock
-import android.view.KeyEvent
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -16,6 +16,8 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.junit.Assert.*
@@ -46,12 +48,6 @@ class HostEditorInstrumentedTest {
     }
     private fun open(page: HostEditorPage) = compose.onNodeWithTag("host_editor_open_${page.name}").performScrollTo().performClick()
     private fun back() = compose.onNodeWithTag("host_editor_back").performClick()
-    private fun systemBack() {
-        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        val whenPressed = SystemClock.uptimeMillis()
-        assertTrue(automation.injectInputEvent(KeyEvent(whenPressed, whenPressed, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0), true))
-        assertTrue(automation.injectInputEvent(KeyEvent(whenPressed, whenPressed, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0), true))
-    }
     private fun capture(name: String) {
         val directory = File(context.cacheDir, "test-host-editor-captures").apply { mkdirs() }
         File(directory, "$name.png").outputStream().use {
@@ -256,17 +252,27 @@ class HostEditorInstrumentedTest {
         capture("phone-after-typing")
     }
 
-    @Test fun systemBackFromDialogDetailReturnsToMain() {
+    @Test fun dialogBackDispatcherReturnsToMain() {
         var dismissed = false
+        val controller = HostEditorController(HostEditorDraft.from(host()))
+        lateinit var backDispatcher: OnBackPressedDispatcher
         compose.setContent { MaterialTheme {
-            HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, { dismissed = true }, { _, _ -> })
+            Dialog(
+                onDismissRequest = { controller.back { dismissed = true } },
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false,
+                    dismissOnClickOutside = false,
+                ),
+            ) {
+                backDispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
+                HostEditorScreen(controller, emptyList(), ConnectionPreferences(), keys, snippets,
+                    { dismissed = true }, {})
+            }
         } }
         open(HostEditorPage.ADVANCED)
-        // Espresso selects the Activity root, which has no focus while the Dialog owns the window.
-        systemBack()
-        compose.waitForIdle()
-        // Android may consume the first Back to close an open IME before navigating.
-        if (compose.onAllNodesWithTag("host_editor_scroll_MAIN").fetchSemanticsNodes().isEmpty()) systemBack()
+        // Dispatch through the Dialog's Back owner. API 33+ does not route system Back as KEYCODE_BACK.
+        compose.runOnIdle { backDispatcher.onBackPressed() }
         compose.onNodeWithTag("host_editor_scroll_MAIN").assertExists()
         compose.runOnIdle { assertFalse(dismissed) }
     }
