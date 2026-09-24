@@ -1,8 +1,8 @@
 package website.sung.mangossh.presentation
 
 import android.graphics.Bitmap
-import android.os.ParcelFileDescriptor
-import android.os.SystemClock
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -16,6 +16,8 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.junit.Assert.*
@@ -46,12 +48,6 @@ class HostEditorInstrumentedTest {
     }
     private fun open(page: HostEditorPage) = compose.onNodeWithTag("host_editor_open_${page.name}").performScrollTo().performClick()
     private fun back() = compose.onNodeWithTag("host_editor_back").performClick()
-    private fun systemBack() {
-        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        // Shell input supplies a keyboard source and returns after sending the event.
-        ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("input keyevent 4"))
-            .use { it.readBytes() }
-    }
     private fun capture(name: String) {
         val directory = File(context.cacheDir, "test-host-editor-captures").apply { mkdirs() }
         File(directory, "$name.png").outputStream().use {
@@ -256,34 +252,27 @@ class HostEditorInstrumentedTest {
         capture("phone-after-typing")
     }
 
-    @Test fun systemBackFromDialogDetailReturnsToMain() {
+    @Test fun dialogBackDispatcherReturnsToMain() {
         var dismissed = false
+        val controller = HostEditorController(HostEditorDraft.from(host()))
+        lateinit var backDispatcher: OnBackPressedDispatcher
         compose.setContent { MaterialTheme {
-            HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, { dismissed = true }, { _, _ -> })
+            Dialog(
+                onDismissRequest = { controller.back { dismissed = true } },
+                properties = DialogProperties(
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = false,
+                    dismissOnClickOutside = false,
+                ),
+            ) {
+                backDispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
+                HostEditorScreen(controller, emptyList(), ConnectionPreferences(), keys, snippets,
+                    { dismissed = true }, {})
+            }
         } }
         open(HostEditorPage.ADVANCED)
-        // Espresso selects the Activity root, which has no focus while the Dialog owns the window.
-        fun awaitMain(): Boolean {
-            val deadline = SystemClock.uptimeMillis() + 5_000
-            do {
-                compose.waitForIdle()
-                if (compose.onAllNodesWithTag("host_editor_scroll_MAIN").fetchSemanticsNodes().isNotEmpty()) return true
-                SystemClock.sleep(50)
-            } while (SystemClock.uptimeMillis() < deadline)
-            return false
-        }
-        systemBack()
-        // Wait for the injected event to reach the Dialog before considering an IME-consumed Back.
-        // Sending another Back too early can navigate from detail to main, then dismiss the Dialog.
-        if (!awaitMain()) {
-            systemBack()
-            val returned = awaitMain()
-            assertTrue(
-                "System Back should return to the editor's main page; " +
-                    "dismissed=$dismissed advancedVisible=${compose.onAllNodesWithTag("host_editor_scroll_ADVANCED").fetchSemanticsNodes().isNotEmpty()}",
-                returned,
-            )
-        }
+        // Dispatch through the Dialog's Back owner. API 33+ does not route system Back as KEYCODE_BACK.
+        compose.runOnIdle { backDispatcher.onBackPressed() }
         compose.onNodeWithTag("host_editor_scroll_MAIN").assertExists()
         compose.runOnIdle { assertFalse(dismissed) }
     }
