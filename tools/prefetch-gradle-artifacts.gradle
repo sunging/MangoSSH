@@ -9,8 +9,8 @@ allprojects {
         doLast {
             // Lint also analyzes unit and instrumented test source sets, so
             // include their classpaths even though the release does not run
-            // device tests. Kotlin's build tools use a separate classpath
-            // during configuration-cache serialization.
+            // device tests. Kotlin build tools and compiler plugins use their
+            // own classpaths during configuration-cache serialization.
             configurations.findAll {
                 def name = it.name.toLowerCase(Locale.ROOT)
                 it.canBeResolved &&
@@ -18,7 +18,7 @@ allprojects {
                         it.name == 'androidTestUtil' ||
                         name.endsWith('compileclasspath') ||
                         name.endsWith('runtimeclasspath') ||
-                        name == 'kotlinbuildtoolsapiclasspath')
+                        (name.startsWith('kotlin') && name.endsWith('classpath')))
             }.each { configuration ->
                 logger.lifecycle('Prefetching {}:{}', project.path, configuration.name)
                 // The graph gives us exact module versions, including those
