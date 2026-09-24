@@ -263,10 +263,22 @@ class HostEditorInstrumentedTest {
         } }
         open(HostEditorPage.ADVANCED)
         // Espresso selects the Activity root, which has no focus while the Dialog owns the window.
+        fun awaitMain(): Boolean {
+            val deadline = SystemClock.uptimeMillis() + 5_000
+            do {
+                compose.waitForIdle()
+                if (compose.onAllNodesWithTag("host_editor_scroll_MAIN").fetchSemanticsNodes().isNotEmpty()) return true
+                SystemClock.sleep(50)
+            } while (SystemClock.uptimeMillis() < deadline)
+            return false
+        }
         systemBack()
-        compose.waitForIdle()
-        // Android may consume the first Back to close an open IME before navigating.
-        if (compose.onAllNodesWithTag("host_editor_scroll_MAIN").fetchSemanticsNodes().isEmpty()) systemBack()
+        // Wait for the injected event to reach the Dialog before considering an IME-consumed Back.
+        // Sending another Back too early can navigate from detail to main, then dismiss the Dialog.
+        if (!awaitMain()) {
+            systemBack()
+            assertTrue("System Back should return to the editor's main page", awaitMain())
+        }
         compose.onNodeWithTag("host_editor_scroll_MAIN").assertExists()
         compose.runOnIdle { assertFalse(dismissed) }
     }
