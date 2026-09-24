@@ -1,8 +1,8 @@
 package website.sung.mangossh.presentation
 
 import android.graphics.Bitmap
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -48,9 +48,9 @@ class HostEditorInstrumentedTest {
     private fun back() = compose.onNodeWithTag("host_editor_back").performClick()
     private fun systemBack() {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        val whenPressed = SystemClock.uptimeMillis()
-        assertTrue(automation.injectInputEvent(KeyEvent(whenPressed, whenPressed, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0), true))
-        assertTrue(automation.injectInputEvent(KeyEvent(whenPressed, whenPressed, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0), true))
+        // Shell input supplies a keyboard source and returns after sending the event.
+        ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("input keyevent 4"))
+            .use { it.readBytes() }
     }
     private fun capture(name: String) {
         val directory = File(context.cacheDir, "test-host-editor-captures").apply { mkdirs() }
@@ -277,7 +277,12 @@ class HostEditorInstrumentedTest {
         // Sending another Back too early can navigate from detail to main, then dismiss the Dialog.
         if (!awaitMain()) {
             systemBack()
-            assertTrue("System Back should return to the editor's main page", awaitMain())
+            val returned = awaitMain()
+            assertTrue(
+                "System Back should return to the editor's main page; " +
+                    "dismissed=$dismissed advancedVisible=${compose.onAllNodesWithTag("host_editor_scroll_ADVANCED").fetchSemanticsNodes().isNotEmpty()}",
+                returned,
+            )
         }
         compose.onNodeWithTag("host_editor_scroll_MAIN").assertExists()
         compose.runOnIdle { assertFalse(dismissed) }
