@@ -1,0 +1,54 @@
+// Gradle's `dependencies` report resolves dependency graphs but does not
+// necessarily download their artifacts. The release build runs offline after
+// native source preparation, so fetch the artifacts for the classpaths used
+// by release tasks in each project while network access is still available.
+allprojects {
+    tasks.register('prefetchOfflineArtifacts') {
+        group = 'build setup'
+        description = 'Downloads artifacts required by the offline release build.'
+        doLast {
+            // Lint also analyzes unit and instrumented test source sets, so
+            // include their classpaths even though the release does not run
+            // device tests.
+            configurations.findAll {
+                def name = it.name.toLowerCase(Locale.ROOT)
+                it.canBeResolved &&
+                    (it.name == 'androidLintTool' ||
+                        it.name == 'androidTestUtil' ||
+                        name.endsWith('compileclasspath') ||
+                        name.endsWith('runtimeclasspath'))
+            }.each { configuration ->
+                logger.lifecycle('Prefetching {}:{}', project.path, configuration.name)
+                // The graph gives us exact module versions, including those
+                // chosen by BOMs and Kotlin constraints. Request their files
+                // separately to avoid AGP's project artifact ambiguity.
+                // BOMs provide constraints but have no library file to cache.
+                def moduleIds = configuration.incoming.resolutionResult.allComponents
+                    .collect { it.id }
+                    .findAll {
+                        it instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier &&
+                            !it.module.toLowerCase(Locale.ROOT).endsWith('-bom')
+                    }
+                    .unique { "${it.group}:${it.module}:${it.version}" }
+                if (moduleIds.isEmpty()) {
+                    return
+                }
+                def modules = moduleIds.collect { id ->
+                    def dependency = dependencies.create("${id.group}:${id.module}:${id.version}")
+                    dependency.transitive = false
+                    dependency
+                }
+                def external = configurations.detachedConfiguration(
+                    modules as org.gradle.api.artifacts.Dependency[]
+                )
+                configuration.attributes.keySet().each { attribute ->
+                    def value = configuration.attributes.getAttribute(attribute)
+                    if (value != null) {
+                        external.attributes.attribute(attribute, value)
+                    }
+                }
+                external.files
+            }
+        }
+    }
+}
