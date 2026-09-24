@@ -102,18 +102,22 @@ jobs:
             -I .tools/release-workflow/tools/prefetch-gradle-artifacts.gradle \
             prefetchOfflineArtifacts
 
-      # Check task-graph and configuration-cache resolution before the costly
-      # pinned native rebuild. Missing Kotlin or lint tool artifacts fail here.
-      - name: Verify offline release task graph
+      # The online task graph resolves classpaths created only when Kotlin
+      # compile tasks enter the graph. Check the same graph offline before the
+      # costly pinned native rebuild.
+      - name: Resolve and verify offline release task graph
         run: |
-          ./gradlew --no-daemon --offline --dry-run -PmangosshOfflineBuild=true \
-            :app:testGithubDebugUnitTest \
-            :app:testFdroidDebugUnitTest \
-            :app:lintGithubDebug \
-            :app:lintFdroidDebug \
-            :app:assembleGithubRelease \
-            :app:bundleGithubRelease \
+          release_tasks=(
+            :app:testGithubDebugUnitTest
+            :app:testFdroidDebugUnitTest
+            :app:lintGithubDebug
+            :app:lintFdroidDebug
+            :app:assembleGithubRelease
+            :app:bundleGithubRelease
             :app:assembleFdroidRelease
+          )
+          ./gradlew --no-daemon --dry-run -PmangosshOfflineBuild=true "${release_tasks[@]}"
+          ./gradlew --no-daemon --offline --dry-run -PmangosshOfflineBuild=true "${release_tasks[@]}"
 
       - name: Select artifact version
         env:
