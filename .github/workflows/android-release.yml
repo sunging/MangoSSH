@@ -85,7 +85,10 @@ jobs:
           fi
 
       - name: Prefetch Gradle dependencies for the offline build
-        run: ./gradlew --no-daemon :app:dependencies
+        run: |
+          ./gradlew --no-daemon --no-configuration-cache \
+            -I tools/prefetch-gradle-artifacts.gradle \
+            prefetchOfflineArtifacts
 
       - name: Select artifact version
         env:
