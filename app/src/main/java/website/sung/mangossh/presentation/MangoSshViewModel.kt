@@ -604,7 +604,10 @@ class MangoSshViewModel @JvmOverloads constructor(
         connectionPreferencesStore.setKeepaliveSeconds(seconds)
     }
 
-    /** Takes effect on the next background transition of any session, no reconnect needed. */
+    /**
+     * Takes effect on the next background wait of every running session, no reconnect
+     * needed. Hosts with their own multiplier keep using it.
+     */
     fun setConnectionBackgroundKeepaliveMultiplier(multiplier: Int) {
         connectionPreferencesStore.setBackgroundKeepaliveMultiplier(multiplier)
     }

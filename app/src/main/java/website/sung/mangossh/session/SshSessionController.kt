@@ -1324,6 +1324,10 @@ class SshSessionController internal constructor(
         }
     }
 
+    /** Re-read before every background wait so a settings change reaches running sessions. */
+    private fun ManagedSession.liveBackgroundMultiplier(): Int =
+        profile.overrides.liveBackgroundMultiplier(connectionPreferencesStore.current())
+
     /**
      * Keeps an authenticated SSH transport visible to idle network devices.
      *
@@ -1347,7 +1351,7 @@ class SshSessionController internal constructor(
                     MangoLog.warn(MangoLogEvent.SSH_KEEPALIVE_FAILED, error)
                     finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
                 },
-                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.preferences.backgroundKeepaliveMultiplier) },
+                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.liveBackgroundMultiplier()) },
             )
         }
     }
@@ -1397,7 +1401,7 @@ class SshSessionController internal constructor(
                         MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)
                     }
                 },
-                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.preferences.backgroundKeepaliveMultiplier) },
+                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.liveBackgroundMultiplier()) },
             )
         }
     }
