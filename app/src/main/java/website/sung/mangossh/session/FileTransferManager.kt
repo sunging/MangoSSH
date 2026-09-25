@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.R
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import java.io.InputStream
@@ -186,7 +188,15 @@ internal class FileTransferManager(
         }
         if (current.phase == ScpTransferPhase.PAUSED) {
             cleanupTemporary(handle)
-            settle(transferId, ScpTransferPhase.CANCELLED, current.transferredBytes, current.completedItems)
+            if (current.controllable) {
+                settle(transferId, ScpTransferPhase.CANCELLED, current.transferredBytes, current.completedItems)
+            } else {
+                // No run can settle a transfer whose session is gone, so cancel it here;
+                // otherwise it would stay paused and "Clear finished" could never drop it.
+                _transfers.update { transfers ->
+                    transfers.map { if (it.id == transferId) it.copy(phase = ScpTransferPhase.CANCELLED, currentItem = null) else it }
+                }
+            }
         } else {
             // A queued transfer has not reached a chunk boundary yet, so the
             // job has to be cancelled for the stop to take effect promptly.
@@ -280,6 +290,9 @@ internal class FileTransferManager(
         val handle = TransferHandle(previous.request)
         handle.exactBytes = startOffset
         val previousCleanup = if (!resume) cleanupTemporary(previous) else null
+        // A run cut off by a lost connection is reported at once but may still be blocked
+        // in I/O; the new run must not touch the same staged files until it has exited.
+        val previousRun = previous.job
         if (resume) {
             handle.remoteWalk = previous.remoteWalk
             handle.localWalk = previous.localWalk
@@ -303,6 +316,7 @@ internal class FileTransferManager(
         val job = scope.launch(start = CoroutineStart.LAZY) {
           try {
             stagingReady.join()
+            previousRun?.join()
             previousCleanup?.join()
             supervisor.run(handle.request.sessionId) {
                     withContext(Dispatchers.IO) {
@@ -742,11 +756,13 @@ internal class FileTransferManager(
             handle.job?.join()
             handle.localTemps.values.forEach { it.delete(); stagingBudget.release(it) }
             handle.localTemps.clear()
-            handle.connection?.let { connection ->
-                handle.remoteTemps.values.forEach { (path, token) ->
-                    runCatching { remoteFiles.removeTemporary(connection, path, token) }
-                }
+            val connection = handle.connection
+            val leftover = handle.remoteTemps.values.count { (path, token) ->
+                connection == null || runCatching { remoteFiles.removeTemporary(connection, path, token) }.isFailure
             }
+            // A dead connection cannot remove its staged files. They stay private (0600) on
+            // the server; say so in the log rather than pretending they were removed.
+            if (leftover > 0) MangoLog.warn(MangoLogEvent.TRANSFER_REMOTE_TEMP_CLEANUP_FAILED)
             handle.remoteTemps.clear()
     }
 
