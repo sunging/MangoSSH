@@ -191,17 +191,17 @@ internal class RemoteFileClient {
         if (attributes.isDirectory) throw RemoteFileException(RemoteFileFailure.NOT_A_FILE)
         val total = attributes.size
         val handle = client.open(remotePath)
-        val buffer = ByteArray(SFTP_CHUNK_BYTES)
         var offset = startOffset
         try {
             onProgress(offset, total)
-            while (control.shouldContinue()) {
-                val read = client.read(handle, offset, buffer, 0, buffer.size)
-                if (read <= 0) break
-                output.write(buffer, 0, read)
-                offset += read
+            offset = SftpPipeline.read(SFTP_PIPELINE_DEPTH, SFTP_CHUNK_BYTES, startOffset,
+                readAt = { at, count -> client.read(handle, at, count) },
+                shouldContinue = control::shouldContinue,
+            ) { data, reached ->
+                output.write(data, 0, data.size)
+                offset = reached
                 control.progressed()
-                onProgress(offset, total)
+                onProgress(reached, total)
             }
             output.flush()
             if (control.shouldContinue()) {
@@ -241,7 +241,11 @@ internal class RemoteFileClient {
         // A staged file is inspected without following links, so a name swapped for a
         // symbolic link is refused instead of truncating whatever the link points at.
         val existing = runCatching { if (staging) client.lstat(remotePath) else client.stat(remotePath) }.getOrNull()
-        val resumable = startOffset > 0L && existing?.size == startOffset
+        // Pipelined writes can land past the acknowledged offset before a pause closes the
+        // channel. A staged file is ours, so its unacknowledged tail is cut off on resume;
+        // any other file must match the offset exactly.
+        val size = existing?.size
+        val resumable = startOffset > 0L && size != null && (size == startOffset || staging && size > startOffset)
         if (startOffset > 0L && !resumable) throw SourceChangedException()
         val handle = when {
             staging -> openStaging(client, remotePath, existing, truncate = !resumable)
@@ -251,19 +255,33 @@ internal class RemoteFileClient {
         val buffer = ByteArray(SFTP_CHUNK_BYTES)
         var offset = if (resumable) startOffset else 0L
         try {
+            if (resumable && size != startOffset) {
+                // Some servers only implement the path form; the handle was verified above.
+                try { client.fsetstat(handle, SshFileAttributes(size = startOffset)) }
+                catch (_: SshFileFailure) { client.setstat(remotePath, SshFileAttributes(size = startOffset)) }
+                if (client.fstat(handle).size != startOffset) throw SourceChangedException()
+            }
             // The stream arrives at position zero, so a resume has to consume
             // the bytes the remote file already holds before writing again.
             if (offset > 0L) skipFully(input, offset, buffer)
             onProgress(offset, totalBytes)
-            while (control.shouldContinue()) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                if (read == 0) continue
-                if (offset + read > maxBytes) throw RemoteFileException(RemoteFileFailure.TOO_LARGE)
-                client.write(handle, offset, buffer, 0, read)
-                offset += read
+            var issued = offset
+            offset = SftpPipeline.write(SFTP_PIPELINE_DEPTH, offset,
+                nextChunk = {
+                    var read: Int
+                    do { read = input.read(buffer) } while (read == 0)
+                    if (read < 0) null else {
+                        if (issued + read > maxBytes) throw RemoteFileException(RemoteFileFailure.TOO_LARGE)
+                        issued += read
+                        buffer.copyOf(read)
+                    }
+                },
+                writeAt = { at, data -> client.write(handle, at, data) },
+                shouldContinue = control::shouldContinue,
+            ) { acknowledged ->
+                offset = acknowledged
                 control.progressed()
-                onProgress(offset, totalBytes)
+                onProgress(acknowledged, totalBytes)
             }
         } finally {
             if (control.shouldContinue()) client.close(handle) else runCatching { client.close(handle) }
@@ -646,6 +664,9 @@ internal class RemoteFileClient {
     internal companion object {
         /** SFTP v3 caps a single read or write request at 32 KiB. */
         const val SFTP_CHUNK_BYTES = 32 * 1024
+
+        /** Requests kept in flight per transfer: at most 256 KiB outstanding. */
+        const val SFTP_PIPELINE_DEPTH = 8
 
         /** `rwxr-xr-x`, matching what a shell `mkdir` produces under a default umask. */
         const val DIRECTORY_PERMISSIONS = 493

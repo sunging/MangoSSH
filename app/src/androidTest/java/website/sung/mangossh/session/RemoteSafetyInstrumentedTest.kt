@@ -70,6 +70,11 @@ class RemoteSafetyInstrumentedTest {
             files.upload(connection, bytes.inputStream(), "/", RemoteFilePaths.nameOf(temporary), 32_768,
                 bytes.size.toLong(), 1 shl 20, control) { _, _ -> }
             assertEquals(0x180, mode(temporary))
+            // A pipelined upload paused mid-flight can leave unacknowledged bytes past the
+            // resume offset; resuming a staged file cuts them off instead of failing.
+            files.upload(connection, bytes.inputStream(), "/", RemoteFilePaths.nameOf(temporary), 20_000,
+                bytes.size.toLong(), 1 shl 20, control) { _, _ -> }
+            assertArrayEquals(java.security.MessageDigest.getInstance("SHA-256").digest(bytes), files.sha256(connection, temporary, control))
             files.commitTemporary(connection, temporary, path, files.inspectTarget(connection, path, control), false, control)
             assertEquals(0x1a4, mode(path))
             val cleanup = connection.openFiles()

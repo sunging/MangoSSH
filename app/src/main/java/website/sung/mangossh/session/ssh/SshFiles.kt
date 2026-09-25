@@ -45,6 +45,7 @@ internal class SshFiles internal constructor(
     suspend fun lstat(path: String): SshFileAttributes = request { delegate.lstat(path) }.appAttributes()
     suspend fun fstat(handle: SshFileHandle): SshFileAttributes = request { delegate.fstat(handle.delegate) }.appAttributes()
     suspend fun setstat(path: String, attributes: SshFileAttributes) = request { delegate.setstat(path, attributes.libraryAttributes()) }
+    suspend fun fsetstat(handle: SshFileHandle, attributes: SshFileAttributes) = request { delegate.fsetstat(handle.delegate, attributes.libraryAttributes()) }
     suspend fun mkdir(path: String, permissions: Int) = request { delegate.mkdir(path, SftpAttributes(permissions = permissions)) }
     suspend fun remove(path: String) = request { delegate.remove(path) }
     suspend fun rename(source: String, target: String) = request { delegate.rename(source, target) }
