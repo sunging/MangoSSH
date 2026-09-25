@@ -1501,13 +1501,14 @@ class SshSessionController internal constructor(
 
             PortForwardType.REMOTE -> {
                 val (destinationHost, destinationPort) = rule.requireDestination()
-                connection.requestRemotePortForwarding(
-                    rule.bindHost.ifBlank { "127.0.0.1" },
-                    rule.bindPort,
-                    destinationHost,
-                    destinationPort,
+                ManagedPortForward.Remote(
+                    connection.createRemotePortForwarder(
+                        rule.bindHost.ifBlank { "127.0.0.1" },
+                        rule.bindPort,
+                        destinationHost,
+                        destinationPort,
+                    ),
                 )
-                ManagedPortForward.Remote(connection, rule.bindPort)
             }
         }
     }
@@ -1965,11 +1966,9 @@ class SshSessionController internal constructor(
             override fun close() = delegate.close()
         }
 
-        class Remote(
-            private val connection: SshConnection,
-            private val remotePort: Int,
-        ) : ManagedPortForward {
-            override fun close() = connection.cancelRemotePortForwarding(remotePort)
+        /** Owns the exact listener it created; stopping never looks it up by port. */
+        class Remote(private val delegate: SshForward) : ManagedPortForward {
+            override fun close() = delegate.close()
         }
     }
 

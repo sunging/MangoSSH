@@ -232,12 +232,13 @@ class Server(paramiko.ServerInterface):
         threading.Thread(target=execute, daemon=True).start()
         return True
     def check_port_forward_request(self, address, port):
-        if address != "127.0.0.1" or port not in (22500, 22354): return False
+        # 127.0.0.2 lets a test hold two listeners on one port, as a real server may.
+        if address not in ("127.0.0.1", "127.0.0.2") or port not in (22500, 22354): return False
         listener = socket.socket()
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try: listener.bind((address, port)); listener.listen(4)
         except OSError: listener.close(); return False
-        self.listeners[port] = listener
+        self.listeners[(address, port)] = listener
         def accept():
             while self.transport.is_active():
                 client = None
@@ -253,7 +254,7 @@ class Server(paramiko.ServerInterface):
         return port
     def cancel_port_forward_request(self, address, port):
         if args.stall_forward_cancel: threading.Event().wait(60)
-        listener = self.listeners.pop(port, None)
+        listener = self.listeners.pop((address, port), None)
         if listener:
             try: listener.shutdown(socket.SHUT_RDWR)
             except OSError: pass

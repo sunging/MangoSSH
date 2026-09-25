@@ -23,9 +23,9 @@ class RemoteCancellationInstrumentedTest {
                 client.connect(10_000) { _, _ -> true }
                 assertTrue(client.authenticate("fixture", object : SshCredentials {}))
             }
-            connection.requestRemotePortForwarding("127.0.0.1", 22500, "127.0.0.1", port)
+            val forward = connection.createRemotePortForwarder("127.0.0.1", 22500, "127.0.0.1", port)
             val result = CompletableDeferred<Throwable?>()
-            closeForwardInBackground(cleanup, { connection.cancelRemotePortForwarding(22500) }, { result.complete(it) })
+            closeForwardInBackground(cleanup, { forward.close() }, { result.complete(it) })
             // A different SshConnection remains usable while the first peer withholds its response.
             assertNotNull(RemoteFileClient().list(independent, "fixture", "/", 20))
             // Cancellation is a no-reply SSH request; shutdown must not wait for the peer.

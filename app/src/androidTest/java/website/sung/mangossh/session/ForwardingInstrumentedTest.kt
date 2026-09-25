@@ -46,7 +46,9 @@ class ForwardingInstrumentedTest {
             }
             ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { listener ->
                 listener.soTimeout = 5_000
-                connection.requestRemotePortForwarding("127.0.0.1", 22354, "127.0.0.1", listener.localPort)
+                val forward = connection.createRemotePortForwarder("127.0.0.1", 22354, "127.0.0.1", listener.localPort)
+                // A second listener on the same port but another address; stopping it must not touch the first.
+                connection.createRemotePortForwarder("127.0.0.2", 22354, "127.0.0.1", listener.localPort).close()
                 val echo = async(Dispatchers.IO) {
                     listener.accept().use { socket ->
                         socket.soTimeout = 5_000
@@ -61,7 +63,7 @@ class ForwardingInstrumentedTest {
                         assertEquals(73, socket.getInputStream().read())
                     }
                     withTimeout(5_000) { echo.await() }
-                } finally { connection.cancelRemotePortForwarding(22354); echo.cancel() }
+                } finally { forward.close(); echo.cancel() }
             }
             connection.keepalive()
             assertTrue(RemoteFileClient().resolveHome(connection).startsWith("/"))

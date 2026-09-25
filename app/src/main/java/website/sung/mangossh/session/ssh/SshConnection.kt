@@ -76,7 +76,6 @@ internal class SshConnection(
     @Volatile var lastPacketReceivedNanos: Long = 0; private set
     var banner: suspend (String) -> Unit = {}
     private val forwards = ConcurrentHashMap.newKeySet<SshForward>()
-    private val remoteForwards = ConcurrentHashMap<Int, SshForward>()
     private val probeLock = Any()
     private var probe: Deferred<Unit>? = null
 
@@ -122,10 +121,13 @@ internal class SshConnection(
         createForward { clientOrThrow().localPortForward(bind, host, port) }
     suspend fun createDynamicPortForwarder(bind: java.net.InetSocketAddress): SshForward =
         createForward { clientOrThrow().dynamicPortForward(bind) }
-    suspend fun requestRemotePortForwarding(bind: String, port: Int, host: String, targetPort: Int) {
-        remoteForwards[port] = createForward { clientOrThrow().remotePortForward(bind, port, host, targetPort) }
-    }
-    fun cancelRemotePortForwarding(port: Int) { remoteForwards.remove(port)?.also { forwards.remove(it) }?.close() }
+    /**
+     * Asks the server to listen on [bind]:[port]. The returned handle is the only way to
+     * stop that listener: two rules may share a port on different addresses, so a
+     * port number alone cannot identify which one to cancel.
+     */
+    suspend fun createRemotePortForwarder(bind: String, port: Int, host: String, targetPort: Int): SshForward =
+        createForward { clientOrThrow().remotePortForward(bind, port, host, targetPort) }
     private suspend fun createForward(open: suspend () -> org.connectbot.sshlib.PortForwarder?): SshForward =
         owned(onDiscard = { it.close() }) {
             SshForward(open() ?: throw SshFailure(SshFailure.Category.CHANNEL)) { forwards.remove(it) }.also {
