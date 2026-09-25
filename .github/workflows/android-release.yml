@@ -55,6 +55,16 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: write
+    env:
+      # The offline dry-run must check the same graph that the release build runs.
+      RELEASE_GRADLE_TASKS: >-
+        :app:testGithubDebugUnitTest
+        :app:testFdroidDebugUnitTest
+        :app:lintGithubDebug
+        :app:lintFdroidDebug
+        :app:assembleGithubRelease
+        :app:bundleGithubRelease
+        :app:assembleFdroidRelease
 
     steps:
       - name: Check out source and native Mosh source
@@ -107,15 +117,7 @@ jobs:
       # costly pinned native rebuild.
       - name: Resolve and verify offline release task graph
         run: |
-          release_tasks=(
-            :app:testGithubDebugUnitTest
-            :app:testFdroidDebugUnitTest
-            :app:lintGithubDebug
-            :app:lintFdroidDebug
-            :app:assembleGithubRelease
-            :app:bundleGithubRelease
-            :app:assembleFdroidRelease
-          )
+          read -ra release_tasks <<< "$RELEASE_GRADLE_TASKS"
           ./gradlew --no-daemon --dry-run -PmangosshOfflineBuild=true "${release_tasks[@]}"
           ./gradlew --no-daemon --offline --dry-run -PmangosshOfflineBuild=true "${release_tasks[@]}"
 
@@ -189,14 +191,8 @@ jobs:
         env:
           MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.7
         run: |
-          ./gradlew --no-daemon --offline -PmangosshOfflineBuild=true \
-            :app:testGithubDebugUnitTest \
-            :app:testFdroidDebugUnitTest \
-            :app:lintGithubDebug \
-            :app:lintFdroidDebug \
-            :app:assembleGithubRelease \
-            :app:bundleGithubRelease \
-            :app:assembleFdroidRelease
+          read -ra release_tasks <<< "$RELEASE_GRADLE_TASKS"
+          ./gradlew --no-daemon --offline -PmangosshOfflineBuild=true "${release_tasks[@]}"
 
       # Build Tools 34 is deliberately used for the APK signature because its
       # v2/v3 signing block is compatible with F-Droid's apksigcopier-based
