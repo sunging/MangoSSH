@@ -252,7 +252,8 @@ internal class FileTransferManager(
         _transfers.update { current ->
             current.map { transfer ->
                 val handle = ended[transfer.id] ?: return@map transfer
-                TransferRebinding.detach(transfer, handle.exactBytes, rebindable = handle.identity != null)
+                TransferRebinding.detach(transfer, handle.exactBytes, rebindable = handle.identity != null,
+                    failedOnConnection = handle.failedOnConnection)
             }
         }
     }
@@ -384,11 +385,12 @@ internal class FileTransferManager(
                     StopReason.CANCEL -> ScpTransferPhase.CANCELLED
                     null -> ScpTransferPhase.FAILED
                 }
-                settle(runId, phase, handle.exactBytes,
-                    current?.completedItems ?: completedItems,
-                    if (handle.stop == null) {
-                        if (handle.committing && error !is MetadataPreservationException && error !is SourceChangedException) RemoteFileMessage.CommitFailure else error.toRemoteFileMessage()
-                    } else null)
+                val message = if (handle.stop == null) {
+                    if (handle.committing && error !is MetadataPreservationException && error !is SourceChangedException) RemoteFileMessage.CommitFailure else error.toRemoteFileMessage()
+                } else null
+                // If the session ends next, this was the network going away; see onSessionEnded.
+                handle.failedOnConnection = message != null && TransferRebinding.mayBeConnectionLoss(message, handle.committing)
+                settle(runId, phase, handle.exactBytes, current?.completedItems ?: completedItems, message)
                 // A failure keeps its .part files, because a retry restarts from
                 // scratch and cleans them up then. Their unwritten reservations
                 // must not stay charged against the budget until that happens:
@@ -965,6 +967,8 @@ internal class FileTransferManager(
         var verifySha256 = false
         var taskDecision: TransferConflictDecision? = null
         @Volatile var committing = false
+        /** The last run failed with a generic I/O error, as a dropped connection does. */
+        @Volatile var failedOnConnection = false
         val skipped = mutableSetOf<String>()
         val remoteApprovals = mutableMapOf<String, RemoteApproval>()
         val localApprovals = mutableMapOf<String, LocalApproval>()

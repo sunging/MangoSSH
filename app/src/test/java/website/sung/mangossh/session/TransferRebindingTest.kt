@@ -27,6 +27,25 @@ class TransferRebindingTest {
         assertFalse(back.awaitingReconnect)
     }
 
+    @Test fun anIoFailureJustBeforeTheSessionEndsIsTreatedAsAnInterruption() {
+        val failed = running.copy(phase = ScpTransferPhase.FAILED, detail = RemoteFileMessage.Failure(RemoteFileFailure.IO_FAILURE))
+        val detached = TransferRebinding.detach(failed, exactBytes = 640, rebindable = true, failedOnConnection = true)
+        assertEquals(ScpTransferPhase.PAUSED, detached.phase)
+        assertEquals(640, detached.transferredBytes)
+        assertTrue(detached.awaitingReconnect)
+        assertEquals(RemoteFileMessage.TransferSessionClosed, detached.detail)
+    }
+
+    @Test fun otherFailuresStayFailedWhenTheSessionEnds() {
+        val refused = running.copy(phase = ScpTransferPhase.FAILED, detail = RemoteFileMessage.Failure(RemoteFileFailure.ACCESS_DENIED))
+        assertEquals(ScpTransferPhase.FAILED, TransferRebinding.detach(refused, 640, true, failedOnConnection = false).phase)
+        assertTrue(TransferRebinding.mayBeConnectionLoss(RemoteFileMessage.IoFailure, committing = false))
+        assertTrue(TransferRebinding.mayBeConnectionLoss(RemoteFileMessage.Failure(RemoteFileFailure.IO_FAILURE), committing = false))
+        assertFalse(TransferRebinding.mayBeConnectionLoss(RemoteFileMessage.IoFailure, committing = true))
+        assertFalse(TransferRebinding.mayBeConnectionLoss(RemoteFileMessage.Failure(RemoteFileFailure.ACCESS_DENIED), committing = false))
+        assertFalse(TransferRebinding.mayBeConnectionLoss(RemoteFileMessage.SourceChanged, committing = false))
+    }
+
     @Test fun aCommittingTransferStillFails() {
         val detached = TransferRebinding.detach(running.copy(phase = ScpTransferPhase.COMMITTING), 900, true)
         assertEquals(ScpTransferPhase.FAILED, detached.phase)

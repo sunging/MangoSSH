@@ -31,15 +31,24 @@ internal object TransferRebinding {
      * a paused one waiting for a reconnect, keeping the contiguous [exactBytes] it had
      * confirmed. A transfer that was committing is never resumable: its destination may
      * be half replaced, so it fails as before. Nothing restarts on its own.
+     *
+     * A lost network usually surfaces first as an I/O error in the transfer itself, so
+     * the transfer has already failed by the time its session is reported closed. When
+     * [failedOnConnection] says it failed that way, it is treated like one still running.
      */
-    fun detach(state: ScpTransferState, exactBytes: Long, rebindable: Boolean): ScpTransferState = when {
+    fun detach(
+        state: ScpTransferState,
+        exactBytes: Long,
+        rebindable: Boolean,
+        failedOnConnection: Boolean = false,
+    ): ScpTransferState = when {
         state.phase == ScpTransferPhase.COMMITTING -> state.copy(
             phase = ScpTransferPhase.FAILED,
             detail = RemoteFileMessage.CommitFailure,
             currentItem = null,
             controllable = false,
         )
-        state.isActive && rebindable -> state.copy(
+        (state.isActive || state.phase == ScpTransferPhase.FAILED && failedOnConnection) && rebindable -> state.copy(
             phase = ScpTransferPhase.PAUSED,
             transferredBytes = exactBytes,
             detail = RemoteFileMessage.TransferSessionClosed,
@@ -55,6 +64,14 @@ internal object TransferRebinding {
         )
         else -> state.copy(controllable = false, awaitingReconnect = rebindable)
     }
+
+    /**
+     * Whether a run failure could be the connection going away: a generic I/O failure,
+     * not a refusal, a missing file, a changed source or a local document problem, and
+     * never while committing. It only matters if the session then ends as well.
+     */
+    fun mayBeConnectionLoss(message: RemoteFileMessage, committing: Boolean): Boolean = !committing &&
+        (message == RemoteFileMessage.IoFailure || message == RemoteFileMessage.Failure(RemoteFileFailure.IO_FAILURE))
 
     /** The transfer once a session to the same server is open again under [sessionId]. */
     fun reattach(state: ScpTransferState, sessionId: String): ScpTransferState = state.copy(
