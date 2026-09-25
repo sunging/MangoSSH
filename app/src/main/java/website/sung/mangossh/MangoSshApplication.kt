@@ -86,6 +86,9 @@ class MangoSessionRuntime(context: Context, val appForegroundState: AppForegroun
     /** Device-local defaults for new SSH/Mosh connections, shared by the session controller and settings. */
     val connectionPreferences = ConnectionPreferencesStore(context.applicationContext)
 
+    /** Encrypted, device-only store for unsaved remote editor drafts. */
+    internal val remoteDrafts = website.sung.mangossh.data.drafts.RemoteDraftStore.create(context.applicationContext)
+
     /** Version identity of the running build, read from the installed package rather than BuildConfig. */
     val installedAppInfo = context.applicationContext.installedAppInfo()
 

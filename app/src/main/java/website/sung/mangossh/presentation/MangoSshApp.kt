@@ -282,7 +282,9 @@ fun MangoSshApp(
     val sessionPrompts by viewModel.sessionPrompts.collectAsStateWithLifecycle()
     val remoteEditor by viewModel.remoteEditor.collectAsStateWithLifecycle()
     remoteEditor?.let {
-        RemoteTextEditorScreen(it, viewModel::changeRemoteDraft, viewModel::saveRemoteEditor, viewModel::reloadRemoteEditor, viewModel::closeRemoteEditor)
+        RemoteTextEditorScreen(it, viewModel::changeRemoteDraft, viewModel::saveRemoteEditor, viewModel::reloadRemoteEditor, viewModel::closeRemoteEditor,
+            onReview = viewModel::reviewRemoteSave, onDismissReview = viewModel::dismissRemoteReview,
+            onRestoreDraft = viewModel::restoreRemoteDraft, onDiscardDraft = viewModel::discardRemoteDraft)
         sessionPrompts.firstOrNull()?.let { prompt ->
             SessionPromptDialog(prompt) { values -> viewModel.respondToSessionPrompt(prompt, values) }
         }

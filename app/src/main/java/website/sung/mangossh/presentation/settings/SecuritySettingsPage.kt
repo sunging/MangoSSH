@@ -33,7 +33,7 @@ import website.sung.mangossh.ui.components.MangoSettingsCard
 import website.sung.mangossh.ui.components.SettingsChoiceRow
 import website.sung.mangossh.ui.components.SettingsSwitchRow
 
-/** Security & lock detail page: app PIN, lock-now, biometric unlock, and auto-lock delay. */
+/** Security & lock detail page: app PIN, lock-now, biometric unlock, auto-lock delay, and editor drafts. */
 @Composable
 internal fun SecuritySettingsPage(
     state: SecuritySettingsState,
@@ -41,6 +41,7 @@ internal fun SecuritySettingsPage(
     modifier: Modifier = Modifier,
 ) {
     var showPinEditor by rememberSaveable { mutableStateOf(false) }
+    var confirmClearDrafts by rememberSaveable { mutableStateOf(false) }
     val lock = state.lock
 
     LazyColumn(
@@ -106,6 +107,39 @@ internal fun SecuritySettingsPage(
                 }
             }
         }
+        item {
+            MangoSectionHeader(
+                text = stringResource(R.string.settings_editor_drafts_title),
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item {
+            MangoSettingsCard {
+                Text(
+                    stringResource(R.string.settings_editor_drafts_detail),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = { confirmClearDrafts = true }) {
+                    Text(stringResource(R.string.settings_editor_drafts_clear))
+                }
+            }
+        }
+    }
+
+    if (confirmClearDrafts) {
+        AlertDialog(
+            onDismissRequest = { confirmClearDrafts = false },
+            title = { Text(stringResource(R.string.settings_editor_drafts_clear)) },
+            text = { Text(stringResource(R.string.settings_editor_drafts_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearDrafts = false
+                    callbacks.onClearEditorDrafts()
+                }) { Text(stringResource(R.string.settings_editor_drafts_clear)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClearDrafts = false }) { Text(stringResource(R.string.common_cancel)) } },
+        )
     }
 
     if (showPinEditor) {
