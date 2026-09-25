@@ -199,6 +199,7 @@ class SshSessionController internal constructor(
                     val connection = if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection else managed.connection
                     if (connection != null) {
                         try { connection.keepalive(); managed.lastConfirmedNanos = System.nanoTime() }
+                        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                         catch (error: Exception) {
                             if (managed.protocol == ConnectionProtocol.MOSH) invalidateMoshSshFeatureConnection(id, managed, connection)
                             else finishSession(id, managed, SessionEndReason.CONNECTION_LOST, error)
@@ -1623,6 +1624,9 @@ class SshSessionController internal constructor(
             connection.keepalive()
             managed.lastConfirmedNanos = System.nanoTime()
             connection
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // The caller stopped waiting; that says nothing about the companion connection.
+            throw cancelled
         } catch (error: Exception) {
             if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
                 MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)

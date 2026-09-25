@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -76,6 +77,11 @@ internal class SshConnection(
     var banner: suspend (String) -> Unit = {}
     private val forwards = ConcurrentHashMap.newKeySet<SshForward>()
     private val remoteForwards = ConcurrentHashMap<Int, SshForward>()
+    private val probeLock = Any()
+    private var probe: Deferred<Unit>? = null
+
+    /** Test seam replacing the protocol ping; production leaves it null. */
+    @Volatile internal var pinger: (suspend () -> PingResult)? = null
     fun useJump(previous: SshConnection) { check(client.get() == null); through = previous }
     fun useSocketRoute(route: SshSocketRoute) { check(client.get() == null); socketRoute = route }
     fun monitor(callback: (Throwable?) -> Unit) { monitors.add(callback) }
@@ -230,18 +236,37 @@ internal class SshConnection(
         channel
     }
 
-    /** Total deadline includes queued writes and fallback global-request serialization. */
+    /**
+     * Proves the peer still answers, closing this connection when it does not.
+     *
+     * The probe belongs to the connection, not to the caller: a browser refresh or a
+     * paused transfer that stops waiting must not abort a ping that the shell, other
+     * file operations and forwards on the same connection depend on. Concurrent callers
+     * share one in-flight probe. Its deadline is the protocol's own ping timeout, which
+     * includes queued writes and fallback global-request serialization.
+     */
     suspend fun keepalive() {
+        if (closed.get()) throw SshFailure(SshFailure.Category.CLOSED)
         try {
-            if (owned { clientOrThrow().ping() } !is PingResult.Success) {
+            sharedProbe().await()
+        } catch (cancelled: CancellationException) {
+            // Either this caller stopped waiting (rethrow its own cancellation) or the
+            // connection closed underneath the probe (report that as a failure).
+            currentCoroutineContext().ensureActive()
+            throw SshFailure(if (closed.get()) SshFailure.Category.CLOSED else SshFailure.Category.KEEPALIVE)
+        }
+    }
+
+    private fun sharedProbe(): Deferred<Unit> = synchronized(probeLock) {
+        probe?.takeUnless { it.isCompleted } ?: scope.async {
+            val result = try {
+                pinger?.invoke() ?: clientOrThrow().ping()
+            } catch (_: Exception) { null }
+            if (result !is PingResult.Success) {
+                close()
                 throw SshFailure(SshFailure.Category.KEEPALIVE)
             }
-        } catch (error: Exception) {
-            close()
-            currentCoroutineContext().ensureActive()
-            if (error is kotlinx.coroutines.TimeoutCancellationException) throw SshFailure(SshFailure.Category.KEEPALIVE)
-            throw error
-        }
+        }.also { probe = it }
     }
 
     /** A file operation opens a private channel and can cancel without closing sibling channels. */
