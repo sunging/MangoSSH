@@ -85,6 +85,7 @@ internal fun HostsScreen(
     onMoveHostToTop: (String) -> Unit,
     endedTerminals: List<website.sung.mangossh.session.EndedTerminalRecord> = emptyList(),
     onClearEnded: () -> Unit = {},
+    sessionAttention: Map<String, website.sung.mangossh.session.SessionAttention> = emptyMap(),
 ) {
     if (hosts.isEmpty() && sessions.isEmpty() && endedTerminals.isEmpty()) {
         if (hasAnyHost) {
@@ -152,6 +153,13 @@ internal fun HostsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            sessionAttention[session.id]?.label()?.let { attention ->
+                                Text(
+                                    attention,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
                         }
                         OutlinedButton(onClick = { onOpenSession(session.id) }) { Text(stringResource(R.string.common_open)) }
                         TextButton(onClick = { onDisconnectSession(session.id) }) { Text(stringResource(R.string.common_close)) }

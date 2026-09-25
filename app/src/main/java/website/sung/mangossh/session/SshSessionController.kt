@@ -99,8 +99,12 @@ class SshSessionController internal constructor(
             connection.lastPacketSentNanos.takeIf { it > 0 }, connection.lastPacketReceivedNanos.takeIf { it > 0 },
             managed.lastConfirmedNanos.takeIf { it > 0 },
             if (managed.protocol == ConnectionProtocol.MOSH) managed.moshProcess != null && managed.lifecycle.isOpen else null,
-            if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection != null else null)
+            if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection != null else null,
+            companion = _sessionHealth.value[sessionIdOf(managed)]?.companion,
+            network = _network.value)
     }
+
+    private fun sessionIdOf(managed: ManagedSession): String? = sessionsById.entries.firstOrNull { it.value === managed }?.key
 
     /** Clears only ended emulator history; active sessions are unaffected. */
     fun clearEndedTerminals() {
@@ -191,9 +195,45 @@ class SshSessionController internal constructor(
     val clipboardCopies = terminalStore.clipboardCopies
 
     private val connectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
+
+    // The callback reports an existing network right after registration, but says nothing when there is none.
+    private val _network = MutableStateFlow(NetworkStatus(
+        health = if (runCatching { connectivity?.activeNetwork }.getOrNull() == null) NetworkHealth.LOST else NetworkHealth.AVAILABLE,
+    ))
+    /** The default network's state, for explaining stalls; never used to decide liveness. */
+    val network = _network.asStateFlow()
+
+    private val _sessionHealth = MutableStateFlow<Map<String, SessionHealth>>(emptyMap())
+    /** Health beyond the session phase, keyed by session id; see [SessionHealth]. */
+    val sessionHealth = _sessionHealth.asStateFlow()
+
+    private fun setCompanionHealth(sessionId: String, companion: CompanionHealth) {
+        _sessionHealth.update { current ->
+            if (sessionsById.containsKey(sessionId)) current + (sessionId to SessionHealth(companion)) else current - sessionId
+        }
+    }
+
     private val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: android.net.Network) { requestHealthChecks() }
-        override fun onLost(network: android.net.Network) { requestHealthChecks() }
+        override fun onAvailable(network: android.net.Network) {
+            _network.update { it.copy(health = NetworkHealth.AVAILABLE) }
+            requestHealthChecks()
+        }
+        override fun onLost(network: android.net.Network) {
+            // The default network callback reports the loss before any replacement arrives.
+            _network.update { it.copy(health = NetworkHealth.LOST) }
+            requestHealthChecks()
+        }
+        override fun onBlockedStatusChanged(network: android.net.Network, blocked: Boolean) {
+            _network.update { it.copy(health = if (blocked) NetworkHealth.BLOCKED else NetworkHealth.AVAILABLE) }
+        }
+        override fun onCapabilitiesChanged(network: android.net.Network, capabilities: android.net.NetworkCapabilities) {
+            _network.update {
+                it.copy(
+                    validated = capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                    metered = !capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+                )
+            }
+        }
     }
 
     /** Foreground and network events coalesce into at most one in-flight probe per session. */
@@ -858,6 +898,7 @@ class SshSessionController internal constructor(
         val callbacks = synchronized(managed.lifecycle.lock) {
             val detached = managed.lifecycle.close() ?: return
             sessionsById.remove(sessionId, managed)
+            _sessionHealth.update { it - sessionId }
             if (managed.kind == SessionKind.TERMINAL) {
                 val state = _sessions.value.firstOrNull { it.id == sessionId }
                 if (state != null) synchronized(_endedTerminals) {
@@ -1425,6 +1466,7 @@ class SshSessionController internal constructor(
         managed: ManagedSession,
         connection: SshConnection,
     ) {
+        setCompanionHealth(sessionId, CompanionHealth.CONNECTED)
         connection.monitor { reason ->
             // The transport thread must not run teardown that closes channels
             // and sockets, so hand the invalidation to the session scope.
@@ -1725,6 +1767,7 @@ class SshSessionController internal constructor(
         val connection = SshConnection(profile.hostname, profile.port, profile.legacySshAlgorithms)
         val pending = adoptPendingConnection(managed.lifecycle, connection, cleanupScope)
         MangoLog.info(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_STARTED)
+        setCompanionHealth(sessionId, CompanionHealth.RECONNECTING)
         try {
             if (profile.route == ConnectionRoute.TSNET) {
                 connection.useSocketRoute(requireNotNull(managed.tsnetLease).proxyData)
@@ -1758,6 +1801,7 @@ class SshSessionController internal constructor(
                 cleanupScope.launch { runCatching { connection.close() } }
             }
             MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_FAILED, error)
+            setCompanionHealth(sessionId, CompanionHealth.RECONNECT_FAILED)
             throw error
         }
     }
@@ -1792,6 +1836,7 @@ class SshSessionController internal constructor(
             }
         }
         if (!detached) return false
+        setCompanionHealth(sessionId, CompanionHealth.LOST)
 
         forwardsToClose.forEach { forward -> runCatching { forward.close() } }
         runCatching { connection.close() }

@@ -61,6 +61,8 @@ import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionEndReason
 import website.sung.mangossh.session.SessionEndMessageKind
 import website.sung.mangossh.session.TerminalSessionPhase
+import website.sung.mangossh.session.SessionAttention
+import website.sung.mangossh.session.sessionAttention
 import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
 import website.sung.mangossh.presentation.settings.SettingsDestination
 import website.sung.mangossh.presentation.update.DistributionUpdateManager
@@ -184,6 +186,13 @@ class MangoSshViewModel @JvmOverloads constructor(
 
     val endedTerminals = sessionController.endedTerminals
     fun diagnostics(sessionId: String) = sessionController.diagnostics(sessionId)
+
+    /** What, if anything, explains trouble on each open session; see [sessionAttention]. */
+    val sessionAttention: StateFlow<Map<String, SessionAttention>> = combine(
+        sessionController.sessions, sessionController.sessionHealth, sessionController.network,
+    ) { sessions, health, network ->
+        sessions.associate { it.id to sessionAttention(it.phase, health[it.id], network) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
     fun openWorkspace(sessionId: String, workspace: website.sung.mangossh.domain.TmuxWorkspace): String? {
         val profileId = sessions.value.firstOrNull { it.id == sessionId }?.profileId
         val required = vault.snapshot.value.profiles.firstOrNull { it.id == profileId }?.requireReauthentication

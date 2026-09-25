@@ -132,6 +132,7 @@ import website.sung.mangossh.session.PortForwardCarrier
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
 import website.sung.mangossh.session.PortForwardStopOutcome
+import website.sung.mangossh.session.SessionAttention
 import website.sung.mangossh.session.TerminalSessionPhase
 import org.connectbot.terminal.VTermKey
 import website.sung.mangossh.security.AppLockConfiguration
@@ -172,6 +173,7 @@ fun MangoSshApp(
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val sessionAttention by viewModel.sessionAttention.collectAsStateWithLifecycle()
     val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
     val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
@@ -396,7 +398,7 @@ fun MangoSshApp(
         val (activeSession, terminalEmulator) = terminalTarget
         var showDiagnostics by remember(activeSession.id) { mutableStateOf(false) }
         var showWorkspaces by remember(activeSession.id) { mutableStateOf(false) }
-        if (showDiagnostics) ConnectionDiagnosticsDialog(viewModel.diagnostics(activeSession.id)) { showDiagnostics = false }
+        if (showDiagnostics) ConnectionDiagnosticsDialog({ viewModel.diagnostics(activeSession.id) }) { showDiagnostics = false }
         if (showWorkspaces) WorkspaceDialog(load = { viewModel.listWorkspaces(activeSession.id) },
             onOpen = { workspace -> viewModel.openWorkspace(activeSession.id, workspace)?.let { activeSessionId = it }; showWorkspaces = false },
             onDismiss = { showWorkspaces = false })
@@ -438,6 +440,7 @@ fun MangoSshApp(
         }
         TerminalSessionScreen(
             session = activeSession,
+            attention = sessionAttention[activeSession.id] ?: SessionAttention.NONE,
             terminalEmulator = terminalEmulator,
             appearance = terminalAppearance,
             behavior = terminalBehavior,
@@ -621,6 +624,7 @@ fun MangoSshApp(
                             hasAnyHost = hosts.isNotEmpty(),
                             reorderable = hostsReorderable,
                             sessions = sessions,
+                            sessionAttention = sessionAttention,
                             endedTerminals = endedTerminals,
                             onClearEnded = viewModel::clearEndedTerminals,
                             vaultStatus = vaultStatus,
