@@ -1424,8 +1424,10 @@ class SshSessionController internal constructor(
     /**
      * Keeps an authenticated SSH transport visible to idle network devices.
      *
-     * Mosh sessions are excluded because their SSH transport closes after the
-     * UDP bootstrap and the native Mosh client owns its own network lifecycle.
+     * Mosh sessions are excluded: after the UDP bootstrap their SSH connection
+     * lives on as the companion for files and forwards, which has its own
+     * keepalive (see [attachMoshSshFeatureConnection]), and the native Mosh
+     * client owns the terminal's network lifecycle.
      * A keepalive interval of zero means the user disabled keepalives, so no
      * job is started; [runSshKeepaliveLoop] requires a positive interval.
      */
@@ -1469,8 +1471,8 @@ class SshSessionController internal constructor(
     ) {
         setCompanionHealth(sessionId, CompanionHealth.CONNECTED)
         connection.monitor { reason ->
-            // The transport thread must not run teardown that closes channels
-            // and sockets, so hand the invalidation to the session scope.
+            // Monitors run inside the connection's own scope, which teardown
+            // cancels, so hand the invalidation to the session scope.
             scope.launch {
                 if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
                     MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, reason)
@@ -1874,8 +1876,10 @@ class SshSessionController internal constructor(
     /**
      * Publishes one prompt and blocks the calling protocol thread for the answer.
      *
-     * This runs on a trilead transport thread, not on a session coroutine, so
-     * `runBlocking` here cannot be released by cancelling the session's job. The
+     * Callers are blocking callbacks that cbssh invokes from inside its own
+     * coroutines (host-key verification, keyboard-interactive, agent signing) and
+     * workspace preparation. `runBlocking` starts an event loop that is not a
+     * child of the caller's job, so cancelling the session does not release it. The
      * registry is what releases it: [releasePromptWaiters] completes the waiter
      * during teardown. Registering before publishing keeps that guarantee — a
      * waiter is always visible to teardown before its prompt is visible to the

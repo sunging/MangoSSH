@@ -186,9 +186,8 @@ enum class ScpTransferKind {
 /**
  * Progress of one file transfer.
  *
- * [totalBytes] is only known for SFTP transfers started from the remote file
- * browser; the legacy SCP path cannot report progress, so both byte counters
- * stay at their defaults there.
+ * All transfers run over SFTP (the `Scp` prefix is historical). [totalBytes]
+ * stays null until the transfer learns the size of what it moves.
  *
  * [displayName], [remotePath], and [currentItem] are user or server data: they
  * are rendered verbatim, never translated, and never logged.
@@ -207,8 +206,8 @@ data class ScpTransferState(
     val totalBytes: Long? = null,
     /**
      * Download destination or upload source document, as a string so this model
-     * stays free of Android types. Null for the legacy SCP path, which cannot
-     * be resumed, retried, or opened.
+     * stays free of Android types. Null when there is no local document, which
+     * means the transfer cannot be resumed, retried, or opened.
      */
     val localUri: String? = null,
     /** Relative path of the entry a directory transfer is currently moving. */
