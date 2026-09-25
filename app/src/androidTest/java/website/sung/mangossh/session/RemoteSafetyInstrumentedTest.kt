@@ -51,6 +51,32 @@ class RemoteSafetyInstrumentedTest {
         }
     }
 
+    @Test fun stagedUploadStaysPrivateUntilANewFileIsCommitted() = fixture { connection, _ ->
+        val files = RemoteFileClient()
+        BlockingOperation().use { control ->
+            val path = "/" + UUID.randomUUID().toString()
+            val token = UUID.randomUUID().toString()
+            val temporary = files.reserveTemporary(connection, "/", token, control)
+            suspend fun mode(target: String): Int {
+                val client = connection.openFiles()
+                try { return client.lstat(target).permissions!! and 0xfff } finally { client.close() }
+            }
+            assertEquals(0x180, mode(temporary))
+            val bytes = ByteArray(40_000) { 7 }
+            // A first chunk stands in for a paused upload: the partial file must stay private.
+            files.upload(connection, bytes.copyOf(32_768).inputStream(), "/", RemoteFilePaths.nameOf(temporary), 0,
+                null, 1 shl 20, control) { _, _ -> }
+            assertEquals(0x180, mode(temporary))
+            files.upload(connection, bytes.inputStream(), "/", RemoteFilePaths.nameOf(temporary), 32_768,
+                bytes.size.toLong(), 1 shl 20, control) { _, _ -> }
+            assertEquals(0x180, mode(temporary))
+            files.commitTemporary(connection, temporary, path, files.inspectTarget(connection, path, control), false, control)
+            assertEquals(0x1a4, mode(path))
+            val cleanup = connection.openFiles()
+            try { cleanup.remove(path) } finally { cleanup.close() }
+        }
+    }
+
     @Test fun directTcpipJumpCarriesSftpAndClosingItPreservesFirstHop() = fixture { first, port ->
         val final = SshConnection("127.0.0.1", port)
         final.useJump(first)

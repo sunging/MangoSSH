@@ -53,9 +53,14 @@ internal class SshFiles internal constructor(
         request { delegate.posixRename(source, target) }
     }
 
-    /** Exclusive creation prevents another process from substituting an upload's temporary file. */
+    /**
+     * Exclusive creation prevents another process from substituting an upload's temporary file.
+     *
+     * [permissions] is the creation mode the server applies to a new file (before its umask).
+     * Without it the server picks its own default, which for OpenSSH is `0666`.
+     */
     suspend fun open(path: String, write: Boolean = false, create: Boolean = false,
-        truncate: Boolean = false, exclusive: Boolean = false): SshFileHandle {
+        truncate: Boolean = false, exclusive: Boolean = false, permissions: Int? = null): SshFileHandle {
         val flags = buildSet {
             add(SftpOpenFlag.READ)
             if (write) add(SftpOpenFlag.WRITE)
@@ -63,7 +68,8 @@ internal class SshFiles internal constructor(
             if (truncate) add(SftpOpenFlag.TRUNCATE)
             if (exclusive) add(SftpOpenFlag.EXCLUDE)
         }
-        return SshFileHandle(request { delegate.open(path, flags) })
+        val attributes = permissions?.let { SftpAttributes(permissions = it) } ?: SftpAttributes.EMPTY
+        return SshFileHandle(request { delegate.open(path, flags, attributes) })
     }
     suspend fun close(handle: SshFileHandle) = request { delegate.close(handle.delegate) }
     suspend fun read(handle: SshFileHandle, offset: Long, count: Int): ByteArray? =

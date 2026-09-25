@@ -105,7 +105,9 @@ class Files(paramiko.SFTPServerInterface):
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def open(self, path, flags, attr):
         try:
-            fd = os.open(self.local(path), flags | getattr(os, "O_BINARY", 0), 0o600)
+            # Honour the client's creation mode like OpenSSH: 0666 when absent, then the umask.
+            mode = attr.st_mode & 0o7777 if attr is not None and attr.st_mode is not None else 0o666
+            fd = os.open(self.local(path), flags | getattr(os, "O_BINARY", 0), mode)
             stream = os.fdopen(fd, "r+b" if flags & os.O_RDWR else "wb" if flags & os.O_WRONLY else "rb", buffering=0)
             handle = paramiko.SFTPHandle(flags)
             handle.readfile = stream

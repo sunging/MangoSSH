@@ -2,6 +2,7 @@ package website.sung.mangossh.session
 
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshFileFailure
+import website.sung.mangossh.session.ssh.SshFileHandle
 import website.sung.mangossh.session.ssh.SshFiles
 import website.sung.mangossh.session.ssh.SshFileAttributes
 
@@ -236,13 +237,16 @@ internal class RemoteFileClient {
         onProgress: (Long, Long?) -> Unit,
     ): RemoteUploadResult = withClient(connection, control) { client ->
         val remotePath = RemoteFilePaths.join(remoteDirectory, fileName)
-        val resumable = startOffset > 0L &&
-            runCatching { client.stat(remotePath).size }.getOrNull() == startOffset
+        val staging = isStagingName(fileName)
+        // A staged file is inspected without following links, so a name swapped for a
+        // symbolic link is refused instead of truncating whatever the link points at.
+        val existing = runCatching { if (staging) client.lstat(remotePath) else client.stat(remotePath) }.getOrNull()
+        val resumable = startOffset > 0L && existing?.size == startOffset
         if (startOffset > 0L && !resumable) throw SourceChangedException()
-        val handle = if (resumable) {
-            client.open(remotePath, write = true)
-        } else {
-            client.open(remotePath, write = true, create = true, truncate = true)
+        val handle = when {
+            staging -> openStaging(client, remotePath, existing, truncate = !resumable)
+            resumable -> client.open(remotePath, write = true)
+            else -> client.open(remotePath, write = true, create = true, truncate = true)
         }
         val buffer = ByteArray(SFTP_CHUNK_BYTES)
         var offset = if (resumable) startOffset else 0L
@@ -301,7 +305,7 @@ internal class RemoteFileClient {
         if (target.identity != null && !target.atomicReplace && !allowDirectOverwrite) throw AtomicReplaceUnavailableException()
         val bytes = source.encode(draft)
         val token = java.util.UUID.randomUUID().toString()
-        val name = ".mangossh-$token.part"
+        val name = stagingName(token)
         val directory = RemoteFilePaths.parentOf(destination)
         val temporary = reserveTemporary(connection, directory, token, control)
         try {
@@ -371,8 +375,13 @@ internal class RemoteFileClient {
                 } catch (_: SshFileFailure) { throw MetadataPreservationException() }
             }
         }
-        if (target.identity == null) client.rename(temporary, destination)
-        else if (client.atomicReplaceSupported) client.replaceAtomically(temporary, destination)
+        if (target.identity == null) {
+            // The staging file was created private; a brand-new destination gets the mode an
+            // OpenSSH server would give it under the common umask. A server that refuses the
+            // change keeps the file private rather than failing the upload.
+            runCatching { client.setstat(temporary, SshFileAttributes(permissions = NEW_FILE_PERMISSIONS)) }
+            client.rename(temporary, destination)
+        } else if (client.atomicReplaceSupported) client.replaceAtomically(temporary, destination)
         else {
             if (!allowDirectOverwrite) throw AtomicReplaceUnavailableException()
             val source = client.open(temporary)
@@ -400,17 +409,51 @@ internal class RemoteFileClient {
         }
     }
 
-    /** Claims a sibling temporary with exclusive-create before any upload or cleanup can own it. */
+    /**
+     * Claims a sibling temporary with exclusive-create before any upload or cleanup can own it.
+     *
+     * The file is created owner-only: it holds the full new content for as long as the
+     * transfer is paused or failed, and its directory may be readable by other accounts.
+     * A server that ignores the creation mode is asked once more with SETSTAT.
+     */
     suspend fun reserveTemporary(connection: SshConnection, directory: String, token: String, control: TransferControl): String = withClient(connection, control) { client ->
-        val path = RemoteFilePaths.join(directory, ".mangossh-$token.part")
-        val handle = client.open(path, write = true, create = true, exclusive = true)
-        try { client.close(handle) } catch (error: Exception) { runCatching { client.remove(path) }; throw error }
+        val path = RemoteFilePaths.join(directory, stagingName(token))
+        val handle = client.open(path, write = true, create = true, exclusive = true, permissions = STAGING_PERMISSIONS)
+        try {
+            val created = client.fstat(handle)
+            if (created.permissions?.and(0x3f) != 0) runCatching { client.setstat(path, SshFileAttributes(permissions = STAGING_PERMISSIONS)) }
+            client.close(handle)
+        } catch (error: Exception) {
+            runCatching { client.close(handle) }
+            runCatching { client.remove(path) }
+            throw error
+        }
         path
+    }
+
+    /**
+     * Opens a reserved staging file for writing after proving it is still the regular file
+     * that was reserved. SFTP v3 cannot refuse to follow links on open, so the name is
+     * checked with LSTAT first and the opened handle is compared with that result.
+     */
+    private suspend fun openStaging(client: SshFiles, path: String, before: SshFileAttributes?, truncate: Boolean): SshFileHandle {
+        if (before == null || before.permissions != null && !before.isRegularFile) throw SourceChangedException()
+        val handle = client.open(path, write = true, truncate = truncate)
+        try {
+            val opened = client.fstat(handle)
+            if (opened.permissions != null && !opened.isRegularFile) throw SourceChangedException()
+            if (opened.uid != before.uid || opened.permissions != before.permissions) throw SourceChangedException()
+            if (!truncate && opened.size != before.size) throw SourceChangedException()
+            return handle
+        } catch (error: Exception) {
+            runCatching { client.close(handle) }
+            throw error
+        }
     }
 
     /** Deletes only a task-generated sibling name whose ownership token still matches. */
     suspend fun removeTemporary(connection: SshConnection, path: String, token: String) {
-        require(RemoteFilePaths.nameOf(path) == ".mangossh-$token.part")
+        require(RemoteFilePaths.nameOf(path) == stagingName(token))
         withClient(connection) { client ->
             try { client.remove(path) } catch (error: SshFileFailure) {
                 if (error.status != 2) throw error
@@ -600,12 +643,25 @@ internal class RemoteFileClient {
         else -> RemoteFileKind.OTHER
     }
 
-    private companion object {
+    internal companion object {
         /** SFTP v3 caps a single read or write request at 32 KiB. */
         const val SFTP_CHUNK_BYTES = 32 * 1024
 
         /** `rwxr-xr-x`, matching what a shell `mkdir` produces under a default umask. */
         const val DIRECTORY_PERMISSIONS = 493
+
+        /** `rw-------`: staged content is private until it is committed. */
+        const val STAGING_PERMISSIONS = 0x180
+
+        /** `rw-r--r--`, what an OpenSSH server creates under the common `022` umask. */
+        const val NEW_FILE_PERMISSIONS = 0x1a4
+
+        private val STAGING_NAME = Regex("""\.mangossh-[0-9a-fA-F-]{36}\.part""")
+
+        fun stagingName(token: String) = ".mangossh-$token.part"
+
+        /** True only for names this app generates in [reserveTemporary]. */
+        fun isStagingName(name: String) = STAGING_NAME.matches(name)
 
         /**
          * SFTP v3 does not declare a filename encoding. Modern servers use
