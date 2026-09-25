@@ -220,10 +220,11 @@ internal class RemoteFileClient {
      * a huge local selection cannot run away.
      *
      * A [startOffset] of zero truncates any existing remote file; a resume opens
-     * the partial file read/write instead and keeps the bytes already there, so
-     * [input] must already be positioned at [startOffset]. A remote file that no
-     * longer matches that offset is rewritten from the start rather than left
-     * with a hole in the middle.
+     * the partial file read/write instead and keeps the bytes already there.
+     * [input] starts at position zero; the first [startOffset] bytes are skipped.
+     * A staged file longer than [startOffset] has its unacknowledged tail cut off;
+     * any other size mismatch fails with [SourceChangedException] rather than
+     * leaving a hole or stale bytes in the middle.
      */
     suspend fun upload(
         connection: SshConnection,
