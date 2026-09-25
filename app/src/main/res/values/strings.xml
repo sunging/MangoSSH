@@ -67,7 +67,7 @@
     <string name="remote_file_tree_links_skipped">%1$d entries were skipped because symbolic links and special files are not transferred.</string>
     <string name="remote_file_no_app_to_open">No installed app can open this file.</string>
     <string name="remote_file_transfer_session_closed">The connection that carried this transfer is closed. Reopen the file browser to transfer it again.</string>
-    <string name="transfer_awaiting_reconnect">Connection lost. Reconnect to the same host to continue this transfer.</string>
+    <string name="transfer_awaiting_reconnect">Connection lost. After you reconnect to the same host, continue this transfer here. It does not restart on its own.</string>
     <string name="session_ended_remote_exit">The session ended on the remote host.</string>
     <string name="session_ended_connection_lost">The connection was interrupted.</string>
     <string name="session_ended_connection_failed">Unable to establish the connection.</string>
