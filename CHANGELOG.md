@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.5.1](https://github.com/sunging/MangoSSH/compare/v0.5.0...v0.5.1) (2026-09-26)
+
+### Features
+
+* **editor:** preview changes before saving and recover encrypted local drafts ([b4e8492](https://github.com/sunging/MangoSSH/commit/b4e8492f1ccd87ee402ba9cf4f9affcdebd0691f))
+* **forward:** show bound address, carrier, activity and stop outcome ([d0951c9](https://github.com/sunging/MangoSSH/commit/d0951c9f2bec6f8c007236291b31a77005fe1895))
+* **session:** live connection health status ([0c44c8c](https://github.com/sunging/MangoSSH/commit/0c44c8c3df555a9ad8d8ddc243ed7cf3edfbe0bd))
+* **transfer:** resume interrupted transfers after reconnecting to the same verified server ([064ab76](https://github.com/sunging/MangoSSH/commit/064ab7626876cdec2941d2ef8817b037c79a206a))
+
+### Bug Fixes
+
+* **forward:** stop the exact remote listener ([45d9aff](https://github.com/sunging/MangoSSH/commit/45d9affe2e57a8c68c36bfe42b66d742da197cea))
+* **keepalive:** apply background multiplier changes to live sessions ([0755cbb](https://github.com/sunging/MangoSSH/commit/0755cbbe7b56f751793bd03a53785744fcd82aa1))
+* **power:** hold the wake lock for active transfers only ([399f29f](https://github.com/sunging/MangoSSH/commit/399f29fd4c3fc1038bbbe95d1dceba74feac4f31))
+* **sftp:** create staging files private ([c5a4724](https://github.com/sunging/MangoSSH/commit/c5a47246bfd19811c05c26209ed85af36417a313))
+* **ssh:** keep shared connection when a health-check waiter cancels ([850c383](https://github.com/sunging/MangoSSH/commit/850c3835b2b0ba6a85fef2c8371f0cef7a3c493b))
+* **transfer:** drop the contradictory hint on transfers awaiting reconnect ([d5fc48a](https://github.com/sunging/MangoSSH/commit/d5fc48a605307f1bc42f8248478f669f76052426))
+* **transfer:** resume transfers whose I/O failed as the network dropped ([a1878b2](https://github.com/sunging/MangoSSH/commit/a1878b2f44bad8bf68c9f770f622546df3ddc4e2))
+* **transfer:** settle detached pauses and serialize resumed runs ([bf0a273](https://github.com/sunging/MangoSSH/commit/bf0a2738d7409b2ae2fdce5bbe59336bd79fa407))
+* **ui:** keep picker requests across activity recreation ([7df22a9](https://github.com/sunging/MangoSSH/commit/7df22a9368b5bded818eef22da4b2805650bfd2f))
+* **workspace:** reattach the same workspace on reconnect ([ffa69d5](https://github.com/sunging/MangoSSH/commit/ffa69d5a892ae13260c5f8f26526630f5d0a735d))
+
+### Performance Improvements
+
+* **sftp:** pipeline transfer requests ([d47fa75](https://github.com/sunging/MangoSSH/commit/d47fa7521f29b5fa801819e6015ebbd37bfa2787))
+
 ## [0.5.0](https://github.com/sunging/MangoSSH/compare/v0.4.2...v0.5.0) (2026-09-23)
 
 
