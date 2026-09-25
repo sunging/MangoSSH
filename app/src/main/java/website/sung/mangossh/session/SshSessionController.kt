@@ -460,7 +460,7 @@ class SshSessionController internal constructor(
         if (existing?.phase == PortForwardRuntimePhase.ACTIVE || existing?.phase == PortForwardRuntimePhase.STARTING || existing?.phase == PortForwardRuntimePhase.STOPPING) {
             return
         }
-        markPortForwardStarting(runtimeId, sessionId, rule, "Starting tunnel")
+        markPortForwardStarting(runtimeId, sessionId, rule, context.appString(R.string.port_forward_starting))
         activatePortForward(sessionId, rule, runtimeId)
     }
 
@@ -502,7 +502,8 @@ class SshSessionController internal constructor(
             // early because the session is gone.
             _portForwards.update { states ->
                 states.map { state ->
-                    if (state === attempt) state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = SESSION_CLOSED_DETAIL) else state
+                    if (state === attempt) state.copy(phase = PortForwardRuntimePhase.STOPPED,
+                        detail = context.appString(R.string.port_forward_session_closed)) else state
                 }
             }
             return
@@ -530,7 +531,18 @@ class SshSessionController internal constructor(
                         // decided the install keeps a concurrent invalidation or
                         // stop from being overwritten by an ACTIVE the rule no
                         // longer deserves.
-                        updatePortForward(runtimeId, PortForwardRuntimePhase.ACTIVE, "Listening")
+                        val carrier = managed.forwardCarrier()
+                        _portForwards.update { states ->
+                            states.map { state ->
+                                if (state.runtimeId != runtimeId) state else state.copy(
+                                    phase = PortForwardRuntimePhase.ACTIVE,
+                                    detail = context.appString(R.string.port_forward_listening),
+                                    boundAddress = forward.handle.boundAddress(),
+                                    carrier = carrier,
+                                    stopOutcome = null,
+                                ).withActivity(forward.handle.activity)
+                            }
+                        }
                         true
                     } else {
                         false
@@ -615,8 +627,21 @@ class SshSessionController internal constructor(
             synchronized(managed.sshFeatureLock) {
                 if (sessionsById[sessionId] === managed &&
                     _portForwards.value.firstOrNull { it.runtimeId == runtimeId }?.phase == PortForwardRuntimePhase.STOPPING) {
-                    updatePortForward(runtimeId, if (failure == null) PortForwardRuntimePhase.STOPPED else PortForwardRuntimePhase.FAILED,
-                        context.appString(if (failure == null) R.string.port_forward_stopped else R.string.port_forward_stop_failed))
+                    val outcome = if (failure == null) forward?.stopOutcome ?: PortForwardStopOutcome.STOPPED else null
+                    _portForwards.update { states ->
+                        states.map { state ->
+                            if (state.runtimeId != runtimeId) state else state.copy(
+                                phase = if (outcome == null) PortForwardRuntimePhase.FAILED else PortForwardRuntimePhase.STOPPED,
+                                detail = context.appString(when (outcome) {
+                                    null -> R.string.port_forward_stop_failed
+                                    PortForwardStopOutcome.UNCONFIRMED -> R.string.port_forward_stop_unconfirmed
+                                    PortForwardStopOutcome.STOPPED -> R.string.port_forward_stopped
+                                }),
+                                stopOutcome = outcome,
+                                activeConnections = 0,
+                            )
+                        }
+                    }
                 }
             }
             closePortForwardSessionIfIdle(sessionId)
@@ -1551,13 +1576,17 @@ class SshSessionController internal constructor(
     }
 
     private fun closePortForwards(sessionId: String, managed: ManagedSession) {
+        val sessionClosedDetail = context.appString(R.string.port_forward_session_closed)
         val forwards = synchronized(managed.sshFeatureLock) {
             managed.forwards.values.toList().also {
                 managed.forwards.clear()
                 _portForwards.update { states ->
                     states.map { state ->
                         if (state.sessionId == sessionId && state.phase != PortForwardRuntimePhase.STOPPED) {
-                            state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = SESSION_CLOSED_DETAIL)
+                            // The connection is gone, and with it every listener it carried:
+                            // servers drop remote forwards when the connection closes.
+                            state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = sessionClosedDetail,
+                                stopOutcome = PortForwardStopOutcome.STOPPED, activeConnections = 0)
                         } else {
                             state
                         }
@@ -1854,6 +1883,50 @@ class SshSessionController internal constructor(
         _portForwards.update { current -> current.filterNot { it.runtimeId == state.runtimeId } + state }
     }
 
+    private fun ManagedSession.forwardCarrier(): PortForwardCarrier = when {
+        kind == SessionKind.PORT_FORWARD -> PortForwardCarrier.DEDICATED
+        protocol == ConnectionProtocol.MOSH -> PortForwardCarrier.MOSH_COMPANION
+        else -> PortForwardCarrier.SSH_SESSION
+    }
+
+    private fun SshForward.boundAddress(): String =
+        if (':' in boundHost) "[$boundHost]:$boundPort" else "$boundHost:$boundPort"
+
+    private fun PortForwardRuntimeState.withActivity(activity: org.connectbot.sshlib.PortForwardActivity) = copy(
+        activeConnections = activity.activeConnections,
+        totalConnections = activity.totalConnections,
+        lastActivityEpochMillis = activity.lastActivityEpochMillis,
+    )
+
+    /**
+     * Copies connection counts and last activity from every running listener into the
+     * published state, and fails a local listener that stopped accepting on its own.
+     * Called by the forwards screen while it is visible, so nothing polls in background.
+     */
+    fun refreshPortForwardActivity() {
+        val listenerLost = context.appString(R.string.port_forward_listener_lost)
+        sessionsById.values.forEach { managed ->
+            val lost = mutableListOf<ManagedPortForward>()
+            synchronized(managed.sshFeatureLock) {
+                managed.forwards.forEach { (runtimeId, forward) ->
+                    val handle = forward.handle
+                    val alive = handle.isActive
+                    if (!alive) managed.forwards.remove(runtimeId)?.let(lost::add)
+                    _portForwards.update { states ->
+                        states.map { state ->
+                            when {
+                                state.runtimeId != runtimeId || state.phase != PortForwardRuntimePhase.ACTIVE -> state
+                                !alive -> state.copy(phase = PortForwardRuntimePhase.FAILED, detail = listenerLost, activeConnections = 0)
+                                else -> state.withActivity(handle.activity)
+                            }
+                        }
+                    }
+                }
+            }
+            lost.forEach { forward -> cleanupScope.launch { runCatching { forward.close() } } }
+        }
+    }
+
     private fun updatePortForward(runtimeId: String, phase: PortForwardRuntimePhase, detail: String?) {
         _portForwards.update { current ->
             current.map { state ->
@@ -2001,19 +2074,24 @@ class SshSessionController internal constructor(
     }
 
     private sealed interface ManagedPortForward {
-        fun close()
+        /** The listener this rule created; the source of its address and activity. */
+        val handle: SshForward
 
-        class Local(private val delegate: SshForward) : ManagedPortForward {
-            override fun close() = delegate.close()
-        }
+        fun close() = handle.close()
 
-        class Dynamic(private val delegate: SshForward) : ManagedPortForward {
-            override fun close() = delegate.close()
-        }
+        /**
+         * What closing proves: a local listener is closed by this app, while a remote
+         * listener's cancellation gets no reply from the server.
+         */
+        val stopOutcome: PortForwardStopOutcome get() = PortForwardStopOutcome.STOPPED
+
+        class Local(override val handle: SshForward) : ManagedPortForward
+
+        class Dynamic(override val handle: SshForward) : ManagedPortForward
 
         /** Owns the exact listener it created; stopping never looks it up by port. */
-        class Remote(private val delegate: SshForward) : ManagedPortForward {
-            override fun close() = delegate.close()
+        class Remote(override val handle: SshForward) : ManagedPortForward {
+            override val stopOutcome get() = PortForwardStopOutcome.UNCONFIRMED
         }
     }
 
@@ -2077,7 +2155,6 @@ class SshSessionController internal constructor(
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
         const val TSNET_LOOPBACK_HOST = "127.0.0.1"
-        const val SESSION_CLOSED_DETAIL = "SSH session closed"
         const val TSNET_MOSH_GRACEFUL_RELEASE_MILLIS = 2_000L
         const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256 -l LANG=C.UTF-8"
         const val RESOURCE_COMMAND = "printf 'Host: '; hostname; printf '\\nUptime: '; uptime; printf '\\nLoad: '; cat /proc/loadavg 2>/dev/null || true; printf '\\nMemory:\\n'; free -h 2>/dev/null || true; printf '\\nDisk:\\n'; df -h / 2>/dev/null || true; printf '\\nCPU: '; nproc 2>/dev/null || true"

@@ -128,8 +128,10 @@ import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionPromptText
 import website.sung.mangossh.session.SessionPromptTextKind
+import website.sung.mangossh.session.PortForwardCarrier
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
+import website.sung.mangossh.session.PortForwardStopOutcome
 import website.sung.mangossh.session.TerminalSessionPhase
 import org.connectbot.terminal.VTermKey
 import website.sung.mangossh.security.AppLockConfiguration
@@ -654,6 +656,7 @@ fun MangoSshApp(
                             onStartRule = viewModel::startPortForward,
                             onStartOnNewConnection = viewModel::startPortForwardOnNewConnection,
                             onStopRule = viewModel::stopPortForward,
+                            onRefreshActivity = viewModel::refreshPortForwardActivity,
                         )
                         AppSection.SETTINGS -> {
                             val settingsCallbacks = rememberSettingsCallbacks(
@@ -1358,9 +1361,18 @@ private fun PortForwardsScreen(
     onStartRule: (String, PortForwardRule) -> Unit,
     onStartOnNewConnection: (ConnectionProfile, PortForwardRule) -> Unit,
     onStopRule: (String, String) -> Unit,
+    onRefreshActivity: () -> Unit = {},
 ) {
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
     var showRuleEditor by rememberSaveable { mutableStateOf(false) }
+    // Connection counts are read from the listeners only while this screen is shown.
+    val anyActive = activeForwards.any { it.phase == PortForwardRuntimePhase.ACTIVE }
+    LaunchedEffect(anyActive) {
+        while (anyActive) {
+            onRefreshActivity()
+            kotlinx.coroutines.delay(2_000)
+        }
+    }
     // SSH and Mosh terminals both expose an authenticated SSH feature carrier.
     val openFeatureSessions = sessions.filter {
         it.phase == TerminalSessionPhase.OPEN &&
@@ -1421,7 +1433,12 @@ private fun PortForwardsScreen(
             val failed = activeForwards.lastOrNull {
                 it.rule.id == rule.id && it.phase == PortForwardRuntimePhase.FAILED
             }
-            val visibleRuntime = running ?: failed
+            // A remote stop the server never confirms stays visible so it is not mistaken for proof.
+            val unconfirmedStop = activeForwards.lastOrNull {
+                it.rule.id == rule.id && it.phase == PortForwardRuntimePhase.STOPPED &&
+                    it.stopOutcome == PortForwardStopOutcome.UNCONFIRMED
+            }
+            val visibleRuntime = running ?: failed ?: unconfirmedStop
             val eligibleSession = openFeatureSessions.firstOrNull { it.profileId == rule.profileId }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
@@ -1442,24 +1459,49 @@ private fun PortForwardsScreen(
                     // A forward without a terminal session runs on a connection
                     // opened only for it, which is worth showing: it explains why
                     // the host is connected while no terminal is open.
-                    val ownConnection = running != null &&
-                        sessions.firstOrNull { it.id == running.sessionId }?.kind == SessionKind.PORT_FORWARD
+                    val carrierText = when (running?.carrier) {
+                        PortForwardCarrier.DEDICATED -> stringResource(R.string.ui_own_connection)
+                        PortForwardCarrier.MOSH_COMPANION -> stringResource(R.string.port_forward_carrier_mosh)
+                        PortForwardCarrier.SSH_SESSION -> stringResource(R.string.port_forward_carrier_ssh)
+                        null -> if (running != null &&
+                            sessions.firstOrNull { it.id == running.sessionId }?.kind == SessionKind.PORT_FORWARD
+                        ) stringResource(R.string.ui_own_connection) else null
+                    }
                     val status = visibleRuntime?.let { runtime ->
                         when (runtime.phase) {
                             PortForwardRuntimePhase.ACTIVE -> stringResource(R.string.ui_running)
                             PortForwardRuntimePhase.STARTING -> stringResource(R.string.ui_starting)
                             PortForwardRuntimePhase.STOPPING -> stringResource(R.string.port_forward_stopping)
                             PortForwardRuntimePhase.FAILED -> stringResource(R.string.ui_failed)
-                            PortForwardRuntimePhase.STOPPED -> ""
+                            PortForwardRuntimePhase.STOPPED -> stringResource(R.string.port_forward_status_stop_sent)
                         }
                     } ?: if (rule.startOnConnect) stringResource(R.string.ui_start_on_connection) else stringResource(R.string.ui_not_started)
                     Spacer(Modifier.height(4.dp))
-                    val statusText = status
-                    val ownConnectionText = stringResource(R.string.ui_own_connection)
                     Text(
-                        if (ownConnection) "$statusText · $ownConnectionText" else statusText,
+                        listOfNotNull(status, carrierText).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
+                    )
+                    // Fixed slot, like the failure detail below: address and activity while
+                    // running, the stop caveat after an unconfirmed remote stop.
+                    val active = running?.takeIf { it.phase == PortForwardRuntimePhase.ACTIVE }
+                    val infoText = when {
+                        active != null -> listOfNotNull(
+                            active.boundAddress?.let { stringResource(R.string.port_forward_bound, it) },
+                            stringResource(R.string.port_forward_connections, active.activeConnections, active.totalConnections),
+                            active.lastActivityEpochMillis?.let { at ->
+                                stringResource(R.string.port_forward_last_activity,
+                                    android.text.format.DateUtils.getRelativeTimeSpanString(at).toString())
+                            },
+                        ).joinToString("\n")
+                        visibleRuntime === unconfirmedStop && unconfirmedStop != null -> unconfirmedStop.detail.orEmpty()
+                        else -> ""
+                    }
+                    Text(
+                        text = infoText,
+                        modifier = if (infoText.isEmpty()) Modifier.height(0.dp) else Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     // A dedicated connection publishes its session and forward state back-to-back.
                     // Keep these dynamic slots in the lazy item instead of removing several child

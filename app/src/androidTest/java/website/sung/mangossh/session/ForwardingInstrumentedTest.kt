@@ -63,6 +63,9 @@ class ForwardingInstrumentedTest {
                         assertEquals(73, socket.getInputStream().read())
                     }
                     withTimeout(5_000) { echo.await() }
+                    assertEquals(1L, forward.activity.totalConnections)
+                    assertNotNull(forward.activity.lastActivityEpochMillis)
+                    assertEquals("127.0.0.1", forward.boundHost)
                 } finally { forward.close(); echo.cancel() }
             }
             connection.keepalive()

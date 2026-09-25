@@ -104,6 +104,27 @@ enum class PortForwardRuntimePhase {
     STOPPED,
 }
 
+/** Which SSH connection carries a forward. */
+enum class PortForwardCarrier {
+    /** The terminal session's own SSH connection. */
+    SSH_SESSION,
+    /** The SSH connection kept beside a Mosh session for file and forwarding features. */
+    MOSH_COMPANION,
+    /** A connection opened only for forwards, closed when the last one stops. */
+    DEDICATED,
+}
+
+/** What is known about a stopped forward's listener. */
+enum class PortForwardStopOutcome {
+    /** The listener this app owned is closed. */
+    STOPPED,
+    /**
+     * A remote listener's cancellation was sent, but SSH servers send no reply to it,
+     * so the app cannot prove the server has already closed the listener.
+     */
+    UNCONFIRMED,
+}
+
 @Immutable
 data class PortForwardRuntimeState(
     val runtimeId: String,
@@ -111,6 +132,13 @@ data class PortForwardRuntimeState(
     val rule: PortForwardRule,
     val phase: PortForwardRuntimePhase,
     val detail: String? = null,
+    /** `host:port` the listener actually bound, which differs from the rule for port 0 or a wildcard. */
+    val boundAddress: String? = null,
+    val carrier: PortForwardCarrier? = null,
+    val activeConnections: Int = 0,
+    val totalConnections: Long = 0,
+    val lastActivityEpochMillis: Long? = null,
+    val stopOutcome: PortForwardStopOutcome? = null,
 )
 
 /** Marks only live forwards on [sessionId] failed when their SSH carrier disappears. */

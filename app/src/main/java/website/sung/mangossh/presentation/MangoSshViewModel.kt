@@ -708,6 +708,9 @@ class MangoSshViewModel @JvmOverloads constructor(
         sessionController.stopPortForward(sessionId, ruleId)
     }
 
+    /** Refreshes connection counts shown for running forwards; see the forwards screen. */
+    fun refreshPortForwardActivity() = sessionController.refreshPortForwardActivity()
+
     fun requestServerResources(sessionId: String) {
         sessionController.requestServerResources(sessionId)
     }

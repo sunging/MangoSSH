@@ -28,9 +28,32 @@ import kotlinx.coroutines.runBlocking
 interface PortForwarder : AutoCloseable {
     val boundHost: String
     val boundPort: Int
+
+    /**
+     * False once the forward is stopped, and for local and dynamic forwards also once
+     * the local listener has stopped accepting on its own (for example after an error).
+     */
     val isActive: Boolean
+
+    /** Connection counts and the time data last moved; no byte counters are kept. */
+    val activity: PortForwardActivity get() = PortForwardActivity(0, 0, null)
+
     suspend fun stop()
     override fun close() {
         runBlocking { stop() }
     }
 }
+
+/**
+ * Usage of one port forward.
+ *
+ * @property activeConnections data connections open right now
+ * @property totalConnections data connections accepted since the forward started
+ * @property lastActivityEpochMillis when data last moved in either direction, or when the
+ *   latest connection was accepted; null before the first connection
+ */
+data class PortForwardActivity(
+    val activeConnections: Int,
+    val totalConnections: Long,
+    val lastActivityEpochMillis: Long?,
+)
