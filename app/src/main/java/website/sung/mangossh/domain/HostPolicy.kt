@@ -55,4 +55,18 @@ data class TmuxWorkspace(
         WorkspaceMode.CREATE, WorkspaceMode.CREATE_OR_ATTACH -> name.matches(Regex("[A-Za-z0-9_-]{1,80}"))
         WorkspaceMode.ATTACH -> sessionId.matches(Regex("\\$[0-9]{1,10}"))
     }
+
+    /**
+     * The workspace a reconnect opens to return to the same tmux session. CREATE becomes an
+     * ATTACH of the session it created ([resolvedSessionId]), since creating the name again
+     * would fail; named reuse and explicit attach find it again as they are. Null when disabled.
+     */
+    fun reconnectTarget(resolvedSessionId: String?): TmuxWorkspace? = when (mode) {
+        WorkspaceMode.DISABLED -> null
+        WorkspaceMode.CREATE -> resolvedSessionId
+            ?.let { TmuxWorkspace(WorkspaceMode.ATTACH, sessionId = it) }
+            ?.takeIf { it.isValid() }
+            ?: this
+        WorkspaceMode.CREATE_OR_ATTACH, WorkspaceMode.ATTACH -> this
+    }
 }

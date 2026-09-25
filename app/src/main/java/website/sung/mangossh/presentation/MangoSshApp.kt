@@ -409,8 +409,12 @@ fun MangoSshApp(
         if (showReconnect) {
             AlertDialog(onDismissRequest = { showReconnect = false }, title = { Text(stringResource(R.string.terminal_reconnect)) },
                 text = { Column {
-                    Text(stringResource(R.string.terminal_reconnect_fresh))
-                    Row { Checkbox(allowStartupSnippet, { allowStartupSnippet = it }); Text(stringResource(R.string.terminal_reconnect_snippet)) }
+                    if (endedTerminals.firstOrNull { it.session.id == activeSession.id }?.workspace != null) {
+                        Text(stringResource(R.string.terminal_reconnect_workspace))
+                    } else {
+                        Text(stringResource(R.string.terminal_reconnect_fresh))
+                        Row { Checkbox(allowStartupSnippet, { allowStartupSnippet = it }); Text(stringResource(R.string.terminal_reconnect_snippet)) }
+                    }
                 } },
                 confirmButton = { TextButton(onClick = {
                     viewModel.reconnectEnded(activeSession.id, allowStartupSnippet)?.let { activeSessionId = it }

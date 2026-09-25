@@ -637,6 +637,7 @@
     <string name="terminal_clear_records">清除</string>
     <string name="terminal_reconnect">重新连接</string>
     <string name="terminal_reconnect_fresh">将创建新会话，不重放未发送的输入。</string>
+    <string name="terminal_reconnect_workspace">将建立新连接并重新接入同一个 tmux 工作区，不重放未发送的输入。</string>
     <string name="terminal_reconnect_snippet">再次执行配置的启动片段</string>
     <string name="connection_diagnostics">连接诊断</string>
     <string name="diagnostics_unknown">未知</string>

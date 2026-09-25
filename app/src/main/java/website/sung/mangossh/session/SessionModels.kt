@@ -77,6 +77,8 @@ data class EndedTerminalRecord(
     val messageKind: SessionEndMessageKind?,
     val endedAtEpochMillis: Long = System.currentTimeMillis(),
     val diagnostics: ConnectionDiagnostics? = null,
+    /** The tmux workspace a reconnect should reattach, including one chosen after connecting. */
+    val workspace: website.sung.mangossh.domain.TmuxWorkspace? = null,
 )
 
 /** Specific sanitized failure wording selected after a connection attempt ends. */

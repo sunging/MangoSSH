@@ -215,7 +215,13 @@ class MangoSshViewModel @JvmOverloads constructor(
     fun reconnectEnded(sessionId: String, allowStartupSnippet: Boolean): String? {
         val ended = endedTerminals.value.firstOrNull { it.session.id == sessionId } ?: return null
         val profile = vault.snapshot.value.profiles.firstOrNull { it.id == ended.session.profileId } ?: return null
-        return connect(if (allowStartupSnippet) profile else profile.copy(startupSnippetId = null))
+        // Return to the same tmux workspace, even one picked after connecting. Workspaces and
+        // startup snippets are exclusive, so no snippet is replayed into a reattached session.
+        return connect(when {
+            ended.workspace != null -> profile.copy(workspace = ended.workspace, startupSnippetId = null)
+            allowStartupSnippet -> profile
+            else -> profile.copy(startupSnippetId = null)
+        })
     }
     val sessions = sessionController.sessions
     val activePortForwards = sessionController.portForwards

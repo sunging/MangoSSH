@@ -903,7 +903,8 @@ class SshSessionController internal constructor(
                 val state = _sessions.value.firstOrNull { it.id == sessionId }
                 if (state != null) synchronized(_endedTerminals) {
                     val record = EndedTerminalRecord(state.copy(phase = TerminalSessionPhase.CLOSED), reason, messageKind,
-                        diagnostics = diagnosticSnapshot(managed, state.phase).copy(failure = messageKind, moshRunning = if (managed.protocol == ConnectionProtocol.MOSH) false else null, companionConnected = if (managed.protocol == ConnectionProtocol.MOSH) false else null))
+                        diagnostics = diagnosticSnapshot(managed, state.phase).copy(failure = messageKind, moshRunning = if (managed.protocol == ConnectionProtocol.MOSH) false else null, companionConnected = if (managed.protocol == ConnectionProtocol.MOSH) false else null),
+                        workspace = managed.profile.workspace.reconnectTarget(managed.workspaceId))
                     val records = listOf(record) + _endedTerminals.value
                     _endedTerminals.value = records.take(10)
                     records.drop(10).forEach { terminalStore.remove(it.session.id) }
@@ -1648,7 +1649,7 @@ class SshSessionController internal constructor(
      * the sensitive Mosh key.
      */
     private suspend fun prepareWorkspace(sessionId: String, managed: ManagedSession, connection: SshConnection): String? = try {
-        TmuxWorkspaces.prepare(connection, managed.profile.workspace)
+        TmuxWorkspaces.prepare(connection, managed.profile.workspace).also { managed.workspaceId = it }
     } catch (_: WorkspaceUnavailableException) {
         val accepted = requestPrompt(SessionPrompt.Authentication(UUID.randomUUID().toString(), sessionId,
             SessionPromptText.App(SessionPromptTextKind.WORKSPACE_UNAVAILABLE),
@@ -2062,6 +2063,9 @@ class SshSessionController internal constructor(
         @Volatile var lastConfirmedNanos = 0L
         /** Algorithm and fingerprint of the host key this session's target presented and the user trusts. */
         @Volatile var verifiedHostKey: String? = null
+
+        /** tmux session id the terminal attached to, once resolved; a reconnect reattaches it. */
+        @Volatile var workspaceId: String? = null
         @Volatile var configuredRoute = profile.route
         val sshFeatureLock = lifecycle.lock
         @Volatile var inputReady = false

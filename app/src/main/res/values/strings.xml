@@ -657,6 +657,7 @@
     <string name="terminal_clear_records">Clear</string>
     <string name="terminal_reconnect">Reconnect</string>
     <string name="terminal_reconnect_fresh">A new session will be created. Unsent input is never replayed.</string>
+    <string name="terminal_reconnect_workspace">A new connection will reattach the same tmux workspace. Unsent input is never replayed.</string>
     <string name="terminal_reconnect_snippet">Run the configured startup snippet again</string>
     <string name="connection_diagnostics">Connection diagnostics</string>
     <string name="diagnostics_unknown">Unknown</string>
