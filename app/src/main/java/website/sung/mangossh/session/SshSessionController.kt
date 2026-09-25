@@ -166,6 +166,7 @@ class SshSessionController internal constructor(
         remoteFiles = remoteFiles,
         connectionOf = ::requireSshFeatureConnection,
         onSessionIdle = ::closeFileTransferIfIdle,
+        identityOf = { sessionId -> sessionsById[sessionId]?.transferIdentity() },
     )
     val scpTransfers: StateFlow<List<ScpTransferState>> = fileTransfers.transfers
     /** True while any transfer is queued or moving bytes; paused and finished ones do not count. */
@@ -1054,6 +1055,7 @@ class SshSessionController internal constructor(
             syncRemoteSizeToViewport(sessionId)
             startSshReaders(sessionId, managed)
             startSshKeepalive(sessionId, managed)
+            offerInterruptedTransfers(sessionId, managed)
             snapshot.portForwards
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
@@ -1111,6 +1113,7 @@ class SshSessionController internal constructor(
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             startSshKeepalive(sessionId, managed)
+            offerInterruptedTransfers(sessionId, managed)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -1222,6 +1225,7 @@ class SshSessionController internal constructor(
             syncRemoteSizeToViewport(sessionId)
             startMoshReader(sessionId, managed, moshProcess)
             attachMoshSshFeatureConnection(sessionId, managed, connection)
+            offerInterruptedTransfers(sessionId, managed)
             snapshot.portForwards
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
@@ -1328,6 +1332,22 @@ class SshSessionController internal constructor(
                 readStream(sessionId, session.stderr),
             )
         }
+    }
+
+    /** The verified server a transfer on this session belongs to; null until its host key is known. */
+    private fun ManagedSession.transferIdentity(): TransferHostIdentity? = verifiedHostKey?.let { hostKey ->
+        TransferHostIdentity(profile.id, profile.hostname, profile.port, profile.username,
+            profile.route, profile.jumpProfileIds, hostKey)
+    }
+
+    /**
+     * Lets transfers interrupted on an earlier session to the same server continue on
+     * this one. Port-forward-only sessions close with their forwards, so they never
+     * take transfers over.
+     */
+    private fun offerInterruptedTransfers(sessionId: String, managed: ManagedSession) {
+        if (managed.kind == SessionKind.PORT_FORWARD) return
+        fileTransfers.onSessionOpened(sessionId, managed.transferIdentity(), managed.sshFeatureConnection)
     }
 
     /** Re-read before every background wait so a settings change reaches running sessions. */
@@ -1852,6 +1872,19 @@ class SshSessionController internal constructor(
             port: Int,
             algorithm: String,
             hostKey: ByteArray,
+        ): Boolean = verify(hostname, port, algorithm, hostKey).also { accepted ->
+            // Remember which key the session's own target presented (not a jump hop's), so a
+            // transfer interrupted on this session is only ever resumed on the same server.
+            if (accepted) sessionsById[sessionId]
+                ?.takeIf { it.connection.hostname == hostname && it.connection.port == port }
+                ?.verifiedHostKey = "$algorithm ${hostKeyFingerprint(hostKey)}"
+        }
+
+        private fun verify(
+            hostname: String,
+            port: Int,
+            algorithm: String,
+            hostKey: ByteArray,
         ): Boolean {
             val encoded = Base64.getEncoder().encodeToString(hostKey)
             val fingerprint = hostKeyFingerprint(hostKey)
@@ -1909,6 +1942,8 @@ class SshSessionController internal constructor(
         val lifecycle = SessionLifecycle()
         val jumpConnections = mutableListOf<SshConnection>()
         @Volatile var lastConfirmedNanos = 0L
+        /** Algorithm and fingerprint of the host key this session's target presented and the user trusts. */
+        @Volatile var verifiedHostKey: String? = null
         @Volatile var configuredRoute = profile.route
         val sshFeatureLock = lifecycle.lock
         @Volatile var inputReady = false

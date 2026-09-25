@@ -189,11 +189,17 @@ data class ScpTransferState(
     val totalItems: Int? = null,
     /**
      * False once the connection that owns this transfer is gone. Resuming and
-     * retrying need that connection, and the transfer list must never open a
-     * new one, because host-key and authentication prompts are only rendered by
-     * the remote file browser.
+     * retrying need a connection to the same server; the transfer list itself
+     * never opens one, it only asks the user to reconnect.
      */
     val controllable: Boolean = true,
+    /** Host profile the transfer was started for, used to offer a reconnect. */
+    val profileId: String? = null,
+    /**
+     * True while the transfer waits for a new session to the same verified server.
+     * Reconnecting rebinds it and makes it controllable again; see [TransferRebinding].
+     */
+    val awaitingReconnect: Boolean = false,
 )
 
 /** True while the transfer is queued or moving bytes. */

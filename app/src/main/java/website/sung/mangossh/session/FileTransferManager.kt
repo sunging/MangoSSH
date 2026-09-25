@@ -45,7 +45,8 @@ import java.util.concurrent.ConcurrentHashMap
  * carrier is still usable, so a Mosh companion lost underneath a paused
  * transfer is re-authenticated on resume, and any prompt it raises is rendered
  * over whichever screen is showing. A session that has ended has nothing to go
- * back to; [onSessionEnded] marks those transfers uncontrollable instead.
+ * back to; [onSessionEnded] pauses its transfers until the user reconnects to
+ * the same verified server, and [onSessionOpened] hands them to that session.
  *
  * Local documents are addressed through Storage Access Framework grants held by
  * the activity task. They are not taken persistably: a transfer does not
@@ -61,6 +62,8 @@ internal class FileTransferManager(
     private val remoteFiles: RemoteFileClient,
     private val connectionOf: suspend (String) -> SshConnection,
     private val onSessionIdle: (String) -> Unit,
+    /** The verified server behind a session, or null when it cannot be proven. */
+    private val identityOf: (String) -> TransferHostIdentity? = { null },
 ) {
     private val stagingBudget = StagingBudget(availableBytes = { android.os.StatFs(context.cacheDir.absolutePath).availableBytes })
     private val stagingReady = scope.launch(Dispatchers.IO) {
@@ -232,32 +235,49 @@ internal class FileTransferManager(
     /**
      * Reacts to the connection behind [sessionId] going away.
      *
-     * Transfers that were moving bytes end as failures, and everything else the
-     * session owned becomes uncontrollable: resuming and retrying need that
-     * connection, and the transfer list is not allowed to open a new one.
+     * Every transfer on it becomes uncontrollable, because resuming and retrying
+     * need a connection and the transfer list never opens one itself. Transfers
+     * whose server identity is known wait for a reconnect instead of failing; see
+     * [TransferRebinding.detach].
      */
     fun onSessionEnded(sessionId: String) {
-        handles.values.filter { it.request.sessionId == sessionId }.forEach {
+        val ended = handles.filterValues { it.request.sessionId == sessionId }
+        ended.values.forEach {
             it.operation?.close()
             it.job?.cancel()
         }
-        val closedMessage = RemoteFileMessage.TransferSessionClosed
+        // The cancelled runs may still be unwinding; they must not settle the state
+        // written here, nor a later run started after a reconnect.
+        runs.entries.removeIf { it.value.first in ended.keys }
         _transfers.update { current ->
             current.map { transfer ->
-                when {
-                    transfer.sessionId != sessionId -> transfer
-                    transfer.isActive -> transfer.copy(
-                        phase = ScpTransferPhase.FAILED,
-                        detail = if (transfer.phase == ScpTransferPhase.COMMITTING) RemoteFileMessage.CommitFailure else closedMessage,
-                        currentItem = null,
-                        controllable = false,
-                    )
-
-                    transfer.controllable -> transfer.copy(controllable = false)
-                    else -> transfer
-                }
+                val handle = ended[transfer.id] ?: return@map transfer
+                TransferRebinding.detach(transfer, handle.exactBytes, rebindable = handle.identity != null)
             }
         }
+    }
+
+    /**
+     * Hands transfers waiting for a reconnect to [sessionId] when it reaches the same
+     * server they were started on. They stay paused until the user resumes them.
+     * [connection] becomes the carrier used to clean up their staged remote files.
+     */
+    fun onSessionOpened(sessionId: String, identity: TransferHostIdentity?, connection: SshConnection?) {
+        if (identity == null) return
+        val waiting = _transfers.value.filter { it.awaitingReconnect }.mapNotNull { transfer ->
+            handles[transfer.id]?.takeIf { it.identity == identity }?.let { transfer.id to it }
+        }.toMap()
+        if (waiting.isEmpty()) return
+        waiting.values.forEach { handle ->
+            synchronized(handle) {
+                handle.request = handle.request.onSession(sessionId)
+                handle.connection = connection
+            }
+        }
+        _transfers.update { current ->
+            current.map { if (it.id in waiting) TransferRebinding.reattach(it, sessionId) else it }
+        }
+        MangoLog.info(MangoLogEvent.TRANSFER_REBOUND)
     }
 
     private fun enqueue(
@@ -269,7 +289,8 @@ internal class FileTransferManager(
         localUri: String,
     ) {
         val transferId = UUID.randomUUID().toString()
-        handles[transferId] = TransferHandle(request)
+        val identity = identityOf(request.sessionId)
+        handles[transferId] = TransferHandle(request, identity)
         _transfers.update { current ->
             current + ScpTransferState(
                 id = transferId,
@@ -280,6 +301,7 @@ internal class FileTransferManager(
                 phase = ScpTransferPhase.QUEUED,
                 kind = kind,
                 localUri = localUri,
+                profileId = identity?.profileId,
             )
         }
         start(transferId, startOffset = 0L, completedItems = 0)
@@ -287,8 +309,9 @@ internal class FileTransferManager(
 
     private fun start(transferId: String, startOffset: Long, completedItems: Int, resume: Boolean = false) {
         val previous = handles[transferId] ?: return
-        val handle = TransferHandle(previous.request)
+        val handle = TransferHandle(previous.request, previous.identity)
         handle.exactBytes = startOffset
+        handle.connection = previous.connection
         val previousCleanup = if (!resume) cleanupTemporary(previous) else null
         // A run cut off by a lost connection is reported at once but may still be blocked
         // in I/O; the new run must not touch the same staged files until it has exited.
@@ -318,6 +341,13 @@ internal class FileTransferManager(
             stagingReady.join()
             previousRun?.join()
             previousCleanup?.join()
+            // Only now has the interrupted run stopped confirming bytes, so its final
+            // contiguous offset is the one the staged files actually hold.
+            val offset = if (resume) previous.exactBytes else startOffset
+            if (offset != startOffset) {
+                handle.exactBytes = offset
+                update(runId) { it.copy(transferredBytes = offset) }
+            }
             supervisor.run(handle.request.sessionId) {
                     withContext(Dispatchers.IO) {
                         handle.operation = BlockingOperation()
@@ -327,10 +357,10 @@ internal class FileTransferManager(
                         }
                         try {
                             when (val request = handle.request) {
-                                is TransferRequest.FileDownload -> runFileDownload(runId, handle, request, startOffset)
-                                is TransferRequest.DirectoryDownload -> runDirectoryDownload(runId, handle, request, startOffset, completedItems)
-                                is TransferRequest.FileUpload -> runFileUpload(runId, handle, request, startOffset)
-                                is TransferRequest.DirectoryUpload -> runDirectoryUpload(runId, handle, request, startOffset, completedItems)
+                                is TransferRequest.FileDownload -> runFileDownload(runId, handle, request, offset)
+                                is TransferRequest.DirectoryDownload -> runDirectoryDownload(runId, handle, request, offset, completedItems)
+                                is TransferRequest.FileUpload -> runFileUpload(runId, handle, request, offset)
+                                is TransferRequest.DirectoryUpload -> runDirectoryUpload(runId, handle, request, offset, completedItems)
                             }
                         } finally {
                             handle.operation?.close()
@@ -916,7 +946,7 @@ internal class FileTransferManager(
 
     private enum class StopReason { PAUSE, CANCEL }
 
-    private class TransferHandle(val request: TransferRequest) {
+    private class TransferHandle(@Volatile var request: TransferRequest, val identity: TransferHostIdentity?) {
         var job: Job? = null
 
         @Volatile
@@ -945,6 +975,14 @@ internal class FileTransferManager(
     /** Everything needed to run one transfer again from the start. */
     private sealed interface TransferRequest {
         val sessionId: String
+
+        /** The same request carried by another session to the same server. */
+        fun onSession(sessionId: String): TransferRequest = when (this) {
+            is FileDownload -> copy(sessionId = sessionId)
+            is DirectoryDownload -> copy(sessionId = sessionId)
+            is FileUpload -> copy(sessionId = sessionId)
+            is DirectoryUpload -> copy(sessionId = sessionId)
+        }
 
         data class FileDownload(
             override val sessionId: String,

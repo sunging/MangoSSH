@@ -713,6 +713,11 @@ fun MangoSshApp(
             },
             onClearFinished = viewModel::clearFinishedTransfers,
             onDismiss = { showTransfers = false },
+            onReconnect = { transfer ->
+                // The browser renders host-key and sign-in prompts for the new connection.
+                showTransfers = false
+                viewModel.reconnectForTransfer(transfer)
+            },
         )
     }
 

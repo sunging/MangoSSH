@@ -99,6 +99,7 @@ enum class MangoLogEvent(val code: String) {
     MOSH_COMPANION_SSH_RECONNECT_SUCCEEDED("mosh.companion_ssh.reconnect.succeeded"),
     MOSH_COMPANION_SSH_RECONNECT_FAILED("mosh.companion_ssh.reconnect.failed"),
     TRANSFER_REMOTE_TEMP_CLEANUP_FAILED("transfer.remote_temp.cleanup.failed"),
+    TRANSFER_REBOUND("transfer.rebound"),
     TSNET_STARTING("tsnet.starting"),
     TSNET_RUNNING("tsnet.running"),
     TSNET_FAILED("tsnet.failed"),

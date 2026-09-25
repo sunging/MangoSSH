@@ -142,6 +142,7 @@ internal fun FileTransfersSheet(
     onOpenRemoteDirectory: (ScpTransferState) -> Unit,
     onClearFinished: () -> Unit,
     onDismiss: () -> Unit,
+    onReconnect: (ScpTransferState) -> Unit = {},
 ) {
     val context = LocalContext.current
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -177,6 +178,7 @@ internal fun FileTransfersSheet(
                     onResume = { onResume(transfer.id) },
                     onCancel = { onCancel(transfer.id) },
                     onRetry = { onRetry(transfer.id) },
+                    onReconnect = { onReconnect(transfer) },
                     onOpen = {
                         if (transfer.canOpenLocally) {
                             openDownloadedDocument(context, transfer)
@@ -197,6 +199,7 @@ private fun TransferCard(
     onResume: () -> Unit,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    onReconnect: () -> Unit,
     onOpen: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -265,7 +268,15 @@ private fun TransferCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
             )
-            if (!transfer.controllable && !transfer.isFinished) {
+            val waitingForReconnect = transfer.awaitingReconnect && !transfer.controllable &&
+                transfer.phase != ScpTransferPhase.COMPLETED
+            if (waitingForReconnect) {
+                Text(
+                    text = stringResource(R.string.transfer_awaiting_reconnect),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (!transfer.controllable && !transfer.isFinished) {
                 Text(
                     text = stringResource(R.string.remote_file_transfer_session_closed),
                     style = MaterialTheme.typography.labelSmall,
@@ -274,6 +285,9 @@ private fun TransferCard(
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (waitingForReconnect && transfer.profileId != null) {
+                    TransferAction(Icons.Outlined.Refresh, stringResource(R.string.terminal_reconnect), onReconnect)
+                }
                 if (transfer.canPause) {
                     TransferAction(Icons.Outlined.Pause, stringResource(R.string.ui_pause), onPause)
                 }

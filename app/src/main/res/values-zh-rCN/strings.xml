@@ -65,6 +65,7 @@
     <string name="remote_file_tree_links_skipped">已跳过 %1$d 项：符号链接和特殊文件不参与传输。</string>
     <string name="remote_file_no_app_to_open">没有可以打开此文件的应用。</string>
     <string name="remote_file_transfer_session_closed">承载此传输的连接已关闭。请重新打开文件浏览器后再传输。</string>
+    <string name="transfer_awaiting_reconnect">连接已断开。重新连接到同一主机后可继续此传输。</string>
     <string name="session_ended_remote_exit">远端主机已结束该会话。</string>
     <string name="session_ended_connection_lost">连接已中断。</string>
     <string name="session_ended_connection_failed">无法建立连接。</string>

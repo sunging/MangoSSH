@@ -89,6 +89,9 @@ class TransferSafetyInstrumentedTest {
         override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<out String>?) = error("Unexpected update")
     }
 
+    private lateinit var testContext: Context
+    private lateinit var testScope: CoroutineScope
+
     private fun fixture(block: suspend (SshConnection, Documents, FileTransferManager) -> Unit) = runBlocking {
         val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
         if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
@@ -109,6 +112,8 @@ class TransferSafetyInstrumentedTest {
             connection.connect(10_000) { _, _ -> true }
             assertTrue(connection.authenticate("fixture", object : SshCredentials {}))
             val manager = FileTransferManager(context, scope, RemoteFileClient(), { connection }, {})
+            testContext = context
+            testScope = scope
             withTimeout(20_000) { block(connection, provider, manager) }
         } finally {
             scope.coroutineContext[Job]!!.cancelAndJoin()
@@ -283,6 +288,50 @@ class TransferSafetyInstrumentedTest {
         assertEquals(1, manager.transfers.first { it.single().isFinished }.single().skippedItems)
         assertEquals("external replacement", target.readText())
         if (saveAs) assertEquals("original", original.readText())
+    }
+
+    @Test fun anInterruptedUploadContinuesAfterReconnectingToTheSameServer() = fixture { first, provider, _ ->
+        val second = SshConnection(first.hostname, first.port)
+        try {
+            second.connect(10_000) { _, _ -> true }
+            assertTrue(second.authenticate("fixture", object : SshCredentials {}))
+            val identity = TransferHostIdentity("profile", first.hostname, first.port, "fixture",
+                website.sung.mangossh.domain.ConnectionRoute.DIRECT, emptyList(), "fixture-key")
+            val manager = FileTransferManager(testContext, testScope, RemoteFileClient(),
+                connectionOf = { sessionId -> if (sessionId == "s1") first else second }, onSessionIdle = {},
+                identityOf = { sessionId -> identity.takeIf { sessionId == "s1" } })
+            val name = UUID.randomUUID().toString()
+            File(provider.root, "source").writeBytes(ByteArray(100_000) { it.toByte() })
+            provider.blockReads = true
+            manager.uploadFile("s1", provider.uri("source"), name, "/")
+            val conflict = manager.conflicts.first { it.isNotEmpty() }.single()
+            manager.resolveConflict(conflict.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+            withContext(Dispatchers.IO) { check(provider.openedRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
+
+            // The session drops while the source is being opened.
+            manager.onSessionEnded("s1")
+            val waiting = manager.transfers.value.single()
+            assertEquals(ScpTransferPhase.PAUSED, waiting.phase)
+            assertTrue(waiting.awaitingReconnect)
+            assertFalse(waiting.canResume)
+
+            // A session to another server is ignored; the same server takes the transfer over.
+            manager.onSessionOpened("other", identity.copy(hostKey = "different-key"), second)
+            assertTrue(manager.transfers.value.single().awaitingReconnect)
+            manager.onSessionOpened("s2", identity, second)
+            val rebound = manager.transfers.value.single()
+            assertEquals("s2", rebound.sessionId)
+            assertTrue(rebound.canResume)
+
+            provider.blockReads = false; provider.allowRead.countDown()
+            manager.resume(rebound.id)
+            assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+            val files = second.openFiles()
+            try {
+                assertEquals(100_000L, files.stat("/$name").size)
+                files.remove("/$name")
+            } finally { files.close() }
+        } finally { provider.blockReads = false; provider.allowRead.countDown(); second.close() }
     }
 
     @Test fun committingCannotBePausedOrCancelled() = fixture { connection, provider, manager ->

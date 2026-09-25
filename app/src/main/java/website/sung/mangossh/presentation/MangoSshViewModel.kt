@@ -949,6 +949,19 @@ class MangoSshViewModel @JvmOverloads constructor(
      * Only the connection the upload ran on is reused; a closed session cannot
      * be reopened from here because its prompts would have nowhere to render.
      */
+    /**
+     * Opens a file browser on the host an interrupted transfer belongs to. Once that
+     * connection verifies the same server, the transfer is handed to it and can resume.
+     */
+    fun reconnectForTransfer(transfer: ScpTransferState) {
+        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == transfer.profileId }
+        if (profile == null) {
+            _userMessage.value = uiText(R.string.remote_file_transfer_session_closed)
+            return
+        }
+        openRemoteBrowserForProfile(profile)
+    }
+
     fun openRemoteDirectoryFromTransfer(transfer: ScpTransferState) {
         val session = sessions.value.firstOrNull { it.id == transfer.sessionId }
         if (session == null || session.phase != TerminalSessionPhase.OPEN) {
