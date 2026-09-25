@@ -30,7 +30,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -97,8 +99,12 @@ class SshSessionController internal constructor(
             connection.lastPacketSentNanos.takeIf { it > 0 }, connection.lastPacketReceivedNanos.takeIf { it > 0 },
             managed.lastConfirmedNanos.takeIf { it > 0 },
             if (managed.protocol == ConnectionProtocol.MOSH) managed.moshProcess != null && managed.lifecycle.isOpen else null,
-            if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection != null else null)
+            if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection != null else null,
+            companion = _sessionHealth.value[sessionIdOf(managed)]?.companion,
+            network = _network.value)
     }
+
+    private fun sessionIdOf(managed: ManagedSession): String? = sessionsById.entries.firstOrNull { it.value === managed }?.key
 
     /** Clears only ended emulator history; active sessions are unaffected. */
     fun clearEndedTerminals() {
@@ -164,8 +170,13 @@ class SshSessionController internal constructor(
         remoteFiles = remoteFiles,
         connectionOf = ::requireSshFeatureConnection,
         onSessionIdle = ::closeFileTransferIfIdle,
+        identityOf = { sessionId -> sessionsById[sessionId]?.transferIdentity() },
     )
     val scpTransfers: StateFlow<List<ScpTransferState>> = fileTransfers.transfers
+    /** True while any transfer is queued or moving bytes; paused and finished ones do not count. */
+    val hasActiveTransfers: StateFlow<Boolean> = fileTransfers.transfers
+        .map { transfers -> transfers.any { it.isActive } }
+        .stateIn(scope, SharingStarted.Eagerly, false)
     val transferConflicts = fileTransfers.conflicts
     /** Resolves only the currently registered transfer preview. */
     fun resolveTransferConflict(id: String, decision: TransferConflictDecision) = fileTransfers.resolveConflict(id, decision)
@@ -184,9 +195,45 @@ class SshSessionController internal constructor(
     val clipboardCopies = terminalStore.clipboardCopies
 
     private val connectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
+
+    // The callback reports an existing network right after registration, but says nothing when there is none.
+    private val _network = MutableStateFlow(NetworkStatus(
+        health = if (runCatching { connectivity?.activeNetwork }.getOrNull() == null) NetworkHealth.LOST else NetworkHealth.AVAILABLE,
+    ))
+    /** The default network's state, for explaining stalls; never used to decide liveness. */
+    val network = _network.asStateFlow()
+
+    private val _sessionHealth = MutableStateFlow<Map<String, SessionHealth>>(emptyMap())
+    /** Health beyond the session phase, keyed by session id; see [SessionHealth]. */
+    val sessionHealth = _sessionHealth.asStateFlow()
+
+    private fun setCompanionHealth(sessionId: String, companion: CompanionHealth) {
+        _sessionHealth.update { current ->
+            if (sessionsById.containsKey(sessionId)) current + (sessionId to SessionHealth(companion)) else current - sessionId
+        }
+    }
+
     private val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: android.net.Network) { requestHealthChecks() }
-        override fun onLost(network: android.net.Network) { requestHealthChecks() }
+        override fun onAvailable(network: android.net.Network) {
+            _network.update { it.copy(health = NetworkHealth.AVAILABLE) }
+            requestHealthChecks()
+        }
+        override fun onLost(network: android.net.Network) {
+            // The default network callback reports the loss before any replacement arrives.
+            _network.update { it.copy(health = NetworkHealth.LOST) }
+            requestHealthChecks()
+        }
+        override fun onBlockedStatusChanged(network: android.net.Network, blocked: Boolean) {
+            _network.update { it.copy(health = if (blocked) NetworkHealth.BLOCKED else NetworkHealth.AVAILABLE) }
+        }
+        override fun onCapabilitiesChanged(network: android.net.Network, capabilities: android.net.NetworkCapabilities) {
+            _network.update {
+                it.copy(
+                    validated = capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                    metered = !capabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+                )
+            }
+        }
     }
 
     /** Foreground and network events coalesce into at most one in-flight probe per session. */
@@ -199,6 +246,7 @@ class SshSessionController internal constructor(
                     val connection = if (managed.protocol == ConnectionProtocol.MOSH) managed.sshFeatureConnection else managed.connection
                     if (connection != null) {
                         try { connection.keepalive(); managed.lastConfirmedNanos = System.nanoTime() }
+                        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                         catch (error: Exception) {
                             if (managed.protocol == ConnectionProtocol.MOSH) invalidateMoshSshFeatureConnection(id, managed, connection)
                             else finishSession(id, managed, SessionEndReason.CONNECTION_LOST, error)
@@ -452,7 +500,7 @@ class SshSessionController internal constructor(
         if (existing?.phase == PortForwardRuntimePhase.ACTIVE || existing?.phase == PortForwardRuntimePhase.STARTING || existing?.phase == PortForwardRuntimePhase.STOPPING) {
             return
         }
-        markPortForwardStarting(runtimeId, sessionId, rule, "Starting tunnel")
+        markPortForwardStarting(runtimeId, sessionId, rule, context.appString(R.string.port_forward_starting))
         activatePortForward(sessionId, rule, runtimeId)
     }
 
@@ -494,7 +542,8 @@ class SshSessionController internal constructor(
             // early because the session is gone.
             _portForwards.update { states ->
                 states.map { state ->
-                    if (state === attempt) state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = SESSION_CLOSED_DETAIL) else state
+                    if (state === attempt) state.copy(phase = PortForwardRuntimePhase.STOPPED,
+                        detail = context.appString(R.string.port_forward_session_closed)) else state
                 }
             }
             return
@@ -522,7 +571,18 @@ class SshSessionController internal constructor(
                         // decided the install keeps a concurrent invalidation or
                         // stop from being overwritten by an ACTIVE the rule no
                         // longer deserves.
-                        updatePortForward(runtimeId, PortForwardRuntimePhase.ACTIVE, "Listening")
+                        val carrier = managed.forwardCarrier()
+                        _portForwards.update { states ->
+                            states.map { state ->
+                                if (state.runtimeId != runtimeId) state else state.copy(
+                                    phase = PortForwardRuntimePhase.ACTIVE,
+                                    detail = context.appString(R.string.port_forward_listening),
+                                    boundAddress = forward.handle.boundAddress(),
+                                    carrier = carrier,
+                                    stopOutcome = null,
+                                ).withActivity(forward.handle.activity)
+                            }
+                        }
                         true
                     } else {
                         false
@@ -607,8 +667,21 @@ class SshSessionController internal constructor(
             synchronized(managed.sshFeatureLock) {
                 if (sessionsById[sessionId] === managed &&
                     _portForwards.value.firstOrNull { it.runtimeId == runtimeId }?.phase == PortForwardRuntimePhase.STOPPING) {
-                    updatePortForward(runtimeId, if (failure == null) PortForwardRuntimePhase.STOPPED else PortForwardRuntimePhase.FAILED,
-                        context.appString(if (failure == null) R.string.port_forward_stopped else R.string.port_forward_stop_failed))
+                    val outcome = if (failure == null) forward?.stopOutcome ?: PortForwardStopOutcome.STOPPED else null
+                    _portForwards.update { states ->
+                        states.map { state ->
+                            if (state.runtimeId != runtimeId) state else state.copy(
+                                phase = if (outcome == null) PortForwardRuntimePhase.FAILED else PortForwardRuntimePhase.STOPPED,
+                                detail = context.appString(when (outcome) {
+                                    null -> R.string.port_forward_stop_failed
+                                    PortForwardStopOutcome.UNCONFIRMED -> R.string.port_forward_stop_unconfirmed
+                                    PortForwardStopOutcome.STOPPED -> R.string.port_forward_stopped
+                                }),
+                                stopOutcome = outcome,
+                                activeConnections = 0,
+                            )
+                        }
+                    }
                 }
             }
             closePortForwardSessionIfIdle(sessionId)
@@ -825,11 +898,13 @@ class SshSessionController internal constructor(
         val callbacks = synchronized(managed.lifecycle.lock) {
             val detached = managed.lifecycle.close() ?: return
             sessionsById.remove(sessionId, managed)
+            _sessionHealth.update { it - sessionId }
             if (managed.kind == SessionKind.TERMINAL) {
                 val state = _sessions.value.firstOrNull { it.id == sessionId }
                 if (state != null) synchronized(_endedTerminals) {
                     val record = EndedTerminalRecord(state.copy(phase = TerminalSessionPhase.CLOSED), reason, messageKind,
-                        diagnostics = diagnosticSnapshot(managed, state.phase).copy(failure = messageKind, moshRunning = if (managed.protocol == ConnectionProtocol.MOSH) false else null, companionConnected = if (managed.protocol == ConnectionProtocol.MOSH) false else null))
+                        diagnostics = diagnosticSnapshot(managed, state.phase).copy(failure = messageKind, moshRunning = if (managed.protocol == ConnectionProtocol.MOSH) false else null, companionConnected = if (managed.protocol == ConnectionProtocol.MOSH) false else null),
+                        workspace = managed.profile.workspace.reconnectTarget(managed.workspaceId))
                     val records = listOf(record) + _endedTerminals.value
                     _endedTerminals.value = records.take(10)
                     records.drop(10).forEach { terminalStore.remove(it.session.id) }
@@ -1047,6 +1122,7 @@ class SshSessionController internal constructor(
             syncRemoteSizeToViewport(sessionId)
             startSshReaders(sessionId, managed)
             startSshKeepalive(sessionId, managed)
+            offerInterruptedTransfers(sessionId, managed)
             snapshot.portForwards
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
@@ -1104,6 +1180,7 @@ class SshSessionController internal constructor(
             updateSession(sessionId, TerminalSessionPhase.OPEN, context.appString(R.string.session_open))
             MangoLog.info(MangoLogEvent.SSH_SESSION_OPENED)
             startSshKeepalive(sessionId, managed)
+            offerInterruptedTransfers(sessionId, managed)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -1215,6 +1292,7 @@ class SshSessionController internal constructor(
             syncRemoteSizeToViewport(sessionId)
             startMoshReader(sessionId, managed, moshProcess)
             attachMoshSshFeatureConnection(sessionId, managed, connection)
+            offerInterruptedTransfers(sessionId, managed)
             snapshot.portForwards
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
@@ -1323,11 +1401,33 @@ class SshSessionController internal constructor(
         }
     }
 
+    /** The verified server a transfer on this session belongs to; null until its host key is known. */
+    private fun ManagedSession.transferIdentity(): TransferHostIdentity? = verifiedHostKey?.let { hostKey ->
+        TransferHostIdentity(profile.id, profile.hostname, profile.port, profile.username,
+            profile.route, profile.jumpProfileIds, hostKey)
+    }
+
+    /**
+     * Lets transfers interrupted on an earlier session to the same server continue on
+     * this one. Port-forward-only sessions close with their forwards, so they never
+     * take transfers over.
+     */
+    private fun offerInterruptedTransfers(sessionId: String, managed: ManagedSession) {
+        if (managed.kind == SessionKind.PORT_FORWARD) return
+        fileTransfers.onSessionOpened(sessionId, managed.transferIdentity(), managed.sshFeatureConnection)
+    }
+
+    /** Re-read before every background wait so a settings change reaches running sessions. */
+    private fun ManagedSession.liveBackgroundMultiplier(): Int =
+        profile.overrides.liveBackgroundMultiplier(connectionPreferencesStore.current())
+
     /**
      * Keeps an authenticated SSH transport visible to idle network devices.
      *
-     * Mosh sessions are excluded because their SSH transport closes after the
-     * UDP bootstrap and the native Mosh client owns its own network lifecycle.
+     * Mosh sessions are excluded: after the UDP bootstrap their SSH connection
+     * lives on as the companion for files and forwards, which has its own
+     * keepalive (see [attachMoshSshFeatureConnection]), and the native Mosh
+     * client owns the terminal's network lifecycle.
      * A keepalive interval of zero means the user disabled keepalives, so no
      * job is started; [runSshKeepaliveLoop] requires a positive interval.
      */
@@ -1346,7 +1446,7 @@ class SshSessionController internal constructor(
                     MangoLog.warn(MangoLogEvent.SSH_KEEPALIVE_FAILED, error)
                     finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
                 },
-                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.preferences.backgroundKeepaliveMultiplier) },
+                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.liveBackgroundMultiplier()) },
             )
         }
     }
@@ -1369,9 +1469,10 @@ class SshSessionController internal constructor(
         managed: ManagedSession,
         connection: SshConnection,
     ) {
+        setCompanionHealth(sessionId, CompanionHealth.CONNECTED)
         connection.monitor { reason ->
-            // The transport thread must not run teardown that closes channels
-            // and sockets, so hand the invalidation to the session scope.
+            // Monitors run inside the connection's own scope, which teardown
+            // cancels, so hand the invalidation to the session scope.
             scope.launch {
                 if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
                     MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, reason)
@@ -1396,7 +1497,7 @@ class SshSessionController internal constructor(
                         MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)
                     }
                 },
-                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.preferences.backgroundKeepaliveMultiplier) },
+                waitForNextKeepalive = { interval -> keepaliveScheduler.waitForNextKeepalive(interval, managed.liveBackgroundMultiplier()) },
             )
         }
     }
@@ -1500,13 +1601,14 @@ class SshSessionController internal constructor(
 
             PortForwardType.REMOTE -> {
                 val (destinationHost, destinationPort) = rule.requireDestination()
-                connection.requestRemotePortForwarding(
-                    rule.bindHost.ifBlank { "127.0.0.1" },
-                    rule.bindPort,
-                    destinationHost,
-                    destinationPort,
+                ManagedPortForward.Remote(
+                    connection.createRemotePortForwarder(
+                        rule.bindHost.ifBlank { "127.0.0.1" },
+                        rule.bindPort,
+                        destinationHost,
+                        destinationPort,
+                    ),
                 )
-                ManagedPortForward.Remote(connection, rule.bindPort)
             }
         }
     }
@@ -1519,13 +1621,17 @@ class SshSessionController internal constructor(
     }
 
     private fun closePortForwards(sessionId: String, managed: ManagedSession) {
+        val sessionClosedDetail = context.appString(R.string.port_forward_session_closed)
         val forwards = synchronized(managed.sshFeatureLock) {
             managed.forwards.values.toList().also {
                 managed.forwards.clear()
                 _portForwards.update { states ->
                     states.map { state ->
                         if (state.sessionId == sessionId && state.phase != PortForwardRuntimePhase.STOPPED) {
-                            state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = SESSION_CLOSED_DETAIL)
+                            // The connection is gone, and with it every listener it carried:
+                            // servers drop remote forwards when the connection closes.
+                            state.copy(phase = PortForwardRuntimePhase.STOPPED, detail = sessionClosedDetail,
+                                stopOutcome = PortForwardStopOutcome.STOPPED, activeConnections = 0)
                         } else {
                             state
                         }
@@ -1545,7 +1651,7 @@ class SshSessionController internal constructor(
      * the sensitive Mosh key.
      */
     private suspend fun prepareWorkspace(sessionId: String, managed: ManagedSession, connection: SshConnection): String? = try {
-        TmuxWorkspaces.prepare(connection, managed.profile.workspace)
+        TmuxWorkspaces.prepare(connection, managed.profile.workspace).also { managed.workspaceId = it }
     } catch (_: WorkspaceUnavailableException) {
         val accepted = requestPrompt(SessionPrompt.Authentication(UUID.randomUUID().toString(), sessionId,
             SessionPromptText.App(SessionPromptTextKind.WORKSPACE_UNAVAILABLE),
@@ -1623,6 +1729,9 @@ class SshSessionController internal constructor(
             connection.keepalive()
             managed.lastConfirmedNanos = System.nanoTime()
             connection
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // The caller stopped waiting; that says nothing about the companion connection.
+            throw cancelled
         } catch (error: Exception) {
             if (invalidateMoshSshFeatureConnection(sessionId, managed, connection)) {
                 MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_DISCONNECTED, error)
@@ -1661,6 +1770,7 @@ class SshSessionController internal constructor(
         val connection = SshConnection(profile.hostname, profile.port, profile.legacySshAlgorithms)
         val pending = adoptPendingConnection(managed.lifecycle, connection, cleanupScope)
         MangoLog.info(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_STARTED)
+        setCompanionHealth(sessionId, CompanionHealth.RECONNECTING)
         try {
             if (profile.route == ConnectionRoute.TSNET) {
                 connection.useSocketRoute(requireNotNull(managed.tsnetLease).proxyData)
@@ -1694,6 +1804,7 @@ class SshSessionController internal constructor(
                 cleanupScope.launch { runCatching { connection.close() } }
             }
             MangoLog.warn(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_FAILED, error)
+            setCompanionHealth(sessionId, CompanionHealth.RECONNECT_FAILED)
             throw error
         }
     }
@@ -1728,6 +1839,7 @@ class SshSessionController internal constructor(
             }
         }
         if (!detached) return false
+        setCompanionHealth(sessionId, CompanionHealth.LOST)
 
         forwardsToClose.forEach { forward -> runCatching { forward.close() } }
         runCatching { connection.close() }
@@ -1764,8 +1876,10 @@ class SshSessionController internal constructor(
     /**
      * Publishes one prompt and blocks the calling protocol thread for the answer.
      *
-     * This runs on a trilead transport thread, not on a session coroutine, so
-     * `runBlocking` here cannot be released by cancelling the session's job. The
+     * Callers are blocking callbacks that cbssh invokes from inside its own
+     * coroutines (host-key verification, keyboard-interactive, agent signing) and
+     * workspace preparation. `runBlocking` starts an event loop that is not a
+     * child of the caller's job, so cancelling the session does not release it. The
      * registry is what releases it: [releasePromptWaiters] completes the waiter
      * during teardown. Registering before publishing keeps that guarantee — a
      * waiter is always visible to teardown before its prompt is visible to the
@@ -1819,6 +1933,50 @@ class SshSessionController internal constructor(
         _portForwards.update { current -> current.filterNot { it.runtimeId == state.runtimeId } + state }
     }
 
+    private fun ManagedSession.forwardCarrier(): PortForwardCarrier = when {
+        kind == SessionKind.PORT_FORWARD -> PortForwardCarrier.DEDICATED
+        protocol == ConnectionProtocol.MOSH -> PortForwardCarrier.MOSH_COMPANION
+        else -> PortForwardCarrier.SSH_SESSION
+    }
+
+    private fun SshForward.boundAddress(): String =
+        if (':' in boundHost) "[$boundHost]:$boundPort" else "$boundHost:$boundPort"
+
+    private fun PortForwardRuntimeState.withActivity(activity: org.connectbot.sshlib.PortForwardActivity) = copy(
+        activeConnections = activity.activeConnections,
+        totalConnections = activity.totalConnections,
+        lastActivityEpochMillis = activity.lastActivityEpochMillis,
+    )
+
+    /**
+     * Copies connection counts and last activity from every running listener into the
+     * published state, and fails a local listener that stopped accepting on its own.
+     * Called by the forwards screen while it is visible, so nothing polls in background.
+     */
+    fun refreshPortForwardActivity() {
+        val listenerLost = context.appString(R.string.port_forward_listener_lost)
+        sessionsById.values.forEach { managed ->
+            val lost = mutableListOf<ManagedPortForward>()
+            synchronized(managed.sshFeatureLock) {
+                managed.forwards.forEach { (runtimeId, forward) ->
+                    val handle = forward.handle
+                    val alive = handle.isActive
+                    if (!alive) managed.forwards.remove(runtimeId)?.let(lost::add)
+                    _portForwards.update { states ->
+                        states.map { state ->
+                            when {
+                                state.runtimeId != runtimeId || state.phase != PortForwardRuntimePhase.ACTIVE -> state
+                                !alive -> state.copy(phase = PortForwardRuntimePhase.FAILED, detail = listenerLost, activeConnections = 0)
+                                else -> state.withActivity(handle.activity)
+                            }
+                        }
+                    }
+                }
+            }
+            lost.forEach { forward -> cleanupScope.launch { runCatching { forward.close() } } }
+        }
+    }
+
     private fun updatePortForward(runtimeId: String, phase: PortForwardRuntimePhase, detail: String?) {
         _portForwards.update { current ->
             current.map { state ->
@@ -1833,6 +1991,19 @@ class SshSessionController internal constructor(
         private val knownHosts: List<TrustedHostKey>,
     ) {
         fun verifyServerHostKey(
+            hostname: String,
+            port: Int,
+            algorithm: String,
+            hostKey: ByteArray,
+        ): Boolean = verify(hostname, port, algorithm, hostKey).also { accepted ->
+            // Remember which key the session's own target presented (not a jump hop's), so a
+            // transfer interrupted on this session is only ever resumed on the same server.
+            if (accepted) sessionsById[sessionId]
+                ?.takeIf { it.connection.hostname == hostname && it.connection.port == port }
+                ?.verifiedHostKey = "$algorithm ${hostKeyFingerprint(hostKey)}"
+        }
+
+        private fun verify(
             hostname: String,
             port: Int,
             algorithm: String,
@@ -1894,6 +2065,11 @@ class SshSessionController internal constructor(
         val lifecycle = SessionLifecycle()
         val jumpConnections = mutableListOf<SshConnection>()
         @Volatile var lastConfirmedNanos = 0L
+        /** Algorithm and fingerprint of the host key this session's target presented and the user trusts. */
+        @Volatile var verifiedHostKey: String? = null
+
+        /** tmux session id the terminal attached to, once resolved; a reconnect reattaches it. */
+        @Volatile var workspaceId: String? = null
         @Volatile var configuredRoute = profile.route
         val sshFeatureLock = lifecycle.lock
         @Volatile var inputReady = false
@@ -1951,21 +2127,24 @@ class SshSessionController internal constructor(
     }
 
     private sealed interface ManagedPortForward {
-        fun close()
+        /** The listener this rule created; the source of its address and activity. */
+        val handle: SshForward
 
-        class Local(private val delegate: SshForward) : ManagedPortForward {
-            override fun close() = delegate.close()
-        }
+        fun close() = handle.close()
 
-        class Dynamic(private val delegate: SshForward) : ManagedPortForward {
-            override fun close() = delegate.close()
-        }
+        /**
+         * What closing proves: a local listener is closed by this app, while a remote
+         * listener's cancellation gets no reply from the server.
+         */
+        val stopOutcome: PortForwardStopOutcome get() = PortForwardStopOutcome.STOPPED
 
-        class Remote(
-            private val connection: SshConnection,
-            private val remotePort: Int,
-        ) : ManagedPortForward {
-            override fun close() = connection.cancelRemotePortForwarding(remotePort)
+        class Local(override val handle: SshForward) : ManagedPortForward
+
+        class Dynamic(override val handle: SshForward) : ManagedPortForward
+
+        /** Owns the exact listener it created; stopping never looks it up by port. */
+        class Remote(override val handle: SshForward) : ManagedPortForward {
+            override val stopOutcome get() = PortForwardStopOutcome.UNCONFIRMED
         }
     }
 
@@ -2029,7 +2208,6 @@ class SshSessionController internal constructor(
         const val MAX_RESOURCE_REPORT_CHARS = 32 * 1024
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
         const val TSNET_LOOPBACK_HOST = "127.0.0.1"
-        const val SESSION_CLOSED_DETAIL = "SSH session closed"
         const val TSNET_MOSH_GRACEFUL_RELEASE_MILLIS = 2_000L
         const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256 -l LANG=C.UTF-8"
         const val RESOURCE_COMMAND = "printf 'Host: '; hostname; printf '\\nUptime: '; uptime; printf '\\nLoad: '; cat /proc/loadavg 2>/dev/null || true; printf '\\nMemory:\\n'; free -h 2>/dev/null || true; printf '\\nDisk:\\n'; df -h / 2>/dev/null || true; printf '\\nCPU: '; nproc 2>/dev/null || true"

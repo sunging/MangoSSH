@@ -31,7 +31,6 @@ allprojects {
                         it instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier &&
                             !it.module.toLowerCase(Locale.ROOT).endsWith('-bom')
                     }
-                    .unique { "${it.group}:${it.module}:${it.version}" }
                 if (moduleIds.isEmpty()) {
                     return
                 }

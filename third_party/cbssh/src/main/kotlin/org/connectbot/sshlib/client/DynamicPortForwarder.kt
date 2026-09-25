@@ -74,10 +74,18 @@ internal class DynamicPortForwarder(
     }
 
     private var acceptJob: Job? = null
-    private val dataForwarders = mutableListOf<DataForwarder>()
+    private val connections = ForwardConnections<DataForwarder>()
+
+    @Volatile
     private var _isActive = true
 
-    override val isActive: Boolean get() = _isActive
+    /** False once the accept loop ended on its own; the forward then serves nobody. */
+    @Volatile
+    private var listening = true
+
+    override val isActive: Boolean get() = _isActive && listening
+
+    override val activity get() = connections.activity()
 
     private fun startAcceptLoop() {
         acceptJob = scope.launch {
@@ -90,6 +98,8 @@ internal class DynamicPortForwarder(
                 // Normal shutdown
             } catch (e: Exception) {
                 logger.debug("Accept loop ended: ${e.message}")
+            } finally {
+                listening = false
             }
         }
     }
@@ -133,11 +143,9 @@ internal class DynamicPortForwarder(
             return
         }
 
-        val forwarder = DataForwarder(scope, sshChannel, readChannel, writeChannel) { socket.close() }
-        synchronized(dataForwarders) {
-            if (!_isActive) { forwarder.abort(); return }
-            dataForwarders.add(forwarder)
-        }
+        val forwarder = DataForwarder(scope, sshChannel, readChannel, writeChannel, { socket.close() },
+            onActivity = connections::touch, onFinished = connections::remove)
+        if (!connections.add(forwarder) { _isActive }) { forwarder.abort(); return }
         forwarder.start()
         transferred = true
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -154,9 +162,7 @@ internal class DynamicPortForwarder(
         acceptJob?.cancel()
         serverSocket.close()
         selectorManager.close()
-        synchronized(dataForwarders) {
-            dataForwarders.toList()
-        }.forEach { it.abort() }
+        connections.snapshot().forEach { it.abort() }
 
         try {
             serverSocket.close()

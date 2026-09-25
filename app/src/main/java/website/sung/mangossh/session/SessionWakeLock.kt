@@ -23,13 +23,14 @@ internal class SessionWakeLock(
     /**
      * Applies a complete work snapshot, not a per-session reference increment.
      *
-     * The lease is held only while a live session is on screen. Once the app is
-     * backgrounded ([uiForeground] false) the lock is released so the SoC can
+     * The lease is held while a live session is on screen, or while a file transfer is
+     * actively moving bytes. An idle backgrounded session releases it so the SoC can
      * suspend; keepalives then run off [SessionKeepaliveScheduler]'s Doze-tolerant
-     * alarm instead of a CPU-bound `delay`.
+     * alarm instead of a CPU-bound `delay`. A paused transfer does not count as
+     * active. Holding the lock does not exempt a transfer from Doze network limits.
      */
-    fun update(hasSessions: Boolean, foregroundOwned: Boolean, uiForeground: Boolean = true) {
-        val nextRequired = hasSessions && foregroundOwned && uiForeground
+    fun update(hasSessions: Boolean, foregroundOwned: Boolean, uiForeground: Boolean = true, activeTransfers: Boolean = false) {
+        val nextRequired = hasSessions && foregroundOwned && (uiForeground || activeTransfers)
         if (nextRequired == required) return
         required = nextRequired
         if (required) {

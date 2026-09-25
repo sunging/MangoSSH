@@ -128,8 +128,11 @@ import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionPromptText
 import website.sung.mangossh.session.SessionPromptTextKind
+import website.sung.mangossh.session.PortForwardCarrier
 import website.sung.mangossh.session.PortForwardRuntimePhase
 import website.sung.mangossh.session.PortForwardRuntimeState
+import website.sung.mangossh.session.PortForwardStopOutcome
+import website.sung.mangossh.session.SessionAttention
 import website.sung.mangossh.session.TerminalSessionPhase
 import org.connectbot.terminal.VTermKey
 import website.sung.mangossh.security.AppLockConfiguration
@@ -170,6 +173,7 @@ fun MangoSshApp(
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val sessionAttention by viewModel.sessionAttention.collectAsStateWithLifecycle()
     val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
     val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
@@ -278,7 +282,9 @@ fun MangoSshApp(
     val sessionPrompts by viewModel.sessionPrompts.collectAsStateWithLifecycle()
     val remoteEditor by viewModel.remoteEditor.collectAsStateWithLifecycle()
     remoteEditor?.let {
-        RemoteTextEditorScreen(it, viewModel::changeRemoteDraft, viewModel::saveRemoteEditor, viewModel::reloadRemoteEditor, viewModel::closeRemoteEditor)
+        RemoteTextEditorScreen(it, viewModel::changeRemoteDraft, viewModel::saveRemoteEditor, viewModel::reloadRemoteEditor, viewModel::closeRemoteEditor,
+            onReview = viewModel::reviewRemoteSave, onDismissReview = viewModel::dismissRemoteReview,
+            onRestoreDraft = viewModel::restoreRemoteDraft, onDiscardDraft = viewModel::discardRemoteDraft)
         sessionPrompts.firstOrNull()?.let { prompt ->
             SessionPromptDialog(prompt) { values -> viewModel.respondToSessionPrompt(prompt, values) }
         }
@@ -322,7 +328,8 @@ fun MangoSshApp(
         )
     }
     var editingHostId by rememberSaveable { mutableStateOf<String?>(null) }
-    var showSshConfigImport by remember { mutableStateOf(false) }
+    // Saveable: the dialog owns an open file picker whose result arrives after recreation.
+    var showSshConfigImport by rememberSaveable { mutableStateOf(false) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
     var showTransfers by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
@@ -393,7 +400,7 @@ fun MangoSshApp(
         val (activeSession, terminalEmulator) = terminalTarget
         var showDiagnostics by remember(activeSession.id) { mutableStateOf(false) }
         var showWorkspaces by remember(activeSession.id) { mutableStateOf(false) }
-        if (showDiagnostics) ConnectionDiagnosticsDialog(viewModel.diagnostics(activeSession.id)) { showDiagnostics = false }
+        if (showDiagnostics) ConnectionDiagnosticsDialog({ viewModel.diagnostics(activeSession.id) }) { showDiagnostics = false }
         if (showWorkspaces) WorkspaceDialog(load = { viewModel.listWorkspaces(activeSession.id) },
             onOpen = { workspace -> viewModel.openWorkspace(activeSession.id, workspace)?.let { activeSessionId = it }; showWorkspaces = false },
             onDismiss = { showWorkspaces = false })
@@ -402,8 +409,12 @@ fun MangoSshApp(
         if (showReconnect) {
             AlertDialog(onDismissRequest = { showReconnect = false }, title = { Text(stringResource(R.string.terminal_reconnect)) },
                 text = { Column {
-                    Text(stringResource(R.string.terminal_reconnect_fresh))
-                    Row { Checkbox(allowStartupSnippet, { allowStartupSnippet = it }); Text(stringResource(R.string.terminal_reconnect_snippet)) }
+                    if (endedTerminals.firstOrNull { it.session.id == activeSession.id }?.workspace != null) {
+                        Text(stringResource(R.string.terminal_reconnect_workspace))
+                    } else {
+                        Text(stringResource(R.string.terminal_reconnect_fresh))
+                        Row { Checkbox(allowStartupSnippet, { allowStartupSnippet = it }); Text(stringResource(R.string.terminal_reconnect_snippet)) }
+                    }
                 } },
                 confirmButton = { TextButton(onClick = {
                     viewModel.reconnectEnded(activeSession.id, allowStartupSnippet)?.let { activeSessionId = it }
@@ -435,6 +446,7 @@ fun MangoSshApp(
         }
         TerminalSessionScreen(
             session = activeSession,
+            attention = sessionAttention[activeSession.id] ?: SessionAttention.NONE,
             terminalEmulator = terminalEmulator,
             appearance = terminalAppearance,
             behavior = terminalBehavior,
@@ -618,6 +630,7 @@ fun MangoSshApp(
                             hasAnyHost = hosts.isNotEmpty(),
                             reorderable = hostsReorderable,
                             sessions = sessions,
+                            sessionAttention = sessionAttention,
                             endedTerminals = endedTerminals,
                             onClearEnded = viewModel::clearEndedTerminals,
                             vaultStatus = vaultStatus,
@@ -653,6 +666,7 @@ fun MangoSshApp(
                             onStartRule = viewModel::startPortForward,
                             onStartOnNewConnection = viewModel::startPortForwardOnNewConnection,
                             onStopRule = viewModel::stopPortForward,
+                            onRefreshActivity = viewModel::refreshPortForwardActivity,
                         )
                         AppSection.SETTINGS -> {
                             val settingsCallbacks = rememberSettingsCallbacks(
@@ -712,6 +726,11 @@ fun MangoSshApp(
             },
             onClearFinished = viewModel::clearFinishedTransfers,
             onDismiss = { showTransfers = false },
+            onReconnect = { transfer ->
+                // The browser renders host-key and sign-in prompts for the new connection.
+                showTransfers = false
+                viewModel.reconnectForTransfer(transfer)
+            },
         )
     }
 
@@ -1028,7 +1047,8 @@ internal fun KeysScreen(
     var importBusy by remember { mutableStateOf(false) }
     var importFailed by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<String?>(null) }
-    var pendingExport by remember { mutableStateOf<StoredSshKey?>(null) }
+    // Only the key id is saved across recreation; key material never enters saved state.
+    var pendingExportId by rememberSaveable { mutableStateOf<String?>(null) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         if (busy || importBusy) return@rememberLauncherForActivityResult
@@ -1046,10 +1066,10 @@ internal fun KeysScreen(
         }
     }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-pem-file")) { uri ->
-        val key = pendingExport
-        pendingExport = null
-        if (uri == null || key == null) return@rememberLauncherForActivityResult
-        onExport(key.id, uri)
+        val keyId = pendingExportId
+        pendingExportId = null
+        if (uri == null || keyId == null) return@rememberLauncherForActivityResult
+        onExport(keyId, uri)
     }
 
     LazyColumn(
@@ -1123,7 +1143,7 @@ internal fun KeysScreen(
                         TextButton(
                             enabled = !busy,
                             onClick = {
-                                pendingExport = key
+                                pendingExportId = key.id
                                 exportLauncher.launch("${key.label.replace(' ', '_')}.pem")
                             },
                         ) {
@@ -1351,9 +1371,18 @@ private fun PortForwardsScreen(
     onStartRule: (String, PortForwardRule) -> Unit,
     onStartOnNewConnection: (ConnectionProfile, PortForwardRule) -> Unit,
     onStopRule: (String, String) -> Unit,
+    onRefreshActivity: () -> Unit = {},
 ) {
     var editingRule by remember { mutableStateOf<PortForwardRule?>(null) }
     var showRuleEditor by rememberSaveable { mutableStateOf(false) }
+    // Connection counts are read from the listeners only while this screen is shown.
+    val anyActive = activeForwards.any { it.phase == PortForwardRuntimePhase.ACTIVE }
+    LaunchedEffect(anyActive) {
+        while (anyActive) {
+            onRefreshActivity()
+            kotlinx.coroutines.delay(2_000)
+        }
+    }
     // SSH and Mosh terminals both expose an authenticated SSH feature carrier.
     val openFeatureSessions = sessions.filter {
         it.phase == TerminalSessionPhase.OPEN &&
@@ -1414,7 +1443,12 @@ private fun PortForwardsScreen(
             val failed = activeForwards.lastOrNull {
                 it.rule.id == rule.id && it.phase == PortForwardRuntimePhase.FAILED
             }
-            val visibleRuntime = running ?: failed
+            // A remote stop the server never confirms stays visible so it is not mistaken for proof.
+            val unconfirmedStop = activeForwards.lastOrNull {
+                it.rule.id == rule.id && it.phase == PortForwardRuntimePhase.STOPPED &&
+                    it.stopOutcome == PortForwardStopOutcome.UNCONFIRMED
+            }
+            val visibleRuntime = running ?: failed ?: unconfirmedStop
             val eligibleSession = openFeatureSessions.firstOrNull { it.profileId == rule.profileId }
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
@@ -1435,24 +1469,49 @@ private fun PortForwardsScreen(
                     // A forward without a terminal session runs on a connection
                     // opened only for it, which is worth showing: it explains why
                     // the host is connected while no terminal is open.
-                    val ownConnection = running != null &&
-                        sessions.firstOrNull { it.id == running.sessionId }?.kind == SessionKind.PORT_FORWARD
+                    val carrierText = when (running?.carrier) {
+                        PortForwardCarrier.DEDICATED -> stringResource(R.string.ui_own_connection)
+                        PortForwardCarrier.MOSH_COMPANION -> stringResource(R.string.port_forward_carrier_mosh)
+                        PortForwardCarrier.SSH_SESSION -> stringResource(R.string.port_forward_carrier_ssh)
+                        null -> if (running != null &&
+                            sessions.firstOrNull { it.id == running.sessionId }?.kind == SessionKind.PORT_FORWARD
+                        ) stringResource(R.string.ui_own_connection) else null
+                    }
                     val status = visibleRuntime?.let { runtime ->
                         when (runtime.phase) {
                             PortForwardRuntimePhase.ACTIVE -> stringResource(R.string.ui_running)
                             PortForwardRuntimePhase.STARTING -> stringResource(R.string.ui_starting)
                             PortForwardRuntimePhase.STOPPING -> stringResource(R.string.port_forward_stopping)
                             PortForwardRuntimePhase.FAILED -> stringResource(R.string.ui_failed)
-                            PortForwardRuntimePhase.STOPPED -> ""
+                            PortForwardRuntimePhase.STOPPED -> stringResource(R.string.port_forward_status_stop_sent)
                         }
                     } ?: if (rule.startOnConnect) stringResource(R.string.ui_start_on_connection) else stringResource(R.string.ui_not_started)
                     Spacer(Modifier.height(4.dp))
-                    val statusText = status
-                    val ownConnectionText = stringResource(R.string.ui_own_connection)
                     Text(
-                        if (ownConnection) "$statusText · $ownConnectionText" else statusText,
+                        listOfNotNull(status, carrierText).joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
+                    )
+                    // Fixed slot, like the failure detail below: address and activity while
+                    // running, the stop caveat after an unconfirmed remote stop.
+                    val active = running?.takeIf { it.phase == PortForwardRuntimePhase.ACTIVE }
+                    val infoText = when {
+                        active != null -> listOfNotNull(
+                            active.boundAddress?.let { stringResource(R.string.port_forward_bound, it) },
+                            stringResource(R.string.port_forward_connections, active.activeConnections, active.totalConnections),
+                            active.lastActivityEpochMillis?.let { at ->
+                                stringResource(R.string.port_forward_last_activity,
+                                    android.text.format.DateUtils.getRelativeTimeSpanString(at).toString())
+                            },
+                        ).joinToString("\n")
+                        visibleRuntime === unconfirmedStop && unconfirmedStop != null -> unconfirmedStop.detail.orEmpty()
+                        else -> ""
+                    }
+                    Text(
+                        text = infoText,
+                        modifier = if (infoText.isEmpty()) Modifier.height(0.dp) else Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     // A dedicated connection publishes its session and forward state back-to-back.
                     // Keep these dynamic slots in the lazy item instead of removing several child

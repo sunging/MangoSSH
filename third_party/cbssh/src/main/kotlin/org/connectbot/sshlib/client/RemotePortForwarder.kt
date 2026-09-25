@@ -70,10 +70,14 @@ internal class RemotePortForwarder(
         }
     }
 
-    private val dataForwarders = mutableListOf<DataForwarder>()
+    private val connections = ForwardConnections<DataForwarder>()
+
+    @Volatile
     private var _isActive = true
 
     override val isActive: Boolean get() = _isActive
+
+    override val activity get() = connections.activity()
 
     private suspend fun handleIncomingChannel(
         connectedAddr: String,
@@ -122,11 +126,9 @@ internal class RemotePortForwarder(
             val readChannel = socket.openReadChannel()
             val writeChannel = socket.openWriteChannel(autoFlush = false)
 
-            val forwarder = DataForwarder(scope, fwdChannel, readChannel, writeChannel) { socket.close(); selectorManager.close() }
-            synchronized(dataForwarders) {
-                if (!_isActive) { forwarder.abort(); return }
-                dataForwarders.add(forwarder)
-            }
+            val forwarder = DataForwarder(scope, fwdChannel, readChannel, writeChannel, { socket.close(); selectorManager.close() },
+                onActivity = connections::touch, onFinished = connections::remove)
+            if (!connections.add(forwarder) { _isActive }) { forwarder.abort(); return }
             forwarder.start()
             ownedSocket = null
             ownedSelector = null
@@ -160,9 +162,7 @@ internal class RemotePortForwarder(
             connection.sendCancelTcpipForward(remoteBindAddress, remoteBindPort)
         } finally {
             // A blocked cancellation packet must not retain local forwarding sockets.
-            synchronized(dataForwarders) {
-                dataForwarders.toList()
-            }.forEach { it.abort() }
+            connections.snapshot().forEach { it.abort() }
         }
     }
 }

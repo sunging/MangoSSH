@@ -45,10 +45,9 @@
   by a user, or cryptographic material.
 - Put new platform-facing and session-facing text in Android string resources,
   with default English values and Simplified Chinese values under
-  `values-zh-rCN`. The established Compose wording is currently routed through
-  `MangoUiLiteralLocalization`; when touching one of those fixed literals, add
-  its English mapping there rather than leaving English locales with Chinese
-  text. User-provided values must never be translated or altered.
+  `values-zh-rCN`; `StringResourcesContractTest` checks that both define the
+  same names and placeholders and that Kotlin sources hold no Chinese literals.
+  User-provided values must never be translated or altered.
 - Prefer immutable UI state and suspend functions. Never execute network, disk,
   cryptography, or subprocess work in a composable.
 
@@ -115,5 +114,10 @@ bash tools/check-16kb-elf.sh \
 - Keep unrelated work out of a commit.
 - Use Conventional Commits, for example `feat: add native mosh runtime` or
   `docs: add contributor guidance`.
+- Use `ci:` or `test:` for workflow and test-only changes. Release Please turns
+  `fix(ci):` into a patch release even when the app does not change.
+- Title `develop` to `main` pull requests `chore: merge develop into main`.
+  GitHub writes the PR title into the merge commit, so a `feat:` or `fix:`
+  title makes Release Please list the same change twice.
 - Do not commit keystores, private keys, encrypted backups, local SDK paths,
   downloaded toolchains, or generated build output.

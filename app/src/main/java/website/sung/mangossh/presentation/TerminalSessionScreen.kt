@@ -130,6 +130,7 @@ fun TerminalSessionScreen(
     onReconnect: () -> Unit = {},
     onWorkspaces: () -> Unit = {},
     onDiagnostics: () -> Unit = {},
+    attention: website.sung.mangossh.session.SessionAttention = website.sung.mangossh.session.SessionAttention.NONE,
 ) {
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
@@ -327,13 +328,25 @@ fun TerminalSessionScreen(
                             .padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = "${session.title} · ${session.endpoint} · ${session.phase.label()}",
-                            style = MaterialTheme.typography.titleSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).padding(start = 4.dp),
-                        )
+                        Column(Modifier.weight(1f).padding(start = 4.dp)) {
+                            Text(
+                                text = "${session.title} · ${session.endpoint} · ${session.phase.label()}",
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            // Says why things may stall (no network, Mosh SSH features
+                            // offline) instead of leaving a silent disconnect to guess at.
+                            attention.label()?.let { text ->
+                                Text(
+                                    text = text,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                         IconButton(
                             modifier = Modifier.size(40.dp),
                             onClick = onRequestLeave,

@@ -100,6 +100,31 @@ class SessionWakeLockTest {
     }
 
     @Test
+    fun anActiveTransferKeepsTheLockWhileBackgrounded() {
+        val fixture = Fixture()
+        fixture.open()
+
+        fixture.owner.update(hasSessions = true, foregroundOwned = true, uiForeground = false, activeTransfers = true)
+        fixture.owner.renew()
+
+        assertTrue(fixture.held)
+        assertEquals(0, fixture.releases)
+    }
+
+    @Test
+    fun aFinishedOrPausedTransferReleasesTheBackgroundLock() {
+        val fixture = Fixture()
+        fixture.open()
+        fixture.owner.update(hasSessions = true, foregroundOwned = true, uiForeground = false, activeTransfers = true)
+
+        fixture.owner.update(hasSessions = true, foregroundOwned = true, uiForeground = false, activeTransfers = false)
+        fixture.owner.renew()
+
+        assertFalse(fixture.held)
+        assertEquals(1, fixture.releases)
+    }
+
+    @Test
     fun returningToForegroundReacquiresForTheSameSession() {
         val fixture = Fixture()
         fixture.open()

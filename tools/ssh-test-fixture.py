@@ -84,6 +84,19 @@ def linux_path(name):
 
 tools_enabled = args.wsl_tmux or args.native_tools
 
+def set_attributes(attr, target):
+    """SETSTAT/FSETSTAT like OpenSSH. paramiko's set_file_attr reopens the file with
+    "w+" to change its size, which empties it first; truncate in place instead.
+    target is a path or, for FSETSTAT, an open descriptor."""
+    if args.reject_metadata: return paramiko.SFTP_PERMISSION_DENIED
+    try:
+        if attr._flags & attr.FLAG_PERMISSIONS: os.chmod(target, attr.st_mode & 0o7777)
+        if attr._flags & attr.FLAG_UIDGID: os.chown(target, attr.st_uid, attr.st_gid)
+        if attr._flags & attr.FLAG_AMTIME: os.utime(target, (attr.st_atime, attr.st_mtime))
+        if attr._flags & attr.FLAG_SIZE: os.truncate(target, attr.st_size)
+        return paramiko.SFTP_OK
+    except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
+
 class Files(paramiko.SFTPServerInterface):
     def local(self, path):
         result = (root / path.lstrip("/")).resolve()
@@ -105,12 +118,15 @@ class Files(paramiko.SFTPServerInterface):
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def open(self, path, flags, attr):
         try:
-            fd = os.open(self.local(path), flags | getattr(os, "O_BINARY", 0), 0o600)
+            # Honour the client's creation mode like OpenSSH: 0666 when absent, then the umask.
+            mode = attr.st_mode & 0o7777 if attr is not None and attr.st_mode is not None else 0o666
+            fd = os.open(self.local(path), flags | getattr(os, "O_BINARY", 0), mode)
             stream = os.fdopen(fd, "r+b" if flags & os.O_RDWR else "wb" if flags & os.O_WRONLY else "rb", buffering=0)
             handle = paramiko.SFTPHandle(flags)
             handle.readfile = stream
             handle.writefile = stream
             handle.stat = lambda: paramiko.SFTPAttributes.from_stat(os.fstat(stream.fileno()))
+            handle.chattr = lambda attr: set_attributes(attr, stream.fileno())
             return handle
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def remove(self, path):
@@ -125,9 +141,7 @@ class Files(paramiko.SFTPServerInterface):
         try: os.replace(self.local(old), self.local(new)); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def chattr(self, path, attr):
-        if args.reject_metadata: return paramiko.SFTP_PERMISSION_DENIED
-        try: paramiko.SFTPServer.set_file_attr(str(self.local(path)), attr); return paramiko.SFTP_OK
-        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
+        return set_attributes(attr, str(self.local(path)))
     def mkdir(self, path, attr):
         try: self.local(path).mkdir(); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
@@ -230,12 +244,13 @@ class Server(paramiko.ServerInterface):
         threading.Thread(target=execute, daemon=True).start()
         return True
     def check_port_forward_request(self, address, port):
-        if address != "127.0.0.1" or port not in (22500, 22354): return False
+        # 127.0.0.2 lets a test hold two listeners on one port, as a real server may.
+        if address not in ("127.0.0.1", "127.0.0.2") or port not in (22500, 22354): return False
         listener = socket.socket()
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try: listener.bind((address, port)); listener.listen(4)
         except OSError: listener.close(); return False
-        self.listeners[port] = listener
+        self.listeners[(address, port)] = listener
         def accept():
             while self.transport.is_active():
                 client = None
@@ -251,7 +266,7 @@ class Server(paramiko.ServerInterface):
         return port
     def cancel_port_forward_request(self, address, port):
         if args.stall_forward_cancel: threading.Event().wait(60)
-        listener = self.listeners.pop(port, None)
+        listener = self.listeners.pop((address, port), None)
         if listener:
             try: listener.shutdown(socket.SHUT_RDWR)
             except OSError: pass
