@@ -44,6 +44,10 @@ internal class DataForwarder(
     private val tcpRead: ByteReadChannel,
     private val tcpWrite: ByteWriteChannel,
     private val releaseSocket: () -> Unit = {},
+    /** Called whenever a chunk moves in either direction. */
+    private val onActivity: () -> Unit = {},
+    /** Called once after both directions ended and the connection was released. */
+    private val onFinished: (DataForwarder) -> Unit = {},
 ) {
     companion object {
         private val logger = LoggerFactory.getLogger(DataForwarder::class.java)
@@ -67,7 +71,11 @@ internal class DataForwarder(
             } catch (e: Exception) {
                 logger.debug("DataForwarder ended: ${e.message}")
             } finally {
-                cleanup()
+                try {
+                    cleanup()
+                } finally {
+                    onFinished(this@DataForwarder)
+                }
             }
         }
     }
@@ -92,6 +100,7 @@ internal class DataForwarder(
                 if (bytesRead == -1) break
                 if (bytesRead > 0) {
                     sshChannel.sendData(buffer.copyOf(bytesRead))
+                    onActivity()
                 }
             }
             sshChannel.sendEof()
@@ -107,6 +116,7 @@ internal class DataForwarder(
             for (data in sshChannel.incomingData) {
                 tcpWrite.writeFully(data, 0, data.size)
                 tcpWrite.flush()
+                onActivity()
             }
         } catch (e: CancellationException) {
             throw e

@@ -64,6 +64,7 @@ internal fun rememberSettingsCallbacks(
                 onLockNow = viewModel::lockForBackground,
                 onSetAutoLockDelay = viewModel::setAutoLockDelay,
                 onSetReauthentication = viewModel::setReauthentication,
+                onClearEditorDrafts = viewModel::clearEditorDrafts,
             ),
             backup = BackupSettingsCallbacks(
                 onSaveWebDav = viewModel::saveWebDavConfig,

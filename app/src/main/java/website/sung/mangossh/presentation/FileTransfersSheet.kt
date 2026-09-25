@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
+import website.sung.mangossh.session.RemoteFileMessage
 import website.sung.mangossh.session.ScpTransferDirection
 import website.sung.mangossh.session.ScpTransferKind
 import website.sung.mangossh.session.ScpTransferPhase
@@ -142,6 +143,7 @@ internal fun FileTransfersSheet(
     onOpenRemoteDirectory: (ScpTransferState) -> Unit,
     onClearFinished: () -> Unit,
     onDismiss: () -> Unit,
+    onReconnect: (ScpTransferState) -> Unit = {},
 ) {
     val context = LocalContext.current
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -177,6 +179,7 @@ internal fun FileTransfersSheet(
                     onResume = { onResume(transfer.id) },
                     onCancel = { onCancel(transfer.id) },
                     onRetry = { onRetry(transfer.id) },
+                    onReconnect = { onReconnect(transfer) },
                     onOpen = {
                         if (transfer.canOpenLocally) {
                             openDownloadedDocument(context, transfer)
@@ -197,6 +200,7 @@ private fun TransferCard(
     onResume: () -> Unit,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    onReconnect: () -> Unit,
     onOpen: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -259,13 +263,26 @@ private fun TransferCard(
             }
             Spacer(Modifier.height(4.dp))
             val failed = transfer.phase == ScpTransferPhase.FAILED
+            val waitingForReconnect = transfer.awaitingReconnect && !transfer.controllable &&
+                transfer.phase != ScpTransferPhase.COMPLETED
+            val detachedLine = waitingForReconnect || !transfer.controllable && !transfer.isFinished
+            // The line below the status already says what to do about the closed
+            // connection; repeating "session closed" here would contradict it.
+            val detail = transfer.detail
+                ?.takeUnless { detachedLine && it == RemoteFileMessage.TransferSessionClosed }
             Text(
-                text = listOfNotNull(transfer.phase.label(), transfer.detail?.toUiText()?.asString())
+                text = listOfNotNull(transfer.phase.label(), detail?.toUiText()?.asString())
                     .joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
             )
-            if (!transfer.controllable && !transfer.isFinished) {
+            if (waitingForReconnect) {
+                Text(
+                    text = stringResource(R.string.transfer_awaiting_reconnect),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (!transfer.controllable && !transfer.isFinished) {
                 Text(
                     text = stringResource(R.string.remote_file_transfer_session_closed),
                     style = MaterialTheme.typography.labelSmall,
@@ -274,6 +291,9 @@ private fun TransferCard(
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (waitingForReconnect && transfer.profileId != null) {
+                    TransferAction(Icons.Outlined.Refresh, stringResource(R.string.terminal_reconnect), onReconnect)
+                }
                 if (transfer.canPause) {
                     TransferAction(Icons.Outlined.Pause, stringResource(R.string.ui_pause), onPause)
                 }

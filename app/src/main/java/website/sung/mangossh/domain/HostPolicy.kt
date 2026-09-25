@@ -1,6 +1,12 @@
 package website.sung.mangossh.domain
 
-/** Nullable overrides inherit app defaults; an effective snapshot is fixed when connecting. */
+/**
+ * Nullable overrides inherit app defaults.
+ *
+ * Settings that shape the connection itself (timeouts, keepalive interval, terminal type)
+ * are fixed in a snapshot when connecting. The background keepalive multiplier is a
+ * runtime policy instead: see [liveBackgroundMultiplier].
+ */
 data class HostConnectionOverrides(
     val connectTimeoutSeconds: Int? = null,
     val keepaliveSeconds: Int? = null,
@@ -13,6 +19,14 @@ data class HostConnectionOverrides(
         backgroundKeepaliveMultiplier = backgroundMultiplier ?: defaults.backgroundKeepaliveMultiplier,
         sshTerminalType = terminalType ?: defaults.sshTerminalType,
     )
+
+    /**
+     * The multiplier for the next background wait of a running session: this host's
+     * override when it has one, otherwise the current app-wide [defaults], so changing
+     * the global setting reaches sessions that are already connected.
+     */
+    fun liveBackgroundMultiplier(defaults: ConnectionPreferences): Int =
+        backgroundMultiplier ?: defaults.backgroundKeepaliveMultiplier
 
     fun isValid(): Boolean = (connectTimeoutSeconds == null || connectTimeoutSeconds in 5..120) &&
         (keepaliveSeconds == null || keepaliveSeconds == 0 || keepaliveSeconds in 10..300) &&
@@ -40,5 +54,19 @@ data class TmuxWorkspace(
         WorkspaceMode.DISABLED -> true
         WorkspaceMode.CREATE, WorkspaceMode.CREATE_OR_ATTACH -> name.matches(Regex("[A-Za-z0-9_-]{1,80}"))
         WorkspaceMode.ATTACH -> sessionId.matches(Regex("\\$[0-9]{1,10}"))
+    }
+
+    /**
+     * The workspace a reconnect opens to return to the same tmux session. CREATE becomes an
+     * ATTACH of the session it created ([resolvedSessionId]), since creating the name again
+     * would fail; named reuse and explicit attach find it again as they are. Null when disabled.
+     */
+    fun reconnectTarget(resolvedSessionId: String?): TmuxWorkspace? = when (mode) {
+        WorkspaceMode.DISABLED -> null
+        WorkspaceMode.CREATE -> resolvedSessionId
+            ?.let { TmuxWorkspace(WorkspaceMode.ATTACH, sessionId = it) }
+            ?.takeIf { it.isValid() }
+            ?: this
+        WorkspaceMode.CREATE_OR_ATTACH, WorkspaceMode.ATTACH -> this
     }
 }

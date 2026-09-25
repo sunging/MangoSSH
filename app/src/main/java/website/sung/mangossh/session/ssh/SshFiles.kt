@@ -45,6 +45,7 @@ internal class SshFiles internal constructor(
     suspend fun lstat(path: String): SshFileAttributes = request { delegate.lstat(path) }.appAttributes()
     suspend fun fstat(handle: SshFileHandle): SshFileAttributes = request { delegate.fstat(handle.delegate) }.appAttributes()
     suspend fun setstat(path: String, attributes: SshFileAttributes) = request { delegate.setstat(path, attributes.libraryAttributes()) }
+    suspend fun fsetstat(handle: SshFileHandle, attributes: SshFileAttributes) = request { delegate.fsetstat(handle.delegate, attributes.libraryAttributes()) }
     suspend fun mkdir(path: String, permissions: Int) = request { delegate.mkdir(path, SftpAttributes(permissions = permissions)) }
     suspend fun remove(path: String) = request { delegate.remove(path) }
     suspend fun rename(source: String, target: String) = request { delegate.rename(source, target) }
@@ -53,9 +54,14 @@ internal class SshFiles internal constructor(
         request { delegate.posixRename(source, target) }
     }
 
-    /** Exclusive creation prevents another process from substituting an upload's temporary file. */
+    /**
+     * Exclusive creation prevents another process from substituting an upload's temporary file.
+     *
+     * [permissions] is the creation mode the server applies to a new file (before its umask).
+     * Without it the server picks its own default, which for OpenSSH is `0666`.
+     */
     suspend fun open(path: String, write: Boolean = false, create: Boolean = false,
-        truncate: Boolean = false, exclusive: Boolean = false): SshFileHandle {
+        truncate: Boolean = false, exclusive: Boolean = false, permissions: Int? = null): SshFileHandle {
         val flags = buildSet {
             add(SftpOpenFlag.READ)
             if (write) add(SftpOpenFlag.WRITE)
@@ -63,7 +69,8 @@ internal class SshFiles internal constructor(
             if (truncate) add(SftpOpenFlag.TRUNCATE)
             if (exclusive) add(SftpOpenFlag.EXCLUDE)
         }
-        return SshFileHandle(request { delegate.open(path, flags) })
+        val attributes = permissions?.let { SftpAttributes(permissions = it) } ?: SftpAttributes.EMPTY
+        return SshFileHandle(request { delegate.open(path, flags, attributes) })
     }
     suspend fun close(handle: SshFileHandle) = request { delegate.close(handle.delegate) }
     suspend fun read(handle: SshFileHandle, offset: Long, count: Int): ByteArray? =

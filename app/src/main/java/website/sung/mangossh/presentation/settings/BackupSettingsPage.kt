@@ -1,6 +1,7 @@
 package website.sung.mangossh.presentation.settings
 
 import android.net.Uri
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -10,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
@@ -41,7 +43,9 @@ internal fun BackupSettingsPage(state: BackupSettingsState, callbacks: BackupSet
     var historyEntry by remember { mutableStateOf<BackupHistoryEntry?>(null) }
     var editWebDav by remember { mutableStateOf(false) }
     var confirmRemoveWebDav by remember { mutableStateOf(false) }
-    var launchedExport by remember { mutableStateOf(false) }
+    // Saved so a recreated page neither loses the open picker nor launches a second one.
+    var launchedExport by rememberSaveable { mutableStateOf(false) }
+    val activity = LocalActivity.current
     var remoteHistory by remember { mutableStateOf(false) }
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) { importUri = uri; action = BackupAction.IMPORT }
@@ -50,7 +54,9 @@ internal fun BackupSettingsPage(state: BackupSettingsState, callbacks: BackupSet
         callbacks.onWriteExport(uri)
     }
     LaunchedEffect(Unit) { callbacks.onRefresh() }
-    DisposableEffect(Unit) { onDispose { callbacks.onCancel() } }
+    // Leaving the page abandons the prepared export, but a configuration change only
+    // recreates it: the export picker is still open and its result still needs the ciphertext.
+    DisposableEffect(Unit) { onDispose { if (activity?.isChangingConfigurations != true) callbacks.onCancel() } }
     LaunchedEffect(operation.exportReady, busy) {
         if (operation.exportReady && !busy && !launchedExport) {
             launchedExport = true

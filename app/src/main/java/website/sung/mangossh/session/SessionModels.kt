@@ -77,6 +77,8 @@ data class EndedTerminalRecord(
     val messageKind: SessionEndMessageKind?,
     val endedAtEpochMillis: Long = System.currentTimeMillis(),
     val diagnostics: ConnectionDiagnostics? = null,
+    /** The tmux workspace a reconnect should reattach, including one chosen after connecting. */
+    val workspace: website.sung.mangossh.domain.TmuxWorkspace? = null,
 )
 
 /** Specific sanitized failure wording selected after a connection attempt ends. */
@@ -104,6 +106,27 @@ enum class PortForwardRuntimePhase {
     STOPPED,
 }
 
+/** Which SSH connection carries a forward. */
+enum class PortForwardCarrier {
+    /** The terminal session's own SSH connection. */
+    SSH_SESSION,
+    /** The SSH connection kept beside a Mosh session for file and forwarding features. */
+    MOSH_COMPANION,
+    /** A connection opened only for forwards, closed when the last one stops. */
+    DEDICATED,
+}
+
+/** What is known about a stopped forward's listener. */
+enum class PortForwardStopOutcome {
+    /** The listener this app owned is closed. */
+    STOPPED,
+    /**
+     * A remote listener's cancellation was sent, but SSH servers send no reply to it,
+     * so the app cannot prove the server has already closed the listener.
+     */
+    UNCONFIRMED,
+}
+
 @Immutable
 data class PortForwardRuntimeState(
     val runtimeId: String,
@@ -111,6 +134,13 @@ data class PortForwardRuntimeState(
     val rule: PortForwardRule,
     val phase: PortForwardRuntimePhase,
     val detail: String? = null,
+    /** `host:port` the listener actually bound, which differs from the rule for port 0 or a wildcard. */
+    val boundAddress: String? = null,
+    val carrier: PortForwardCarrier? = null,
+    val activeConnections: Int = 0,
+    val totalConnections: Long = 0,
+    val lastActivityEpochMillis: Long? = null,
+    val stopOutcome: PortForwardStopOutcome? = null,
 )
 
 /** Marks only live forwards on [sessionId] failed when their SSH carrier disappears. */
@@ -156,9 +186,8 @@ enum class ScpTransferKind {
 /**
  * Progress of one file transfer.
  *
- * [totalBytes] is only known for SFTP transfers started from the remote file
- * browser; the legacy SCP path cannot report progress, so both byte counters
- * stay at their defaults there.
+ * All transfers run over SFTP (the `Scp` prefix is historical). [totalBytes]
+ * stays null until the transfer learns the size of what it moves.
  *
  * [displayName], [remotePath], and [currentItem] are user or server data: they
  * are rendered verbatim, never translated, and never logged.
@@ -177,8 +206,8 @@ data class ScpTransferState(
     val totalBytes: Long? = null,
     /**
      * Download destination or upload source document, as a string so this model
-     * stays free of Android types. Null for the legacy SCP path, which cannot
-     * be resumed, retried, or opened.
+     * stays free of Android types. Null when there is no local document, which
+     * means the transfer cannot be resumed, retried, or opened.
      */
     val localUri: String? = null,
     /** Relative path of the entry a directory transfer is currently moving. */
@@ -189,11 +218,17 @@ data class ScpTransferState(
     val totalItems: Int? = null,
     /**
      * False once the connection that owns this transfer is gone. Resuming and
-     * retrying need that connection, and the transfer list must never open a
-     * new one, because host-key and authentication prompts are only rendered by
-     * the remote file browser.
+     * retrying need a connection to the same server; the transfer list itself
+     * never opens one, it only asks the user to reconnect.
      */
     val controllable: Boolean = true,
+    /** Host profile the transfer was started for, used to offer a reconnect. */
+    val profileId: String? = null,
+    /**
+     * True while the transfer waits for a new session to the same verified server.
+     * Reconnecting rebinds it and makes it controllable again; see [TransferRebinding].
+     */
+    val awaitingReconnect: Boolean = false,
 )
 
 /** True while the transfer is queued or moving bytes. */

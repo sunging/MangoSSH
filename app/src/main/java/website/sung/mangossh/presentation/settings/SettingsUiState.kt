@@ -147,6 +147,7 @@ internal data class SecuritySettingsCallbacks(
     val onLockNow: () -> Unit,
     val onSetAutoLockDelay: (AppLockDelay) -> Unit,
     val onSetReauthentication: (website.sung.mangossh.security.ReauthenticationMode) -> Unit = {},
+    val onClearEditorDrafts: () -> Unit = {},
 )
 
 @Immutable

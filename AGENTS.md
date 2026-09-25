@@ -45,10 +45,9 @@
   by a user, or cryptographic material.
 - Put new platform-facing and session-facing text in Android string resources,
   with default English values and Simplified Chinese values under
-  `values-zh-rCN`. The established Compose wording is currently routed through
-  `MangoUiLiteralLocalization`; when touching one of those fixed literals, add
-  its English mapping there rather than leaving English locales with Chinese
-  text. User-provided values must never be translated or altered.
+  `values-zh-rCN`; `StringResourcesContractTest` checks that both define the
+  same names and placeholders and that Kotlin sources hold no Chinese literals.
+  User-provided values must never be translated or altered.
 - Prefer immutable UI state and suspend functions. Never execute network, disk,
   cryptography, or subprocess work in a composable.
 

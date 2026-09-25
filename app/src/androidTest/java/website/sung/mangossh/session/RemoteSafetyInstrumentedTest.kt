@@ -51,6 +51,46 @@ class RemoteSafetyInstrumentedTest {
         }
     }
 
+    @Test fun stagedUploadStaysPrivateUntilANewFileIsCommitted() = fixture { connection, _ ->
+        val files = RemoteFileClient()
+        BlockingOperation().use { control ->
+            val path = "/" + UUID.randomUUID().toString()
+            val token = UUID.randomUUID().toString()
+            val temporary = files.reserveTemporary(connection, "/", token, control)
+            suspend fun mode(target: String): Int {
+                val client = connection.openFiles()
+                try { return client.lstat(target).permissions!! and 0xfff } finally { client.close() }
+            }
+            assertEquals(0x180, mode(temporary))
+            // Position-dependent content, so any byte written at the wrong offset changes the digest.
+            val bytes = ByteArray(40_000) { (it % 251).toByte() }
+            // A first chunk stands in for a paused upload: the partial file must stay private.
+            files.upload(connection, bytes.copyOf(32_768).inputStream(), "/", RemoteFilePaths.nameOf(temporary), 0,
+                null, 1 shl 20, control) { _, _ -> }
+            assertEquals(0x180, mode(temporary))
+            suspend fun size(target: String): Long {
+                val client = connection.openFiles()
+                try { return client.lstat(target).size!! } finally { client.close() }
+            }
+            assertEquals(32_768L, size(temporary))
+            files.upload(connection, bytes.inputStream(), "/", RemoteFilePaths.nameOf(temporary), 32_768,
+                bytes.size.toLong(), 1 shl 20, control) { _, _ -> }
+            assertEquals(0x180, mode(temporary))
+            assertEquals(40_000L, size(temporary))
+            assertArrayEquals(java.security.MessageDigest.getInstance("SHA-256").digest(bytes), files.sha256(connection, temporary, control))
+            // A pipelined upload paused mid-flight can leave unacknowledged bytes past the
+            // resume offset; resuming a staged file cuts them off instead of failing.
+            files.upload(connection, bytes.inputStream(), "/", RemoteFilePaths.nameOf(temporary), 20_000,
+                bytes.size.toLong(), 1 shl 20, control) { _, _ -> }
+            assertEquals(40_000L, size(temporary))
+            assertArrayEquals(java.security.MessageDigest.getInstance("SHA-256").digest(bytes), files.sha256(connection, temporary, control))
+            files.commitTemporary(connection, temporary, path, files.inspectTarget(connection, path, control), false, control)
+            assertEquals(0x1a4, mode(path))
+            val cleanup = connection.openFiles()
+            try { cleanup.remove(path) } finally { cleanup.close() }
+        }
+    }
+
     @Test fun directTcpipJumpCarriesSftpAndClosingItPreservesFirstHop() = fixture { first, port ->
         val final = SshConnection("127.0.0.1", port)
         final.useJump(first)
