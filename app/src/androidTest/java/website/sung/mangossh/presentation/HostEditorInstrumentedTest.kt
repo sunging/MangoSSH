@@ -2,7 +2,7 @@ package website.sung.mangossh.presentation
 
 import android.graphics.Bitmap
 import androidx.activity.OnBackPressedDispatcher
-import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -16,8 +16,9 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.matcher.RootMatchers.isDialog as isDialogWindow
+import androidx.test.espresso.matcher.ViewMatchers.isRoot
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.junit.Assert.*
@@ -254,24 +255,15 @@ class HostEditorInstrumentedTest {
 
     @Test fun dialogBackDispatcherReturnsToMain() {
         var dismissed = false
-        val controller = HostEditorController(HostEditorDraft.from(host()))
-        lateinit var backDispatcher: OnBackPressedDispatcher
         compose.setContent { MaterialTheme {
-            Dialog(
-                onDismissRequest = { controller.back { dismissed = true } },
-                properties = DialogProperties(
-                    usePlatformDefaultWidth = false,
-                    decorFitsSystemWindows = false,
-                    dismissOnClickOutside = false,
-                ),
-            ) {
-                backDispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
-                HostEditorScreen(controller, emptyList(), ConnectionPreferences(), keys, snippets,
-                    { dismissed = true }, {})
-            }
+            HostEditorDialog(emptyList(), ConnectionPreferences(), host(), keys, snippets, { dismissed = true }, { _, _ -> })
         } }
         open(HostEditorPage.ADVANCED)
-        // Dispatch through the Dialog's Back owner. API 33+ does not route system Back as KEYCODE_BACK.
+        // Dispatch through the Dialog window's Back owner. API 33+ does not route system Back as KEYCODE_BACK.
+        lateinit var backDispatcher: OnBackPressedDispatcher
+        onView(isRoot()).inRoot(isDialogWindow()).check { view, _ ->
+            backDispatcher = checkNotNull(view.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher
+        }
         compose.runOnIdle { backDispatcher.onBackPressed() }
         compose.onNodeWithTag("host_editor_scroll_MAIN").assertExists()
         compose.runOnIdle { assertFalse(dismissed) }
