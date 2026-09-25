@@ -100,10 +100,11 @@ class SessionForegroundService : Service() {
                 sessionController.sessions,
                 embeddedTsnetManager.foregroundRequired,
                 appForegroundState.foreground,
-            ) { sessions, tsnetRequired, uiForeground ->
-                Triple(sessions, tsnetRequired, uiForeground)
-            }.collect { (sessions, tsnetRequired, uiForeground) ->
-                renderWork(sessions, tsnetRequired, uiForeground)
+                sessionController.hasActiveTransfers,
+            ) { sessions, tsnetRequired, uiForeground, activeTransfers ->
+                WorkSnapshot(sessions, tsnetRequired, uiForeground, activeTransfers)
+            }.collect { work ->
+                renderWork(work.sessions, work.tsnetRequired, work.uiForeground, work.activeTransfers)
             }
         }
     }
@@ -118,6 +119,7 @@ class SessionForegroundService : Service() {
             sessions = sessionController.sessions.value,
             tsnetRequired = embeddedTsnetManager.foregroundRequired.value,
             uiForeground = appForegroundState.foreground.value,
+            activeTransfers = sessionController.hasActiveTransfers.value,
         )
         return START_NOT_STICKY
     }
@@ -140,6 +142,7 @@ class SessionForegroundService : Service() {
         sessions: List<TerminalSessionState>,
         tsnetRequired: Boolean,
         uiForeground: Boolean,
+        activeTransfers: Boolean,
     ) {
         if (sessions.isEmpty() && !tsnetRequired) {
             sessionWakeLock.close()
@@ -158,6 +161,7 @@ class SessionForegroundService : Service() {
             hasSessions = sessions.isNotEmpty(),
             foregroundOwned = foregroundStarted,
             uiForeground = uiForeground,
+            activeTransfers = activeTransfers,
         )
 
         // Posting notifications is a best-effort presentation concern: the
@@ -335,6 +339,14 @@ class SessionForegroundService : Service() {
     } else {
         0
     }
+
+    /** Everything [renderWork] needs, captured together so one change re-renders once. */
+    private data class WorkSnapshot(
+        val sessions: List<TerminalSessionState>,
+        val tsnetRequired: Boolean,
+        val uiForeground: Boolean,
+        val activeTransfers: Boolean,
+    )
 
     companion object {
         private const val CHANNEL_ID = "active_ssh_sessions"

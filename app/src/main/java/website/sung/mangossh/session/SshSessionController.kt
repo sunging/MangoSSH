@@ -30,7 +30,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -166,6 +168,10 @@ class SshSessionController internal constructor(
         onSessionIdle = ::closeFileTransferIfIdle,
     )
     val scpTransfers: StateFlow<List<ScpTransferState>> = fileTransfers.transfers
+    /** True while any transfer is queued or moving bytes; paused and finished ones do not count. */
+    val hasActiveTransfers: StateFlow<Boolean> = fileTransfers.transfers
+        .map { transfers -> transfers.any { it.isActive } }
+        .stateIn(scope, SharingStarted.Eagerly, false)
     val transferConflicts = fileTransfers.conflicts
     /** Resolves only the currently registered transfer preview. */
     fun resolveTransferConflict(id: String, decision: TransferConflictDecision) = fileTransfers.resolveConflict(id, decision)
