@@ -1,27 +1,16 @@
 # Changelog
 
-## [0.5.1](https://github.com/sunging/MangoSSH/compare/v0.5.0...v0.5.1) (2026-09-25)
-
+## [0.5.1](https://github.com/sunging/MangoSSH/compare/v0.5.0...v0.5.1) (2026-09-26)
 
 ### Features
 
-* **editor:** diff before save and encrypted draft recovery ([b4e8492](https://github.com/sunging/MangoSSH/commit/b4e8492f1ccd87ee402ba9cf4f9affcdebd0691f))
+* **editor:** preview changes before saving and recover encrypted local drafts ([b4e8492](https://github.com/sunging/MangoSSH/commit/b4e8492f1ccd87ee402ba9cf4f9affcdebd0691f))
 * **forward:** show bound address, carrier, activity and stop outcome ([d0951c9](https://github.com/sunging/MangoSSH/commit/d0951c9f2bec6f8c007236291b31a77005fe1895))
 * **session:** live connection health status ([0c44c8c](https://github.com/sunging/MangoSSH/commit/0c44c8c3df555a9ad8d8ddc243ed7cf3edfbe0bd))
-* **transfer:** resume queued transfers after reconnecting ([064ab76](https://github.com/sunging/MangoSSH/commit/064ab7626876cdec2941d2ef8817b037c79a206a))
-
+* **transfer:** resume interrupted transfers after reconnecting to the same verified server ([064ab76](https://github.com/sunging/MangoSSH/commit/064ab7626876cdec2941d2ef8817b037c79a206a))
 
 ### Bug Fixes
 
-* **ci:** load retry tooling from workflow revision ([5b2ea4c](https://github.com/sunging/MangoSSH/commit/5b2ea4cd248d7a599e976b0a17b0cf19a3f992b8))
-* **ci:** prefetch artifacts for offline release build ([f1a014c](https://github.com/sunging/MangoSSH/commit/f1a014c3971a1b155d1b775167062c18c6c1819d))
-* **ci:** prefetch Kotlin build tools for offline release ([4ecb0bd](https://github.com/sunging/MangoSSH/commit/4ecb0bd71ea75cead87217448bf199bc449f92b1))
-* **ci:** prefetch Kotlin build tools for offline release ([d436e1b](https://github.com/sunging/MangoSSH/commit/d436e1b897c0e168a5c78328ab81be50493ca26a))
-* **ci:** prefetch Kotlin compiler plugin artifacts ([93804f1](https://github.com/sunging/MangoSSH/commit/93804f157a6b9c0e55259dda16a180b860c4a6a6))
-* **ci:** prefetch Kotlin compiler plugin artifacts ([7f6377f](https://github.com/sunging/MangoSSH/commit/7f6377f704cf1557ac13cde53b26c4e8e1131372))
-* **ci:** resolve release task graph before offline build ([2b98350](https://github.com/sunging/MangoSSH/commit/2b9835097e240d38a0d132535170aec62d89e89f))
-* **ci:** resolve release task graph before offline build ([dcfc6a6](https://github.com/sunging/MangoSSH/commit/dcfc6a6960b07871945145282633fdb161436a1e))
-* **ci:** resume v0.5.0 signed release from draft ([3681a27](https://github.com/sunging/MangoSSH/commit/3681a27646db5bef1090ec7b902d1aa80a0904a9))
 * **forward:** stop the exact remote listener ([45d9aff](https://github.com/sunging/MangoSSH/commit/45d9affe2e57a8c68c36bfe42b66d742da197cea))
 * **keepalive:** apply background multiplier changes to live sessions ([0755cbb](https://github.com/sunging/MangoSSH/commit/0755cbbe7b56f751793bd03a53785744fcd82aa1))
 * **power:** hold the wake lock for active transfers only ([399f29f](https://github.com/sunging/MangoSSH/commit/399f29fd4c3fc1038bbbe95d1dceba74feac4f31))
@@ -33,15 +22,9 @@
 * **ui:** keep picker requests across activity recreation ([7df22a9](https://github.com/sunging/MangoSSH/commit/7df22a9368b5bded818eef22da4b2805650bfd2f))
 * **workspace:** reattach the same workspace on reconnect ([ffa69d5](https://github.com/sunging/MangoSSH/commit/ffa69d5a892ae13260c5f8f26526630f5d0a735d))
 
-
 ### Performance Improvements
 
 * **sftp:** pipeline transfer requests ([d47fa75](https://github.com/sunging/MangoSSH/commit/d47fa7521f29b5fa801819e6015ebbd37bfa2787))
-
-
-### Miscellaneous Chores
-
-* merge develop into main ([8000772](https://github.com/sunging/MangoSSH/commit/80007728133ee6516bb18d5c71cc8ef696a91666))
 
 ## [0.5.0](https://github.com/sunging/MangoSSH/compare/v0.4.2...v0.5.0) (2026-09-23)
 

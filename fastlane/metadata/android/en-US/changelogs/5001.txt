@@ -1,0 +1,5 @@
+Resume interrupted transfers after reconnecting to the same verified server; improve SFTP speed and staging-file privacy.
+Preview edits before saving and recover encrypted local drafts.
+Show network and Mosh companion health, plus forwarding addresses, activity and stop results.
+Reconnect to the same tmux workspace; preserve file-picker requests across activity recreation.
+Fix shared SSH cancellation, remote forwarding shutdown, live keepalive updates and transfer wake locks.
