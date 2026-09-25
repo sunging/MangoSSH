@@ -52,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,8 +86,8 @@ fun RemoteFileBrowserScreen(
     onUp: () -> Unit,
     onRefresh: () -> Unit,
     onOpenEntry: (RemoteFileEntry) -> Unit,
-    onDownload: (String, Uri) -> Unit,
-    onDownloadDirectory: (String, Uri) -> Unit,
+    onDownload: (sessionId: String, remotePath: String, destination: Uri) -> Unit,
+    onDownloadDirectory: (sessionId: String, remotePath: String, destinationTree: Uri) -> Unit,
     onUpload: (Uri, String) -> Unit,
     onUploadDirectory: (Uri, String) -> Unit,
     onDismissPreview: () -> Unit,
@@ -94,15 +95,22 @@ fun RemoteFileBrowserScreen(
     onEditText: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
-    var pendingDownloadPath by remember { mutableStateOf<String?>(null) }
-    var pendingDirectoryPath by remember { mutableStateOf<String?>(null) }
+    // The system picker can outlive this Activity (rotation, dark-mode switch), so the
+    // request it answers is saved with the session that asked for it; the result is
+    // then applied to that session only, never to whichever browser is open later.
+    var pendingDownloadPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingDownloadSession by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingDirectoryPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingDirectorySession by rememberSaveable { mutableStateOf<String?>(null) }
     var showUploadMenu by remember { mutableStateOf(false) }
     val downloadLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
         val remotePath = pendingDownloadPath
+        val sessionId = pendingDownloadSession
         pendingDownloadPath = null
-        if (uri != null && remotePath != null) onDownload(remotePath, uri)
+        pendingDownloadSession = null
+        if (uri != null && remotePath != null && sessionId != null) onDownload(sessionId, remotePath, uri)
     }
     // A directory download needs a folder to build its tree in, which only the
     // tree contract can grant.
@@ -110,8 +118,10 @@ fun RemoteFileBrowserScreen(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         val remotePath = pendingDirectoryPath
+        val sessionId = pendingDirectorySession
         pendingDirectoryPath = null
-        if (uri != null && remotePath != null) onDownloadDirectory(remotePath, uri)
+        pendingDirectorySession = null
+        if (uri != null && remotePath != null && sessionId != null) onDownloadDirectory(sessionId, remotePath, uri)
     }
     val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onUpload(uri, uri.displayName(context))
@@ -123,10 +133,12 @@ fun RemoteFileBrowserScreen(
     }
     val startDownload: (String) -> Unit = { remotePath ->
         pendingDownloadPath = remotePath
+        pendingDownloadSession = state.sessionId
         downloadLauncher.launch(RemoteFilePaths.nameOf(remotePath))
     }
     val startDirectoryDownload: (String) -> Unit = { remotePath ->
         pendingDirectoryPath = remotePath
+        pendingDirectorySession = state.sessionId
         directoryDownloadLauncher.launch(null)
     }
 

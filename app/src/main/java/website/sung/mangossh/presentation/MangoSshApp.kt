@@ -322,7 +322,8 @@ fun MangoSshApp(
         )
     }
     var editingHostId by rememberSaveable { mutableStateOf<String?>(null) }
-    var showSshConfigImport by remember { mutableStateOf(false) }
+    // Saveable: the dialog owns an open file picker whose result arrives after recreation.
+    var showSshConfigImport by rememberSaveable { mutableStateOf(false) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
     var showTransfers by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
@@ -1028,7 +1029,8 @@ internal fun KeysScreen(
     var importBusy by remember { mutableStateOf(false) }
     var importFailed by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<String?>(null) }
-    var pendingExport by remember { mutableStateOf<StoredSshKey?>(null) }
+    // Only the key id is saved across recreation; key material never enters saved state.
+    var pendingExportId by rememberSaveable { mutableStateOf<String?>(null) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         if (busy || importBusy) return@rememberLauncherForActivityResult
@@ -1046,10 +1048,10 @@ internal fun KeysScreen(
         }
     }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-pem-file")) { uri ->
-        val key = pendingExport
-        pendingExport = null
-        if (uri == null || key == null) return@rememberLauncherForActivityResult
-        onExport(key.id, uri)
+        val keyId = pendingExportId
+        pendingExportId = null
+        if (uri == null || keyId == null) return@rememberLauncherForActivityResult
+        onExport(keyId, uri)
     }
 
     LazyColumn(
@@ -1123,7 +1125,7 @@ internal fun KeysScreen(
                         TextButton(
                             enabled = !busy,
                             onClick = {
-                                pendingExport = key
+                                pendingExportId = key.id
                                 exportLauncher.launch("${key.label.replace(' ', '_')}.pem")
                             },
                         ) {

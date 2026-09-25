@@ -886,15 +886,28 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     /** Downloads a browsed remote file into a document the user selected. */
-    fun downloadRemoteFile(remotePath: String, destination: Uri) {
-        val current = _remoteBrowser.value ?: return
-        sessionController.downloadRemoteFile(current.sessionId, remotePath, destination)
+    fun downloadRemoteFile(sessionId: String, remotePath: String, destination: Uri) {
+        if (!pickerSessionStillOpen(sessionId)) return
+        runCatching { sessionController.downloadRemoteFile(sessionId, remotePath, destination) }
+            .onFailure { error -> _userMessage.value = sessionController.remoteFileMessage(error).toUiText() }
     }
 
     /** Downloads a browsed remote directory into a folder the user selected. */
-    fun downloadRemoteDirectory(remotePath: String, destinationTree: Uri) {
-        val current = _remoteBrowser.value ?: return
-        sessionController.downloadRemoteDirectory(current.sessionId, remotePath, destinationTree)
+    fun downloadRemoteDirectory(sessionId: String, remotePath: String, destinationTree: Uri) {
+        if (!pickerSessionStillOpen(sessionId)) return
+        runCatching { sessionController.downloadRemoteDirectory(sessionId, remotePath, destinationTree) }
+            .onFailure { error -> _userMessage.value = sessionController.remoteFileMessage(error).toUiText() }
+    }
+
+    /**
+     * A picker result is applied only to the session that launched the picker. When that
+     * session ended while the picker was open, the user is told instead of the choice
+     * being dropped silently or sent over another connection.
+     */
+    private fun pickerSessionStillOpen(sessionId: String): Boolean {
+        val open = sessionController.sessions.value.any { it.id == sessionId && it.phase == TerminalSessionPhase.OPEN }
+        if (!open) _userMessage.value = uiText(R.string.remote_file_transfer_session_closed)
+        return open
     }
 
     /** Uploads a selected document into the directory currently being browsed. */
