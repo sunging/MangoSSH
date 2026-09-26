@@ -13,12 +13,10 @@ die() {
 }
 
 [[ -f "$LOCK_FILE" ]] || die "missing source lock: $LOCK_FILE"
-[[ -d "${MANGOSSH_GO_SOURCE:-}" ]] || die "MANGOSSH_GO_SOURCE is required"
 [[ -d "${MANGOSSH_MOSH_DEPS_DIR:-}" ]] || die "MANGOSSH_MOSH_DEPS_DIR is required"
 
 source_dir() {
     case "$1" in
-        go) printf '%s\n' "$MANGOSSH_GO_SOURCE" ;;
         mosh4android) printf '%s\n' "$PROJECT_DIR/third_party/mosh4android" ;;
         *) printf '%s\n' "$MANGOSSH_MOSH_DEPS_DIR/$1" ;;
     esac

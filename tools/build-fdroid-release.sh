@@ -19,7 +19,9 @@ die() {
     exit 1
 }
 
-export MANGOSSH_GO_ROOT="${MANGOSSH_GO_ROOT:-$PROJECT_DIR/.tools/go/1.26.7}"
+# shellcheck source=tools/lib/go-toolchain.sh
+source "$PROJECT_DIR/tools/lib/go-toolchain.sh"
+export MANGOSSH_GO_ROOT="${MANGOSSH_GO_ROOT:-$PROJECT_DIR/.tools/go/$MANGOSSH_GO_VERSION}"
 export MANGOSSH_OFFLINE_BUILD=1
 export GOTOOLCHAIN=local
 export GOPROXY=off

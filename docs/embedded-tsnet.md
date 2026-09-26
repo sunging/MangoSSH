@@ -28,7 +28,9 @@ The reproducible bridge build pins:
 - `tailscale.com v1.102.4`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
 
-Local-development download scripts verify the published Go SHA-256, Temurin
+Local and GitHub release preparation use `tools/fetch-go.sh` to install the
+SHA-256-pinned official Go archive; Go itself is not compiled. Download scripts
+verify the published Go SHA-256, Temurin
 SHA-256, and NDK size/SHA-1 before extracting. F-Droid builds instead require
 those toolchains to be supplied by the build environment and fail before any
 download is attempted. The complete Go module source graph is committed under

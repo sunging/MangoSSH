@@ -150,15 +150,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
-            autoconf automake binutils bison cmake gettext golang-go gperf git libtool ninja-build \
+            autoconf automake binutils bison cmake gettext gperf git libtool ninja-build \
             pkg-config rsync texinfo unzip zip
 
       - name: Fetch F-Droid source inputs at locked commits
         run: bash tools/fetch-fdroid-sources.sh
 
+      - name: Install verified Go toolchain
+        run: bash tools/fetch-go.sh
+
       - name: Rebuild native assets from pinned source
         env:
-          MANGOSSH_GO_SOURCE: ${{ github.workspace }}/.fdroid/sources/go
           MANGOSSH_MOSH_DEPS_DIR: ${{ github.workspace }}/.fdroid/sources
           MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.7
         run: |

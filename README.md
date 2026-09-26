@@ -218,9 +218,11 @@ F-Droid builds use `tools/prepare-fdroid-native.sh` followed by the standard
 `assembleFdroidRelease` Gradle task. `tools/build-fdroid-release.sh` composes
 those steps for local and CI verification with Gradle offline. The build
 environment must provide JDK 17, Android SDK/NDK r27d, and the source trees
-locked by `tools/fdroid-sources.lock`. Go 1.26.7, protoc 29.1, and the host
-`tic` used to compile terminfo are built from those sources; release-signing
-variables are rejected, and the result is an unsigned APK containing rebuilt
+locked by `tools/fdroid-sources.lock`. Install the pinned Go 1.26.7 Linux amd64
+toolchain with `bash tools/fetch-go.sh` during network-enabled preparation;
+this verifies the official archive SHA-256 instead of compiling Go itself.
+Protoc 29.1 and the host `tic` used to compile terminfo are built from source;
+release-signing variables are rejected, and the result is an unsigned APK containing rebuilt
 PTY, Mosh, terminfo, and tsnet artifacts.
 
 The expected external source layout is selected by
@@ -241,10 +243,14 @@ nor Hogweed is needed. This does not change the separate SSH or tsnet
 cryptography. Previously published releases and their fdroiddata recipes retain
 their original source requirements.
 
-`MANGOSSH_GO_SOURCE`, `MANGOSSH_MOSH_DEPS_DIR`, `JAVA_HOME`, `ANDROID_HOME`,
+`MANGOSSH_GO_ROOT`, `MANGOSSH_MOSH_DEPS_DIR`, `JAVA_HOME`, `ANDROID_HOME`,
 and `ANDROID_NDK_HOME` complete the environment contract. The source-build
 scripts set strict offline flags for Go and Gradle and fail instead of fetching
-a missing input. `tools/fetch-fdroid-sources.sh` is a separate, explicitly
+a missing input. Go defaults to `.tools/go/1.26.7`; no automatic toolchain
+upgrade or compiler bootstrap is permitted during the build. GitHub releases
+use the same verified prebuilt toolchain. F-Droid may supply a matching Debian
+toolchain, subject to APK reproducibility verification, or the checksum-pinned
+official archive. `tools/fetch-fdroid-sources.sh` is a separate, explicitly
 network-enabled preparation helper for CI; it verifies every checkout against
 the full commit in the lock file before the isolated build begins. Offline Mosh
 builds use isolated ABI workers; tune their safe concurrency with

@@ -89,6 +89,7 @@ val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
         rootProject.file("tools/build-tsnet-android.sh"),
         rootProject.file("tools/fetch-android-ndk.sh"),
         rootProject.file("tools/fetch-go.sh"),
+        rootProject.file("tools/lib/go-toolchain.sh"),
         rootProject.file("tools/fetch-jdk17.sh"),
         rootProject.file("tools/lib/linux-host.sh"),
         rootProject.file("tools/lib/tsnet-version.sh"),
