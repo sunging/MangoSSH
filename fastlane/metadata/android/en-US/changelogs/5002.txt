@@ -1,0 +1,3 @@
+Fix singular and plural counts for jump hosts and custom settings in the host editor.
+Use a verified, pinned Go toolchain for native builds, with stricter offline checks.
+Refresh store descriptions and screenshots, and reorganize the bilingual documentation.
