@@ -740,9 +740,13 @@
     <string name="host_editor_startup_note">可选择启动片段或 tmux 工作区，两者互斥；不会修改远端 tmux 配置。</string>
     <string name="host_editor_mosh_unavailable">Mosh 使用 UDP，不支持 SSH 跳板</string>
     <string name="host_editor_not_configured">未设置</string>
-    <string name="host_editor_jump_count">已选择 %1$d 个跳板</string>
+    <plurals name="host_editor_jump_count">
+        <item quantity="other">已选择 %1$d 个跳板</item>
+    </plurals>
     <string name="host_editor_security_summary">Agent：%1$s · 再认证：%2$s</string>
-    <string name="host_editor_override_count">已自定义 %1$d 项</string>
+    <plurals name="host_editor_override_count">
+        <item quantity="other">已自定义 %1$d 项</item>
+    </plurals>
     <string name="host_editor_select_key">请选择登录密钥</string>
     <string name="host_editor_this_connection">当前连接</string>
     <string name="host_editor_key_count">已授权 %1$d 个密钥</string>
