@@ -760,9 +760,15 @@
     <string name="host_editor_startup_note">Choose a startup snippet or a tmux workspace. These modes are exclusive; remote tmux configuration is unchanged.</string>
     <string name="host_editor_mosh_unavailable">Unavailable with Mosh (UDP)</string>
     <string name="host_editor_not_configured">Not configured</string>
-    <string name="host_editor_jump_count">%1$d jumps selected</string>
+    <plurals name="host_editor_jump_count">
+        <item quantity="one">%1$d jump selected</item>
+        <item quantity="other">%1$d jumps selected</item>
+    </plurals>
     <string name="host_editor_security_summary">Agent: %1$s · Reauthentication: %2$s</string>
-    <string name="host_editor_override_count">%1$d custom settings</string>
+    <plurals name="host_editor_override_count">
+        <item quantity="one">%1$d custom setting</item>
+        <item quantity="other">%1$d custom settings</item>
+    </plurals>
     <string name="host_editor_select_key">Select a login key</string>
     <string name="host_editor_this_connection">This connection</string>
     <string name="host_editor_key_count">%1$d keys authorized</string>

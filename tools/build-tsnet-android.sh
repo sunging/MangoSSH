@@ -10,7 +10,9 @@ mangossh_require_commands \
     bash cat chmod cp find flock git grep install mkdir rm python3 sha256sum
 BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
 TOOLS_DIR="$PROJECT_DIR/.tools"
-GO_VERSION="1.26.7"
+# shellcheck source=tools/lib/go-toolchain.sh
+source "$PROJECT_DIR/tools/lib/go-toolchain.sh"
+GO_VERSION="$MANGOSSH_GO_VERSION"
 JDK_VERSION="17.0.19+10"
 # shellcheck source=tools/lib/tsnet-version.sh
 source "$PROJECT_DIR/tools/lib/tsnet-version.sh"
@@ -46,10 +48,7 @@ if [[ ! -x "$GO_ROOT/bin/go" ]]; then
     bash "$PROJECT_DIR/tools/fetch-go.sh"
     GO_ROOT="$TOOLS_DIR/go/$GO_VERSION"
 fi
-[[ "$("$GO_ROOT/bin/go" version)" == "go version go${GO_VERSION} linux/amd64" ]] || {
-    printf 'Go %s for linux/amd64 is required at %s.\n' "$GO_VERSION" "$GO_ROOT" >&2
-    exit 1
-}
+mangossh_require_go "$GO_ROOT"
 [[ -f "$VENDOR_DIR/modules.txt" ]] || {
     printf 'Vendored Go sources are required at %s.\n' "$VENDOR_DIR" >&2
     exit 1

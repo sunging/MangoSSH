@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -168,7 +169,7 @@ private fun HostEditorDraft.summary(page: HostEditorPage, snippets: List<Command
     HostEditorPage.JUMPS -> when {
         protocol == ConnectionProtocol.MOSH -> stringResource(R.string.host_editor_mosh_unavailable)
         jumpIds.isEmpty() -> stringResource(R.string.host_editor_not_configured)
-        else -> stringResource(R.string.host_editor_jump_count, jumpIds.size)
+        else -> pluralStringResource(R.plurals.host_editor_jump_count, jumpIds.size, jumpIds.size)
     }
     HostEditorPage.STARTUP -> when {
         workspace.mode != WorkspaceMode.DISABLED -> "tmux · ${workspace.mode.label()} · ${if (workspace.mode == WorkspaceMode.ATTACH) workspace.sessionId else workspace.name}"
@@ -179,7 +180,7 @@ private fun HostEditorDraft.summary(page: HostEditorPage, snippets: List<Command
         stringResource(if (protocol == ConnectionProtocol.SSH && agentForwarding) R.string.host_policy_enabled else R.string.host_policy_disabled),
         stringResource(when (reauthenticate) { null -> R.string.host_policy_inherited; true -> R.string.host_policy_enabled; false -> R.string.host_policy_disabled }))
     HostEditorPage.ADVANCED -> listOf(overrides.connectTimeoutSeconds, overrides.keepaliveSeconds, overrides.backgroundMultiplier, overrides.terminalType)
-        .count { it != null }.let { if (it == 0) stringResource(R.string.host_policy_inherit) else stringResource(R.string.host_editor_override_count, it) }
+        .count { it != null }.let { if (it == 0) stringResource(R.string.host_policy_inherit) else pluralStringResource(R.plurals.host_editor_override_count, it, it) }
 }
 
 @Composable

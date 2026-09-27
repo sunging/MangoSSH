@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Builds every native input from pinned source. It intentionally stops before
-# Gradle so fdroidserver can perform its standard assembleFdroidRelease step.
+# Builds application native inputs from pinned source using preinstalled tools.
+# It stops before Gradle so fdroidserver can perform its standard
+# assembleFdroidRelease step.
 
 set -euo pipefail
 
@@ -24,7 +25,6 @@ die() {
     die "ANDROID_NDK_HOME must provide Android NDK r27d"
 grep -q '^Pkg.Revision = 27\.3\.13750724$' "$ANDROID_NDK_HOME/source.properties" ||
     die "Android NDK revision 27.3.13750724 (r27d) is required"
-[[ -d "${MANGOSSH_GO_SOURCE:-}" ]] || die "MANGOSSH_GO_SOURCE is required"
 [[ -d "${MANGOSSH_MOSH_DEPS_DIR:-}" ]] || die "MANGOSSH_MOSH_DEPS_DIR is required"
 
 for secret_name in \
@@ -35,7 +35,10 @@ for secret_name in \
     [[ -z "${!secret_name:-}" ]] || die "release signing variables are forbidden in F-Droid builds"
 done
 
-export MANGOSSH_GO_ROOT="${MANGOSSH_GO_ROOT:-$PROJECT_DIR/.tools/go/1.26.7}"
+# shellcheck source=tools/lib/go-toolchain.sh
+source "$PROJECT_DIR/tools/lib/go-toolchain.sh"
+export MANGOSSH_GO_ROOT="${MANGOSSH_GO_ROOT:-$PROJECT_DIR/.tools/go/$MANGOSSH_GO_VERSION}"
+mangossh_require_go "$MANGOSSH_GO_ROOT"
 export MANGOSSH_OFFLINE_BUILD=1
 export GOTOOLCHAIN=local
 export GOPROXY=off
@@ -46,7 +49,6 @@ export LC_ALL=C
 export TZ=UTC
 
 bash "$PROJECT_DIR/tools/verify-fdroid-sources.sh"
-bash "$PROJECT_DIR/tools/build-fdroid-go.sh"
 
 # Never let a failed source build fall back to binaries checked into the
 # developer repository. fdroidserver's scandelete performs the same removal
