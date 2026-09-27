@@ -8,9 +8,10 @@
 * **ui:** pluralize host editor jump and custom setting counts ([bc32c7a](https://github.com/sunging/MangoSSH/commit/bc32c7a3f4a0913976455388865f09f8d3c8ea3b))
 
 
-### Miscellaneous Chores
+### Build and Documentation
 
-* merge develop into main ([13c8a9e](https://github.com/sunging/MangoSSH/commit/13c8a9e695652fc3e5824dd3f5266e67e43172cc))
+* Use a verified, pinned Go toolchain for native builds and strengthen offline toolchain validation.
+* Refresh store descriptions and screenshots, and reorganize the English and Simplified Chinese documentation.
 
 ## [0.5.1](https://github.com/sunging/MangoSSH/compare/v0.5.0...v0.5.1) (2026-09-26)
 
