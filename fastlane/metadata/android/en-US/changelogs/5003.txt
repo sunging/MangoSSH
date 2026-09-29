@@ -1,0 +1,2 @@
+Show connection failures and other session messages while the terminal, remote file browser, or editor is open.
+Make native builds more consistent by declaring NDK r27d and using the selected JDK 17 without Gradle downloading another JDK.
