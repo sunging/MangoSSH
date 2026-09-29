@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- JDK 17 and an Android SDK (`ANDROID_SDK_ROOT` or `ANDROID_HOME`).
+- A preinstalled full JDK 17 and an Android SDK (`ANDROID_SDK_ROOT` or `ANDROID_HOME`).
 - Git submodules:
 
   ```text
@@ -12,6 +12,21 @@
 - For the native Mosh client and PTY bridge: a glibc-compatible Linux x86_64
   host. On Windows, Gradle uses WSL only as an adapter for the same Linux
   scripts.
+
+Set `JAVA_HOME` to your JDK 17 installation before invoking Gradle. In Android
+Studio, select that installation in Settings > Build, Execution, Deployment >
+Build Tools > Gradle > Gradle JDK. The settings script rejects other Java
+versions and installations without `javac`. Gradle does not download a JDK or
+override the selected JVM with daemon toolchain criteria. GitHub workflows
+already install JDK 17 with `actions/setup-java`.
+
+On Linux, Gradle passes its own JDK installation to the tsnet build subprocess.
+On Windows, WSL uses a separate Linux JDK; the Windows `JAVA_HOME` is not
+forwarded by the adapter. Direct Linux/WSL native scripts retain their pinned
+JDK download fallback for online builds; offline builds require a supplied
+Linux JDK 17. Machine-specific paths such as Debian's
+`/usr/lib/jvm/java-17-openjdk-amd64` belong in the build environment, not in
+the application's committed Gradle properties.
 
 A debug build of the GitHub distribution:
 
@@ -70,6 +85,8 @@ boundaries, build commands, and emulator/lab verification checklist.
 The Go packages linked into that bridge are committed as source under
 `native/tsnetbridge/vendor`. Local builds may download the pinned Go, JDK, and
 NDK toolchains when they are missing, but do not download Go module source.
+The app declares NDK r27d (`27.3.13750724`) for Gradle's native-library
+processing, matching the native build scripts.
 
 ## F-Droid source build
 

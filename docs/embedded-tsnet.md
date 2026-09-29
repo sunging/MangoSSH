@@ -23,7 +23,8 @@ routing are intentionally unsupported.
 The reproducible bridge build pins:
 
 - Go `1.26.7`;
-- Eclipse Temurin JDK `17.0.19+10` for the gomobile build;
+- JDK 17 supplied by the build environment (the standalone script's download
+  fallback pins Eclipse Temurin `17.0.19+10`);
 - Android NDK `27.3.13750724` (r27d);
 - `tailscale.com v1.102.4`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
@@ -74,9 +75,14 @@ bash tools/build-tsnet-android.sh
 Direct builds require `ANDROID_SDK_ROOT` or `ANDROID_HOME` to name an existing
 Android SDK directory. The build normalizes the selected path and exports both
 variables to its child tools.
+On Linux, Gradle explicitly passes its running JDK as `JAVA_HOME`, so the
+native subprocess and Gradle use the same installation. Gradle itself requires
+a preinstalled JDK 17 and does not provision Java toolchains.
 
 On Windows, normal Gradle tasks use WSL as an adapter to invoke the same generic
-Linux build script and pass Gradle's resolved Android SDK path into Linux:
+Linux build script and pass Gradle's resolved Android SDK path into Linux.
+The adapter does not forward the Windows JVM path; the Linux script selects
+its own Linux JDK as described above.
 
 ```text
 gradlew.bat :app:testDebugUnitTest
