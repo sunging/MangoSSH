@@ -288,6 +288,7 @@ fun MangoSshApp(
         sessionPrompts.firstOrNull()?.let { prompt ->
             SessionPromptDialog(prompt) { values -> viewModel.respondToSessionPrompt(prompt, values) }
         }
+        userMessage?.let { UserMessageDialog(it, viewModel::dismissUserMessage) }
         return
     }
     val hosts by viewModel.hosts.collectAsStateWithLifecycle()
@@ -380,6 +381,7 @@ fun MangoSshApp(
                 onRespond = { values -> viewModel.respondToSessionPrompt(prompt, values) },
             )
         }
+        userMessage?.let { UserMessageDialog(it, viewModel::dismissUserMessage) }
         return
     }
 
@@ -504,6 +506,7 @@ fun MangoSshApp(
                 },
             )
         }
+        userMessage?.let { UserMessageDialog(it, viewModel::dismissUserMessage) }
         return
     }
 
@@ -770,16 +773,24 @@ fun MangoSshApp(
         )
     }
 
-    userMessage?.let { message ->
-        AlertDialog(
-            onDismissRequest = viewModel::dismissUserMessage,
-            title = { Text("MangoSSH") },
-            text = { Text(message.asString()) },
-            confirmButton = {
-                TextButton(onClick = viewModel::dismissUserMessage) { Text(stringResource(R.string.common_ok)) }
-            },
-        )
-    }
+    userMessage?.let { UserMessageDialog(it, viewModel::dismissUserMessage) }
+}
+
+/**
+ * The app-wide message dialog. Every full-screen branch of [MangoSshApp] that
+ * returns early renders it too, so a failure is shown where it happens instead
+ * of waiting behind the terminal or browser until the user leaves it.
+ */
+@Composable
+private fun UserMessageDialog(message: UiText, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("MangoSSH") },
+        text = { Text(message.asString()) },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_ok)) }
+        },
+    )
 }
 
 @Composable
