@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.3](https://github.com/sunging/MangoSSH/compare/v0.5.2...v0.5.3) (2026-09-29)
+
+
+### Bug Fixes
+
+* **build:** declare native toolchains in application configuration ([8d16f70](https://github.com/sunging/MangoSSH/commit/8d16f705e7684a61e21f7a0b9396d1feda020ec4))
+* **ui:** show session messages over terminal and remote screens ([f0f1eef](https://github.com/sunging/MangoSSH/commit/f0f1eef327d4e38cd4e031c705fac211c9293886))
+
+
 ## [0.5.2](https://github.com/sunging/MangoSSH/compare/v0.5.1...v0.5.2) (2026-09-27)
 
 
