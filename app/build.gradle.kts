@@ -121,6 +121,9 @@ val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
     } else {
         environment("ANDROID_HOME", androidSdkPath)
         environment("ANDROID_SDK_ROOT", androidSdkPath)
+        // Native Linux tools must use the same JDK as Gradle. The Windows branch
+        // uses a separate Linux JDK inside WSL, not the Windows JVM installation.
+        environment("JAVA_HOME", System.getProperty("java.home"))
         if (providers.gradleProperty("mangosshOfflineBuild").orNull == "true") {
             environment("MANGOSSH_OFFLINE_BUILD", "1")
         }
@@ -143,6 +146,8 @@ val hasReleaseSigning = listOf(
 ).all { !it.isNullOrBlank() }
 
 android {
+    // Match the native build scripts when Gradle strips and packages their libraries.
+    ndkVersion = "27.3.13750724"
     namespace = "website.sung.mangossh"
     compileSdk = 37
 
