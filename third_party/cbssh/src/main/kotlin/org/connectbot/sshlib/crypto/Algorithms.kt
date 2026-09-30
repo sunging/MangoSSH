@@ -95,8 +95,8 @@ internal enum class CipherEntry(
     internal fun create(key: ByteArray, iv: ByteArray, forEncryption: Boolean): EncryptionInstance = factory(key, iv, forEncryption)
 
     companion object {
-        val defaults: List<CipherEntry> = listOf(
-            CHACHA20_POLY1305,
+        val defaults: List<CipherEntry> = listOfNotNull(
+            CHACHA20_POLY1305.takeIf { ChaCha20Poly1305Cipher.isAvailable },
             AES128_GCM,
             AES256_GCM,
             AES128_CTR,
