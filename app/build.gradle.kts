@@ -78,7 +78,7 @@ require(
 
 val embeddedTsnetAar = layout.buildDirectory.file("generated/tsnet/mangossh-tsnet.aar")
 val androidSdkPath = androidComponents.sdkComponents.sdkDirectory.get().asFile.absolutePath
-val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
+val buildEmbeddedTsnetAar = tasks.register<Exec>("buildEmbeddedTsnetAar") {
     group = "build"
     description = "Builds the pinned four-ABI embedded tsnet gomobile bridge."
     val bridgeSources = rootProject.fileTree("native/tsnetbridge") {
@@ -248,7 +248,7 @@ abstract class GenerateEmbeddedTsnetBuildInfo : DefaultTask() {
     }
 }
 
-val generateEmbeddedTsnetBuildInfo by tasks.registering(GenerateEmbeddedTsnetBuildInfo::class) {
+val generateEmbeddedTsnetBuildInfo = tasks.register<GenerateEmbeddedTsnetBuildInfo>("generateEmbeddedTsnetBuildInfo") {
     group = "build"
     description = "Generates the vendored Tailscale version constant shown in Settings."
     tailscaleVersion.set(embeddedTailscaleVersion)

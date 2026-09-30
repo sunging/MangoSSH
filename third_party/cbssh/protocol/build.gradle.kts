@@ -7,7 +7,7 @@ kotlin { jvmToolchain(17) }
 
 java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
 
-val kaitaiCompiler by configurations.creating
+val kaitaiCompiler = configurations.create("kaitaiCompiler")
 
 /** Generates protocol codecs from the pinned, reviewable wire definitions. */
 abstract class KaitaiTask : JavaExec() {
