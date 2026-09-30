@@ -334,7 +334,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(project(":third_party:cbssh"))
-    runtimeOnly("org.slf4j:slf4j-nop:2.0.18")
+    runtimeOnly("org.slf4j:slf4j-nop:2.0.20")
     implementation(project(":third_party:termlib"))
     implementation(libs.conscrypt.android)
     implementation(libs.androidx.biometric)
