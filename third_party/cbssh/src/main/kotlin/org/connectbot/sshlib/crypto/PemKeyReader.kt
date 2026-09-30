@@ -241,13 +241,23 @@ internal object PemKeyReader {
         } catch (_: InvalidKeySpecException) {}
 
         try {
-            val privKey = RawKeyFactory.generatePrivate("RSA", PKCS8EncodedKeySpec(data)) as RSAPrivateCrtKey
+            val decoded = RawKeyFactory.generatePrivate("RSA", PKCS8EncodedKeySpec(data))
+            // Android 8's Conscrypt returns a key without the CRT interface here.
+            // The embedded PKCS#1 structure always carries the CRT fields.
+            val privKey = decoded as? RSAPrivateCrtKey ?: return readPkcs1Rsa(pkcs8PrivateKeyOctets(data))
             val pubSpec = RSAPublicKeySpec(privKey.modulus, privKey.publicExponent)
             val pubKey = RawKeyFactory.generatePublic("RSA", pubSpec)
             return SshPrivateKey("ssh-rsa", KeyPair(pubKey, privKey), "rsa-sha2-512")
         } catch (_: InvalidKeySpecException) {}
 
         throw SshException("Unable to parse PKCS#8 key: unsupported algorithm")
+    }
+
+    /** Returns the privateKey OCTET STRING of a PKCS#8 PrivateKeyInfo. */
+    private fun pkcs8PrivateKeyOctets(data: ByteArray): ByteArray = DerReader(data).readSequence { seq ->
+        seq.readInteger() // version
+        seq.readSequence { algId -> while (algId.hasRemaining()) algId.skipTag() }
+        seq.readOctetString()
     }
 
     internal fun ed25519PublicKeyFromSeed(seed: ByteArray): PublicKey {
