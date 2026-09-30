@@ -1,7 +1,9 @@
 package website.sung.mangossh.presentation
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import website.sung.mangossh.R
 import website.sung.mangossh.session.SessionEndReason
@@ -48,6 +50,21 @@ class SessionEndMessageTest {
             assertEquals(uiText(resource), resolveSessionEndMessage(
                 SessionEndedEvent("authentication", SessionEndReason.CONNECTION_FAILED, messageKind = kind)))
         }
+    }
+
+    @Test
+    fun onlyOrderlySessionEndsLeaveTheTerminal() {
+        assertTrue(SessionEndedEvent("exit", SessionEndReason.REMOTE_EXIT).leavesTerminal())
+        assertTrue(SessionEndedEvent("user", SessionEndReason.USER_REQUEST).leavesTerminal())
+        assertFalse(SessionEndedEvent("lost", SessionEndReason.CONNECTION_LOST).leavesTerminal())
+        assertFalse(SessionEndedEvent("failed", SessionEndReason.CONNECTION_FAILED).leavesTerminal())
+        assertFalse(
+            SessionEndedEvent(
+                "mosh",
+                SessionEndReason.REMOTE_EXIT,
+                messageKind = SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED,
+            ).leavesTerminal(),
+        )
     }
 
     @Test

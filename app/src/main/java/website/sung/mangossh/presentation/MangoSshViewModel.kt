@@ -107,6 +107,9 @@ internal fun resolveSessionEndMessage(
     SessionEndReason.CONNECTION_FAILED -> uiText(R.string.session_ended_connection_failed)
 }
 
+/** Orderly ends leave the terminal; failures stay so their output and Reconnect remain reachable. */
+internal fun SessionEndedEvent.leavesTerminal(): Boolean = resolveSessionEndMessage(this) == null
+
 /** Resolves only the fixed failure category, never remote exception text. */
 internal fun SessionEndMessageKind.toUiText(): UiText = uiText(
     when (this) {

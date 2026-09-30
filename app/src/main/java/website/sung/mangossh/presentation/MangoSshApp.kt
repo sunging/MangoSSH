@@ -213,6 +213,7 @@ fun MangoSshApp(
         viewModel.sessionEndedEvents.collect { event ->
             if (event.sessionId == currentActiveSessionId) {
                 leaveSessionId = null
+                if (event.leavesTerminal()) activeSessionId = null
                 viewModel.sessionEndMessage(event)?.let(viewModel::reportUserMessage)
             }
         }
