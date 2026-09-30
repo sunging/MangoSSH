@@ -20,6 +20,7 @@ package org.connectbot.sshlib.crypto
 import org.connectbot.sshlib.SshException
 import java.io.ByteArrayOutputStream
 import java.security.KeyPair
+import java.security.PrivateKey
 import java.security.SecureRandom
 import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
@@ -145,11 +146,9 @@ internal object OpenSshKeyWriter {
 
     private fun extractEd25519Seed(keyPair: KeyPair): ByteArray {
         val privKey = keyPair.private
+        // Check our own key class first: EdECPrivateKey exists only on Java 15+
+        // and Android 13+, so resolving it on older Android throws.
         return when {
-            privKey is EdECPrivateKey -> {
-                privKey.bytes.orElseThrow { SshException("Cannot extract Ed25519 seed") }
-            }
-
             privKey.javaClass.name.contains("Ed25519PrivateKey") -> {
                 // Our Ed25519PrivateKey or similar — extract from PKCS#8 encoding
                 val encoded = privKey.encoded
@@ -163,8 +162,15 @@ internal object OpenSshKeyWriter {
                 }
             }
 
-            else -> throw SshException("Cannot extract Ed25519 seed from ${privKey.javaClass}")
+            else -> platformEd25519Seed(privKey)
+                ?: throw SshException("Cannot extract Ed25519 seed from ${privKey.javaClass}")
         }
+    }
+
+    private fun platformEd25519Seed(privKey: PrivateKey): ByteArray? = try {
+        (privKey as? EdECPrivateKey)?.bytes?.orElseThrow { SshException("Cannot extract Ed25519 seed") }
+    } catch (_: LinkageError) {
+        null
     }
 
     private fun writeEcdsaPrivate(out: ByteArrayOutputStream, keyPair: KeyPair, keyType: String) {

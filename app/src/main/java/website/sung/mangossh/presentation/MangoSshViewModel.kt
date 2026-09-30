@@ -1319,6 +1319,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                     }
                 }
                 .onFailure {
+                    MangoLog.warn(MangoLogEvent.KEY_GENERATION_FAILED, it)
                     _userMessage.value = uiText(R.string.message_key_generation_failed)
                 }
           } finally { _keyOperationBusy.value = false }

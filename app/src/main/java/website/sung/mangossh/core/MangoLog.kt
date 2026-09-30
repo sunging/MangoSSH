@@ -107,6 +107,9 @@ enum class MangoLogEvent(val code: String) {
     REMOTE_STREAM_OPEN_FAILED("remote_stream.open.failed"),
     REMOTE_STREAM_READ_FAILED("remote_stream.read.failed"),
     EDITOR_DRAFT_STORE_FAILED("editor.draft_store.failed"),
+
+    /** Generating or encoding a new client key failed before it reached the vault. */
+    KEY_GENERATION_FAILED("key.generation.failed"),
     TSNET_STARTING("tsnet.starting"),
     TSNET_RUNNING("tsnet.running"),
     TSNET_FAILED("tsnet.failed"),
