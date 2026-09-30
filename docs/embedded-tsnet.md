@@ -119,9 +119,24 @@ is not saveable UI state. It is converted to a mutable character array, passed
 directly through the restricted bridge, and cleared on every completion path.
 Failures use fixed categories and require fresh input.
 
-The bridge exposes only start, fixed status, authenticated SOCKS5, UDP relay,
-logout, and close operations. It does not expose Tailscale LocalAPI. Upstream
-text logging is discarded, `TS_NO_LOGS_NO_SUPPORT` is enabled, and the audited
+The bridge exposes only start, fixed status, a read-only network snapshot,
+authenticated SOCKS5, UDP relay, logout, and close operations. It does not
+expose Tailscale LocalAPI. The network snapshot is an explicit allow-list:
+this node's hostname, MagicDNS name, and Tailnet addresses, and for each peer
+its stable ID, hostname, MagicDNS name, OS, Tailnet addresses, online state,
+last-seen time, and whether it advertises Tailscale SSH host keys. Node keys,
+endpoints, DERP/relay data, user identities, and SSH host key contents never
+cross the boundary. Sharee nodes and Mullvad exit nodes are omitted.
+
+Settings → Embedded Tailscale keeps an enrolled node up while the page is
+visible, polls the snapshot every five seconds, and releases the node five
+seconds after the page is hidden unless a session owns it. This browse-only
+hold never starts the foreground service or opens a browser authorization,
+and never starts a node that has not enrolled. The snapshot is held only in
+memory while the page is visible. Peer names and addresses are displayed
+verbatim and never logged.
+
+Upstream text logging is discarded, `TS_NO_LOGS_NO_SUPPORT` is enabled, and the audited
 patch prevents creation or upload of the raw logtail buffer. The `ts_omit_netlog`
 build tag keeps upstream's logtail-backed network flow logger out of the binary
 rather than relying on its runtime check. MangoSSH logs only fixed state event

@@ -118,6 +118,7 @@ enum class MangoLogEvent(val code: String) {
     TSNET_STATE_RECOVERED("tsnet.state.recovered"),
     TSNET_LOGOUT_SUCCEEDED("tsnet.logout.succeeded"),
     TSNET_LOGOUT_FAILED("tsnet.logout.failed"),
+    TSNET_SNAPSHOT_FAILED("tsnet.snapshot.failed"),
     WEBDAV_UPLOAD_SUCCEEDED("webdav.upload.succeeded"),
     WEBDAV_UPLOAD_FAILED("webdav.upload.failed"),
     WEBDAV_DOWNLOAD_SUCCEEDED("webdav.download.succeeded"),

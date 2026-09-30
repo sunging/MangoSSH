@@ -30,14 +30,18 @@ import website.sung.mangossh.data.vault.StoredSshKey
 import website.sung.mangossh.domain.*
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 
-/** Phones use all available space; tablet panels bound line length and share the same navigation. */
+/**
+ * Phones use all available space; tablet panels bound line length and share the same navigation.
+ * Without [initialHost], a [prefill] profile seeds the new host's form instead of empty fields.
+ */
 @Composable
 internal fun HostEditorDialog(hosts: List<ConnectionProfile>, defaults: ConnectionPreferences,
     initialHost: ConnectionProfile?, keys: List<StoredSshKey>, snippets: List<CommandSnippet>,
-    onDismiss: () -> Unit, onSave: (ConnectionProfileDraft, EditorSaveOperation) -> Unit) {
+    onDismiss: () -> Unit, onSave: (ConnectionProfileDraft, EditorSaveOperation) -> Unit,
+    prefill: ConnectionProfile? = null) {
     val save = remember { EditorSaveOperation(onDismiss) }
     DisposableEffect(save) { onDispose { save.dispose() } }
-    val controller = rememberHostEditorController(initialHost)
+    val controller = rememberHostEditorController(initialHost, prefill)
     val tablet = LocalWindowInfo.current.containerDpSize.width >= 600.dp
     Dialog(onDismissRequest = { controller.back(onDismiss) }, properties = DialogProperties(
         usePlatformDefaultWidth = false, decorFitsSystemWindows = false, dismissOnClickOutside = false)) {

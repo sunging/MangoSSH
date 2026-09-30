@@ -6,16 +6,19 @@ import android.content.Context
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -43,6 +46,8 @@ internal data class EmbeddedTsnetStatus(
     val phase: EmbeddedTsnetPhase,
     val activeSessions: Int = 0,
     val authKeyAllowed: Boolean = true,
+    /** False only until the stored identity has been read; [phase] is a placeholder until then. */
+    val identityResolved: Boolean = true,
 )
 
 /** Fixed failure used when a TSNET profile is selected before enrollment. */
@@ -91,7 +96,15 @@ internal class EmbeddedTsnetManager(
     private var enrolledIdentity = false
     private var registrationExists = false
 
-    private val _status = MutableStateFlow(EmbeddedTsnetStatus(EmbeddedTsnetPhase.UNENROLLED))
+    // Device browsing keeps an enrolled node up while the Tailscale settings
+    // page is visible. The app is in the foreground then, so a browse-only
+    // node never asks for the foreground service.
+    private var browseHold = false
+    private val browsingRequested = MutableStateFlow(false)
+
+    private val _status = MutableStateFlow(
+        EmbeddedTsnetStatus(EmbeddedTsnetPhase.UNENROLLED, identityResolved = false),
+    )
     val status = _status.asStateFlow()
 
     private val _authorizationUrls = MutableSharedFlow<String>(
@@ -105,9 +118,19 @@ internal class EmbeddedTsnetManager(
     private val _foregroundRequired = MutableStateFlow(false)
     val foregroundRequired = _foregroundRequired.asStateFlow()
 
+    private val _network = MutableStateFlow<TsnetNetworkSnapshot?>(null)
+
+    /**
+     * Latest tailnet view, refreshed only while device browsing is held and
+     * cleared when it is released so peer names are not kept in memory.
+     */
+    val network = _network.asStateFlow()
+
     init {
         scope.launch {
-            val enrolled = stateStore.hasEnrolledIdentity()
+            // An unreadable store resolves as not enrolled rather than
+            // leaving the status unresolved forever.
+            val enrolled = runCatching { stateStore.hasEnrolledIdentity() }.getOrDefault(false)
             mutex.withLock {
                 if (backend == null && _status.value.phase == EmbeddedTsnetPhase.UNENROLLED) {
                     enrolledIdentity = enrolled
@@ -115,6 +138,93 @@ internal class EmbeddedTsnetManager(
                     updateStatusLocked(idlePhase())
                 }
             }
+        }
+        // One collector applies visibility changes in order; a newer request
+        // cancels a pending release or an older hold's snapshot polling.
+        scope.launch {
+            browsingRequested.collectLatest { visible ->
+                if (visible) {
+                    holdForBrowsing()
+                    pollNetworkSnapshots()
+                } else {
+                    delay(BROWSE_RELEASE_DELAY_MILLIS)
+                    releaseBrowsing()
+                }
+            }
+        }
+    }
+
+    /** Name this installation registers with; stable across restarts and sign-outs. */
+    suspend fun nodeName(): String = withContext(Dispatchers.IO) { stateStore.nodeName() }
+
+    /**
+     * Keeps an enrolled node running while the device list is on screen.
+     *
+     * Hiding the list releases the hold after [BROWSE_RELEASE_DELAY_MILLIS], so
+     * a quick connect that navigates away can take its session lease before
+     * the node would otherwise stop and restart.
+     */
+    fun setDeviceBrowsing(visible: Boolean) {
+        browsingRequested.value = visible
+    }
+
+    private suspend fun holdForBrowsing() {
+        val enrolled = hasIdentity()
+        val shouldStart = mutex.withLock {
+            browseHold = true
+            if (enrolled && backend == null && !runtimeStarting) {
+                runtimeStarting = true
+                true
+            } else {
+                false
+            }
+        }
+        // Started outside the collector so a quick hide cannot cancel it
+        // half-way; the release path detaches whatever it produced.
+        if (shouldStart) scope.launch { startRuntime(null) }
+    }
+
+    private suspend fun releaseBrowsing() {
+        val close = mutex.withLock {
+            if (!browseHold) return
+            browseHold = false
+            _network.value = null
+            if (backend != null || runtimeStarting) {
+                detachIfIdleLocked() ?: run {
+                    // Still owned by sessions or enrollment: only the
+                    // foreground requirement may have changed.
+                    updateStatusLocked(_status.value.phase)
+                    null
+                }
+            } else {
+                updateStatusLocked(_status.value.phase)
+                null
+            }
+        }
+        close?.let(::closeBackend)
+    }
+
+    private suspend fun pollNetworkSnapshots() {
+        while (true) {
+            status.first { it.phase == EmbeddedTsnetPhase.ACTIVE }
+            val current = mutex.withLock { backend.takeIf { browseHold } }
+            if (current == null) {
+                delay(SNAPSHOT_INTERVAL_MILLIS)
+                continue
+            }
+            try {
+                val snapshot = withContext(Dispatchers.IO) {
+                    TsnetNetworkSnapshotCodec.decode(current.networkSnapshotJson())
+                }
+                mutex.withLock {
+                    if (browseHold && backend === current) _network.value = snapshot
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                MangoLog.warn(MangoLogEvent.TSNET_SNAPSHOT_FAILED, error)
+            }
+            delay(SNAPSHOT_INTERVAL_MILLIS)
         }
     }
 
@@ -242,6 +352,7 @@ internal class EmbeddedTsnetManager(
                 enrollmentHold = false
                 enrolledIdentity = false
                 registrationExists = false
+                _network.value = null
                 val detached = backend
                 backend = null
                 backendToken = null
@@ -405,12 +516,20 @@ internal class EmbeddedTsnetManager(
         var close: EmbeddedTsnetBackend? = null
         mutex.withLock {
             if (token !== backendToken) return
-            if (authorizationUrl.isNotEmpty()) {
+            // Merely viewing the device list must never open a browser; login
+            // stays an explicit enrollment action.
+            if (authorizationUrl.isNotEmpty() && !browseOnlyLocked()) {
                 authorizationUrlToEmit = authorizationUrl
             }
             when (rawState) {
                 "starting" -> updateStatusLocked(EmbeddedTsnetPhase.STARTING)
-                "needs_login" -> {
+                // A registered node reports NoState/NeedsLogin while it loads
+                // its saved state. tsnet requests an authorization URL when a
+                // sign-in is really needed, so until one arrives the node is
+                // still starting and must not look signed out.
+                "needs_login" -> if (registrationStillExists == true && authorizationUrl.isEmpty()) {
+                    updateStatusLocked(EmbeddedTsnetPhase.STARTING)
+                } else {
                     enrolledIdentity = false
                     registrationExists = registrationStillExists == true
                     updateStatusLocked(EmbeddedTsnetPhase.WAITING_FOR_LOGIN)
@@ -457,7 +576,7 @@ internal class EmbeddedTsnetManager(
     }
 
     private fun detachIfIdleLocked(): EmbeddedTsnetBackend? {
-        if (activeLeases != 0 || pendingAcquires != 0 || enrollmentHold) return null
+        if (activeLeases != 0 || pendingAcquires != 0 || enrollmentHold || browseHold) return null
         val current = backend
         backend = null
         backendToken = null
@@ -478,12 +597,17 @@ internal class EmbeddedTsnetManager(
             activeSessions = activeLeases,
             authKeyAllowed = !registrationExists,
         )
-        _foregroundRequired.value = phase == EmbeddedTsnetPhase.STARTING ||
+        val converging = phase == EmbeddedTsnetPhase.STARTING ||
             phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN ||
-            phase == EmbeddedTsnetPhase.WAITING_FOR_APPROVAL ||
+            phase == EmbeddedTsnetPhase.WAITING_FOR_APPROVAL
+        _foregroundRequired.value = (converging && !browseOnlyLocked()) ||
             activeLeases > 0 ||
             pendingAcquires > 0
     }
+
+    /** True when only the visible device list owns the node. */
+    private fun browseOnlyLocked(): Boolean =
+        browseHold && !enrollmentHold && activeLeases == 0 && pendingAcquires == 0
 
     private fun closeBackend(value: EmbeddedTsnetBackend) {
         runCatching { value.close() }
@@ -515,6 +639,8 @@ internal class EmbeddedTsnetManager(
 
     private companion object {
         const val START_TIMEOUT_MILLIS = 30_000L
+        const val BROWSE_RELEASE_DELAY_MILLIS = 5_000L
+        const val SNAPSHOT_INTERVAL_MILLIS = 5_000L
     }
 }
 

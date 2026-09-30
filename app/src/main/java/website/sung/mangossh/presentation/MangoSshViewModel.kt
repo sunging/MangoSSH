@@ -234,6 +234,11 @@ class MangoSshViewModel @JvmOverloads constructor(
     val terminalClipboardCopies = sessionController.clipboardCopies
     internal val embeddedTsnetStatus = embeddedTsnetManager.status
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
+    internal val embeddedTsnetNetwork = embeddedTsnetManager.network
+    private val _embeddedTsnetNodeName = MutableStateFlow<String?>(null)
+
+    /** Hostname this installation registers with, shown before the node reports its MagicDNS name. */
+    internal val embeddedTsnetNodeName = _embeddedTsnetNodeName.asStateFlow()
     val terminalAppearance = terminalAppearanceStore.appearance
     val terminalBehavior = terminalBehaviorStore.behavior
     val terminalShortcuts = terminalShortcutStore.config
@@ -1285,6 +1290,30 @@ class MangoSshViewModel @JvmOverloads constructor(
                 authKey.fill('\u0000')
             }
         }
+    }
+
+    /** Starts or stops keeping the embedded node up for the visible device list. */
+    fun setTsnetDeviceBrowsing(visible: Boolean) {
+        embeddedTsnetManager.setDeviceBrowsing(visible)
+        if (visible && _embeddedTsnetNodeName.value == null) {
+            viewModelScope.launch {
+                _embeddedTsnetNodeName.value = runCatching { embeddedTsnetManager.nodeName() }.getOrNull()
+            }
+        }
+    }
+
+    /**
+     * Connects to a tailnet device through a profile that is not in the vault,
+     * so unlike [connect] it records no usage statistics.
+     */
+    fun quickConnectTsnetDevice(profile: ConnectionProfile): String? {
+        if (!authorizeSensitive(profile.requireReauthentication) {
+                quickConnectTsnetDevice(profile)?.let { _sessionNavigationRequest.value = SessionNavigationRequest.OpenSession(it) }
+            }
+        ) {
+            return null
+        }
+        return sessionController.connect(profile)
     }
 
     fun logoutEmbeddedTsnet() {

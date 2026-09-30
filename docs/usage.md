@@ -72,6 +72,15 @@ Each profile picks one route:
   Headscale, custom control servers, exit nodes, and device-wide VPN routing are
   intentionally out of scope. See [embedded-tsnet.md](embedded-tsnet.md).
 
+Once enrolled, **Settings → Embedded Tailscale** shows this device's Tailnet
+name and addresses and lists the other devices on the Tailnet, with their
+platform, online state, and whether Tailscale SSH is on. **Connect** on a
+device reuses the saved tsnet host that already targets it; otherwise, or
+when you tap the row, a quick-connect dialog asks for a username, protocol,
+and authentication (Tailscale SSH by default where the device offers it).
+Quick connect does not save a host; **Save as host** opens the host editor
+prefilled with the same settings.
+
 ## In-app updates
 
 A sideloaded install of the `github` distribution can check **Settings** for a

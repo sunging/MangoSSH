@@ -39,6 +39,24 @@
     <string name="embedded_tsnet_invalid_authorization_url">内嵌 Tailscale 返回了无效的授权请求。</string>
     <string name="embedded_tsnet_enrollment_required">请先在设置中登录内嵌 Tailscale，再连接此配置。</string>
     <string name="embedded_tsnet_version">内嵌节点版本 %1$s</string>
+    <string name="embedded_tsnet_status_connected">已登录 · 已连接</string>
+    <string name="embedded_tsnet_status_checking">正在检查登录状态…</string>
+    <string name="embedded_tsnet_self_title">本机</string>
+    <string name="embedded_tsnet_devices_title">Tailnet 设备</string>
+    <plurals name="embedded_tsnet_devices_title_online">
+        <item quantity="other">Tailnet 设备 · %1$d 台在线</item>
+    </plurals>
+    <string name="embedded_tsnet_devices_loading">正在加载设备…</string>
+    <string name="embedded_tsnet_devices_empty">此 Tailnet 中没有其他设备。</string>
+    <string name="embedded_tsnet_device_online">在线</string>
+    <string name="embedded_tsnet_device_offline">离线</string>
+    <string name="embedded_tsnet_device_last_seen">最后在线 %1$s</string>
+    <string name="embedded_tsnet_device_ssh_on">Tailscale SSH 已开启</string>
+    <string name="embedded_tsnet_device_ssh_off">Tailscale SSH 未开启</string>
+    <string name="embedded_tsnet_quick_connect_title">连接到 %1$s</string>
+    <string name="embedded_tsnet_quick_connect_saved">已保存的主机</string>
+    <string name="embedded_tsnet_quick_connect_ssh_hint">此设备已开启 Tailscale SSH，由 Tailnet 策略授权登录，无需密码或密钥。</string>
+    <string name="embedded_tsnet_quick_connect_save_host">保存为主机</string>
     <string name="active_sessions_notification_public_title">MangoSSH 正在运行</string>
     <string name="active_sessions_notification_public_text">正在保护一个活动终端会话。</string>
     <string name="active_session_notification_title">%1$s</string>

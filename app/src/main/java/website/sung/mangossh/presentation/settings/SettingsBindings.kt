@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
+import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.presentation.AppLanguage
 import website.sung.mangossh.presentation.MangoSshViewModel
 import website.sung.mangossh.presentation.UpdateCardCallbacks
@@ -25,9 +26,10 @@ internal fun rememberSettingsCallbacks(
     viewModel: MangoSshViewModel,
     onSetAppLanguage: (AppLanguage) -> Unit,
     onRemoveSnippet: (String) -> Unit,
+    tsnetDeviceActions: TsnetDeviceActions,
 ): SettingsCallbacks {
     val context = LocalContext.current
-    return remember(viewModel, onSetAppLanguage, onRemoveSnippet) {
+    return remember(viewModel, onSetAppLanguage, onRemoveSnippet, tsnetDeviceActions) {
         SettingsCallbacks(
             appearance = AppearanceSettingsCallbacks(
                 onSetLanguage = onSetAppLanguage,
@@ -90,6 +92,10 @@ internal fun rememberSettingsCallbacks(
                 onBeginBrowserEnrollment = viewModel::beginEmbeddedTsnetBrowserEnrollment,
                 onBeginAuthKeyEnrollment = viewModel::beginEmbeddedTsnetAuthKeyEnrollment,
                 onLogout = viewModel::logoutEmbeddedTsnet,
+                onBrowsingChanged = viewModel::setTsnetDeviceBrowsing,
+                onConnectSavedHost = tsnetDeviceActions.onConnectSavedHost,
+                onQuickConnect = tsnetDeviceActions.onQuickConnect,
+                onSaveAsHost = tsnetDeviceActions.onSaveAsHost,
             ),
             update = UpdateCardCallbacks(
                 onCheckNow = viewModel::checkForUpdates,
@@ -106,6 +112,17 @@ internal fun rememberSettingsCallbacks(
         )
     }
 }
+
+/**
+ * Embedded Tailscale device actions that open a terminal or the host editor.
+ * Both live in `MangoSshApp`'s state, so, like [rememberSettingsCallbacks]'s
+ * `onRemoveSnippet`, the caller supplies them.
+ */
+internal data class TsnetDeviceActions(
+    val onConnectSavedHost: (ConnectionProfile) -> Unit,
+    val onQuickConnect: (ConnectionProfile) -> Unit,
+    val onSaveAsHost: (ConnectionProfile) -> Unit,
+)
 
 /**
  * Opens a URL in the browser, refusing anything but an `https://github.com` link.

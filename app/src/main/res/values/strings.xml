@@ -41,6 +41,25 @@
     <string name="embedded_tsnet_invalid_authorization_url">Embedded Tailscale returned an invalid authorization request.</string>
     <string name="embedded_tsnet_enrollment_required">Sign in to Embedded Tailscale in Settings before connecting this profile.</string>
     <string name="embedded_tsnet_version">Embedded node version %1$s</string>
+    <string name="embedded_tsnet_status_connected">Signed in · connected</string>
+    <string name="embedded_tsnet_status_checking">Checking sign-in…</string>
+    <string name="embedded_tsnet_self_title">This device</string>
+    <string name="embedded_tsnet_devices_title">Tailnet devices</string>
+    <plurals name="embedded_tsnet_devices_title_online">
+        <item quantity="one">Tailnet devices · %1$d online</item>
+        <item quantity="other">Tailnet devices · %1$d online</item>
+    </plurals>
+    <string name="embedded_tsnet_devices_loading">Loading devices…</string>
+    <string name="embedded_tsnet_devices_empty">No other devices on this Tailnet.</string>
+    <string name="embedded_tsnet_device_online">Online</string>
+    <string name="embedded_tsnet_device_offline">Offline</string>
+    <string name="embedded_tsnet_device_last_seen">Last seen %1$s</string>
+    <string name="embedded_tsnet_device_ssh_on">Tailscale SSH on</string>
+    <string name="embedded_tsnet_device_ssh_off">Tailscale SSH off</string>
+    <string name="embedded_tsnet_quick_connect_title">Connect to %1$s</string>
+    <string name="embedded_tsnet_quick_connect_saved">Saved hosts</string>
+    <string name="embedded_tsnet_quick_connect_ssh_hint">This device runs Tailscale SSH. The Tailnet policy authorizes the login, so no password or key is needed.</string>
+    <string name="embedded_tsnet_quick_connect_save_host">Save as host</string>
     <string name="active_sessions_notification_public_title">MangoSSH is running</string>
     <string name="active_sessions_notification_public_text">An active terminal session is protected.</string>
     <string name="active_session_notification_title">%1$s</string>

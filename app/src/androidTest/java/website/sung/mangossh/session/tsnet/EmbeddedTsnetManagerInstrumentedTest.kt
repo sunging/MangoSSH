@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -173,6 +174,139 @@ class EmbeddedTsnetManagerInstrumentedTest {
     }
 
     @Test
+    fun deviceBrowsingRunsEnrolledNodeWithoutForegroundAndStopsAfterRelease() = runBlocking {
+        val factory = FakeBackendFactory()
+        val manager = EmbeddedTsnetManager(
+            context = isolatedContext(),
+            scope = isolatedScope(),
+            stateStore = FakeStateStore(enrolled = true),
+            backendFactory = factory,
+            foregroundStarter = { error("Browsing must not start the foreground service") },
+        )
+
+        manager.setDeviceBrowsing(true)
+        val network = withTimeout(5_000) { manager.network.first { it != null } }
+
+        assertEquals(listOf("lab"), network!!.devices.map { it.displayName })
+        assertEquals(EmbeddedTsnetPhase.ACTIVE, manager.status.value.phase)
+        assertEquals(0, manager.status.value.activeSessions)
+        assertFalse(manager.foregroundRequired.value)
+
+        manager.setDeviceBrowsing(false)
+        withTimeout(10_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.READY_IDLE } }
+        assertEquals(null, manager.network.value)
+        assertEquals(1, factory.closed.get())
+    }
+
+    @Test
+    fun browsingAgainWithinTheGraceDelayKeepsTheSameNode() = runBlocking {
+        val factory = FakeBackendFactory()
+        val manager = EmbeddedTsnetManager(
+            context = isolatedContext(),
+            scope = isolatedScope(),
+            stateStore = FakeStateStore(enrolled = true),
+            backendFactory = factory,
+            foregroundStarter = {},
+        )
+        manager.setDeviceBrowsing(true)
+        withTimeout(5_000) { manager.network.first { it != null } }
+
+        manager.setDeviceBrowsing(false)
+        val lease = manager.acquire()
+        manager.setDeviceBrowsing(true)
+        lease.close()
+        withTimeout(5_000) { manager.status.first { it.activeSessions == 0 } }
+        delay(6_000)
+
+        assertEquals(EmbeddedTsnetPhase.ACTIVE, manager.status.value.phase)
+        assertEquals(1, factory.created.get())
+        assertEquals(0, factory.closed.get())
+    }
+
+    @Test
+    fun statusStaysUnresolvedUntilTheStoredIdentityIsRead() = runBlocking {
+        val manager = EmbeddedTsnetManager(
+            context = isolatedContext(),
+            scope = isolatedScope(),
+            stateStore = FakeStateStore(enrolled = true),
+            backendFactory = FakeBackendFactory(),
+            foregroundStarter = {},
+        )
+
+        val resolved = withTimeout(5_000) { manager.status.first { it.identityResolved } }
+
+        assertEquals(EmbeddedTsnetPhase.READY_IDLE, resolved.phase)
+    }
+
+    @Test
+    fun registeredNodeLoadingItsStateNeverLooksSignedOut() = runBlocking {
+        val factory = FakeBackendFactory(transientLoginBeforeRunning = true)
+        val manager = EmbeddedTsnetManager(
+            context = isolatedContext(),
+            scope = isolatedScope(),
+            stateStore = FakeStateStore(enrolled = true),
+            backendFactory = factory,
+            foregroundStarter = {},
+        )
+        withTimeout(5_000) { manager.status.first { it.identityResolved } }
+        val phases = java.util.concurrent.CopyOnWriteArrayList<EmbeddedTsnetPhase>()
+        val recorder = launch(kotlinx.coroutines.Dispatchers.IO) { manager.status.collect { phases += it.phase } }
+
+        manager.setDeviceBrowsing(true)
+        withTimeout(5_000) { manager.network.first { it != null } }
+        manager.setDeviceBrowsing(false)
+        withTimeout(10_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.READY_IDLE } }
+        recorder.cancel()
+
+        assertTrue(EmbeddedTsnetPhase.STARTING in phases)
+        assertFalse(EmbeddedTsnetPhase.WAITING_FOR_LOGIN in phases)
+        assertFalse(EmbeddedTsnetPhase.UNENROLLED in phases)
+    }
+
+    @Test
+    fun registeredNodeAskingForAuthorizationStillWaitsForLoginWithoutOpeningBrowser() = runBlocking {
+        val factory = FakeBackendFactory(
+            remainWaitingForLogin = true,
+            loginUrl = "https://login.tailscale.com/a/test",
+        )
+        val manager = EmbeddedTsnetManager(
+            context = isolatedContext(),
+            scope = isolatedScope(),
+            stateStore = FakeStateStore(enrolled = true),
+            backendFactory = factory,
+            foregroundStarter = {},
+        )
+        val urls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val recorder = launch(kotlinx.coroutines.Dispatchers.IO) { manager.authorizationUrls.collect { urls += it } }
+
+        manager.setDeviceBrowsing(true)
+        withTimeout(5_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN } }
+        delay(200)
+        recorder.cancel()
+
+        assertTrue("Browsing must not open a browser", urls.isEmpty())
+        assertFalse(manager.foregroundRequired.value)
+    }
+
+    @Test
+    fun browsingNeverStartsAnUnenrolledNode() = runBlocking {
+        val factory = FakeBackendFactory()
+        val manager = EmbeddedTsnetManager(
+            context = isolatedContext(),
+            scope = isolatedScope(),
+            stateStore = FakeStateStore(enrolled = false),
+            backendFactory = factory,
+            foregroundStarter = {},
+        )
+
+        manager.setDeviceBrowsing(true)
+        delay(500)
+
+        assertEquals(0, factory.created.get())
+        assertEquals(EmbeddedTsnetPhase.UNENROLLED, manager.status.value.phase)
+    }
+
+    @Test
     fun androidNetworkSnapshotUsesPlatformInterfaces() {
         val context = isolatedContext()
         val snapshot = JSONObject(AndroidTsnetNetworkStateSource(context).snapshotJson())
@@ -236,6 +370,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
     private class FakeBackendFactory(
         private val transientLoginBeforeRunning: Boolean = false,
         private val remainWaitingForLogin: Boolean = false,
+        private val loginUrl: String = "",
     ) : EmbeddedTsnetBackendFactory {
         val listeners = java.util.concurrent.CopyOnWriteArrayList<StatusListener>()
         val created = AtomicInteger()
@@ -254,7 +389,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
                 override fun start(authKey: String) {
                     authKeyWasNonEmpty.set(authKey.isNotEmpty())
                     if (remainWaitingForLogin) {
-                        listener.onStatus("needs_login", "")
+                        listener.onStatus("needs_login", loginUrl)
                         return
                     }
                     if (transientLoginBeforeRunning) {
@@ -273,6 +408,11 @@ class EmbeddedTsnetManagerInstrumentedTest {
                         override val localPort: Int = 1
                         override fun close() = Unit
                     }
+
+                override fun networkSnapshotJson(): String =
+                    """{"self":{"hostName":"$hostname","dnsName":"$hostname.example.ts.net","ips":["100.64.0.1"]},""" +
+                        """"peers":[{"id":"n1","hostName":"lab","dnsName":"lab.example.ts.net","os":"linux",""" +
+                        """"ips":["100.64.0.2"],"online":true,"lastSeenUnixMs":0,"sshEnabled":true}]}"""
 
                 override fun logout() {
                     listener.onStatus("stopped", "")
