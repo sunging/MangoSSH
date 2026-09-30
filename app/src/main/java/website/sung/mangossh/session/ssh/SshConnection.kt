@@ -35,6 +35,7 @@ import org.connectbot.sshlib.SftpResult
 import org.connectbot.sshlib.transport.KtorTcpTransportFactory
 import org.connectbot.sshlib.transport.Transport
 import org.connectbot.sshlib.transport.TransportFactory
+import website.sung.mangossh.core.MangoLogDetail
 
 /** Prompt fields contain remote text and must never be included in logs or diagnostics. */
 internal class SshPromptField(val text: String, val echo: Boolean)
@@ -47,9 +48,26 @@ internal interface SshCredentials {
     suspend fun banner(text: String) = Unit
 }
 
-/** Protocol-neutral failure; never retains remote descriptions or credential-bearing causes. */
-internal class SshFailure(val category: Category) : IOException(category.name) {
+/**
+ * Protocol-neutral failure; never retains remote descriptions or credential-bearing causes.
+ * [detail] holds only class names, so logs can still say what went wrong.
+ */
+internal class SshFailure(val category: Category, private val detail: String? = null) :
+    IOException(category.name), MangoLogDetail {
     enum class Category { CLOSED, HOST_KEY, ALGORITHMS, CONNECT, AUTHENTICATION, CHANNEL, KEEPALIVE }
+
+    override val logDetail: String get() = listOfNotNull(category.name, detail).joinToString("/")
+}
+
+/** Names the failed connect stage and its root exception class, never their messages. */
+internal fun ConnectResult.failureDetail(): String {
+    val cause = when (this) {
+        is ConnectResult.TransportError -> cause
+        is ConnectResult.ProtocolError -> cause
+        else -> null
+    }
+    val root = cause?.let { generateSequence(it) { current -> current.cause?.takeIf { next -> next !== current } }.last() }
+    return listOfNotNull(javaClass.simpleName, root?.javaClass?.simpleName?.takeIf(String::isNotBlank)).joinToString("/")
 }
 
 /**
@@ -181,7 +199,7 @@ internal class SshConnection(
                     val active = SshClient(config)
                     check(client.compareAndSet(null, active)) { "Connection already started" }
                     currentCoroutineContext().ensureActive()
-                    when (active.connect()) {
+                    when (val result = active.connect()) {
                         ConnectResult.Success -> scope.launch {
                             active.disconnectedFlow.collect { cause ->
                                 monitors.forEach { it(if (cause == null) null else SshFailure(SshFailure.Category.CLOSED)) }
@@ -189,14 +207,14 @@ internal class SshConnection(
                         }.let { Unit }
                         is ConnectResult.HostKeyRejected -> throw SshFailure(SshFailure.Category.HOST_KEY)
                         is ConnectResult.AlgorithmMismatch -> throw SshFailure(SshFailure.Category.ALGORITHMS)
-                        else -> throw SshFailure(SshFailure.Category.CONNECT)
+                        else -> throw SshFailure(SshFailure.Category.CONNECT, result.failureDetail())
                     }
                 }
             }
         } catch (error: Exception) {
             close()
             currentCoroutineContext().ensureActive()
-            if (error is kotlinx.coroutines.TimeoutCancellationException) throw SshFailure(SshFailure.Category.CONNECT)
+            if (error is kotlinx.coroutines.TimeoutCancellationException) throw SshFailure(SshFailure.Category.CONNECT, "Timeout")
             throw error
         }
     }

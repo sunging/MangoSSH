@@ -37,13 +37,38 @@ object MangoLog {
     }
 
     private fun warnCode(code: String, error: Throwable?) {
-        val suffix = error?.javaClass?.simpleName?.takeIf(String::isNotBlank)
+        val suffix = error?.let(::describe)?.takeIf(String::isNotBlank)
         if (suffix == null) {
             Log.w(TAG, code)
         } else {
             Log.w(TAG, "$code; cause=$suffix")
         }
     }
+
+    /**
+     * Names each throwable in the cause chain, plus any [MangoLogDetail], for
+     * example `SshFailure[CONNECT/TransportError/NoSuchAlgorithmException]`.
+     * Messages are never included.
+     */
+    internal fun describe(error: Throwable): String =
+        generateSequence(error) { current -> current.cause?.takeIf { it !== current } }
+            .take(MAX_CAUSE_DEPTH)
+            .joinToString(" <- ") { throwable ->
+                val name = throwable.javaClass.simpleName.ifBlank { throwable.javaClass.name.substringAfterLast('.') }
+                val detail = (throwable as? MangoLogDetail)?.logDetail?.takeIf(String::isNotBlank)
+                if (detail == null) name else "$name[$detail]"
+            }
+
+    private const val MAX_CAUSE_DEPTH = 4
+}
+
+/**
+ * Lets an exception add fixed diagnostic detail to its log line. Implementations
+ * must build [logDetail] only from enum names and class names, never from
+ * messages, hostnames, or other remote or user-supplied text.
+ */
+interface MangoLogDetail {
+    val logDetail: String
 }
 
 /** Fixed-code contract for events whose declarations live in a product flavor. */
