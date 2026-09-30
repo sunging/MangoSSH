@@ -33,7 +33,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -540,15 +539,24 @@ class SshConnection(
                         // Encryption advances cipher state before the transport accepts the
                         // bytes, so a started packet must finish even if its caller is
                         // cancelled. Only closing the transport may interrupt it; the
-                        // emitting job owns the lock until the packet is out.
-                        connectionScope.async(NonCancellable, start = CoroutineStart.UNDISPATCHED) {
-                            try {
-                                packetIO.writePacket(messageType, payload)
-                                afterWrite()
-                            } finally {
-                                writeMutex.unlock()
+                        // emitting job owns the lock until the packet is out. The outcome
+                        // goes through its own deferred so a scope cancelled during close
+                        // still reports the transport failure instead of a cancellation.
+                        val outcome = CompletableDeferred<Unit>()
+                        connectionScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                            withContext(NonCancellable) {
+                                try {
+                                    packetIO.writePacket(messageType, payload)
+                                    afterWrite()
+                                    outcome.complete(Unit)
+                                } catch (failure: Throwable) {
+                                    outcome.completeExceptionally(failure)
+                                } finally {
+                                    writeMutex.unlock()
+                                }
                             }
                         }
+                        outcome
                     } else {
                         writeMutex.unlock()
                         null

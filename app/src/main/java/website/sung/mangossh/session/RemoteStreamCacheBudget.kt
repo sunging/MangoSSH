@@ -57,7 +57,9 @@ internal class RemoteStreamCacheBudget(
      * The caller must pass it to exactly one of [register] or [recycle].
      */
     fun acquire(): ByteBuffer = synchronized(lock) {
-        while (blocks.size + loadingBuffers >= maxBlocks() && evictOne()) Unit
+        while (blocks.size + loadingBuffers >= maxBlocks()) {
+            if (!evictOne()) break
+        }
         loadingBuffers++
         (pool.removeFirstOrNull() ?: allocate(blockBytes)).also { it.clear() }
     }
@@ -137,7 +139,9 @@ internal class RemoteStreamCacheBudget(
     private fun maxBlocks(): Int = (effectiveBytes() / blockBytes).coerceIn(MIN_BLOCKS.toLong(), Int.MAX_VALUE.toLong()).toInt()
 
     private fun shrink() {
-        while (blocks.size + loadingBuffers > maxBlocks() && evictOne()) Unit
+        while (blocks.size + loadingBuffers > maxBlocks()) {
+            if (!evictOne()) break
+        }
         trimPool()
     }
 

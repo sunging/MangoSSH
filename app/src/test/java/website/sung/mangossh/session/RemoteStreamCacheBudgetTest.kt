@@ -71,6 +71,8 @@ class RemoteStreamCacheBudgetTest {
         assertEquals(4L * BLOCK, budget.usage.value.usedBytes)
     }
 
+    // Pre-API 34 devices still deliver the deprecated RUNNING_* levels.
+    @Suppress("DEPRECATION")
     @Test fun memoryPressureKeepsOnlyTheReadAheadWindow() {
         val budget = budget(configuredBlocks = 64)
         val owner = owner(budget).apply { cursorBlock = 10 }

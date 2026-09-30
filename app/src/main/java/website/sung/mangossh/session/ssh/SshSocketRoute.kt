@@ -7,7 +7,7 @@ import org.connectbot.sshlib.transport.Transport
 
 /** Register the socket before connecting, so cancellation can interrupt proxy negotiation. */
 internal fun interface SshSocketRoute {
-    fun openSocket(host: String, port: Int, timeout: Int, register: (Socket) -> Unit): Socket
+    fun openSocket(hostname: String, port: Int, connectTimeout: Int, register: (Socket) -> Unit): Socket
 }
 
 /** Exact-count SSH transport over an authenticated application-owned proxy socket. */

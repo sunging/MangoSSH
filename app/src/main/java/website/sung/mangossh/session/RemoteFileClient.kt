@@ -139,14 +139,14 @@ internal class RemoteFileClient {
         val entries = raw.asSequence()
             .filter { it.filename != "." && it.filename != ".." }
             .mapNotNull { entry ->
-                val name = entry.filename ?: return@mapNotNull null
+                val name = entry.filename
                 if (runCatching { RemoteFilePaths.requireSafeRemoteName(name) }.isFailure) return@mapNotNull null
                 val attributes = entry.attributes
                 RemoteFileEntry(
                     name = name,
                     path = RemoteFilePaths.join(directory, name),
                     kind = attributes.toKind(),
-                    sizeBytes = attributes?.size,
+                    sizeBytes = attributes.size,
                     modifiedEpochSeconds = attributes.mtime?.toLong(),
                     permissions = runCatching { attributes.permissions?.let { Integer.toOctalString(it and 4095) } }.getOrNull(),
                 )
@@ -579,7 +579,7 @@ internal class RemoteFileClient {
             for (entry in listing) {
                 if (control?.shouldContinue() == false) throw java.io.InterruptedIOException()
                 if (++visited > maxEntries) { truncated = true; break@traversal }
-                val name = entry.filename ?: continue
+                val name = entry.filename
                 if (name == "." || name == "..") continue
                 if (runCatching { RemoteFilePaths.requireSafeRemoteName(name) }.isFailure) {
                     skipped += 1
@@ -602,12 +602,12 @@ internal class RemoteFileClient {
                             truncated = true
                             continue
                         }
-                        val size = entry.attributes?.size
+                        val size = entry.attributes.size
                         files += RemoteTreeEntry(
                             relativePath = relative,
                             absolutePath = absolute,
                             sizeBytes = size,
-                            modifiedEpochMillis = entry.attributes?.mtime?.times(1_000L),
+                            modifiedEpochMillis = entry.attributes.mtime?.times(1_000L),
                         )
                         totalBytes += size ?: 0L
                     }
