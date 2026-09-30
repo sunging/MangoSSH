@@ -959,13 +959,14 @@ class SshConnection(
             allowedAuthentications = noneResult.allowedMethods
         }
 
-        val allowedMethods = allowedAuthentications!!
-        handler.onAuthMethodsAvailable(allowedMethods)
+        handler.onAuthMethodsAvailable(allowedAuthentications!!)
+        val allowedMethods = allowedAuthentications!!.intersect(handler.supportedMethods)
 
         // Step 2: Public key phase
         if ("publickey" in allowedMethods) {
             val keys = handler.onPublicKeysNeeded()
             for (key in keys) {
+                if ("publickey" !in allowedAuthentications.orEmpty()) break
                 if (key in triedPublicKeys) continue
                 val probeResult = probePublicKey(username, key, handler, channel)
                 if (probeResult is InternalAuthResult.Success) return PublicAuthResult.Success
@@ -983,7 +984,10 @@ class SshConnection(
             }
         }
 
-        for (method in selectPasswordMethods(allowedMethods, preferPasswordAuth)) {
+        for (method in selectPasswordMethods(
+            allowedAuthentications.orEmpty().intersect(handler.supportedMethods),
+            preferPasswordAuth || handler.preferPasswordAuth,
+        )) {
             when (method) {
                 is AuthMethod.KeyboardInteractive -> {
                     val kbdResult = doKeyboardInteractive(username, handler, channel)
@@ -1083,6 +1087,10 @@ class SshConnection(
         val response = receiveAuthResult(channel, handler)
         return when (response) {
             is InternalAuthResult.Success -> true
+            is InternalAuthResult.Failure -> {
+                allowedAuthentications = response.allowedMethods
+                false
+            }
             else -> false
         }
     }

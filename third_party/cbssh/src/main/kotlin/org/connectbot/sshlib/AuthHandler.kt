@@ -25,6 +25,14 @@ package org.connectbot.sshlib
  * none → publickey probe → sign → keyboard-interactive → password
  */
 interface AuthHandler {
+    /** Methods this caller can handle. The initial none probe is always retained. */
+    val supportedMethods: Set<String>
+        get() = setOf("publickey", "keyboard-interactive", "password")
+
+    /** Prefer password when both password methods are advertised; never retry after rejection. */
+    val preferPasswordAuth: Boolean
+        get() = false
+
     /**
      * Called when the server reports which authentication methods are available.
      * Override to observe or log.

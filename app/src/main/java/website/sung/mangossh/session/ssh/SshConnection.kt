@@ -20,12 +20,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
-import org.connectbot.sshlib.AuthHandler
-import org.connectbot.sshlib.AuthPublicKey
-import org.connectbot.sshlib.AuthResult
 import org.connectbot.sshlib.ConnectResult
 import org.connectbot.sshlib.HostKeyVerifier
-import org.connectbot.sshlib.KeyboardInteractiveCallback
 import org.connectbot.sshlib.PingResult
 import org.connectbot.sshlib.PublicKey
 import org.connectbot.sshlib.SshClient
@@ -36,12 +32,17 @@ import org.connectbot.sshlib.transport.KtorTcpTransportFactory
 import org.connectbot.sshlib.transport.Transport
 import org.connectbot.sshlib.transport.TransportFactory
 import website.sung.mangossh.core.MangoLogDetail
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 
 /** Prompt fields contain remote text and must never be included in logs or diagnostics. */
 internal class SshPromptField(val text: String, val echo: Boolean)
 
 /** Credential callbacks are suspended inside the owning connection's cancellable task. */
 internal interface SshCredentials {
+    /** Only these methods may be sent after the initial none probe. */
+    val supportedMethods: Set<String> get() = setOf("publickey", "keyboard-interactive", "password")
+    val preferPasswordAuth: Boolean get() = false
     suspend fun key(): java.security.KeyPair? = null
     suspend fun password(): String? = null
     suspend fun interactive(name: String, instruction: String, fields: List<SshPromptField>): List<String>? = null
@@ -222,26 +223,18 @@ internal class SshConnection(
     /** None authentication precedes optional credentials, including Tailscale SSH approval. */
     suspend fun authenticate(username: String, credentials: SshCredentials): Boolean = try {
         owned {
-            var pair: java.security.KeyPair? = null
-            clientOrThrow().authenticate(username, object : AuthHandler {
-                override suspend fun onPublicKeysNeeded(): List<AuthPublicKey> {
-                    pair = credentials.key()
-                    return pair?.let { listOf(SshSigning.encodePublicKey(it)) } ?: emptyList()
-                }
-                override suspend fun onSignatureRequest(key: AuthPublicKey, dataToSign: ByteArray): ByteArray? {
-                    if (key.algorithmName == "ssh-rsa" && !legacyAlgorithms) return null
-                    return pair?.let { SshSigning.signWithKeyPair(key.algorithmName, it, dataToSign) }
-                }
-                override suspend fun onKeyboardInteractivePrompt(name: String, instruction: String,
-                    prompts: List<KeyboardInteractiveCallback.Prompt>): List<String>? =
-                    credentials.interactive(name, instruction, prompts.map { SshPromptField(it.text, it.echo) })
-                override suspend fun onPasswordNeeded(): String? = credentials.password()
-                override suspend fun onBanner(message: String) { banner(message); credentials.banner(message) }
-            }) == AuthResult.Success
+            val handler = SshAuthenticationHandler(credentials, legacyAlgorithms, banner)
+            handler.resolve(clientOrThrow().authenticate(username, handler)).also { success ->
+                if (!success) MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED,
+                    SshAuthenticationFailure(SshAuthenticationFailure.Category.REJECTED, handler.stage))
+            }
         }
     } catch (cancelled: CancellationException) {
         close()
         throw cancelled
+    } catch (failure: SshAuthenticationFailure) {
+        MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED, failure)
+        throw failure
     }
 
     /** A channel remains tracked until its owner closes it, including after remote EOF. */

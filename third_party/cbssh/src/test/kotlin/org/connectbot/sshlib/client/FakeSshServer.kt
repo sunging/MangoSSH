@@ -112,6 +112,7 @@ class FakeSshServer(
     var sendDuplicateKexInitDuringRekey: Boolean = false
     private val receivedPongs = Channel<ByteArray>(Channel.UNLIMITED)
     private val receivedExtInfo = Channel<SshMsgExtInfo>(Channel.UNLIMITED)
+    private val receivedUserauthInfoResponses = Channel<org.connectbot.sshlib.protocol.SshMsgUserauthInfoResponse>(Channel.UNLIMITED)
     private val receivedUserauthRequests = Channel<SshMsgUserauthRequest>(Channel.UNLIMITED)
     private val receivedClientKexInits = Channel<SshMsgKexinit>(Channel.UNLIMITED)
     private val receivedChannelOpens = Channel<SshMsgChannelOpen>(Channel.UNLIMITED)
@@ -236,6 +237,14 @@ class FakeSshServer(
                             val request = SshMsgUserauthRequest(ByteBufferKaitaiStream(bodyBytes))
                             request._read()
                             receivedUserauthRequests.trySend(request)
+                        }
+
+                        SshEnums.MessageType.SSH_MSG_USERAUTH_METHOD_SPECIFIC_61 -> {
+                            val response = org.connectbot.sshlib.protocol.SshMsgUserauthInfoResponse(
+                                ByteBufferKaitaiStream(rawBytes.copyOfRange(1, rawBytes.size)),
+                            )
+                            response._read()
+                            receivedUserauthInfoResponses.trySend(response)
                         }
 
                         SshEnums.MessageType.SSH_MSG_CHANNEL_OPEN -> {
@@ -950,6 +959,12 @@ class FakeSshServer(
     suspend fun awaitExtInfo(): SshMsgExtInfo = receivedExtInfo.receive()
 
     suspend fun awaitUserauthRequest(): SshMsgUserauthRequest = receivedUserauthRequests.receive()
+
+    /** Observes responses to multi-round keyboard-interactive prompts. */
+    suspend fun awaitUserauthInfoResponse() = receivedUserauthInfoResponses.receive()
+
+    /** Asserts that completed authentication sent no fallback request. */
+    fun pollUserauthRequest(): SshMsgUserauthRequest? = receivedUserauthRequests.tryReceive().getOrNull()
 
     suspend fun awaitClientKexInit(): SshMsgKexinit = receivedClientKexInits.receive()
 

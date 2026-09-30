@@ -96,6 +96,9 @@
     <string name="session_ended_connection_failed">无法建立连接。</string>
     <string name="session_foreground_service_unavailable">Android 不允许 MangoSSH 在后台保持连接。请打开应用后重试。</string>
     <string name="session_ended_authentication_failed">服务器拒绝了所选身份验证方式。</string>
+    <string name="session_ended_authentication_method_unavailable">服务器未提供此连接配置支持的身份验证方式。</string>
+    <string name="session_ended_authentication_key_failed">无法加载所选密钥或使用它签名。请检查密钥及其口令。</string>
+    <string name="session_ended_authentication_protocol_failed">由于协议或连接错误，SSH 身份验证未能完成。</string>
     <string name="session_leave_title">保持此会话连接？</string>
     <string name="session_leave_message">离开终端后，此会话可以继续在后台运行。</string>
     <string name="session_leave_disconnect">断开并退出</string>

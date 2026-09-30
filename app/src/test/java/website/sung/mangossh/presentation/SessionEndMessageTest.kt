@@ -39,6 +39,17 @@ class SessionEndMessageTest {
         )
     }
 
+    @Test fun authenticationFailuresUseDistinctLocalizedMessages() {
+        for ((kind, resource) in mapOf(
+            SessionEndMessageKind.AUTHENTICATION_METHOD_UNAVAILABLE to R.string.session_ended_authentication_method_unavailable,
+            SessionEndMessageKind.AUTHENTICATION_KEY_FAILED to R.string.session_ended_authentication_key_failed,
+            SessionEndMessageKind.AUTHENTICATION_PROTOCOL_FAILED to R.string.session_ended_authentication_protocol_failed,
+        )) {
+            assertEquals(uiText(resource), resolveSessionEndMessage(
+                SessionEndedEvent("authentication", SessionEndReason.CONNECTION_FAILED, messageKind = kind)))
+        }
+    }
+
     @Test
     fun preservesSpecificSanitizedFailureMessage() {
         assertEquals(

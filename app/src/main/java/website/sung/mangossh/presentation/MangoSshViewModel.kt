@@ -111,6 +111,9 @@ internal fun resolveSessionEndMessage(
 internal fun SessionEndMessageKind.toUiText(): UiText = uiText(
     when (this) {
         SessionEndMessageKind.AUTHENTICATION_FAILED -> R.string.session_ended_authentication_failed
+        SessionEndMessageKind.AUTHENTICATION_METHOD_UNAVAILABLE -> R.string.session_ended_authentication_method_unavailable
+        SessionEndMessageKind.AUTHENTICATION_KEY_FAILED -> R.string.session_ended_authentication_key_failed
+        SessionEndMessageKind.AUTHENTICATION_PROTOCOL_FAILED -> R.string.session_ended_authentication_protocol_failed
         SessionEndMessageKind.DSA_KEY_UNSUPPORTED -> R.string.ssh_dsa_unsupported
         SessionEndMessageKind.KEY_ENCRYPTION_UNSUPPORTED -> R.string.ssh_key_encryption_unsupported
         SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED -> R.string.mosh_bootstrap_failed

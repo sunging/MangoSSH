@@ -5,6 +5,7 @@ import android.net.Uri
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.isTrustedHostKey
 import website.sung.mangossh.data.vault.sameHostKeySlot
+import website.sung.mangossh.session.ssh.SshAuthenticationFailure
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshAgent
 import website.sung.mangossh.session.ssh.SshAgentIdentity
@@ -1386,6 +1387,12 @@ class SshSessionController internal constructor(
 
     /** Returns only fixed localized wording for failure categories that need clarification. */
     private fun connectionFailureMessage(error: Throwable): SessionEndMessageKind? = when (error) {
+        is SshAuthenticationFailure -> when (error.category) {
+            SshAuthenticationFailure.Category.REJECTED -> SessionEndMessageKind.AUTHENTICATION_FAILED
+            SshAuthenticationFailure.Category.NO_MATCHING_METHOD -> SessionEndMessageKind.AUTHENTICATION_METHOD_UNAVAILABLE
+            SshAuthenticationFailure.Category.LOCAL_KEY -> SessionEndMessageKind.AUTHENTICATION_KEY_FAILED
+            SshAuthenticationFailure.Category.PROTOCOL -> SessionEndMessageKind.AUTHENTICATION_PROTOCOL_FAILED
+        }
         is SshAuthenticationException -> SessionEndMessageKind.AUTHENTICATION_FAILED
         is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> SessionEndMessageKind.DSA_KEY_UNSUPPORTED
         is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException -> SessionEndMessageKind.KEY_ENCRYPTION_UNSUPPORTED
@@ -2241,6 +2248,12 @@ class SshSessionController internal constructor(
         Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(hostKey))
 
     private fun Throwable.toSafeMessage(): String = when (this) {
+        is SshAuthenticationFailure -> context.appString(when (category) {
+            SshAuthenticationFailure.Category.REJECTED -> R.string.session_ended_authentication_failed
+            SshAuthenticationFailure.Category.NO_MATCHING_METHOD -> R.string.session_ended_authentication_method_unavailable
+            SshAuthenticationFailure.Category.LOCAL_KEY -> R.string.session_ended_authentication_key_failed
+            SshAuthenticationFailure.Category.PROTOCOL -> R.string.session_ended_authentication_protocol_failed
+        })
         is SshAuthenticationException -> context.appString(R.string.session_ended_authentication_failed)
         is KeyPassphraseRequiredException -> context.appString(R.string.message_key_passphrase_required)
         is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> context.appString(R.string.ssh_dsa_unsupported)

@@ -103,6 +103,42 @@ class SshMigrationInstrumentedTest {
         } finally { source.close() }
     }
 
+    @Test fun profilePolicyHandlesMixedMethodsAndInteractiveFallback() = runBlocking<Unit> {
+        val port = port()
+        val source = connect(port)
+        try {
+            assertTrue(source.authenticate("fixture", object : SshCredentials {}))
+            val answers = metadata(source)
+            for (user in listOf("fixture-mixed", "fixture-otp")) {
+                val connection = connect(port)
+                var prompts = 0
+                val authentication = SshAuthentication(SshKeyManager()) { _, _, _, fields ->
+                    assertEquals(1, fields.size)
+                    prompts++
+                    listOf(answers.getString(if (user == "fixture-otp") "otp" else "password"))
+                }
+                try {
+                    assertTrue(authentication.authenticate(connection, "fixture",
+                        website.sung.mangossh.domain.ConnectionProfile(
+                            label = "fixture", hostname = "127.0.0.1", username = user,
+                            authentication = website.sung.mangossh.domain.AuthenticationMethod.PASSWORD),
+                        website.sung.mangossh.data.vault.VaultSnapshot()))
+                    assertEquals(1, prompts)
+                } finally { connection.close() }
+            }
+            val cancelled = connect(port)
+            try {
+                assertSuspendingThrows(CancellationException::class.java) {
+                    SshAuthentication(SshKeyManager()) { _, _, _, _ -> null }.authenticate(cancelled, "fixture",
+                        website.sung.mangossh.domain.ConnectionProfile(label = "fixture", hostname = "127.0.0.1",
+                            username = "fixture-otp", authentication = website.sung.mangossh.domain.AuthenticationMethod.PASSWORD),
+                        website.sung.mangossh.data.vault.VaultSnapshot())
+                }
+                assertSuspendingThrows(SshFailure::class.java) { cancelled.openChannel() }
+            } finally { cancelled.close() }
+        } finally { source.close() }
+    }
+
     @Test fun changedHostKeyIsRejectedAndNormalExitDrainsBothStreams() = runBlocking<Unit> {
         var trusted: ByteArray? = null
         val first = SshConnection("127.0.0.1", port())
