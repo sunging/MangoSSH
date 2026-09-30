@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -320,7 +321,7 @@ private fun ImportDialog(preview: ImportPreview, busy: Boolean, failure: BackupF
                 DialogSectionHeading(R.string.backup_import_mode)
                 CheckLine(stringResource(R.string.backup_replace), replace, !busy) { replace = it }
                 if (replace) Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.errorContainer) {
-                    Text(stringResource(R.string.backup_remove_count, preview.removedByReplacement),
+                    Text(pluralStringResource(R.plurals.backup_remove_count, preview.removedByReplacement, preview.removedByReplacement),
                         Modifier.fillMaxWidth().padding(12.dp), color = MaterialTheme.colorScheme.onErrorContainer)
                 }
                 BackupSupportingText(R.string.backup_merge_detail)

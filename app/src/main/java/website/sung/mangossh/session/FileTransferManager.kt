@@ -2,6 +2,7 @@ package website.sung.mangossh.session
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.net.toUri
 import website.sung.mangossh.session.ssh.SshConnection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -454,7 +455,7 @@ internal class FileTransferManager(
         val choice = if (unchanged) saved.choice else decision(runId, handle, RemoteFilePaths.nameOf(path),
             ScpTransferDirection.DOWNLOAD, current != null, false, forcePrompt = saved != null)
         if (choice.action == TransferConflictAction.SKIP) { markSkipped(runId, handle, path); return 0 }
-        var finalUri = if (choice.action == TransferConflictAction.SAVE_AS) Uri.parse(requireNotNull(choice.localUri)) else initialUri
+        var finalUri = if (choice.action == TransferConflictAction.SAVE_AS) requireNotNull(choice.localUri).toUri() else initialUri
         // A pause during provider lookup or hashing must not erase the fact that this file was confirmed.
         if (!unchanged) handle.localApprovals[path] = LocalApproval(finalUri, current, choice, null, confirmed = false)
         val approval = if (unchanged) saved else LocalApproval(finalUri, observed(finalUri), choice,

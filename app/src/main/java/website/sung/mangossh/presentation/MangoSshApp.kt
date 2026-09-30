@@ -76,6 +76,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
@@ -1232,7 +1233,7 @@ private fun GenerateKeyDialog(
     onConfirm: (type: SshKeyGenerationType, label: String) -> Unit,
 ) {
     var algorithm by rememberSaveable { mutableStateOf(KeyGenerationAlgorithm.ED25519) }
-    var keyLength by rememberSaveable { mutableStateOf(algorithm.defaultLength) }
+    var keyLength by rememberSaveable { mutableIntStateOf(algorithm.defaultLength) }
     var label by rememberSaveable {
         mutableStateOf(defaultGeneratedKeyLabel(algorithm, keyLength))
     }

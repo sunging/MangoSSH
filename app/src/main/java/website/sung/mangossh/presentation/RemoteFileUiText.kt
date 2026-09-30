@@ -27,7 +27,7 @@ internal fun RemoteFileMessage.toUiText(): UiText = when (this) {
     )
     RemoteFileMessage.TransferSessionClosed -> uiText(R.string.remote_file_transfer_session_closed)
     RemoteFileMessage.ResumeRestarted -> uiText(R.string.remote_file_resume_restarted)
-    is RemoteFileMessage.LinksSkipped -> uiText(R.string.remote_file_tree_links_skipped, count)
+    is RemoteFileMessage.LinksSkipped -> uiPluralText(R.plurals.remote_file_tree_links_skipped, count, count)
     RemoteFileMessage.SourceChanged -> uiText(R.string.remote_file_source_changed)
     RemoteFileMessage.MetadataFailure -> uiText(R.string.transfer_metadata_failed)
     RemoteFileMessage.CommitFailure -> uiText(R.string.transfer_commit_failed)

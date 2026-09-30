@@ -321,7 +321,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                     try { action?.invoke() } finally { approvedSensitiveAction = false }
                 } else {
                     val remaining = appLockStore.cooldownRemainingMillis()
-                    _userMessage.value = if (remaining > 0) uiText(R.string.message_pin_cooldown, (remaining + 999) / 1000)
+                    _userMessage.value = if (remaining > 0) ((remaining + 999) / 1000).toInt().let { uiPluralText(R.plurals.message_pin_cooldown, it, it) }
                         else uiText(R.string.message_pin_incorrect)
                 }
             } finally { chars.fill('\u0000'); _appLockBusy.value = false }
@@ -1576,7 +1576,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                     runtime.accessState.setLocked(false)
                 } else {
                     val remaining = appLockStore.cooldownRemainingMillis()
-                    _userMessage.value = if (remaining > 0) uiText(R.string.message_pin_cooldown, (remaining + 999) / 1000)
+                    _userMessage.value = if (remaining > 0) ((remaining + 999) / 1000).toInt().let { uiPluralText(R.plurals.message_pin_cooldown, it, it) }
                         else uiText(R.string.message_pin_incorrect)
                 }
             } finally {

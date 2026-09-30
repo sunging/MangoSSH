@@ -1,6 +1,7 @@
 package website.sung.mangossh.presentation
 
 import android.content.Context
+import androidx.annotation.PluralsRes
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -20,6 +21,13 @@ sealed interface UiText {
         val arguments: List<Any> = emptyList(),
     ) : UiText
 
+    /** Quantity-dependent wording; [quantity] selects the plural form only. */
+    data class Plural(
+        @PluralsRes val resourceId: Int,
+        val quantity: Int,
+        val arguments: List<Any> = emptyList(),
+    ) : UiText
+
     data class Verbatim(val value: String) : UiText
 }
 
@@ -30,9 +38,14 @@ internal fun UiText.asString(): String = resolve(LocalContext.current)
 /** Resolves text at an Android UI boundary without altering verbatim values. */
 internal fun UiText.resolve(context: Context): String = when (this) {
     is UiText.Resource -> context.getString(resourceId, *arguments.toTypedArray())
+    is UiText.Plural -> context.resources.getQuantityString(resourceId, quantity, *arguments.toTypedArray())
     is UiText.Verbatim -> value
 }
 
 /** Creates a resource-backed message with positional formatting arguments. */
 internal fun uiText(@StringRes resourceId: Int, vararg arguments: Any): UiText =
     UiText.Resource(resourceId, arguments.toList())
+
+/** Creates a plural resource-backed message; [quantity] is not itself a format argument. */
+internal fun uiPluralText(@PluralsRes resourceId: Int, quantity: Int, vararg arguments: Any): UiText =
+    UiText.Plural(resourceId, quantity, arguments.toList())

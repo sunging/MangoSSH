@@ -15,6 +15,7 @@ termlib = "0.1.0"
 conscrypt = "2.7.0"
 biometric = "1.4.0-alpha07"
 json = "20260814"
+slf4j = "2.0.20"
 
 [libraries]
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
@@ -45,6 +46,7 @@ connectbot-termlib = { group = "org.connectbot", name = "termlib", version.ref =
 conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 json = { group = "org.json", name = "json", version.ref = "json" }
+slf4j-nop = { group = "org.slf4j", name = "slf4j-nop", version.ref = "slf4j" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

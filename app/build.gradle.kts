@@ -213,6 +213,14 @@ android {
         }
     }
 
+    // The in-app language setting switches locales at runtime, so an App Bundle
+    // must keep every language instead of only those installed on the device.
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
 }
 
 tasks.named("preBuild").configure {
@@ -334,7 +342,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(project(":third_party:cbssh"))
-    runtimeOnly("org.slf4j:slf4j-nop:2.0.20")
+    runtimeOnly(libs.slf4j.nop)
     implementation(project(":third_party:termlib"))
     implementation(libs.conscrypt.android)
     implementation(libs.androidx.biometric)
