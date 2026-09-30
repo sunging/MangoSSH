@@ -1,13 +1,16 @@
 package website.sung.mangossh.presentation.settings
 
 import androidx.compose.runtime.Immutable
+import website.sung.mangossh.data.settings.StreamingPreferencesStore
 import website.sung.mangossh.data.vault.CommandSnippet
+import website.sung.mangossh.data.vault.StoredSshKey
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.domain.AppLockDelay
 import website.sung.mangossh.domain.AppThemeMode
 import website.sung.mangossh.domain.AppThemePreferences
 import website.sung.mangossh.domain.ConnectionPreferences
+import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.SshTerminalType
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalBehavior
@@ -21,7 +24,9 @@ import website.sung.mangossh.presentation.AppLanguage
 import website.sung.mangossh.presentation.UpdateCardCallbacks
 import website.sung.mangossh.presentation.UpdateUiState
 import website.sung.mangossh.security.AppLockConfiguration
+import website.sung.mangossh.session.RemoteStreamCacheBudget
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
+import website.sung.mangossh.session.tsnet.TsnetNetworkSnapshot
 
 /** State shown on the Appearance detail page. */
 @Immutable
@@ -30,6 +35,19 @@ internal data class AppearanceSettingsState(
     val themePreferences: AppThemePreferences,
     /** False below API 31, where Material You dynamic color does not exist. */
     val dynamicColorSupported: Boolean,
+)
+
+/**
+ * State shown on the Embedded Tailscale detail page. [hosts] and [keys] let
+ * quick connect reuse saved hosts and offer key authentication.
+ */
+@Immutable
+internal data class TsnetSettingsState(
+    val status: EmbeddedTsnetStatus,
+    val nodeName: String? = null,
+    val network: TsnetNetworkSnapshot? = null,
+    val hosts: List<ConnectionProfile> = emptyList(),
+    val keys: List<StoredSshKey> = emptyList(),
 )
 
 /** State shown on the Terminal detail page. */
@@ -50,6 +68,10 @@ internal data class ShortcutSettingsState(
 @Immutable
 internal data class ConnectionSettingsState(
     val preferences: ConnectionPreferences,
+    /** Configured memory limit for streamed remote files, in MiB. */
+    val streamingCacheLimitMebibytes: Int = StreamingPreferencesStore.DEFAULT_CACHE_LIMIT_MIB,
+    /** Memory streamed files hold now and the limit this device applies; null when unknown. */
+    val streamingCacheUsage: RemoteStreamCacheBudget.Usage? = null,
 )
 
 /** State shown on the Security & lock detail page. */
@@ -98,7 +120,7 @@ internal data class SettingsScreenState(
     val security: SecuritySettingsState,
     val backup: BackupSettingsState,
     val snippets: SnippetSettingsState,
-    val tsnet: EmbeddedTsnetStatus,
+    val tsnet: TsnetSettingsState,
     val update: UpdateUiState,
     val about: AboutSettingsState,
 )
@@ -137,6 +159,7 @@ internal data class ConnectionSettingsCallbacks(
     val onSetBackgroundKeepaliveMultiplier: (Int) -> Unit,
     val onSetConnectTimeoutSeconds: (Int) -> Unit,
     val onSetSshTerminalType: (SshTerminalType) -> Unit,
+    val onSetStreamingCacheLimitMebibytes: (Int) -> Unit = {},
 )
 
 @Immutable
@@ -179,6 +202,13 @@ internal data class TsnetSettingsCallbacks(
     val onBeginBrowserEnrollment: () -> Unit,
     val onBeginAuthKeyEnrollment: (CharArray) -> Unit,
     val onLogout: () -> Unit,
+    /** Holds (true) or releases (false) the embedded node for the visible device list. */
+    val onBrowsingChanged: (Boolean) -> Unit = {},
+    val onConnectSavedHost: (ConnectionProfile) -> Unit = {},
+    /** Connects through an unsaved Embedded Tailscale profile built by quick connect. */
+    val onQuickConnect: (ConnectionProfile) -> Unit = {},
+    /** Opens the host editor prefilled with a quick-connect profile, as a new host. */
+    val onSaveAsHost: (ConnectionProfile) -> Unit = {},
 )
 
 @Immutable

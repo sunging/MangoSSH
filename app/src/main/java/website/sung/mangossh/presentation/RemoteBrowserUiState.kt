@@ -2,6 +2,7 @@ package website.sung.mangossh.presentation
 
 import androidx.compose.runtime.Immutable
 import website.sung.mangossh.session.RemoteFileEntry
+import website.sung.mangossh.session.RemoteLaunchRequest
 import website.sung.mangossh.session.RemoteTextPreview
 
 /**
@@ -31,6 +32,22 @@ data class RemoteBrowserUiState(
     val ownsSession: Boolean = false,
     /** Set only for a browser-owned connection, to recognize a repeat request. */
     val profileId: String? = null,
+    /** A file being prepared for another app, shown with progress and a cancel action. */
+    val opening: RemoteOpenUiState? = null,
+    /** A prepared file the screen must hand to another app once, then consume. */
+    val pendingLaunch: RemoteLaunchRequest? = null,
+)
+
+/**
+ * Progress of preparing [path] for another app: a whole-file download into the
+ * private cache, or, when [streaming], only the metadata lookup for a stream.
+ */
+@Immutable
+data class RemoteOpenUiState(
+    val path: String,
+    val streaming: Boolean = false,
+    val transferredBytes: Long = 0L,
+    val totalBytes: Long? = null,
 )
 
 /**

@@ -78,7 +78,7 @@ require(
 
 val embeddedTsnetAar = layout.buildDirectory.file("generated/tsnet/mangossh-tsnet.aar")
 val androidSdkPath = androidComponents.sdkComponents.sdkDirectory.get().asFile.absolutePath
-val buildEmbeddedTsnetAar by tasks.registering(Exec::class) {
+val buildEmbeddedTsnetAar = tasks.register<Exec>("buildEmbeddedTsnetAar") {
     group = "build"
     description = "Builds the pinned four-ABI embedded tsnet gomobile bridge."
     val bridgeSources = rootProject.fileTree("native/tsnetbridge") {
@@ -213,6 +213,14 @@ android {
         }
     }
 
+    // The in-app language setting switches locales at runtime, so an App Bundle
+    // must keep every language instead of only those installed on the device.
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
 }
 
 tasks.named("preBuild").configure {
@@ -248,7 +256,7 @@ abstract class GenerateEmbeddedTsnetBuildInfo : DefaultTask() {
     }
 }
 
-val generateEmbeddedTsnetBuildInfo by tasks.registering(GenerateEmbeddedTsnetBuildInfo::class) {
+val generateEmbeddedTsnetBuildInfo = tasks.register<GenerateEmbeddedTsnetBuildInfo>("generateEmbeddedTsnetBuildInfo") {
     group = "build"
     description = "Generates the vendored Tailscale version constant shown in Settings."
     tailscaleVersion.set(embeddedTailscaleVersion)
@@ -334,7 +342,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(project(":third_party:cbssh"))
-    runtimeOnly("org.slf4j:slf4j-nop:2.0.18")
+    runtimeOnly(libs.slf4j.nop)
     implementation(project(":third_party:termlib"))
     implementation(libs.conscrypt.android)
     implementation(libs.androidx.biometric)

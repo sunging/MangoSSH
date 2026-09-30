@@ -16,6 +16,8 @@ local.properties
 *.p12
 *.pfx
 /app/release
+/app/github/
+/app/fdroid/
 /third_party/tailscale/.cache
 /third_party/termlib/build/
 /third_party/cbssh/build/

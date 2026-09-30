@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -120,7 +122,7 @@ private fun TerminalShortcutEditorDialog(
     onSave: (TerminalShortcutConfig) -> Unit,
 ) {
     val draft = remember(initial) { mutableStateListOf<TerminalShortcutItem>().apply { addAll(initial.items) } }
-    var rowCount by remember(initial) { mutableStateOf(initial.rowCount) }
+    var rowCount by remember(initial) { mutableIntStateOf(initial.rowCount) }
     var editingIndex by remember { mutableStateOf<Int?>(null) }
     var adding by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss) {
@@ -294,10 +296,9 @@ private fun ShortcutEditorRow(
 private fun TerminalShortcutAction.summary(): String = when (this) {
     TerminalShortcutAction.Paste -> stringResource(R.string.terminal_shortcut_summary_paste)
     is TerminalShortcutAction.Modifier -> stringResource(R.string.terminal_shortcut_summary_modifier, modifier.label)
-    is TerminalShortcutAction.Text -> stringResource(
-        R.string.terminal_shortcut_summary_text,
-        value.codePointCount(0, value.length),
-    )
+    is TerminalShortcutAction.Text -> value.codePointCount(0, value.length).let { characters ->
+        pluralStringResource(R.plurals.terminal_shortcut_summary_text, characters, characters)
+    }
     is TerminalShortcutAction.SpecialKey -> stringResource(R.string.terminal_shortcut_summary_special, key.label)
     is TerminalShortcutAction.Chord -> stringResource(R.string.terminal_shortcut_summary_chord, defaultLabel())
 }

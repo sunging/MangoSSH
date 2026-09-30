@@ -69,8 +69,8 @@ internal object EcdsaSignatureAlgorithm : SshSignatureAlgorithm {
         if (encoded[0] != 0x04.toByte() || encoded.size != 1 + 2 * fieldSize) {
             throw SshException("Invalid EC point encoding")
         }
-        val x = BigInteger(1, encoded, 1, fieldSize)
-        val y = BigInteger(1, encoded, 1 + fieldSize, fieldSize)
+        val x = BigInteger(1, encoded.copyOfRange(1, 1 + fieldSize))
+        val y = BigInteger(1, encoded.copyOfRange(1 + fieldSize, 1 + 2 * fieldSize))
         return ECPoint(x, y)
     }
 

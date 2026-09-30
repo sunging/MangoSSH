@@ -329,7 +329,7 @@ internal class TerminalEmulatorImpl(
     private var currentDefaultBackground: Color = defaultBackground
 
     // Damage accumulation (thread-safe) - MUST be initialized before terminalNative
-    private val damageLock = Object()
+    private val damageLock = Any()
     private val pendingDamageRegions = mutableListOf<DamageRegion>()
     private var damagePosted = false
     private var cursorMoved = false

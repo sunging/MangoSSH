@@ -13,6 +13,12 @@ internal interface EmbeddedTsnetBackend : Closeable {
     fun socksAddress(): String
     fun socksSecret(): String
     fun startUdpRelay(host: String, port: Int): EmbeddedTsnetUdpRelay
+
+    /**
+     * Returns the bridge's allow-listed JSON view of this node and its peers.
+     * The payload holds tailnet names and addresses: display it, never log it.
+     */
+    fun networkSnapshotJson(): String
     fun logout()
 }
 
@@ -75,6 +81,8 @@ internal class GomobileTsnetBackendFactory(context: Context) : EmbeddedTsnetBack
                     override fun close() = relay.close()
                 }
             }
+
+            override fun networkSnapshotJson(): String = runtime.networkSnapshotJson()
 
             override fun logout() = runtime.logout()
 

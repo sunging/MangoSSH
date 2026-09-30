@@ -28,7 +28,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
@@ -75,8 +75,8 @@ class BackupSettingsInstrumentedTest {
         compose.onNodeWithText(text(R.string.backup_apply)).performClick()
         compose.runOnIdle {
             assertEquals(setOf("profile:0"), decision!!.useIncoming)
-            assertFalse(decision!!.replace)
-            assertFalse(decision!!.restoreWebDav)
+            assertFalse(decision.replace)
+            assertFalse(decision.restoreWebDav)
         }
     }
 
@@ -324,7 +324,7 @@ class BackupSettingsInstrumentedTest {
         compose.onNodeWithText(text(R.string.backup_data_conflicts)).assertDoesNotExist()
         compose.onNodeWithText(text(R.string.backup_trust_conflicts)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.backup_apply)).performClick()
-        compose.runOnIdle { assertTrue(decision!!.replace); assertTrue(decision!!.useIncoming.isEmpty()) }
+        compose.runOnIdle { assertTrue(decision!!.replace); assertTrue(decision.useIncoming.isEmpty()) }
     }
 
     @Test fun narrowChineseLayoutStacksActions() = verifyLayout(320, 1f, Locale.SIMPLIFIED_CHINESE, false, true)

@@ -29,14 +29,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Upload
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -49,6 +53,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -93,8 +98,19 @@ fun RemoteFileBrowserScreen(
     onDismissPreview: () -> Unit,
     onClose: () -> Unit,
     onEditText: (String) -> Unit = {},
+    onOpenWithApp: (String) -> Unit = {},
+    onStream: (String) -> Unit = {},
+    onCancelOpen: () -> Unit = {},
+    onLaunchConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    // Starting another app needs this Activity, so the view model only prepares
+    // the URI and the screen hands it over exactly once.
+    LaunchedEffect(state.pendingLaunch) {
+        val launch = state.pendingLaunch ?: return@LaunchedEffect
+        onLaunchConsumed()
+        launchViewIntent(context, launch.uri, launch.mimeType)
+    }
     // The system picker can outlive this Activity (rotation, dark-mode switch), so the
     // request it answers is saved with the session that asked for it; the result is
     // then applied to that session only, never to whichever browser is open later.
@@ -144,6 +160,7 @@ fun RemoteFileBrowserScreen(
 
     BackHandler {
         when {
+            state.opening != null -> onCancelOpen()
             state.preview != null -> onDismissPreview()
             state.path != RemoteFilePaths.ROOT -> onUp()
             else -> onClose()
@@ -289,6 +306,8 @@ fun RemoteFileBrowserScreen(
                                     startDownload(entry.path)
                                 }
                             },
+                            onOpenWithApp = { onOpenWithApp(entry.path) },
+                            onStream = { onStream(entry.path) },
                         )
                         HorizontalDivider()
                     }
@@ -301,10 +320,83 @@ fun RemoteFileBrowserScreen(
                 preview = preview,
                 onEdit = { onEditText(preview.path) },
                 onDownload = { startDownload(preview.path) },
+                onOpenWithApp = { onOpenWithApp(preview.path) },
+                onStream = { onStream(preview.path) },
                 onDismiss = onDismissPreview,
             )
         }
+
+        state.opening?.let { opening -> RemoteOpenProgressDialog(opening, onCancel = onCancelOpen) }
     }
+}
+
+/**
+ * Shown while a file is prepared for another app. A whole-file download shows
+ * byte progress; preparing a stream only looks the file up, so it spins.
+ */
+@Composable
+private fun RemoteOpenProgressDialog(opening: RemoteOpenUiState, onCancel: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onCancel,
+        modifier = Modifier.testTag("remote-open-progress"),
+        title = {
+            Text(
+                stringResource(if (opening.streaming) R.string.remote_open_preparing_stream else R.string.remote_open_downloading),
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = RemoteFilePaths.nameOf(opening.path),
+                    maxLines = 1,
+                    overflow = TextOverflow.MiddleEllipsis,
+                )
+                val total = opening.totalBytes
+                if (opening.streaming || total == null || total <= 0L) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                } else {
+                    LinearProgressIndicator(
+                        progress = { (opening.transferredBytes.toFloat() / total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = "${formatByteSize(context, opening.transferredBytes)} / ${formatByteSize(context, total)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.common_cancel)) } },
+    )
+}
+
+/**
+ * The two ways to hand a remote file to another app, offered wherever a file
+ * can be acted on.
+ */
+@Composable
+private fun OpenElsewhereMenuItems(onOpenWithApp: () -> Unit, onStream: () -> Unit, dismiss: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.remote_open_with_app)) },
+        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null) },
+        onClick = {
+            dismiss()
+            onOpenWithApp()
+        },
+        modifier = Modifier.testTag("remote-open-with-app"),
+    )
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.remote_open_stream)) },
+        leadingIcon = { Icon(Icons.Outlined.PlayCircle, contentDescription = null) },
+        onClick = {
+            dismiss()
+            onStream()
+        },
+        modifier = Modifier.testTag("remote-open-stream"),
+    )
 }
 
 /**
@@ -359,6 +451,8 @@ private fun RemoteFileRow(
     entry: RemoteFileEntry,
     onOpen: () -> Unit,
     onDownload: () -> Unit,
+    onOpenWithApp: () -> Unit,
+    onStream: () -> Unit,
 ) {
     val context = LocalContext.current
     Row(
@@ -402,15 +496,30 @@ private fun RemoteFileRow(
                 )
             }
         }
-        IconButton(onClick = onDownload) {
-            Icon(
-                Icons.Outlined.Download,
-                contentDescription = if (entry.kind == RemoteFileKind.DIRECTORY) {
-                    stringResource(R.string.ui_download_folder)
-                } else {
-                    stringResource(R.string.common_download)
-                },
-            )
+        if (entry.kind == RemoteFileKind.DIRECTORY) {
+            IconButton(onClick = onDownload) {
+                Icon(Icons.Outlined.Download, contentDescription = stringResource(R.string.ui_download_folder))
+            }
+        } else {
+            // A symlink may point at a directory; the actions then fail with a
+            // "not a file" message instead of being hidden on a guess.
+            var showMenu by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { showMenu = true }, modifier = Modifier.testTag("remote-file-actions")) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.remote_file_actions))
+                }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    OpenElsewhereMenuItems(onOpenWithApp, onStream, dismiss = { showMenu = false })
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.common_download)) },
+                        leadingIcon = { Icon(Icons.Outlined.Download, contentDescription = null) },
+                        onClick = {
+                            showMenu = false
+                            onDownload()
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -450,8 +559,11 @@ private fun RemoteFilePreviewLayer(
     preview: RemotePreviewUiState,
     onEdit: () -> Unit,
     onDownload: () -> Unit,
+    onOpenWithApp: () -> Unit,
+    onStream: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var showOpenMenu by remember { mutableStateOf(false) }
     Surface(
         modifier = Modifier
             .fillMaxSize()
@@ -488,6 +600,14 @@ private fun RemoteFilePreviewLayer(
                     )
                 }
                 if (preview.content?.truncated == false && !preview.isBinary) TextButton(onClick = onEdit) { Text(stringResource(R.string.editor_edit)) }
+                Box {
+                    IconButton(onClick = { showOpenMenu = true }) {
+                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = stringResource(R.string.remote_open_elsewhere))
+                    }
+                    DropdownMenu(expanded = showOpenMenu, onDismissRequest = { showOpenMenu = false }) {
+                        OpenElsewhereMenuItems(onOpenWithApp, onStream, dismiss = { showOpenMenu = false })
+                    }
+                }
                 IconButton(onClick = onDownload) {
                     Icon(Icons.Outlined.Download, contentDescription = stringResource(R.string.common_download))
                 }
@@ -511,11 +631,20 @@ private fun RemoteFilePreviewLayer(
                     onRetry = null,
                 )
 
-                preview.isBinary || content == null -> RemoteBrowserMessage(
-                    message = stringResource(R.string.ui_this_file_is_not_text_and_cannot_be_previewed_you_can_download_it_instea),
-                    isError = false,
-                    onRetry = null,
-                )
+                preview.isBinary || content == null -> Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    RemoteBrowserMessage(
+                        message = stringResource(R.string.ui_this_file_is_not_text_and_cannot_be_previewed_you_can_download_it_instea),
+                        isError = false,
+                        onRetry = null,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = onOpenWithApp) { Text(stringResource(R.string.remote_open_with_app)) }
+                        TextButton(onClick = onStream) { Text(stringResource(R.string.remote_open_stream)) }
+                    }
+                }
 
                 else -> Column(modifier = Modifier.weight(1f)) {
                     if (content.truncated) {

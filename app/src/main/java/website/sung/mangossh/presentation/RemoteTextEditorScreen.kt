@@ -94,7 +94,7 @@ internal fun RemoteTextEditorScreen(state: RemoteEditorUiState, onChange: (Strin
     }
     state.review?.let { review ->
         AlertDialog(onDismissRequest = onDismissReview, title = { Text(stringResource(R.string.editor_review_title)) },
-            text = { DiffView(review.changes) },
+            text = { DiffView(review.changes, Modifier.heightIn(max = 400.dp)) },
             confirmButton = { TextButton(onClick = { onSave(null, false) }) { Text(stringResource(R.string.editor_save)) } },
             dismissButton = { TextButton(onClick = onDismissReview) { Text(stringResource(R.string.common_cancel)) } })
     }
@@ -138,7 +138,7 @@ private fun RecoveredDraftCard(recovered: RecoveredDraft, onRestore: () -> Unit,
 
 /** Condensed line diff; null entries stand for runs of unchanged lines. */
 @Composable
-private fun DiffView(changes: List<DiffLine?>?, modifier: Modifier = Modifier.heightIn(max = 400.dp)) {
+private fun DiffView(changes: List<DiffLine?>?, modifier: Modifier = Modifier) {
     when {
         changes == null -> Text(stringResource(R.string.editor_diff_too_large))
         changes.none { it != null && it.kind != DiffLine.Kind.SAME } -> Text(stringResource(R.string.editor_diff_none))

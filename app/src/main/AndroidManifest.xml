@@ -44,6 +44,20 @@
                 android:value="@string/foreground_service_special_use" />
         </service>
 
+        <!-- Seekable read-only streams of remote files, granted per intent; nothing is stored. -->
+        <provider
+            android:name=".session.RemoteStreamProvider"
+            android:authorities="${applicationId}.remotestream"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!-- Whole remote files downloaded to cacheDir/remote-open for another app to open. -->
+        <provider
+            android:name=".session.RemoteOpenFileProvider"
+            android:authorities="${applicationId}.remoteopen"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"

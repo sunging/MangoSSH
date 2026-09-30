@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <issue id="NewerVersionAvailable">
+        <!-- third_party/termlib patches the termlib 0.1.0 sources and reuses the JNI
+             libraries from that exact release, so the AAR version must not move alone. -->
+        <ignore regexp="org\.connectbot:termlib" />
+    </issue>
+</lint>

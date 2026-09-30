@@ -20,6 +20,8 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
             snapshot.keys.firstOrNull { it.id == profile.keyId }?.let { keyManager.requireSupportedEncryption(it.privateKeyPem) }
         }
         return connection.authenticate(profile.username, object : SshCredentials {
+            override val supportedMethods: Set<String> = profile.authentication.sshMethods()
+            override val preferPasswordAuth: Boolean = profile.authentication == AuthenticationMethod.PASSWORD
             override suspend fun password(): String? {
                 if (profile.authentication != AuthenticationMethod.PASSWORD) return null
                 return ask(SessionPromptText.App(SessionPromptTextKind.PASSWORD_TITLE, profile.label),
@@ -28,7 +30,7 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
             }
             override suspend fun key(): java.security.KeyPair? {
                 if (profile.authentication != AuthenticationMethod.PRIVATE_KEY) return null
-                val stored = snapshot.keys.firstOrNull { it.id == profile.keyId } ?: throw SshAuthenticationException()
+                val stored = snapshot.keys.firstOrNull { it.id == profile.keyId } ?: throw IllegalStateException()
                 if (stored.algorithm == "ssh-dss") throw website.sung.mangossh.data.keys.UnsupportedDsaKeyException()
                 val passphrase = if (stored.requiresPassphrase) ask(
                     SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, stored.label),
@@ -37,7 +39,7 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
                 return keyManager.decodeKeyPair(stored, passphrase)
             }
             override suspend fun interactive(name: String, instruction: String, fields: List<SshPromptField>): List<String>? {
-                if (profile.authentication !in setOf(AuthenticationMethod.KEYBOARD_INTERACTIVE, AuthenticationMethod.TAILSCALE_SSH)) return null
+                if ("keyboard-interactive" !in supportedMethods) return null
                 return ask(name.takeIf(String::isNotBlank)?.let(SessionPromptText::Verbatim) ?: SessionPromptText.App(
                     if (profile.authentication == AuthenticationMethod.TAILSCALE_SSH) SessionPromptTextKind.TAILSCALE_LOGIN_TITLE
                     else SessionPromptTextKind.INTERACTIVE_LOGIN_TITLE),
@@ -48,6 +50,13 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
                 prompt(sessionId, title, instruction, fields)?.takeIf { it.size == fields.size } ?: throw CancellationException("Authentication cancelled")
         })
     }
+}
+
+/** Password fallback is explicit user input; key profiles never offer other credentials. */
+internal fun AuthenticationMethod.sshMethods(): Set<String> = when (this) {
+    AuthenticationMethod.PRIVATE_KEY -> setOf("publickey")
+    AuthenticationMethod.PASSWORD -> setOf("password", "keyboard-interactive")
+    AuthenticationMethod.KEYBOARD_INTERACTIVE, AuthenticationMethod.TAILSCALE_SSH -> setOf("keyboard-interactive")
 }
 
 /** Sanitized authentication failure; never retains credentials or remote responses. */

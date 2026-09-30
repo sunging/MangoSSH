@@ -2,7 +2,6 @@
 <resources>
     <string name="settings_category_updates_title">Updates</string>
     <string name="settings_category_updates_summary">Check for and install new versions</string>
-    <string name="app_update_title">App updates</string>
     <string name="app_update_description">MangoSSH checks GitHub for a newer signed release and installs it with the system installer.</string>
     <string name="app_update_installed_version">Installed version %1$s</string>
     <string name="app_update_automatic_check">Check for updates automatically</string>

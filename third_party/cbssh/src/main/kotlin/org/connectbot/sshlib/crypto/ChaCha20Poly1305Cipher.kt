@@ -18,6 +18,7 @@
 package org.connectbot.sshlib.crypto
 
 import org.connectbot.sshlib.transport.TransportException
+import java.security.GeneralSecurityException
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
@@ -37,6 +38,16 @@ internal class ChaCha20Poly1305Cipher(private val key: ByteArray) : PacketAead {
         const val BLOCK_SIZE = 8
         const val KEYSPEC_ALGO = "ChaCha20"
         const val CIPHER_ALGO = "ChaCha20/None/NoPadding"
+
+        /** Android gained a raw ChaCha20 cipher in API 28; older releases must not offer it. */
+        val isAvailable: Boolean by lazy {
+            try {
+                Cipher.getInstance(CIPHER_ALGO)
+                true
+            } catch (_: GeneralSecurityException) {
+                false
+            }
+        }
     }
 
     override val tagLength: Int = TAG_SIZE

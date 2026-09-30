@@ -11,6 +11,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -136,7 +137,7 @@ private fun SecurityDetail(controller: HostEditorController, keys: List<StoredSs
 private fun AgentAllowlist(allowed: List<String>?, keys: List<StoredSshKey>, change: (List<String>?) -> Unit) {
     var picking by rememberSaveable { mutableStateOf(false) }
     HostEditorRow(stringResource(R.string.host_policy_agent), if (allowed == null) stringResource(R.string.host_policy_selected_key)
-        else stringResource(R.string.host_editor_key_count, allowed.size), { picking = true }, Modifier.testTag("host_editor_agent_keys"), dense = true)
+        else pluralStringResource(R.plurals.host_editor_key_count, allowed.size, allowed.size), { picking = true }, Modifier.testTag("host_editor_agent_keys"), dense = true)
     if (picking) {
         var selected by rememberSaveable { mutableStateOf(allowed) }
         var query by rememberSaveable { mutableStateOf("") }

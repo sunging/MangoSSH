@@ -19,6 +19,7 @@ package org.connectbot.terminal
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Intent
 import android.graphics.Paint
 import android.graphics.Path
@@ -96,7 +97,9 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.Clipboard
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -117,6 +120,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -145,6 +149,14 @@ private fun ensureRunBuffer(minLength: Int): CharArray {
     val grown = CharArray(Integer.highestOneBit(minLength - 1) * 2)
     DRAW_RUN_BUFFER.set(grown)
     return grown
+}
+
+/**
+ * Copies [text] from a non-suspending callback. The label matches what the
+ * deprecated ClipboardManager.setText used.
+ */
+internal fun Clipboard.copyPlainText(scope: CoroutineScope, text: String) {
+    scope.launch { setClipEntry(ClipEntry(ClipData.newPlainText("plain text", text))) }
 }
 
 /**
@@ -484,7 +496,7 @@ internal fun TerminalWithAccessibility(
 
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
 
@@ -688,7 +700,7 @@ internal fun TerminalWithAccessibility(
     }
 
     // Selection controller - expose API for external control
-    val selectionController = remember(terminalEmulator, selectionManager, clipboardManager, screenState) {
+    val selectionController = remember(terminalEmulator, selectionManager, clipboard, screenState) {
         object : SelectionController {
             override val isSelectionActive: Boolean
                 get() = selectionManager.mode != SelectionMode.NONE
@@ -745,7 +757,7 @@ internal fun TerminalWithAccessibility(
             override fun copySelection(): String {
                 val text = selectionManager.getSelectedText(screenState.snapshot, screenState.scrollbackPosition)
                 if (text.isNotEmpty()) {
-                    clipboardManager.setText(AnnotatedString(text))
+                    clipboard.copyPlainText(scope, text)
                     selectionManager.clearSelection()
                 }
                 return text
@@ -1653,7 +1665,7 @@ internal fun TerminalWithAccessibility(
                             onClick = {
                                 val selectedText =
                                     selectionManager.getSelectedText(screenState.snapshot, screenState.scrollbackPosition)
-                                clipboardManager.setText(AnnotatedString(selectedText))
+                                clipboard.copyPlainText(scope, selectedText)
                                 selectionManager.clearSelection()
                             },
                             modifier = Modifier.size(COPY_BUTTON_SIZE),

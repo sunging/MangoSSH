@@ -76,6 +76,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
@@ -148,6 +149,8 @@ import website.sung.mangossh.presentation.settings.title
 import website.sung.mangossh.presentation.settings.ShortcutSettingsState
 import website.sung.mangossh.presentation.settings.SnippetSettingsState
 import website.sung.mangossh.presentation.settings.TerminalSettingsState
+import website.sung.mangossh.presentation.settings.TsnetDeviceActions
+import website.sung.mangossh.presentation.settings.TsnetSettingsState
 import website.sung.mangossh.presentation.settings.rememberSettingsCallbacks
 import website.sung.mangossh.presentation.update.distributionUpdateBadgeDescription
 
@@ -176,12 +179,16 @@ fun MangoSshApp(
     val sessionAttention by viewModel.sessionAttention.collectAsStateWithLifecycle()
     val sessionNavigationRequest by viewModel.sessionNavigationRequest.collectAsStateWithLifecycle()
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
+    val embeddedTsnetNetwork by viewModel.embeddedTsnetNetwork.collectAsStateWithLifecycle()
+    val embeddedTsnetNodeName by viewModel.embeddedTsnetNodeName.collectAsStateWithLifecycle()
     val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
     val sessionFontSizeOverrides by viewModel.sessionFontSizeOverrides.collectAsStateWithLifecycle()
     val terminalBehavior by viewModel.terminalBehavior.collectAsStateWithLifecycle()
     val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
     val appThemePreferences by viewModel.appTheme.collectAsStateWithLifecycle()
     val connectionPreferences by viewModel.connectionPreferences.collectAsStateWithLifecycle()
+    val streamingCacheLimitMebibytes by viewModel.streamingCacheLimitMebibytes.collectAsStateWithLifecycle()
+    val streamingCacheUsage by viewModel.streamingCacheUsage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -206,6 +213,7 @@ fun MangoSshApp(
         viewModel.sessionEndedEvents.collect { event ->
             if (event.sessionId == currentActiveSessionId) {
                 leaveSessionId = null
+                if (event.leavesTerminal()) activeSessionId = null
                 viewModel.sessionEndMessage(event)?.let(viewModel::reportUserMessage)
             }
         }
@@ -332,6 +340,9 @@ fun MangoSshApp(
     // Saveable: the dialog owns an open file picker whose result arrives after recreation.
     var showSshConfigImport by rememberSaveable { mutableStateOf(false) }
     var showHostEditor by rememberSaveable { mutableStateOf(false) }
+    // Seeds a new host from an Embedded Tailscale device. Only the first
+    // composition reads it; the editor's own saved draft survives recreation.
+    var hostEditorPrefill by remember { mutableStateOf<ConnectionProfile?>(null) }
     var showTransfers by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
     var hostSearchActive by rememberSaveable { mutableStateOf(false) }
@@ -348,8 +359,9 @@ fun MangoSshApp(
         if (selectedSection != AppSection.HOSTS && hostSearchActive) closeHostSearch()
     }
 
-    fun openHostEditor(host: ConnectionProfile? = null) {
+    fun openHostEditor(host: ConnectionProfile? = null, prefill: ConnectionProfile? = null) {
         editingHostId = host?.id
+        hostEditorPrefill = prefill
         showHostEditor = true
     }
 
@@ -374,6 +386,10 @@ fun MangoSshApp(
             onUploadDirectory = viewModel::uploadDirectoryToRemoteBrowser,
             onDismissPreview = viewModel::dismissRemotePreview,
             onClose = viewModel::closeRemoteBrowser,
+            onOpenWithApp = viewModel::openRemoteWithApp,
+            onStream = viewModel::streamRemoteFile,
+            onCancelOpen = viewModel::cancelRemoteOpen,
+            onLaunchConsumed = viewModel::consumeRemoteLaunch,
         )
         visiblePrompt?.let { prompt ->
             SessionPromptDialog(
@@ -676,6 +692,17 @@ fun MangoSshApp(
                                 viewModel = viewModel,
                                 onSetAppLanguage = onSetAppLanguage,
                                 onRemoveSnippet = { pendingRemoval = PendingRemovalRequest.Snippet(it) },
+                                tsnetDeviceActions = TsnetDeviceActions(
+                                    onConnectSavedHost = { host ->
+                                        val connect = { activeSessionId = viewModel.connect(host) }
+                                        onRequestNotificationPermission?.invoke(connect) ?: connect()
+                                    },
+                                    onQuickConnect = { profile ->
+                                        val connect = { activeSessionId = viewModel.quickConnectTsnetDevice(profile) }
+                                        onRequestNotificationPermission?.invoke(connect) ?: connect()
+                                    },
+                                    onSaveAsHost = { profile -> openHostEditor(prefill = profile) },
+                                ),
                             )
                             SettingsScreen(
                                 viewModel = viewModel,
@@ -688,11 +715,21 @@ fun MangoSshApp(
                                     ),
                                     terminal = TerminalSettingsState(appearance = terminalAppearance, behavior = terminalBehavior),
                                     shortcuts = ShortcutSettingsState(config = terminalShortcutConfig, behavior = terminalBehavior),
-                                    connection = ConnectionSettingsState(preferences = connectionPreferences),
+                                    connection = ConnectionSettingsState(
+                                        preferences = connectionPreferences,
+                                        streamingCacheLimitMebibytes = streamingCacheLimitMebibytes,
+                                        streamingCacheUsage = streamingCacheUsage,
+                                    ),
                                     security = SecuritySettingsState(lock = appLockConfiguration),
                                     backup = BackupSettingsState(vaultStatus = vaultStatus, webDavConfig = webDavConfig, operation = backupOperation),
                                     snippets = SnippetSettingsState(snippets = snippets),
-                                    tsnet = embeddedTsnetStatus,
+                                    tsnet = TsnetSettingsState(
+                                        status = embeddedTsnetStatus,
+                                        nodeName = embeddedTsnetNodeName,
+                                        network = embeddedTsnetNetwork,
+                                        hosts = hosts,
+                                        keys = keys,
+                                    ),
                                     update = updateState,
                                     about = AboutSettingsState(
                                         versionName = viewModel.installedVersionName,
@@ -746,11 +783,13 @@ fun MangoSshApp(
             hosts = hosts,
             defaults = connectionPreferences,
             initialHost = hosts.firstOrNull { it.id == editingHostId },
+            prefill = hostEditorPrefill,
             keys = keys,
             snippets = snippets,
             onDismiss = {
                 showHostEditor = false
                 editingHostId = null
+                hostEditorPrefill = null
             },
             onSave = viewModel::saveHost,
         )
@@ -1195,7 +1234,7 @@ private fun GenerateKeyDialog(
     onConfirm: (type: SshKeyGenerationType, label: String) -> Unit,
 ) {
     var algorithm by rememberSaveable { mutableStateOf(KeyGenerationAlgorithm.ED25519) }
-    var keyLength by rememberSaveable { mutableStateOf(algorithm.defaultLength) }
+    var keyLength by rememberSaveable { mutableIntStateOf(algorithm.defaultLength) }
     var label by rememberSaveable {
         mutableStateOf(defaultGeneratedKeyLabel(algorithm, keyLength))
     }

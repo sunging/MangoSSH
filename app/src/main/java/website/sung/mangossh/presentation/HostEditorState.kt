@@ -44,9 +44,11 @@ internal class HostEditorController(val original: HostEditorDraft) {
 }
 
 @Composable
-internal fun rememberHostEditorController(host: ConnectionProfile?) = rememberSaveable(host?.id, saver = HostEditorController.StateSaver) {
-    HostEditorController(HostEditorDraft.from(host))
-}
+internal fun rememberHostEditorController(host: ConnectionProfile?, prefill: ConnectionProfile? = null) =
+    rememberSaveable(host?.id, saver = HostEditorController.StateSaver) {
+        // A prefill is never an existing host: dropping its id makes saving create one.
+        HostEditorController(host?.let(HostEditorDraft::from) ?: HostEditorDraft.from(prefill).copy(id = null))
+    }
 
 /** Saveable form values contain references to keys and snippets, never their secret contents. */
 internal data class HostEditorDraft(

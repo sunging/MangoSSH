@@ -1,4 +1,4 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="ssh_key_encryption_unsupported">DES/3DES-encrypted PEM and encrypted PKCS#8 keys are no longer supported. Existing records can still be backed up and exported. Convert the exported key to an AES-encrypted OpenSSH key using a trusted external tool, then import it again.</string>
     <string name="host_legacy_ssh_algorithms">Legacy SSH compatibility</string>
     <string name="host_legacy_ssh_algorithms_description">Allow RSA/SHA-1, DH group14/GEX SHA-1, AES-CBC and HMAC-SHA1 after modern algorithms for this host. Enable only for older servers. Connection failures never enable this automatically.</string>
@@ -10,7 +10,6 @@
     <string name="active_sessions_notification_text">Active sessions and port forwards appear here.</string>
     <string name="embedded_tsnet_notification_text">Completing embedded Tailscale sign-in.</string>
     <string name="foreground_service_special_use" translatable="false">Maintains user-initiated SSH/Mosh sessions and embedded Tailscale enrollment.</string>
-    <string name="embedded_tsnet_title">Embedded Tailscale</string>
     <string name="embedded_tsnet_description">A separate userspace Tailnet node for profiles that explicitly select Embedded Tailscale. It does not request Android VPN access or depend on the Tailscale app.</string>
     <string name="embedded_tsnet_status_unenrolled">Not signed in</string>
     <string name="embedded_tsnet_status_starting">Connecting</string>
@@ -41,6 +40,25 @@
     <string name="embedded_tsnet_invalid_authorization_url">Embedded Tailscale returned an invalid authorization request.</string>
     <string name="embedded_tsnet_enrollment_required">Sign in to Embedded Tailscale in Settings before connecting this profile.</string>
     <string name="embedded_tsnet_version">Embedded node version %1$s</string>
+    <string name="embedded_tsnet_status_connected">Signed in · connected</string>
+    <string name="embedded_tsnet_status_checking">Checking sign-in…</string>
+    <string name="embedded_tsnet_self_title">This device</string>
+    <string name="embedded_tsnet_devices_title">Tailnet devices</string>
+    <plurals name="embedded_tsnet_devices_title_online">
+        <item quantity="one">Tailnet devices · %1$d online</item>
+        <item quantity="other">Tailnet devices · %1$d online</item>
+    </plurals>
+    <string name="embedded_tsnet_devices_loading">Loading devices…</string>
+    <string name="embedded_tsnet_devices_empty">No other devices on this Tailnet.</string>
+    <string name="embedded_tsnet_device_online">Online</string>
+    <string name="embedded_tsnet_device_offline">Offline</string>
+    <string name="embedded_tsnet_device_last_seen">Last seen %1$s</string>
+    <string name="embedded_tsnet_device_ssh_on">Tailscale SSH on</string>
+    <string name="embedded_tsnet_device_ssh_off">Tailscale SSH off</string>
+    <string name="embedded_tsnet_quick_connect_title">Connect to %1$s</string>
+    <string name="embedded_tsnet_quick_connect_saved">Saved hosts</string>
+    <string name="embedded_tsnet_quick_connect_ssh_hint">This device runs Tailscale SSH. The Tailnet policy authorizes the login, so no password or key is needed.</string>
+    <string name="embedded_tsnet_quick_connect_save_host">Save as host</string>
     <string name="active_sessions_notification_public_title">MangoSSH is running</string>
     <string name="active_sessions_notification_public_text">An active terminal session is protected.</string>
     <string name="active_session_notification_title">%1$s</string>
@@ -60,19 +78,31 @@
     <string name="remote_file_not_a_file">That remote path is a directory, not a file.</string>
     <string name="remote_file_too_large">The selected file exceeds the transfer size limit.</string>
     <string name="remote_file_io_failure">The remote file operation failed.</string>
-    <string name="remote_file_directory_truncated">Only the first %1$d entries of this directory are shown.</string>
+    <string name="remote_file_directory_truncated" tools:ignore="PluralsCandidate">Only the first %1$d entries of this directory are shown.</string>
     <string name="remote_file_local_document_failure">The selected local file or folder could not be opened.</string>
     <string name="remote_file_resume_restarted">This destination cannot be appended to, so the transfer restarted from the beginning.</string>
-    <string name="remote_file_tree_too_large">This folder holds more than %1$d files or is nested deeper than %2$d levels, so it cannot be transferred.</string>
-    <string name="remote_file_tree_links_skipped">%1$d entries were skipped because symbolic links and special files are not transferred.</string>
+    <string name="remote_file_tree_too_large" tools:ignore="PluralsCandidate">This folder holds more than %1$d files or is nested deeper than %2$d levels, so it cannot be transferred.</string>
+    <plurals name="remote_file_tree_links_skipped">
+        <item quantity="one">%1$d entry was skipped because symbolic links and special files are not transferred.</item>
+        <item quantity="other">%1$d entries were skipped because symbolic links and special files are not transferred.</item>
+    </plurals>
     <string name="remote_file_no_app_to_open">No installed app can open this file.</string>
+    <string name="remote_file_actions">File actions</string>
+    <string name="remote_open_elsewhere">Open in another app</string>
+    <string name="remote_open_with_app">Open with…</string>
+    <string name="remote_open_stream">Stream with…</string>
+    <string name="remote_open_downloading">Downloading to open</string>
+    <string name="remote_open_preparing_stream">Preparing stream</string>
+    <string name="remote_open_space_failed">Not enough storage to download this file first. Additional bytes required: %1$d. Streaming it needs no storage.</string>
     <string name="remote_file_transfer_session_closed">The connection that carried this transfer is closed. Reopen the file browser to transfer it again.</string>
     <string name="transfer_awaiting_reconnect">Connection lost. After you reconnect to the same host, continue this transfer here. It does not restart on its own.</string>
-    <string name="session_ended_remote_exit">The session ended on the remote host.</string>
     <string name="session_ended_connection_lost">The connection was interrupted.</string>
     <string name="session_ended_connection_failed">Unable to establish the connection.</string>
     <string name="session_foreground_service_unavailable">Android did not allow MangoSSH to keep a connection running in the background. Open the app and try again.</string>
     <string name="session_ended_authentication_failed">The server rejected the selected authentication method.</string>
+    <string name="session_ended_authentication_method_unavailable">The server does not offer an authentication method supported by this profile.</string>
+    <string name="session_ended_authentication_key_failed">The selected key could not be loaded or used to sign. Check the key and its passphrase.</string>
+    <string name="session_ended_authentication_protocol_failed">SSH authentication could not complete because of a protocol or connection error.</string>
     <string name="session_leave_title">Keep this session connected?</string>
     <string name="session_leave_message">Leaving the terminal can keep this session running in the background.</string>
     <string name="session_leave_disconnect">Disconnect and exit</string>
@@ -137,7 +167,6 @@
     <string name="terminal_shortcuts_restore">Restore defaults</string>
     <string name="terminal_shortcuts_save">Save</string>
     <string name="terminal_shortcuts_cancel">Cancel</string>
-    <string name="terminal_shortcuts_visible">Visible</string>
     <string name="terminal_shortcuts_move_up">Move shortcut earlier</string>
     <string name="terminal_shortcuts_move_down">Move shortcut later</string>
     <string name="terminal_shortcuts_edit">Edit shortcut</string>
@@ -154,7 +183,6 @@
     <string name="terminal_shortcut_action_chord">Key chord</string>
     <string name="terminal_shortcut_modifier">Modifier</string>
     <string name="terminal_shortcut_text_content">Text to send</string>
-    <string name="terminal_shortcut_special_key">Special key</string>
     <string name="terminal_shortcut_chord_modifiers">Chord modifiers</string>
     <string name="terminal_shortcut_chord_key">Chord key</string>
     <string name="terminal_shortcut_character">Character</string>
@@ -168,7 +196,10 @@
     <string name="terminal_shortcut_error_duplicate">Paste and each one-shot modifier can appear only once.</string>
     <string name="terminal_shortcut_summary_paste">Paste clipboard</string>
     <string name="terminal_shortcut_summary_modifier">One-shot %1$s modifier</string>
-    <string name="terminal_shortcut_summary_text">Text · %1$d characters</string>
+    <plurals name="terminal_shortcut_summary_text">
+        <item quantity="one">Text · %1$d character</item>
+        <item quantity="other">Text · %1$d characters</item>
+    </plurals>
     <string name="terminal_shortcut_summary_special">Special key · %1$s</string>
     <string name="terminal_shortcut_summary_chord">Chord · %1$s</string>
     <string name="terminal_enter_immersive_mode">Enter immersive mode</string>
@@ -211,10 +242,8 @@
     <string name="port_forward_title">%1$s · %2$s</string>
     <string name="preview_full_size">Full size %1$s</string>
     <string name="message_port_forward_incomplete">Port-forward configuration is incomplete.</string>
-    <string name="message_port_forward_saved">Port forwarding saved.</string>
     <string name="port_forward_mosh_companion_disconnected">The SSH connection carrying this Mosh port forward disconnected. Start the forward again to reconnect.</string>
     <string name="message_snippet_required">Snippet name and contents cannot be empty.</string>
-    <string name="message_snippet_saved">Snippet saved.</string>
     <string name="message_key_generated">Generated %1$s.</string>
     <string name="message_key_imported">Imported %1$s.</string>
     <string name="message_vault_save_failed">Unable to save the encrypted vault. Existing data was not overwritten.</string>
@@ -224,23 +253,9 @@
     <string name="message_key_import_failed">Unable to import the private key. Check its format and passphrase.</string>
     <string name="message_webdav_fields_required">Enter an HTTPS WebDAV URL, username, and remote filename.</string>
     <string name="message_webdav_saved">WebDAV configuration saved.</string>
-    <string name="message_choose_backup_destination">Choose where to save the backup file.</string>
-    <string name="message_backup_create_missing_passphrase">Unable to create the encrypted backup. Ensure a sync passphrase is set.</string>
-    <string name="message_backup_imported">Encrypted backup imported. Hosts and keys were replaced.</string>
-    <string name="message_backup_import_failed">Unable to import the backup: incorrect passphrase or corrupted file.</string>
-    <string name="message_webdav_configure_first">Configure WebDAV first.</string>
-    <string name="message_backup_create_failed">Unable to create the encrypted backup.</string>
-    <string name="message_webdav_upload_complete">Encrypted backup uploaded to WebDAV.</string>
-    <string name="message_webdav_import_complete">Encrypted backup imported from WebDAV.</string>
-    <string name="message_webdav_import_failed">Unable to import the WebDAV backup: incorrect passphrase or corrupted file.</string>
     <string name="message_webdav_invalid_configuration">The WebDAV address or remote filename is invalid.</string>
-    <string name="message_webdav_invalid_backup_size">The encrypted backup size is invalid.</string>
-    <string name="message_webdav_http_failed">The WebDAV request failed (HTTP %1$d).</string>
-    <string name="message_webdav_response_too_large">The remote backup exceeds the transfer size limit.</string>
-    <string name="message_webdav_upload_failed">Unable to upload the encrypted backup.</string>
-    <string name="message_webdav_download_failed">Unable to download the encrypted backup.</string>
     <string name="message_app_lock_enabled">App PIN unlock enabled.</string>
-    <string name="message_pin_invalid">PIN must contain %1$d to %2$d digits.</string>
+    <string name="message_pin_invalid" tools:ignore="PluralsCandidate">PIN must contain %1$d to %2$d digits.</string>
     <string name="message_app_lock_disabled">App lock disabled.</string>
     <string name="message_app_pin_required">Set an app PIN first.</string>
     <string name="message_pin_incorrect">Incorrect PIN.</string>
@@ -266,13 +281,11 @@
     <string name="common_start">Start</string>
     <string name="common_stop">Stop</string>
     <string name="common_submit">Submit</string>
-    <string name="common_upload">Upload</string>
     <string name="ui_4_12_digit_pin">4–12 digit PIN</string>
     <string name="ui_a_snippet_selected_in_the_host_editor_is_sent_automatically_when_the_she">A snippet selected in the host editor is sent automatically when the shell opens.</string>
     <string name="ui_a_socks5_proxy_does_not_need_a_destination_host_or_port">A SOCKS5 proxy does not need a destination host or port.</string>
     <string name="ui_active_sessions">Active sessions</string>
     <string name="ui_add_an_ssh_mosh_or_tailnet_host_profile_keys_are_managed_and_shared_sepa">Add an SSH, Mosh, or Tailnet host profile. Keys are managed and shared separately once the secure vault is available.</string>
-    <string name="ui_after_download_the_backup_will_be_decrypted_with_this_passphrase_and_rep">After download, the backup will be decrypted with this passphrase and replace the current vault.</string>
     <string name="ui_allow_biometric_unlock">Allow biometric unlock</string>
     <string name="ui_app_lock_sync_and_tailnet">Appearance, terminal, security, and more</string>
     <string name="ui_app_pin">App PIN</string>
@@ -291,7 +304,6 @@
     <string name="ui_close_the_file_browser">Close the file browser</string>
     <string name="ui_closed">Closed</string>
     <string name="ui_completed">Completed</string>
-    <string name="ui_configure">Configure</string>
     <string name="ui_configure_webdav">Configure WebDAV</string>
     <string name="ui_confirm_pin">Confirm PIN</string>
     <string name="ui_connected">Connected</string>
@@ -304,7 +316,6 @@
     <string name="ui_connection_workspace">Connection workspace</string>
     <string name="ui_copy_public_key">Copy public key</string>
     <string name="ui_create_a_host_profile_before_adding_a_port_forward">Create a host profile before adding a port forward.</string>
-    <string name="ui_custom_webdav">Custom WebDAV</string>
     <string name="ui_destination_host">Destination host</string>
     <string name="ui_destination_port">Destination port</string>
     <string name="ui_do_not_run">Do not run</string>
@@ -316,16 +327,11 @@
     <string name="ui_edit_snippet">Edit snippet</string>
     <string name="ui_embedded_tailscale_proxies_only_this_profile_s_ssh_and_mosh_traffic_tail">Embedded Tailscale proxies only this profile\'s SSH and Mosh traffic. Tailscale SSH is the default, and regular SSH authentication remains available.</string>
     <string name="ui_enable_ssh_agent_forwarding">Enable SSH agent forwarding</string>
-    <string name="ui_encrypted_backup">Encrypted backup</string>
     <string name="ui_enter_value">Enter value</string>
-    <string name="ui_export">Export</string>
-    <string name="ui_export_encrypted_backup">Export encrypted backup</string>
     <string name="ui_export_private_key">Export private key</string>
-    <string name="ui_exports_and_webdav_uploads_are_encrypted_again_with_a_separate_sync_pass">Exports and WebDAV uploads are encrypted again with a separate sync passphrase; the device-bound local vault key is never uploaded.</string>
     <string name="ui_failed">Failed</string>
     <string name="ui_file_transfers">File transfers</string>
     <string name="ui_files">Files</string>
-    <string name="ui_full_size">Full size</string>
     <string name="ui_generate">Generate</string>
     <string name="ui_generate_key">Generate key</string>
     <string name="ui_generate_or_import_a_private_key_on_the_keys_page_first">Generate or import a private key on the Keys page first.</string>
@@ -336,11 +342,8 @@
     <string name="ui_host_actions">%1$s actions</string>
     <string name="ui_hostname_or_ip_address">Hostname or IP address</string>
     <string name="ui_import">Import</string>
-    <string name="ui_import_encrypted_backup">Import encrypted backup</string>
-    <string name="ui_import_from_webdav">Import from WebDAV</string>
     <string name="ui_import_private_key">Import private key</string>
     <string name="ui_imported_private_key">Imported private key</string>
-    <string name="ui_importing_replaces_the_current_hosts_keys_snippets_and_sync_configuratio">Importing replaces the current hosts, keys, snippets, and sync configuration.</string>
     <string name="ui_keep">Keep</string>
     <string name="ui_key_algorithm">Key algorithm</string>
     <string name="ui_key_length">Key length</string>
@@ -379,7 +382,6 @@
     <string name="ui_openssh_and_pem_private_keys_are_supported_leave_the_passphrase_blank_fo">OpenSSH and PEM private keys are supported. Leave the passphrase blank for an unencrypted key.</string>
     <string name="ui_own_connection">Own connection</string>
     <string name="ui_parent_directory">Parent directory</string>
-    <string name="ui_password_app_password">Password / app password</string>
     <string name="ui_pause">Pause</string>
     <string name="ui_paused">Paused</string>
     <string name="ui_port">Port</string>
@@ -407,7 +409,6 @@
     <string name="ui_secure_vault_encrypted_by_android_keystore">Secure vault: encrypted by Android Keystore</string>
     <string name="ui_secure_vault_opening">Secure vault: opening</string>
     <string name="ui_secure_vault_unavailable">Secure vault: unavailable</string>
-    <string name="ui_security_and_sync">Security and sync</string>
     <string name="ui_security_first">Security first</string>
     <string name="ui_server_fingerprint_changed">Server fingerprint changed</string>
     <string name="ui_server_resources">Server resources</string>
@@ -425,9 +426,7 @@
     <string name="ui_start_on_connection">Start on connection</string>
     <string name="ui_starting">Starting</string>
     <string name="ui_starting_opens_a_connection_dedicated_to_this_forward_so_no_terminal_is">Starting opens a connection dedicated to this forward, so no terminal is needed first.</string>
-    <string name="ui_sync_passphrase">Sync passphrase</string>
     <string name="ui_tailnet_routing_reaches_the_target_through_the_device_s_enabled_tailscal">Tailnet routing reaches the target through the device\'s enabled Tailscale VPN; authentication uses Tailscale SSH.</string>
-    <string name="ui_the_backup_will_be_encrypted_with_this_passphrase_before_upload">The backup will be encrypted with this passphrase before upload.</string>
     <string name="ui_the_host_and_its_port_forwarding_rules_will_be_permanently_removed_this">The host and its port-forwarding rules will be permanently removed. This cannot be undone.</string>
     <string name="ui_the_pin_is_stored_only_on_this_device_as_a_salted_verifier_and_cannot_be">The PIN is stored only on this device as a salted verifier and cannot be recovered.</string>
     <string name="ui_the_private_key_will_be_permanently_removed_and_unlinked_from_its_host_p">The private key will be permanently removed and unlinked from its host profiles. This cannot be undone.</string>
@@ -435,7 +434,6 @@
     <string name="ui_this_directory_is_empty">This directory is empty.</string>
     <string name="ui_this_file_is_not_text_and_cannot_be_previewed_you_can_download_it_instea">This file is not text and cannot be previewed. You can download it instead.</string>
     <string name="ui_this_is_the_first_connection_to_this_server_verify_the_fingerprint_with">This is the first connection to this server. Verify the fingerprint with the administrator before trusting it.</string>
-    <string name="ui_this_passphrase_protects_the_exported_backup_file">This passphrase protects the exported backup file.</string>
     <string name="ui_this_port_forwarding_rule_will_be_permanently_removed_this_cannot_be_und">This port-forwarding rule will be permanently removed. This cannot be undone.</string>
     <string name="ui_this_private_key_also_requires_its_passphrase">This private key also requires its passphrase.</string>
     <string name="ui_this_snippet_will_be_permanently_removed_and_linked_host_profiles_will_s">This snippet will be permanently removed and linked host profiles will stop running it automatically. This cannot be undone.</string>
@@ -447,7 +445,6 @@
     <string name="ui_upload_file">Upload file</string>
     <string name="ui_upload_folder">Upload folder</string>
     <string name="ui_upload_to_this_directory">Upload to this directory</string>
-    <string name="ui_upload_to_webdav">Upload to WebDAV</string>
     <string name="ui_use_biometrics">Use biometrics</string>
     <string name="ui_username">Username</string>
     <string name="ui_verify_server_fingerprint">Verify server fingerprint</string>
@@ -496,7 +493,7 @@
     <string name="settings_terminal_behavior_title">Terminal behavior</string>
     <string name="settings_terminal_scrollback_title">Scrollback</string>
     <string name="settings_terminal_scrollback_summary">Off-screen lines kept per session.</string>
-    <string name="settings_terminal_scrollback_value">%1$d lines</string>
+    <string name="settings_terminal_scrollback_value" tools:ignore="PluralsCandidate">%1$d lines</string>
     <string name="settings_terminal_bold_as_bright_title">Bold as bright</string>
     <string name="settings_terminal_bold_as_bright_summary">Bold text using a low-intensity color switches to its bright counterpart, matching common terminal behavior.</string>
     <string name="settings_terminal_auto_detect_urls_title">Detect URLs in output</string>
@@ -518,7 +515,7 @@
     <string name="settings_applies_to_new_connections">Applies to connections opened after this change; connections already open are unaffected.</string>
     <string name="settings_connection_keepalive_title">SSH keepalive</string>
     <string name="settings_connection_keepalive_summary">How often an idle SSH transport sends a keepalive packet to stay visible to routers and firewalls.</string>
-    <string name="settings_connection_keepalive_value">Every %1$d seconds</string>
+    <string name="settings_connection_keepalive_value" tools:ignore="PluralsCandidate">Every %1$d seconds</string>
     <string name="settings_connection_keepalive_off">Off</string>
     <string name="settings_connection_bg_keepalive_title">Background keepalive</string>
     <string name="settings_connection_bg_keepalive_summary">How much to stretch the keepalive interval once the app is in the background, so the device can sleep between sends. Longer saves more battery but a connection is likelier to drop while backgrounded.</string>
@@ -526,10 +523,17 @@
     <string name="settings_connection_bg_keepalive_same">Same as foreground</string>
     <string name="settings_connection_timeout_title">Connect timeout</string>
     <string name="settings_connection_timeout_summary">How long to wait for a new connection to reach the server.</string>
-    <string name="settings_connection_timeout_value">%1$d seconds</string>
+    <string name="settings_connection_timeout_value" tools:ignore="PluralsCandidate">%1$d seconds</string>
     <string name="settings_connection_terminal_type_title">SSH terminal type</string>
     <string name="settings_connection_terminal_type_summary">The TERM value MangoSSH requests over SSH. xterm-256color is correct for nearly every server.</string>
     <string name="settings_connection_terminal_type_mosh_note">Mosh always uses xterm-256color regardless of this setting, because its bundled terminfo only ships that entry.</string>
+    <string name="settings_streaming_header">Streaming remote files</string>
+    <string name="settings_streaming_cache_title">Stream cache size</string>
+    <string name="settings_streaming_cache_summary">Memory used to cache files streamed to another app, such as a video player. Larger values make seeking back smoother. Nothing is written to storage.</string>
+    <string name="settings_streaming_cache_usage">In use: %1$s of %2$s.</string>
+    <string name="settings_streaming_cache_value_mb">%1$d MB</string>
+    <string name="settings_streaming_cache_value_gb">%1$d GB</string>
+    <string name="settings_streaming_cache_capped">%1$s (limited by this device)</string>
     <string name="settings_connection_terminal_type_xterm_256color" translatable="false">xterm-256color</string>
     <string name="settings_connection_terminal_type_xterm" translatable="false">xterm</string>
     <string name="settings_connection_terminal_type_screen_256color" translatable="false">screen-256color</string>
@@ -548,7 +552,6 @@
     <string name="settings_about_view_license_text">View license</string>
     <string name="settings_about_license_unavailable">This license text could not be read from the app package.</string>
     <string name="settings_about_license_dialog_title">%1$s (%2$s)</string>
-    <string name="backup_intro">Preview and merge encrypted backups. Connection settings stay on this device unless explicitly included.</string>
     <string name="backup_local_history">Local recovery points</string>
     <string name="backup_remote_history">WebDAV history</string>
     <string name="backup_forget_manual">Forget saved file backup passphrase</string>
@@ -563,11 +566,9 @@
     <string name="backup_remote_changed_detail">This remote backup is new to this device or has changed. Download and merge it first, or explicitly replace it with this device’s snapshot. The previous remote file will be archived before replacement.</string>
     <string name="backup_download_merge">Download and merge</string>
     <string name="backup_overwrite">Archive and overwrite</string>
-    <string name="backup_history">Backup history</string>
     <string name="backup_history_limit">Keep 10 previous versions. Restoring creates another local recovery point.</string>
     <string name="backup_history_empty">No previous versions.</string>
     <string name="backup_passphrase">Backup encryption passphrase</string>
-    <string name="backup_password_detail">This is separate from the WebDAV login password. Changing it affects only new backups; older remote files still require their original passphrase. Local recovery points use the device key.</string>
     <string name="backup_use_saved">Use saved passphrase</string>
     <string name="backup_confirm_password">Confirm new passphrase</string>
     <string name="backup_remember">Remember on this device</string>
@@ -576,7 +577,10 @@
     <string name="backup_counts">New: %1$d · Unchanged: %2$d · Conflicts: %3$d</string>
     <string name="backup_unknown_date">Creation time unknown (legacy backup)</string>
     <string name="backup_replace">Replace all data instead of merging</string>
-    <string name="backup_remove_count">Replacement removes %1$d local-only records.</string>
+    <plurals name="backup_remove_count">
+        <item quantity="one">Replacement removes %1$d local-only record.</item>
+        <item quantity="other">Replacement removes %1$d local-only records.</item>
+    </plurals>
     <string name="backup_merge_detail">Unchecked conflicts keep the local record. Trust conflicts always require an individual choice. Changes apply to future connections.</string>
     <string name="backup_restore_config">Restore WebDAV settings and login credentials</string>
     <string name="backup_all_incoming">Use incoming for all non-trust conflicts</string>
@@ -618,19 +622,19 @@
     <string name="session_input_overflow">The session ended because terminal input exceeded the pending input limit.</string>
     <string name="remote_file_source_changed">The source changed or cannot be verified for resume. Restart this transfer.</string>
     <string name="resource_report_empty">No resource data returned</string>
-    <string name="message_pin_cooldown">Too many attempts. Try again in %1$d seconds.</string>
+    <plurals name="message_pin_cooldown">
+        <item quantity="one">Too many attempts. Try again in %1$d second.</item>
+        <item quantity="other">Too many attempts. Try again in %1$d seconds.</item>
+    </plurals>
     <string name="app_lock_verifying">Verifying…</string>
     <string name="app_lock_scope">Locking restricts access and new agent signatures. Existing background sessions continue; their credentials may remain in memory.</string>
-    <string name="host_policy_title">Host connection and permissions</string>
     <string name="host_policy_snapshot">Effective values come from app defaults followed by host overrides. Changes apply to new connections.</string>
     <string name="host_policy_timeout">Connect timeout (seconds)</string>
     <string name="host_policy_keepalive">Heartbeat interval (seconds; 0 disables)</string>
     <string name="host_policy_background">Background interval multiplier</string>
-    <string name="host_policy_terminal">Terminal: %1$s · %2$s</string>
     <string name="host_policy_inherited">app default</string>
     <string name="host_policy_override">host override</string>
     <string name="host_policy_inherit">Use app default</string>
-    <string name="host_policy_change">Change</string>
     <string name="host_policy_agent">Keys authorized for agent forwarding</string>
     <string name="host_policy_selected_key">Use only the selected login key</string>
     <string name="host_policy_confirm_signature">Confirm every signature</string>
@@ -639,14 +643,11 @@
     <string name="host_policy_enabled">Enabled</string>
     <string name="host_policy_disabled">Disabled</string>
     <string name="host_policy_workspace">Optional tmux workspace</string>
-    <string name="host_policy_workspace_exclusive">Using tmux replaces the startup snippet. No remote tmux configuration is changed.</string>
     <string name="workspace_create">Create workspace</string>
     <string name="workspace_attach">Attach workspace</string>
     <string name="workspace_name">Workspace name (letters, digits, _ or -)</string>
     <string name="workspace_id">Remote session ID (for example $0)</string>
-    <string name="host_policy_jumps">SSH jump chain (ordered, up to 4)</string>
     <string name="host_policy_mosh_jumps">Mosh uses UDP and cannot use this SSH jump chain. Remove jumps or choose SSH.</string>
-    <string name="host_policy_add_jump">Add jump: %1$s</string>
     <string name="agent_signature_title">Authorize agent signing for %1$s</string>
     <string name="agent_signature_instruction">This host requests a signature using an allowed key. Approve only if you intended to authenticate from this connection.</string>
     <string name="host_dependencies">Affected hosts:\n%1$s</string>
@@ -771,7 +772,10 @@
     </plurals>
     <string name="host_editor_select_key">Select a login key</string>
     <string name="host_editor_this_connection">This connection</string>
-    <string name="host_editor_key_count">%1$d keys authorized</string>
+    <plurals name="host_editor_key_count">
+        <item quantity="one">%1$d key authorized</item>
+        <item quantity="other">%1$d keys authorized</item>
+    </plurals>
     <string name="host_editor_missing_key">Missing key (remove this reference)</string>
     <string name="host_editor_custom_keys">Choose an explicit allowlist</string>
     <string name="host_editor_terminal">Terminal type</string>
@@ -787,7 +791,7 @@
     <string name="port_forward_bound">Listening on %1$s</string>
     <string name="port_forward_carrier_ssh">Terminal SSH connection</string>
     <string name="port_forward_carrier_mosh">Mosh companion SSH connection</string>
-    <string name="port_forward_connections">%1$d open · %2$d total</string>
+    <string name="port_forward_connections" tools:ignore="PluralsCandidate">%1$d open · %2$d total</string>
     <string name="port_forward_last_activity">Last activity %1$s</string>
     <string name="transfer_metadata_failed">Cannot preserve file ownership or permissions. The replacement was not committed.</string>
     <string name="transfer_commit_failed">Final commit failed. The destination may be incomplete. Retry to confirm the destination again.</string>

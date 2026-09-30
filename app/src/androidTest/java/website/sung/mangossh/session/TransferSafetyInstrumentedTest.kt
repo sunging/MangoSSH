@@ -6,6 +6,7 @@ import android.database.MatrixCursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
+import androidx.core.os.BundleCompat
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import website.sung.mangossh.session.ssh.SshConnection
@@ -70,7 +71,7 @@ class TransferSafetyInstrumentedTest {
             return ParcelFileDescriptor.open(file(uri), flags)
         }
         override fun call(method: String, arg: String?, extras: android.os.Bundle?): android.os.Bundle? {
-            val document = extras?.getParcelable<Uri>("uri") ?: return super.call(method, arg, extras)
+            val document = extras?.let { BundleCompat.getParcelable(it, "uri", Uri::class.java) } ?: return super.call(method, arg, extras)
             return when (method) {
                 "android:createDocument" -> {
                     val parent = file(document)

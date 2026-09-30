@@ -1,7 +1,7 @@
 package website.sung.mangossh.presentation
 
 import android.graphics.Bitmap
-import androidx.activity.OnBackPressedDispatcher
+import android.view.View
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
@@ -10,15 +10,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
-import androidx.test.espresso.Espresso.onView
-import androidx.test.espresso.matcher.RootMatchers.isDialog as isDialogWindow
-import androidx.test.espresso.matcher.ViewMatchers.isRoot
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.junit.Assert.*
@@ -260,9 +259,12 @@ class HostEditorInstrumentedTest {
         } }
         open(HostEditorPage.ADVANCED)
         // Dispatch through the Dialog window's Back owner. API 33+ does not route system Back as KEYCODE_BACK.
-        lateinit var backDispatcher: OnBackPressedDispatcher
-        onView(isRoot()).inRoot(isDialogWindow()).check { view, _ ->
-            backDispatcher = checkNotNull(view.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher
+        // Reach the Dialog through its Compose root rather than an Espresso root matcher, which also
+        // waits for window focus and flakes when the window manager hands focus over late.
+        val dialogView = (compose.onNodeWithTag("host_editor").fetchSemanticsNode().root as ViewRootForTest).view
+        assertTrue(generateSequence<Any>(dialogView) { (it as? View)?.parent }.any { it is DialogWindowProvider })
+        val backDispatcher = compose.runOnIdle {
+            checkNotNull(dialogView.findViewTreeOnBackPressedDispatcherOwner()).onBackPressedDispatcher
         }
         compose.runOnIdle { backDispatcher.onBackPressed() }
         compose.onNodeWithTag("host_editor_scroll_MAIN").assertExists()

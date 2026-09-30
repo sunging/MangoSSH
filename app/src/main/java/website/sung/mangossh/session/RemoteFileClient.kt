@@ -90,6 +90,39 @@ internal class RemoteFileClient {
     }
 
     /**
+     * Identifies the regular file [path] resolves to, following symlinks, for
+     * streaming or opening in another app. A streamed file must have a known
+     * size because the proxy descriptor reports it up front.
+     */
+    suspend fun streamIdentity(connection: SshConnection, path: String): SourceIdentity = withClient(connection) { client ->
+        val attributes = client.stat(path)
+        if (attributes.toKind() != RemoteFileKind.FILE) throw RemoteFileException(RemoteFileFailure.NOT_A_FILE)
+        val size = attributes.size ?: throw SourceChangedException()
+        SourceIdentity(path, size, attributes.mtime?.times(1_000L))
+    }
+
+    /**
+     * Opens [expected] for random-access reads that outlive a single call.
+     *
+     * Unlike every other function here, the SFTP channel stays open until the
+     * returned session is closed. The opened handle is compared with [expected],
+     * so bytes are never served from a file that changed after it was offered.
+     */
+    suspend fun openReader(connection: SshConnection, expected: SourceIdentity): RemoteReadSession {
+        val client = try { connection.openFiles() } catch (error: Exception) { throw error.toRemoteFileError() }
+        try {
+            val handle = client.open(expected.locator)
+            val attributes = client.fstat(handle)
+            if (attributes.permissions != null && !attributes.isRegularFile) throw RemoteFileException(RemoteFileFailure.NOT_A_FILE)
+            expected.requireMatches(SourceIdentity(expected.locator, attributes.size, attributes.mtime?.times(1_000L)))
+            return RemoteReadSession(client, handle)
+        } catch (error: Exception) {
+            client.close()
+            throw error.toRemoteFileError()
+        }
+    }
+
+    /**
      * Lists [path], dropping `.`/`..` and capping the result at [maxEntries].
      *
      * The listing is sorted for display here so the UI never re-sorts remote
@@ -106,14 +139,14 @@ internal class RemoteFileClient {
         val entries = raw.asSequence()
             .filter { it.filename != "." && it.filename != ".." }
             .mapNotNull { entry ->
-                val name = entry.filename ?: return@mapNotNull null
+                val name = entry.filename
                 if (runCatching { RemoteFilePaths.requireSafeRemoteName(name) }.isFailure) return@mapNotNull null
                 val attributes = entry.attributes
                 RemoteFileEntry(
                     name = name,
                     path = RemoteFilePaths.join(directory, name),
                     kind = attributes.toKind(),
-                    sizeBytes = attributes?.size,
+                    sizeBytes = attributes.size,
                     modifiedEpochSeconds = attributes.mtime?.toLong(),
                     permissions = runCatching { attributes.permissions?.let { Integer.toOctalString(it and 4095) } }.getOrNull(),
                 )
@@ -546,7 +579,7 @@ internal class RemoteFileClient {
             for (entry in listing) {
                 if (control?.shouldContinue() == false) throw java.io.InterruptedIOException()
                 if (++visited > maxEntries) { truncated = true; break@traversal }
-                val name = entry.filename ?: continue
+                val name = entry.filename
                 if (name == "." || name == "..") continue
                 if (runCatching { RemoteFilePaths.requireSafeRemoteName(name) }.isFailure) {
                     skipped += 1
@@ -569,12 +602,12 @@ internal class RemoteFileClient {
                             truncated = true
                             continue
                         }
-                        val size = entry.attributes?.size
+                        val size = entry.attributes.size
                         files += RemoteTreeEntry(
                             relativePath = relative,
                             absolutePath = absolute,
                             sizeBytes = size,
-                            modifiedEpochMillis = entry.attributes?.mtime?.times(1_000L),
+                            modifiedEpochMillis = entry.attributes.mtime?.times(1_000L),
                         )
                         totalBytes += size ?: 0L
                     }
@@ -647,13 +680,6 @@ internal class RemoteFileClient {
         }
     }
 
-    private fun SshFileFailure.toFailure(): RemoteFileFailure = when (status) {
-        2, 10 -> RemoteFileFailure.NOT_FOUND
-        3 -> RemoteFileFailure.ACCESS_DENIED
-        8 -> RemoteFileFailure.SUBSYSTEM_UNAVAILABLE
-        else -> RemoteFileFailure.IO_FAILURE
-    }
-
     private fun SshFileAttributes?.toKind(): RemoteFileKind = when {
         this == null -> RemoteFileKind.OTHER
         isDirectory -> RemoteFileKind.DIRECTORY
@@ -691,4 +717,49 @@ internal class RemoteFileClient {
          */
         const val FILENAME_CHARSET = "UTF-8"
     }
+}
+
+private fun SshFileFailure.toFailure(): RemoteFileFailure = when (status) {
+    2, 10 -> RemoteFileFailure.NOT_FOUND
+    3 -> RemoteFileFailure.ACCESS_DENIED
+    8 -> RemoteFileFailure.SUBSYSTEM_UNAVAILABLE
+    else -> RemoteFileFailure.IO_FAILURE
+}
+
+/**
+ * Keeps application-owned failure categories and replaces everything else,
+ * so no server or library text survives a streamed read.
+ */
+private fun Throwable.toRemoteFileError(): Exception = when (this) {
+    is kotlinx.coroutines.CancellationException -> this
+    is RemoteFileException -> this
+    is SourceChangedException -> this
+    is SshFileFailure -> RemoteFileException(toFailure(), this)
+    else -> RemoteFileException(RemoteFileFailure.IO_FAILURE, this)
+}
+
+/** Random-access chunk reads from one open remote file. */
+internal interface RemoteChunkReader : java.io.Closeable {
+    /** Reads at most one SFTP chunk at [offset]; null means end of file. */
+    suspend fun readAt(offset: Long, count: Int): ByteArray?
+}
+
+/**
+ * One open SFTP read handle held for a streamed file.
+ *
+ * SFTP matches replies by request id, so several coroutines may read through
+ * one session at once. Closing it closes the whole private channel, which also
+ * releases the handle on the server.
+ */
+internal class RemoteReadSession internal constructor(
+    private val client: SshFiles,
+    private val handle: SshFileHandle,
+) : RemoteChunkReader {
+    override suspend fun readAt(offset: Long, count: Int): ByteArray? = try {
+        client.read(handle, offset, count)
+    } catch (error: Exception) {
+        throw error.toRemoteFileError()
+    }
+
+    override fun close() = client.close()
 }

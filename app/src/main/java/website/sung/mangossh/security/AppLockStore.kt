@@ -49,8 +49,10 @@ class AppLockStore(context: Context, private val clockMillis: () -> Long = Syste
             val accepted = MessageDigest.isEqual(expected, actual)
             val next = if (accepted) PinBackoff() else backoff().failed(clockMillis())
             // Synchronous persistence completes before another attempt can begin.
-            preferences.edit().putInt("pin_failures", next.failures)
-                .putLong("pin_blocked_until", next.blockedUntilMillis).commit()
+            preferences.edit(commit = true) {
+                putInt("pin_failures", next.failures)
+                putLong("pin_blocked_until", next.blockedUntilMillis)
+            }
             accepted
         } finally {
             salt.fill(0)

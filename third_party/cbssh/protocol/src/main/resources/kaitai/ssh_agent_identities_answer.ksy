@@ -8,7 +8,7 @@ doc: |
   Response to REQUEST_IDENTITIES (type 12).
   Returns list of available public keys.
 seq:
-  - id: nkeys
+  - id: num_identities
     type: u4
     valid:
       expr: _ <= (_io.size - _io.pos) / 8
@@ -16,7 +16,7 @@ seq:
   - id: identities
     type: identity
     repeat: expr
-    repeat-expr: nkeys
+    repeat-expr: num_identities
     doc: List of available identities
 types:
   identity:

@@ -93,6 +93,9 @@ sealed interface SessionNavigationRequest {
 /** Unsaved editor text is stored this long after the last keystroke. */
 private const val DRAFT_SAVE_DELAY_MS = 1_500L
 
+/** Progress of a download for another app is published at most this often. */
+private const val OPEN_PROGRESS_INTERVAL_MILLIS = 200L
+
 /** Resolves user-visible failure text while keeping orderly session exits silent. */
 internal fun resolveSessionEndMessage(
     event: SessionEndedEvent,
@@ -104,10 +107,16 @@ internal fun resolveSessionEndMessage(
     SessionEndReason.CONNECTION_FAILED -> uiText(R.string.session_ended_connection_failed)
 }
 
+/** Orderly ends leave the terminal; failures stay so their output and Reconnect remain reachable. */
+internal fun SessionEndedEvent.leavesTerminal(): Boolean = resolveSessionEndMessage(this) == null
+
 /** Resolves only the fixed failure category, never remote exception text. */
 internal fun SessionEndMessageKind.toUiText(): UiText = uiText(
     when (this) {
         SessionEndMessageKind.AUTHENTICATION_FAILED -> R.string.session_ended_authentication_failed
+        SessionEndMessageKind.AUTHENTICATION_METHOD_UNAVAILABLE -> R.string.session_ended_authentication_method_unavailable
+        SessionEndMessageKind.AUTHENTICATION_KEY_FAILED -> R.string.session_ended_authentication_key_failed
+        SessionEndMessageKind.AUTHENTICATION_PROTOCOL_FAILED -> R.string.session_ended_authentication_protocol_failed
         SessionEndMessageKind.DSA_KEY_UNSUPPORTED -> R.string.ssh_dsa_unsupported
         SessionEndMessageKind.KEY_ENCRYPTION_UNSUPPORTED -> R.string.ssh_key_encryption_unsupported
         SessionEndMessageKind.MOSH_BOOTSTRAP_FAILED -> R.string.mosh_bootstrap_failed
@@ -234,6 +243,11 @@ class MangoSshViewModel @JvmOverloads constructor(
     val terminalClipboardCopies = sessionController.clipboardCopies
     internal val embeddedTsnetStatus = embeddedTsnetManager.status
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
+    internal val embeddedTsnetNetwork = embeddedTsnetManager.network
+    private val _embeddedTsnetNodeName = MutableStateFlow<String?>(null)
+
+    /** Hostname this installation registers with, shown before the node reports its MagicDNS name. */
+    internal val embeddedTsnetNodeName = _embeddedTsnetNodeName.asStateFlow()
     val terminalAppearance = terminalAppearanceStore.appearance
     val terminalBehavior = terminalBehaviorStore.behavior
     val terminalShortcuts = terminalShortcutStore.config
@@ -313,7 +327,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                     try { action?.invoke() } finally { approvedSensitiveAction = false }
                 } else {
                     val remaining = appLockStore.cooldownRemainingMillis()
-                    _userMessage.value = if (remaining > 0) uiText(R.string.message_pin_cooldown, (remaining + 999) / 1000)
+                    _userMessage.value = if (remaining > 0) ((remaining + 999) / 1000).toInt().let { uiPluralText(R.plurals.message_pin_cooldown, it, it) }
                         else uiText(R.string.message_pin_incorrect)
                 }
             } finally { chars.fill('\u0000'); _appLockBusy.value = false }
@@ -515,6 +529,8 @@ class MangoSshViewModel @JvmOverloads constructor(
     // so a slow server cannot overwrite a newer destination.
     private var browserJob: Job? = null
     private var previewJob: Job? = null
+    private var openJob: Job? = null
+    private var openOperation: website.sung.mangossh.session.BlockingOperation? = null
 
     private val _sessionNavigationRequest = MutableStateFlow<SessionNavigationRequest?>(null)
     /** Foreground-notification destination retained until the app lock is cleared. */
@@ -763,6 +779,17 @@ class MangoSshViewModel @JvmOverloads constructor(
         connectionPreferencesStore.setSshTerminalType(type)
     }
 
+    /** Configured memory limit for streamed remote files, in MiB. */
+    val streamingCacheLimitMebibytes: StateFlow<Int> = runtime.streamingPreferences.cacheLimitMebibytes
+
+    /** Memory streamed files hold now, against the limit this device applies. */
+    internal val streamingCacheUsage = runtime.remoteStreamBudget.usage
+
+    /** Takes effect at once; lowering the limit evicts cached blocks immediately. */
+    fun setStreamingCacheLimitMebibytes(value: Int) {
+        runtime.setStreamingCacheLimitMebibytes(value)
+    }
+
     /** Restores the bundled shortcut layout, including all three transient modifiers. */
     fun resetTerminalShortcuts() {
         terminalShortcutStore.reset()
@@ -964,6 +991,7 @@ class MangoSshViewModel @JvmOverloads constructor(
         browserJob = null
         previewJob?.cancel()
         previewJob = null
+        cancelRemoteOpen()
         _remoteBrowser.value = null
         // A borrowed terminal session keeps running; only a connection this
         // browser opened for itself is handed back.
@@ -973,9 +1001,9 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Opens [entry]: directories are listed, files are previewed, and a symlink
-     * is resolved on the server first because a listing only reports the link
-     * itself, not what it points at.
+     * Opens [entry]: directories are listed, audio and video are streamed to a
+     * player, other files are previewed, and a symlink is resolved on the server
+     * first because a listing only reports the link itself, not what it points at.
      */
     fun openRemoteEntry(entry: RemoteFileEntry) {
         val current = _remoteBrowser.value ?: return
@@ -987,12 +1015,90 @@ class MangoSshViewModel @JvmOverloads constructor(
                 if (kind == RemoteFileKind.DIRECTORY) {
                     navigateRemoteBrowser(entry.path)
                 } else {
-                    previewRemoteFile(entry.path)
+                    openRemoteFile(entry.path)
                 }
             }
 
-            RemoteFileKind.FILE, RemoteFileKind.OTHER -> previewRemoteFile(entry.path)
+            RemoteFileKind.FILE, RemoteFileKind.OTHER -> openRemoteFile(entry.path)
         }
+    }
+
+    private fun openRemoteFile(path: String) {
+        val mimeType = website.sung.mangossh.session.remoteMimeType(RemoteFilePaths.nameOf(path))
+        if (website.sung.mangossh.session.RemoteOpenNames.isStreamable(mimeType)) streamRemoteFile(path) else previewRemoteFile(path)
+    }
+
+    /**
+     * Downloads [path] whole into the private cache, then asks the screen to
+     * hand it to another app. Suits documents and images that need every byte.
+     */
+    fun openRemoteWithApp(path: String) {
+        val current = _remoteBrowser.value ?: return
+        cancelRemoteOpen()
+        val sessionId = current.sessionId
+        val operation = website.sung.mangossh.session.BlockingOperation()
+        openOperation = operation
+        _remoteBrowser.update { it?.copy(opening = RemoteOpenUiState(path = path)) }
+        openJob = viewModelScope.launch {
+            var lastProgressAt = 0L
+            val result = runCatching {
+                sessionController.downloadForOpening(sessionId, path, operation) { transferred, total ->
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastProgressAt < OPEN_PROGRESS_INTERVAL_MILLIS && transferred != total) return@downloadForOpening
+                    lastProgressAt = now
+                    _remoteBrowser.update { state ->
+                        val opening = state?.opening?.takeIf { it.path == path && state.sessionId == sessionId }
+                        if (opening == null) state else state.copy(opening = opening.copy(transferredBytes = transferred, totalBytes = total))
+                    }
+                }
+            }
+            operation.close()
+            finishRemoteOpen(sessionId, path, result)
+        }
+    }
+
+    /**
+     * Offers [path] to a player or viewer as a seekable stream: bytes are read
+     * over SFTP only as the other app asks for them and cached in memory.
+     */
+    fun streamRemoteFile(path: String) {
+        val current = _remoteBrowser.value ?: return
+        cancelRemoteOpen()
+        val sessionId = current.sessionId
+        _remoteBrowser.update { it?.copy(opening = RemoteOpenUiState(path = path, streaming = true)) }
+        openJob = viewModelScope.launch {
+            finishRemoteOpen(sessionId, path, runCatching { sessionController.prepareRemoteStream(sessionId, path) })
+        }
+    }
+
+    private fun finishRemoteOpen(
+        sessionId: String,
+        path: String,
+        result: Result<website.sung.mangossh.session.RemoteLaunchRequest>,
+    ) {
+        result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        val stillWanted = _remoteBrowser.value?.let { it.sessionId == sessionId && it.opening?.path == path } == true
+        if (!stillWanted) return
+        _remoteBrowser.update { state ->
+            state?.copy(opening = null, pendingLaunch = result.getOrNull() ?: state.pendingLaunch)
+        }
+        result.exceptionOrNull()?.let { error ->
+            if (error !is java.io.InterruptedIOException) _userMessage.value = sessionController.remoteFileMessage(error).toUiText()
+        }
+    }
+
+    /** Stops preparing a file for another app; a partial download is deleted. */
+    fun cancelRemoteOpen() {
+        openOperation?.close()
+        openOperation = null
+        openJob?.cancel()
+        openJob = null
+        _remoteBrowser.update { state -> state?.copy(opening = null) }
+    }
+
+    /** Called once the screen has handed [RemoteBrowserUiState.pendingLaunch] to another app. */
+    fun consumeRemoteLaunch() {
+        _remoteBrowser.update { state -> state?.copy(pendingLaunch = null) }
     }
 
     /** Loads a read-only text preview of a remote file. */
@@ -1219,6 +1325,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                     }
                 }
                 .onFailure {
+                    MangoLog.warn(MangoLogEvent.KEY_GENERATION_FAILED, it)
                     _userMessage.value = uiText(R.string.message_key_generation_failed)
                 }
           } finally { _keyOperationBusy.value = false }
@@ -1285,6 +1392,30 @@ class MangoSshViewModel @JvmOverloads constructor(
                 authKey.fill('\u0000')
             }
         }
+    }
+
+    /** Starts or stops keeping the embedded node up for the visible device list. */
+    fun setTsnetDeviceBrowsing(visible: Boolean) {
+        embeddedTsnetManager.setDeviceBrowsing(visible)
+        if (visible && _embeddedTsnetNodeName.value == null) {
+            viewModelScope.launch {
+                _embeddedTsnetNodeName.value = runCatching { embeddedTsnetManager.nodeName() }.getOrNull()
+            }
+        }
+    }
+
+    /**
+     * Connects to a tailnet device through a profile that is not in the vault,
+     * so unlike [connect] it records no usage statistics.
+     */
+    fun quickConnectTsnetDevice(profile: ConnectionProfile): String? {
+        if (!authorizeSensitive(profile.requireReauthentication) {
+                quickConnectTsnetDevice(profile)?.let { _sessionNavigationRequest.value = SessionNavigationRequest.OpenSession(it) }
+            }
+        ) {
+            return null
+        }
+        return sessionController.connect(profile)
     }
 
     fun logoutEmbeddedTsnet() {
@@ -1451,7 +1582,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                     runtime.accessState.setLocked(false)
                 } else {
                     val remaining = appLockStore.cooldownRemainingMillis()
-                    _userMessage.value = if (remaining > 0) uiText(R.string.message_pin_cooldown, (remaining + 999) / 1000)
+                    _userMessage.value = if (remaining > 0) ((remaining + 999) / 1000).toInt().let { uiPluralText(R.plurals.message_pin_cooldown, it, it) }
                         else uiText(R.string.message_pin_incorrect)
                 }
             } finally {

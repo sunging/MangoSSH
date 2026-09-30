@@ -264,7 +264,7 @@ internal class AgentProtocolHandler(
         logger.debug("Provider returned ${allIdentities.size} identities, ${visibleIdentities.size} visible for current path")
 
         val response = SshAgentIdentitiesAnswer()
-        response.setNkeys(visibleIdentities.size.toLong())
+        response.setNumIdentities(visibleIdentities.size.toLong())
 
         val identityList = ArrayList<SshAgentIdentitiesAnswer.Identity>()
         for (identity in visibleIdentities) {

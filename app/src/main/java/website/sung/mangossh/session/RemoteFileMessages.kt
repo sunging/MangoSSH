@@ -17,6 +17,8 @@ sealed interface RemoteFileMessage {
     data object MetadataFailure : RemoteFileMessage
     data object CommitFailure : RemoteFileMessage
     data class InsufficientSpace(val requiredBytes: Long) : RemoteFileMessage
+    /** Too little storage to download a file whole for another app; streaming needs none. */
+    data class OpenSpaceShortage(val requiredBytes: Long) : RemoteFileMessage
     data object IoFailure : RemoteFileMessage
 }
 
@@ -24,6 +26,7 @@ sealed interface RemoteFileMessage {
 internal fun Throwable.toRemoteFileMessage(): RemoteFileMessage = when (this) {
     is MetadataPreservationException -> RemoteFileMessage.MetadataFailure
     is StagingSpaceException -> RemoteFileMessage.InsufficientSpace(requiredBytes)
+    is OpenCacheSpaceException -> RemoteFileMessage.OpenSpaceShortage(requiredBytes)
     is SourceChangedException -> RemoteFileMessage.SourceChanged
     is RemoteFileException -> RemoteFileMessage.Failure(failure)
     is LocalDocumentException -> RemoteFileMessage.LocalDocumentFailure

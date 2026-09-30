@@ -20,7 +20,7 @@ plugins {
 // byte-identical JNI libraries from the pinned upstream AAR. The AAR is kept
 // off every compile/runtime classpath so its classes cannot collide with this
 // module's patched classes.
-val upstreamNativeBundle by configurations.creating {
+val upstreamNativeBundle = configurations.create("upstreamNativeBundle") {
     isCanBeConsumed = false
     isCanBeResolved = true
     isTransitive = false

@@ -2,7 +2,6 @@
 <resources>
     <string name="settings_category_updates_title">应用更新</string>
     <string name="settings_category_updates_summary">检查并安装新版本</string>
-    <string name="app_update_title">应用更新</string>
     <string name="app_update_description">MangoSSH 会检查 GitHub 上是否有更新的已签名版本，并通过系统安装程序安装。</string>
     <string name="app_update_installed_version">已安装版本 %1$s</string>
     <string name="app_update_automatic_check">自动检查更新</string>

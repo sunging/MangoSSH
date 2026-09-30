@@ -37,13 +37,38 @@ object MangoLog {
     }
 
     private fun warnCode(code: String, error: Throwable?) {
-        val suffix = error?.javaClass?.simpleName?.takeIf(String::isNotBlank)
+        val suffix = error?.let(::describe)?.takeIf(String::isNotBlank)
         if (suffix == null) {
             Log.w(TAG, code)
         } else {
             Log.w(TAG, "$code; cause=$suffix")
         }
     }
+
+    /**
+     * Names each throwable in the cause chain, plus any [MangoLogDetail], for
+     * example `SshFailure[CONNECT/TransportError/NoSuchAlgorithmException]`.
+     * Messages are never included.
+     */
+    internal fun describe(error: Throwable): String =
+        generateSequence(error) { current -> current.cause?.takeIf { it !== current } }
+            .take(MAX_CAUSE_DEPTH)
+            .joinToString(" <- ") { throwable ->
+                val name = throwable.javaClass.simpleName.ifBlank { throwable.javaClass.name.substringAfterLast('.') }
+                val detail = (throwable as? MangoLogDetail)?.logDetail?.takeIf(String::isNotBlank)
+                if (detail == null) name else "$name[$detail]"
+            }
+
+    private const val MAX_CAUSE_DEPTH = 4
+}
+
+/**
+ * Lets an exception add fixed diagnostic detail to its log line. Implementations
+ * must build [logDetail] only from enum names and class names, never from
+ * messages, hostnames, or other remote or user-supplied text.
+ */
+interface MangoLogDetail {
+    val logDetail: String
 }
 
 /** Fixed-code contract for events whose declarations live in a product flavor. */
@@ -100,7 +125,16 @@ enum class MangoLogEvent(val code: String) {
     MOSH_COMPANION_SSH_RECONNECT_FAILED("mosh.companion_ssh.reconnect.failed"),
     TRANSFER_REMOTE_TEMP_CLEANUP_FAILED("transfer.remote_temp.cleanup.failed"),
     TRANSFER_REBOUND("transfer.rebound"),
+
+    /** Another app opened, closed, or failed to read a streamed remote file. */
+    REMOTE_STREAM_OPENED("remote_stream.opened"),
+    REMOTE_STREAM_CLOSED("remote_stream.closed"),
+    REMOTE_STREAM_OPEN_FAILED("remote_stream.open.failed"),
+    REMOTE_STREAM_READ_FAILED("remote_stream.read.failed"),
     EDITOR_DRAFT_STORE_FAILED("editor.draft_store.failed"),
+
+    /** Generating or encoding a new client key failed before it reached the vault. */
+    KEY_GENERATION_FAILED("key.generation.failed"),
     TSNET_STARTING("tsnet.starting"),
     TSNET_RUNNING("tsnet.running"),
     TSNET_FAILED("tsnet.failed"),
@@ -118,6 +152,7 @@ enum class MangoLogEvent(val code: String) {
     TSNET_STATE_RECOVERED("tsnet.state.recovered"),
     TSNET_LOGOUT_SUCCEEDED("tsnet.logout.succeeded"),
     TSNET_LOGOUT_FAILED("tsnet.logout.failed"),
+    TSNET_SNAPSHOT_FAILED("tsnet.snapshot.failed"),
     WEBDAV_UPLOAD_SUCCEEDED("webdav.upload.succeeded"),
     WEBDAV_UPLOAD_FAILED("webdav.upload.failed"),
     WEBDAV_DOWNLOAD_SUCCEEDED("webdav.download.succeeded"),

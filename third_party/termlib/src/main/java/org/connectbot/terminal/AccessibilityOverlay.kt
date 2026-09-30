@@ -33,7 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -70,7 +70,7 @@ internal fun AccessibilityOverlay(
     isReviewMode: Boolean = false,
 ) {
     val density = LocalDensity.current
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val coroutineScope = rememberCoroutineScope()
 
     // State for live region announcements (replaces deprecated announceForAccessibility)
@@ -156,7 +156,7 @@ internal fun AccessibilityOverlay(
                             // Copy Line
                             add(
                                 CustomAccessibilityAction("Copy Line") {
-                                    clipboardManager.setText(buildAnnotatedString { append(line.text) })
+                                    clipboard.copyPlainText(coroutineScope, line.text)
                                     true
                                 },
                             )

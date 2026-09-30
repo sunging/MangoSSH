@@ -95,8 +95,8 @@ internal enum class CipherEntry(
     internal fun create(key: ByteArray, iv: ByteArray, forEncryption: Boolean): EncryptionInstance = factory(key, iv, forEncryption)
 
     companion object {
-        val defaults: List<CipherEntry> = listOf(
-            CHACHA20_POLY1305,
+        val defaults: List<CipherEntry> = listOfNotNull(
+            CHACHA20_POLY1305.takeIf { ChaCha20Poly1305Cipher.isAvailable },
             AES128_GCM,
             AES256_GCM,
             AES128_CTR,
@@ -295,7 +295,17 @@ internal enum class SignatureEntry(
     ;
 
     companion object {
-        val defaults: List<SignatureEntry> = entries.filter { it != SSH_RSA }
+        /** Ed448 has no fallback implementation and Android ships no platform provider for it. */
+        private val ed448Available: Boolean by lazy {
+            try {
+                java.security.Signature.getInstance("Ed448")
+                true
+            } catch (_: java.security.GeneralSecurityException) {
+                false
+            }
+        }
+
+        val defaults: List<SignatureEntry> = entries.filter { it != SSH_RSA && (it != SSH_ED448 || ed448Available) }
 
         val defaultString: String = defaults.joinToString(",") { it.sshName }
 

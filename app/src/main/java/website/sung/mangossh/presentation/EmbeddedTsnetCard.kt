@@ -36,7 +36,9 @@ internal fun EmbeddedTsnetCard(
 ) {
     var showAuthKeyDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
-    val statusText = when (status.phase) {
+    val statusText = if (!status.identityResolved) {
+        stringResource(R.string.embedded_tsnet_status_checking)
+    } else when (status.phase) {
         EmbeddedTsnetPhase.UNENROLLED -> stringResource(R.string.embedded_tsnet_status_unenrolled)
         EmbeddedTsnetPhase.STARTING -> stringResource(R.string.embedded_tsnet_status_starting)
         EmbeddedTsnetPhase.WAITING_FOR_LOGIN ->
@@ -44,17 +46,25 @@ internal fun EmbeddedTsnetCard(
         EmbeddedTsnetPhase.WAITING_FOR_APPROVAL ->
             stringResource(R.string.embedded_tsnet_status_waiting_approval)
         EmbeddedTsnetPhase.READY_IDLE -> stringResource(R.string.embedded_tsnet_status_ready_idle)
-        EmbeddedTsnetPhase.ACTIVE ->
+        // With no session, only the visible device list keeps the node up.
+        EmbeddedTsnetPhase.ACTIVE -> if (status.activeSessions == 0) {
+            stringResource(R.string.embedded_tsnet_status_connected)
+        } else {
             pluralStringResource(
                 R.plurals.embedded_tsnet_status_active,
                 status.activeSessions,
                 status.activeSessions,
             )
+        }
         EmbeddedTsnetPhase.FAILED -> stringResource(R.string.embedded_tsnet_status_failed)
     }
-    val canStartEnrollment = status.phase == EmbeddedTsnetPhase.UNENROLLED ||
-        status.phase == EmbeddedTsnetPhase.FAILED ||
-        status.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN
+    // Until the stored identity is read, UNENROLLED is only a placeholder:
+    // offering sign-in then would flash for an already signed-in node.
+    val canStartEnrollment = status.identityResolved && (
+        status.phase == EmbeddedTsnetPhase.UNENROLLED ||
+            status.phase == EmbeddedTsnetPhase.FAILED ||
+            status.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN
+        )
     val canLogout = status.phase == EmbeddedTsnetPhase.READY_IDLE ||
         status.phase == EmbeddedTsnetPhase.ACTIVE
 
