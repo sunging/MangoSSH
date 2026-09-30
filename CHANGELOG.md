@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.6.0](https://github.com/sunging/MangoSSH/compare/v0.5.3...v0.6.0) (2026-09-30)
+
+
+### Features
+
+* **files:** open remote files in other apps and stream them ([d06c601](https://github.com/sunging/MangoSSH/commit/d06c601a097c8168b7d7518f074fd50713bcebba))
+* **tsnet:** list tailnet devices with quick connect ([a26f342](https://github.com/sunging/MangoSSH/commit/a26f342c5109c951492a4acac5641b590a5b64a9))
+
+
+### Bug Fixes
+
+* honor selected SSH authentication methods ([7ac63ff](https://github.com/sunging/MangoSSH/commit/7ac63ff5f97425ea902b122157e59a201b7f0a85))
+* **keys:** generate Ed25519 keys on Android 12 and older ([2f51e75](https://github.com/sunging/MangoSSH/commit/2f51e756e6c73a224b6ff2676ced2c3c42f1581b))
+* **keys:** import PKCS#8 RSA keys on Android 8 ([9d1670a](https://github.com/sunging/MangoSSH/commit/9d1670a3a85f04da88ba3774e634de8e8622c70d))
+* **log:** name the cause chain and connect stage in warnings ([82adb92](https://github.com/sunging/MangoSSH/commit/82adb92116a00f7c7172b488cb750a98c72a5593))
+* resolve compiler warnings ([27a7c4a](https://github.com/sunging/MangoSSH/commit/27a7c4a2edbc872c251925c7cd89eb4b544f9321))
+* resolve lint warnings ([d8784df](https://github.com/sunging/MangoSSH/commit/d8784df9fefb4e9035ac624a39a57a810e95989b))
+* return to the host list when the shell exits ([44fe907](https://github.com/sunging/MangoSSH/commit/44fe907b5ba35b0a09a08bc2ef98185ee223dbf2))
+* **ssh:** decode EC points without the Java 9 BigInteger constructor ([2632148](https://github.com/sunging/MangoSSH/commit/26321487bdddb46c8a7548e21f70a580e87db920))
+* **ssh:** skip chacha20-poly1305 when the platform lacks ChaCha20 ([de20e60](https://github.com/sunging/MangoSSH/commit/de20e60b4cb4c36797eec4bf44c1447c47c83087))
+* **ssh:** stop offering ssh-ed448 when the platform cannot verify it ([8994d2a](https://github.com/sunging/MangoSSH/commit/8994d2aefea46f52ff26e28da20f9c3a53827bac))
+
 ## [0.5.3](https://github.com/sunging/MangoSSH/compare/v0.5.2...v0.5.3) (2026-09-29)
 
 
