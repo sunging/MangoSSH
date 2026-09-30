@@ -13,7 +13,7 @@
 
 * honor selected SSH authentication methods ([7ac63ff](https://github.com/sunging/MangoSSH/commit/7ac63ff5f97425ea902b122157e59a201b7f0a85))
 * **keys:** generate Ed25519 keys on Android 12 and older ([2f51e75](https://github.com/sunging/MangoSSH/commit/2f51e756e6c73a224b6ff2676ced2c3c42f1581b))
-* **keys:** import PKCS[#8](https://github.com/sunging/MangoSSH/issues/8) RSA keys on Android 8 ([9d1670a](https://github.com/sunging/MangoSSH/commit/9d1670a3a85f04da88ba3774e634de8e8622c70d))
+* **keys:** import PKCS#8 RSA keys on Android 8 ([9d1670a](https://github.com/sunging/MangoSSH/commit/9d1670a3a85f04da88ba3774e634de8e8622c70d))
 * **log:** name the cause chain and connect stage in warnings ([82adb92](https://github.com/sunging/MangoSSH/commit/82adb92116a00f7c7172b488cb750a98c72a5593))
 * resolve compiler warnings ([27a7c4a](https://github.com/sunging/MangoSSH/commit/27a7c4a2edbc872c251925c7cd89eb4b544f9321))
 * resolve lint warnings ([d8784df](https://github.com/sunging/MangoSSH/commit/d8784df9fefb4e9035ac624a39a57a810e95989b))

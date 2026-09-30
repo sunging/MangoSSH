@@ -1,0 +1,5 @@
+Open remote files in other apps, or stream audio and video over SFTP without downloading them first. Set the stream cache size in Settings › Connection.
+List devices on your tailnet and connect to one with a tap.
+Typing exit now returns to the host list instead of leaving the closed terminal on screen.
+Use only the SSH authentication methods selected for a host.
+Fix key generation, key import, and SSH connections on older Android versions.
