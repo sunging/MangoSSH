@@ -100,6 +100,12 @@ enum class MangoLogEvent(val code: String) {
     MOSH_COMPANION_SSH_RECONNECT_FAILED("mosh.companion_ssh.reconnect.failed"),
     TRANSFER_REMOTE_TEMP_CLEANUP_FAILED("transfer.remote_temp.cleanup.failed"),
     TRANSFER_REBOUND("transfer.rebound"),
+
+    /** Another app opened, closed, or failed to read a streamed remote file. */
+    REMOTE_STREAM_OPENED("remote_stream.opened"),
+    REMOTE_STREAM_CLOSED("remote_stream.closed"),
+    REMOTE_STREAM_OPEN_FAILED("remote_stream.open.failed"),
+    REMOTE_STREAM_READ_FAILED("remote_stream.read.failed"),
     EDITOR_DRAFT_STORE_FAILED("editor.draft_store.failed"),
     TSNET_STARTING("tsnet.starting"),
     TSNET_RUNNING("tsnet.running"),

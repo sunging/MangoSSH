@@ -35,6 +35,8 @@ keep on your own WebDAV server.
 
 **Files**
 - Browse hosts over SFTP; upload and download single files or whole folders.
+- Open remote files in other apps, or stream video and audio to a player
+  with seeking and no full download.
 - Pause, resume, cancel, and retry transfers. A transfer interrupted by a lost
   connection can continue after you reconnect to the same verified host.
 - Edit small text files in place, with a diff preview before saving and

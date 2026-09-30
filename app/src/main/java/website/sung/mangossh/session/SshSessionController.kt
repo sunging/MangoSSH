@@ -82,6 +82,10 @@ class SshSessionController internal constructor(
     private val connectionPreferencesStore: ConnectionPreferencesStore,
     private val appForegroundState: AppForegroundState,
     private val accessState: website.sung.mangossh.security.AppAccessState = website.sung.mangossh.security.AppAccessState(false),
+    internal val remoteStreamBudget: RemoteStreamCacheBudget = RemoteStreamCacheBudget(
+        configuredBytes = website.sung.mangossh.data.settings.StreamingPreferencesStore.DEFAULT_CACHE_LIMIT_MIB * 1024L * 1024,
+        ceilingBytes = RemoteStreamCacheBudget.deviceCeilingBytes(appContext),
+    ),
 ) {
     private val _endedTerminals = MutableStateFlow<List<EndedTerminalRecord>>(emptyList())
     val endedTerminals = _endedTerminals.asStateFlow()
@@ -178,6 +182,30 @@ class SshSessionController internal constructor(
         .map { transfers -> transfers.any { it.isActive } }
         .stateIn(scope, SharingStarted.Eagerly, false)
     val transferConflicts = fileTransfers.conflicts
+
+    /**
+     * Remote files offered to other apps as streams. A stream keeps a
+     * browser-owned connection open while a player still reads it, and is
+     * withdrawn with its session.
+     */
+    internal val remoteStreams = RemoteStreamRegistry(
+        budget = remoteStreamBudget,
+        scope = scope,
+        openReader = { target -> remoteFiles.openReader(requireSshFeatureConnection(target.sessionId), target.identity) },
+        onRevoked = { target ->
+            runCatching {
+                context.revokeUriPermission(RemoteStreamProvider.tokenUri(context, target),
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        },
+        onIdle = ::closeFileTransferIfIdle,
+    )
+
+    /** Whole files downloaded so another app can open them; see [downloadForOpening]. */
+    private val remoteOpenCache = RemoteOpenCache(
+        root = java.io.File(context.cacheDir, RemoteOpenCache.DIRECTORY),
+        availableBytes = { android.os.StatFs(context.cacheDir.absolutePath).availableBytes },
+    ).also { cache -> scope.launch { cache.prune(REMOTE_OPEN_STARTUP_MAX_AGE_MILLIS) } }
     /** Resolves only the currently registered transfer preview. */
     fun resolveTransferConflict(id: String, decision: TransferConflictDecision) = fileTransfers.resolveConflict(id, decision)
 
@@ -416,7 +444,7 @@ class SshSessionController internal constructor(
     private fun closeFileTransferIfIdle(sessionId: String) {
         val managed = sessionsById[sessionId] ?: return
         if (managed.kind != SessionKind.FILE_TRANSFER || !managed.releaseRequested) return
-        if (!fileTransfers.hasBusyTransfers(sessionId)) {
+        if (!fileTransfers.hasBusyTransfers(sessionId) && !remoteStreams.isBusy(sessionId)) {
             finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
         }
     }
@@ -745,6 +773,52 @@ class SshSessionController internal constructor(
         }
 
     /**
+     * Offers [path] to other apps as a seekable stream and returns its content
+     * URI. Bytes are read over SFTP only as the receiving app asks for them.
+     */
+    suspend fun prepareRemoteStream(sessionId: String, path: String): RemoteLaunchRequest = withContext(Dispatchers.IO) {
+        val identity = remoteFiles.streamIdentity(requireSshFeatureConnection(sessionId), path)
+        val name = RemoteFilePaths.nameOf(path)
+        val mimeType = remoteMimeType(name)
+        val target = remoteStreams.register(sessionId, identity, name, mimeType)
+        RemoteLaunchRequest(RemoteStreamProvider.uriFor(context, target), mimeType)
+    }
+
+    /**
+     * Downloads [path] whole into the private open cache and returns a
+     * read-only content URI for another app.
+     *
+     * Symbolic links are resolved first, so the size and modification time
+     * verified before and after the read belong to the file actually copied.
+     * [operation] cancels the read; a partial file is always deleted.
+     */
+    internal suspend fun downloadForOpening(
+        sessionId: String,
+        path: String,
+        operation: BlockingOperation,
+        onProgress: (Long, Long?) -> Unit,
+    ): RemoteLaunchRequest = withContext(Dispatchers.IO) {
+        val connection = requireSshFeatureConnection(sessionId)
+        val resolved = remoteFiles.canonicalize(connection, path)
+        val identity = remoteFiles.identity(connection, resolved, operation)
+        remoteOpenCache.prune(REMOTE_OPEN_MAX_AGE_MILLIS)
+        val name = RemoteFilePaths.nameOf(path)
+        val file = remoteOpenCache.newFile(name, identity.size)
+        try {
+            java.io.FileOutputStream(file).use { output ->
+                val reached = remoteFiles.download(connection, resolved, output, 0L, identity, operation, onProgress)
+                if (!operation.shouldContinue()) throw java.io.InterruptedIOException()
+                if (identity.size != null && reached != identity.size) throw SourceChangedException()
+            }
+        } catch (error: Throwable) {
+            remoteOpenCache.discard(file)
+            throw error
+        }
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, RemoteOpenFileProvider.authority(context), file)
+        RemoteLaunchRequest(uri, remoteMimeType(name))
+    }
+
+    /**
      * Downloads a browsed remote file over SFTP into a caller-selected document.
      *
      * The path never reaches a remote shell, so spaces and other punctuation
@@ -986,6 +1060,7 @@ class SshSessionController internal constructor(
 
         step { _resourceSnapshots.update { snapshots -> snapshots - sessionId } }
         step { fileTransfers.onSessionEnded(sessionId) }
+        step { remoteStreams.onSessionEnded(sessionId) }
         // The emulator is released only after the screen has stopped reading it,
         // which the session withdrawal above already guaranteed.
         if (managed.kind != SessionKind.TERMINAL) step { terminalStore.remove(sessionId) }
@@ -2196,6 +2271,12 @@ class SshSessionController internal constructor(
     private fun connectTimeoutMillis(): Int = connectionPreferencesStore.current().connectTimeoutSeconds * 1_000
 
     private companion object {
+        /** Files opened in another app are kept this long before the next open deletes them. */
+        const val REMOTE_OPEN_MAX_AGE_MILLIS = 60 * 60 * 1_000L
+
+        /** Leftovers from an earlier process are removed on start once this old. */
+        const val REMOTE_OPEN_STARTUP_MAX_AGE_MILLIS = 24 * 60 * 60 * 1_000L
+
         // Host-key verification runs inside key exchange, so this must outlive the full user prompt.
         const val KEY_EXCHANGE_TIMEOUT_MILLIS = 5 * 60 * 1_000 + 30_000
         const val PROMPT_TIMEOUT_MILLIS = 5 * 60 * 1_000L

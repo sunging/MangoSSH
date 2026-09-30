@@ -31,6 +31,17 @@ confirmed bytes. After you reconnect to the same host, with the same verified
 host key, you can continue it from the transfer sheet; it never restarts on its
 own. A transfer whose source changed or cannot be verified has to be restarted.
 
+A file's **⋮** menu, or the open button in its preview, can also hand it to
+another app. **Open with…** downloads the whole file into private app storage
+first, which suits documents and images; downloads older than an hour are
+removed. **Stream with…** gives a video player or viewer a seekable read-only
+file whose bytes are fetched over SFTP only as that app reads them. Tapping an
+audio or video file streams it directly. Streamed data is cached in memory only;
+**Settings › Connection › Stream cache size** sets how much (64 MB by default),
+capped at a quarter of the device's RAM. A stream stays readable until its
+connection closes, and a browser-owned connection stays open for 30 seconds
+after the player closes the file.
+
 Small UTF-8 text files (up to 128 KiB) can be edited in place. Before saving,
 the editor shows a diff of your changes; unsaved drafts are kept encrypted on
 the device and can be restored later.

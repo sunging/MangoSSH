@@ -1,11 +1,8 @@
 package website.sung.mangossh.presentation
 
-import android.content.ActivityNotFoundException
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
-import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -351,14 +348,7 @@ private fun openDownloadedDocument(context: Context, transfer: ScpTransferState)
     } else {
         context.contentResolver.getType(uri) ?: FALLBACK_MIME_TYPE
     }
-    val view = Intent(Intent.ACTION_VIEW)
-        .setDataAndType(uri, mimeType)
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    try {
-        context.startActivity(Intent.createChooser(view, null))
-    } catch (error: ActivityNotFoundException) {
-        Toast.makeText(context, R.string.remote_file_no_app_to_open, Toast.LENGTH_SHORT).show()
-    }
+    launchViewIntent(context, uri, mimeType)
 }
 
 private const val FALLBACK_MIME_TYPE = "*/*"

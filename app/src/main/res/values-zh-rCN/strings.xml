@@ -82,6 +82,13 @@
     <string name="remote_file_tree_too_large">该文件夹超过 %1$d 个文件或嵌套超过 %2$d 层，无法传输。</string>
     <string name="remote_file_tree_links_skipped">已跳过 %1$d 项：符号链接和特殊文件不参与传输。</string>
     <string name="remote_file_no_app_to_open">没有可以打开此文件的应用。</string>
+    <string name="remote_file_actions">文件操作</string>
+    <string name="remote_open_elsewhere">在其他应用中打开</string>
+    <string name="remote_open_with_app">用其他应用打开…</string>
+    <string name="remote_open_stream">流式打开…</string>
+    <string name="remote_open_downloading">正在下载以便打开</string>
+    <string name="remote_open_preparing_stream">正在准备流式打开</string>
+    <string name="remote_open_space_failed">存储空间不足，无法先下载此文件，至少还需要 %1$d 字节。流式打开不占用存储空间。</string>
     <string name="remote_file_transfer_session_closed">承载此传输的连接已关闭。请重新打开文件浏览器后再传输。</string>
     <string name="transfer_awaiting_reconnect">连接已断开。重新连接到同一主机后，可在这里继续此传输；它不会自动开始。</string>
     <string name="session_ended_remote_exit">远端主机已结束该会话。</string>
@@ -532,6 +539,13 @@
     <string name="settings_connection_terminal_type_title">SSH 终端类型</string>
     <string name="settings_connection_terminal_type_summary">MangoSSH 通过 SSH 请求的 TERM 值。对绝大多数服务器而言 xterm-256color 都是正确的选择。</string>
     <string name="settings_connection_terminal_type_mosh_note">无论此设置为何，Mosh 始终使用 xterm-256color，因为其内置的 terminfo 只包含该条目。</string>
+    <string name="settings_streaming_header">远程文件流式打开</string>
+    <string name="settings_streaming_cache_title">流式缓存大小</string>
+    <string name="settings_streaming_cache_summary">将文件流式交给其他应用（如视频播放器）时用于缓存的内存。数值越大，往回拖动越流畅。不会写入存储。</string>
+    <string name="settings_streaming_cache_usage">已用 %1$s，共 %2$s。</string>
+    <string name="settings_streaming_cache_value_mb">%1$d MB</string>
+    <string name="settings_streaming_cache_value_gb">%1$d GB</string>
+    <string name="settings_streaming_cache_capped">%1$s（受本机内存限制）</string>
     <string name="settings_about_version">版本 %1$s（%2$d）</string>
     <string name="settings_about_release_page">在 GitHub 上查看项目</string>
     <string name="settings_about_licenses_title">开源许可证</string>

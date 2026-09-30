@@ -7,6 +7,7 @@ import website.sung.mangossh.data.keys.SshKeyManager
 import website.sung.mangossh.data.settings.AppThemeStore
 import website.sung.mangossh.data.settings.ConnectionPreferencesStore
 import website.sung.mangossh.data.settings.HostListPreferencesStore
+import website.sung.mangossh.data.settings.StreamingPreferencesStore
 import website.sung.mangossh.data.settings.TerminalAppearanceStore
 import website.sung.mangossh.data.settings.TerminalBehaviorStore
 import website.sung.mangossh.data.settings.TerminalShortcutStore
@@ -14,6 +15,7 @@ import website.sung.mangossh.data.settings.UpdatePreferencesStore
 import website.sung.mangossh.data.update.installedAppInfo
 import website.sung.mangossh.data.vault.VaultRepository
 import website.sung.mangossh.session.AppForegroundState
+import website.sung.mangossh.session.RemoteStreamCacheBudget
 import website.sung.mangossh.session.SshSessionController
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetManager
 
@@ -36,9 +38,29 @@ class MangoSshApplication : Application() {
     lateinit var appForegroundState: AppForegroundState
         private set
 
-    /** Shared live-session dependencies for the lifetime of this app process. */
-    val sessionRuntime: MangoSessionRuntime by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+    private val runtime = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         MangoSessionRuntime(this, appForegroundState)
+    }
+
+    /** Shared live-session dependencies for the lifetime of this app process. */
+    val sessionRuntime: MangoSessionRuntime by runtime
+
+    /**
+     * The runtime only if something already created it. A content provider
+     * called after a process restart has nothing to serve and must not build
+     * the vault and session engine just to say so.
+     */
+    internal val existingSessionRuntime: MangoSessionRuntime?
+        get() = if (runtime.isInitialized()) runtime.value else null
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        existingSessionRuntime?.remoteStreamBudget?.onTrimMemory(level)
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        existingSessionRuntime?.remoteStreamBudget?.trim()
     }
 
     override fun onCreate() {
@@ -100,6 +122,15 @@ class MangoSessionRuntime(context: Context, val appForegroundState: AppForegroun
         website.sung.mangossh.security.AppLockStore(context).configuration().pinConfigured,
     )
 
+    /** Device-local memory limit for streaming remote files to other apps. */
+    val streamingPreferences = StreamingPreferencesStore(context.applicationContext)
+
+    /** Memory shared by every streamed remote file; follows [streamingPreferences]. */
+    internal val remoteStreamBudget = RemoteStreamCacheBudget(
+        configuredBytes = streamingPreferences.cacheLimitMebibytes.value * MEBIBYTE,
+        ceilingBytes = RemoteStreamCacheBudget.deviceCeilingBytes(context.applicationContext),
+    )
+
     /** The sole live transport owner for this app process. */
     val sessionController = SshSessionController(
         context.applicationContext,
@@ -111,5 +142,16 @@ class MangoSessionRuntime(context: Context, val appForegroundState: AppForegroun
         connectionPreferences,
         appForegroundState,
         accessState,
+        remoteStreamBudget,
     )
+
+    /** Applies a new streaming cache limit to the live budget. */
+    fun setStreamingCacheLimitMebibytes(value: Int) {
+        streamingPreferences.setCacheLimitMebibytes(value)
+        remoteStreamBudget.setConfiguredBytes(streamingPreferences.cacheLimitMebibytes.value * MEBIBYTE)
+    }
+
+    private companion object {
+        const val MEBIBYTE = 1024L * 1024
+    }
 }

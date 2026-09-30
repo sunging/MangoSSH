@@ -1,6 +1,7 @@
 package website.sung.mangossh.presentation.settings
 
 import androidx.compose.runtime.Immutable
+import website.sung.mangossh.data.settings.StreamingPreferencesStore
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.data.vault.StoredSshKey
 import website.sung.mangossh.data.vault.VaultStatus
@@ -23,6 +24,7 @@ import website.sung.mangossh.presentation.AppLanguage
 import website.sung.mangossh.presentation.UpdateCardCallbacks
 import website.sung.mangossh.presentation.UpdateUiState
 import website.sung.mangossh.security.AppLockConfiguration
+import website.sung.mangossh.session.RemoteStreamCacheBudget
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
 import website.sung.mangossh.session.tsnet.TsnetNetworkSnapshot
 
@@ -66,6 +68,10 @@ internal data class ShortcutSettingsState(
 @Immutable
 internal data class ConnectionSettingsState(
     val preferences: ConnectionPreferences,
+    /** Configured memory limit for streamed remote files, in MiB. */
+    val streamingCacheLimitMebibytes: Int = StreamingPreferencesStore.DEFAULT_CACHE_LIMIT_MIB,
+    /** Memory streamed files hold now and the limit this device applies; null when unknown. */
+    val streamingCacheUsage: RemoteStreamCacheBudget.Usage? = null,
 )
 
 /** State shown on the Security & lock detail page. */
@@ -153,6 +159,7 @@ internal data class ConnectionSettingsCallbacks(
     val onSetBackgroundKeepaliveMultiplier: (Int) -> Unit,
     val onSetConnectTimeoutSeconds: (Int) -> Unit,
     val onSetSshTerminalType: (SshTerminalType) -> Unit,
+    val onSetStreamingCacheLimitMebibytes: (Int) -> Unit = {},
 )
 
 @Immutable

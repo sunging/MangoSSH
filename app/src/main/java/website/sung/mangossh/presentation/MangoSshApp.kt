@@ -186,6 +186,8 @@ fun MangoSshApp(
     val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
     val appThemePreferences by viewModel.appTheme.collectAsStateWithLifecycle()
     val connectionPreferences by viewModel.connectionPreferences.collectAsStateWithLifecycle()
+    val streamingCacheLimitMebibytes by viewModel.streamingCacheLimitMebibytes.collectAsStateWithLifecycle()
+    val streamingCacheUsage by viewModel.streamingCacheUsage.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveSessionId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -382,6 +384,10 @@ fun MangoSshApp(
             onUploadDirectory = viewModel::uploadDirectoryToRemoteBrowser,
             onDismissPreview = viewModel::dismissRemotePreview,
             onClose = viewModel::closeRemoteBrowser,
+            onOpenWithApp = viewModel::openRemoteWithApp,
+            onStream = viewModel::streamRemoteFile,
+            onCancelOpen = viewModel::cancelRemoteOpen,
+            onLaunchConsumed = viewModel::consumeRemoteLaunch,
         )
         visiblePrompt?.let { prompt ->
             SessionPromptDialog(
@@ -707,7 +713,11 @@ fun MangoSshApp(
                                     ),
                                     terminal = TerminalSettingsState(appearance = terminalAppearance, behavior = terminalBehavior),
                                     shortcuts = ShortcutSettingsState(config = terminalShortcutConfig, behavior = terminalBehavior),
-                                    connection = ConnectionSettingsState(preferences = connectionPreferences),
+                                    connection = ConnectionSettingsState(
+                                        preferences = connectionPreferences,
+                                        streamingCacheLimitMebibytes = streamingCacheLimitMebibytes,
+                                        streamingCacheUsage = streamingCacheUsage,
+                                    ),
                                     security = SecuritySettingsState(lock = appLockConfiguration),
                                     backup = BackupSettingsState(vaultStatus = vaultStatus, webDavConfig = webDavConfig, operation = backupOperation),
                                     snippets = SnippetSettingsState(snippets = snippets),

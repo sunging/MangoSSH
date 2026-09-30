@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
+import website.sung.mangossh.data.settings.StreamingPreferencesStore
 import website.sung.mangossh.domain.ConnectionPreferences
 import website.sung.mangossh.domain.SshTerminalType
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
@@ -110,8 +111,59 @@ internal fun ConnectionSettingsPage(
                 )
             }
         }
+        item {
+            MangoSectionHeader(
+                text = stringResource(R.string.settings_streaming_header),
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+        item {
+            val usage = state.streamingCacheUsage
+            val current = state.streamingCacheLimitMebibytes
+            MangoPreferenceGroup(modifier = Modifier.testTag("streaming_settings_card")) {
+                SettingsChoiceRow(
+                    label = stringResource(R.string.settings_streaming_cache_title),
+                    options = StreamingPreferencesStore.cacheLimitChoices(current),
+                    selected = current,
+                    optionLabel = { mebibytes ->
+                        val label = mebibyteLabel(mebibytes)
+                        val capped = usage != null && mebibytes * MEBIBYTE > usage.ceilingBytes
+                        markCustom(
+                            if (capped) stringResource(R.string.settings_streaming_cache_capped, label) else label,
+                            custom = mebibytes !in StreamingPreferencesStore.CACHE_LIMIT_CHOICES_MIB,
+                        )
+                    },
+                    onSelect = callbacks.onSetStreamingCacheLimitMebibytes,
+                    supportingText = buildString {
+                        append(stringResource(R.string.settings_streaming_cache_summary))
+                        if (usage != null) {
+                            append(' ')
+                            append(
+                                stringResource(
+                                    R.string.settings_streaming_cache_usage,
+                                    mebibyteLabel(((usage.usedBytes + MEBIBYTE - 1) / MEBIBYTE).toInt()),
+                                    mebibyteLabel((usage.limitBytes / MEBIBYTE).toInt()),
+                                ),
+                            )
+                        }
+                    },
+                    optionTestTag = { "settings_streaming_cache_$it" },
+                    modifier = Modifier.testTag("settings_streaming_cache_control"),
+                )
+            }
+        }
     }
 }
+
+/** Whole gibibytes read as GB, everything else as MB. */
+@Composable
+private fun mebibyteLabel(mebibytes: Int): String = if (mebibytes >= 1024 && mebibytes % 1024 == 0) {
+    stringResource(R.string.settings_streaming_cache_value_gb, mebibytes / 1024)
+} else {
+    stringResource(R.string.settings_streaming_cache_value_mb, mebibytes)
+}
+
+private const val MEBIBYTE = 1024L * 1024
 
 @Composable
 private fun SshTerminalType.label(): String = stringResource(

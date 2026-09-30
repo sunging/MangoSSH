@@ -58,6 +58,7 @@ internal fun rememberSettingsCallbacks(
                 onSetBackgroundKeepaliveMultiplier = viewModel::setConnectionBackgroundKeepaliveMultiplier,
                 onSetConnectTimeoutSeconds = viewModel::setConnectionTimeoutSeconds,
                 onSetSshTerminalType = viewModel::setSshTerminalType,
+                onSetStreamingCacheLimitMebibytes = viewModel::setStreamingCacheLimitMebibytes,
             ),
             security = SecuritySettingsCallbacks(
                 onConfigurePin = viewModel::configureAppPin,

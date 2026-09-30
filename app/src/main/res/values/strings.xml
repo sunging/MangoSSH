@@ -85,6 +85,13 @@
     <string name="remote_file_tree_too_large">This folder holds more than %1$d files or is nested deeper than %2$d levels, so it cannot be transferred.</string>
     <string name="remote_file_tree_links_skipped">%1$d entries were skipped because symbolic links and special files are not transferred.</string>
     <string name="remote_file_no_app_to_open">No installed app can open this file.</string>
+    <string name="remote_file_actions">File actions</string>
+    <string name="remote_open_elsewhere">Open in another app</string>
+    <string name="remote_open_with_app">Open with…</string>
+    <string name="remote_open_stream">Stream with…</string>
+    <string name="remote_open_downloading">Downloading to open</string>
+    <string name="remote_open_preparing_stream">Preparing stream</string>
+    <string name="remote_open_space_failed">Not enough storage to download this file first. Additional bytes required: %1$d. Streaming it needs no storage.</string>
     <string name="remote_file_transfer_session_closed">The connection that carried this transfer is closed. Reopen the file browser to transfer it again.</string>
     <string name="transfer_awaiting_reconnect">Connection lost. After you reconnect to the same host, continue this transfer here. It does not restart on its own.</string>
     <string name="session_ended_remote_exit">The session ended on the remote host.</string>
@@ -549,6 +556,13 @@
     <string name="settings_connection_terminal_type_title">SSH terminal type</string>
     <string name="settings_connection_terminal_type_summary">The TERM value MangoSSH requests over SSH. xterm-256color is correct for nearly every server.</string>
     <string name="settings_connection_terminal_type_mosh_note">Mosh always uses xterm-256color regardless of this setting, because its bundled terminfo only ships that entry.</string>
+    <string name="settings_streaming_header">Streaming remote files</string>
+    <string name="settings_streaming_cache_title">Stream cache size</string>
+    <string name="settings_streaming_cache_summary">Memory used to cache files streamed to another app, such as a video player. Larger values make seeking back smoother. Nothing is written to storage.</string>
+    <string name="settings_streaming_cache_usage">In use: %1$s of %2$s.</string>
+    <string name="settings_streaming_cache_value_mb">%1$d MB</string>
+    <string name="settings_streaming_cache_value_gb">%1$d GB</string>
+    <string name="settings_streaming_cache_capped">%1$s (limited by this device)</string>
     <string name="settings_connection_terminal_type_xterm_256color" translatable="false">xterm-256color</string>
     <string name="settings_connection_terminal_type_xterm" translatable="false">xterm</string>
     <string name="settings_connection_terminal_type_screen_256color" translatable="false">screen-256color</string>
