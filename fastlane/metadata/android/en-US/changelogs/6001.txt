@@ -1,0 +1,2 @@
+Native components (Mosh, the terminal library, the PTY bridge and the Tailscale bridge) are now built from pinned source code for every release, the same way for the GitHub and F-Droid versions.
+App behavior is unchanged.
