@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.1](https://github.com/sunging/MangoSSH/compare/v0.6.0...v0.6.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **native:** ignore JVM banners in the javac version check ([0b9b569](https://github.com/sunging/MangoSSH/commit/0b9b569ef3d4578f716237b97ac27e1580c9a8a3))
+
+
+### Code Refactoring
+
+* **native:** build Android libraries from locked sources ([a24f382](https://github.com/sunging/MangoSSH/commit/a24f3826ff04c2612ed5386714e2bfdb377b9e78))
+* **native:** address review of locked native builds ([e2b7fd6](https://github.com/sunging/MangoSSH/commit/e2b7fd69b48ed3426e9359e2143ddfba1545e2b2))
+
+
+### Miscellaneous Chores
+
+* release 0.6.1 ([c86a51d](https://github.com/sunging/MangoSSH/commit/c86a51d89e652a44e9edeff1100fc75a3aa6f1fc))
+
 ## [0.6.0](https://github.com/sunging/MangoSSH/compare/v0.5.3...v0.6.0) (2026-09-30)
 
 
