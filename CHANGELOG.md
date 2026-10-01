@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.1](https://github.com/sunging/MangoSSH/compare/v0.6.0...v0.6.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **native:** ignore JVM banners in the javac version check ([0b9b569](https://github.com/sunging/MangoSSH/commit/0b9b569ef3d4578f716237b97ac27e1580c9a8a3))
+
+
+### Miscellaneous Chores
+
+* release 0.6.1 ([c86a51d](https://github.com/sunging/MangoSSH/commit/c86a51d89e652a44e9edeff1100fc75a3aa6f1fc))
+
 ## [0.6.0](https://github.com/sunging/MangoSSH/compare/v0.5.3...v0.6.0) (2026-09-30)
 
 
