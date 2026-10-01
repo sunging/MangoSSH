@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 import zipfile
 
-from build import generated_path, merge_installs, selected_abis
+from build import generated_path, javac_version, merge_installs, selected_abis
 from state import (cached_build, digest, export_source, files, prune_cache, publish_directory,
                    replace_directory, run, source_identity, valid_entry)
 
@@ -224,6 +224,13 @@ class NativeStateTests(unittest.TestCase):
         for path in (ROOT / "native/mosh", ROOT, ROOT.parent, Path("/")):
             with self.assertRaises(ValueError):
                 generated_path(path, state=True)
+
+    def test_javac_version_ignores_java_tool_options_banner(self):
+        javac = self.root / "jdk/bin/javac"
+        javac.parent.mkdir(parents=True)
+        javac.write_text("#!/bin/sh\necho 'Picked up JAVA_TOOL_OPTIONS: -Dx=y' >&2\necho 'javac 17.0.20.1' >&2\n")
+        javac.chmod(0o755)
+        self.assertEqual(javac_version(self.root / "jdk"), "javac 17.0.20.1")
 
     def test_abi_selection_is_exact_and_canonical(self):
         self.assertEqual(selected_abis("x86_64,arm64-v8a"), ["arm64-v8a", "x86_64"])
