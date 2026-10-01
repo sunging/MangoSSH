@@ -1,0 +1,103 @@
+# Advanced CodeQL setup. Default setup cannot prepare the locked native inputs
+# that Kotlin compilation needs (the tsnet AAR and AGP's pinned CMake), so the
+# Java/Kotlin database is built manually after the shared preparation action.
+# The other languages keep the build modes default setup used.
+name: CodeQL
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: c-cpp
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+          - language: java-kotlin
+            build-mode: manual
+          - language: python
+            build-mode: none
+
+    steps:
+      - name: Check out source and native Mosh source
+        uses: actions/checkout@v7
+        with:
+          submodules: ${{ matrix.language == 'java-kotlin' && 'recursive' || 'false' }}
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: native/tsnetbridge/go.mod
+          cache: false
+
+      - name: Set up JDK 17
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Prepare native inputs
+        if: matrix.language == 'java-kotlin'
+        uses: ./.github/actions/prepare-native
+        with:
+          component-cache: restore
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # Compile every Kotlin source set without Gradle's build cache or the
+      # Kotlin daemon, so the CodeQL tracer observes each compiler invocation.
+      - name: Build Java/Kotlin sources
+        if: matrix.build-mode == 'manual'
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --no-build-cache --no-configuration-cache \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            :app:compileGithubDebugUnitTestKotlin \
+            :app:compileFdroidDebugUnitTestKotlin \
+            :app:compileGithubDebugAndroidTestKotlin \
+            :app:compileFdroidDebugAndroidTestKotlin \
+            :third_party:termlib:compileDebugUnitTestKotlin \
+            :third_party:termlib:compileDebugAndroidTestKotlin \
+            :third_party:cbssh:testClasses \
+            :third_party:cbssh:protocol:testClasses
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"

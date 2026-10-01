@@ -213,13 +213,23 @@ class MoshBuilder:
         print(f"native: packaged Mosh for {', '.join(self.args.abis)}")
 
 
+def javac_version(java: Path) -> str:
+    """Return javac's version line without JVM banners.
+
+    The JVM prints "Picked up JAVA_TOOL_OPTIONS: ..." on stderr when that variable
+    is set, as on GitHub runners; it is neither a version nor a cache input.
+    """
+    output = run(java / "bin/javac", "-version", stderr=subprocess.STDOUT)
+    return next((line for line in output.splitlines() if line.startswith("javac ")), output)
+
+
 def build_tsnet(args):
     ndk = ndk_home()
     go_root = Path(os.environ.get("MANGOSSH_GO_ROOT", ROOT / ".tools/go/1.26.7")).resolve()
     java = Path(os.environ.get("JAVA_HOME", ""))
     if not java.is_absolute() or not (java / "bin/javac").is_file():
         raise ValueError("JAVA_HOME must provide a Linux JDK 17")
-    java_version = run(java / "bin/javac", "-version", stderr=subprocess.STDOUT)
+    java_version = javac_version(java)
     if not java_version.startswith("javac 17."):
         raise ValueError(f"JDK 17 required, found {java_version}")
     sdk = Path(os.environ.get("ANDROID_HOME", os.environ.get("ANDROID_SDK_ROOT", "")))
