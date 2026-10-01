@@ -14,7 +14,7 @@ provider because upstream protocol diagnostics may contain sensitive data.
 
 ## OkHttp and Okio
 
-WebDAV uses [OkHttp 5.3.0](https://github.com/square/okhttp) and its
+WebDAV uses [OkHttp 5.5.0](https://github.com/square/okhttp) and its
 [Okio 3.16.2](https://github.com/square/okio) dependency, published by Square.
 Both use the Apache License, Version 2.0. The full license is shared with the
 existing APK asset `assets/licenses/Apache-2.0-ConnectBot-Terminal.txt`.
@@ -31,22 +31,19 @@ branch.
 - License: GNU General Public License, version 3 or later (GPL-3.0-or-later).
 - License text: `third_party/mosh4android/COPYING` and the copy included in
   every APK at `assets/licenses/GPL-3.0-or-later.txt`.
-- Packaged artifacts: `app/src/main/jniLibs/*/libmosh_client.so` and
-  `app/src/main/assets/mosh/terminfo.zip`.
+- Packaged artifacts: `lib/<abi>/libmosh_client.so` and
+  `assets/mosh/terminfo.zip` in the APK, generated under app/build.
 - Build entry point: `tools/build-mosh-android.sh` using Android NDK
   `27.3.13750724`; `tools/fetch-android-ndk.sh` obtains that NDK into the
   ignored project-local `.tools` directory.
 
-The MangoSSH Android build uses the declared zlib, protobuf, ncurses, and
-nettle tags. F-Droid supplies those exact source trees through its
-source-library mechanism, and MangoSSH applies
-`tools/patches/mosh4android-offline-sources.patch` so its network-isolated build
-never downloads compiler binaries or dependency source. The subsequent
-`tools/patches/mosh4android-no-gmp.patch` removes the upstream GMP build and
-configures Nettle with `--disable-public-key`, keeping mini-GMP at its default
-off state. Mosh only uses Nettle AES; GMP and Hogweed are not required. Do not
-replace the packaged binary with an unverifiable build or remove the source
-submodule, license text, build patch, or this notice.
+All distributions compile the exact commits in `tools/fdroid-sources.lock`.
+`native/mosh/recipes` splits the upstream build plus MangoSSH's offline/no-GMP
+adaptations into independently cached components. Mosh's Android compatibility
+patch still comes from its pinned source. Host protoc and tic are built from the
+same protobuf/ncurses sources. Nettle public-key and mini-GMP support remain
+disabled; neither GMP nor Hogweed is required. Preserve the source submodule,
+recipe provenance, GPL text and this notice.
 
 ## ConnectBot terminal library
 
@@ -58,9 +55,11 @@ MangoSSH's terminal rendering is [ConnectBot termlib
 - License: Apache License, Version 2.0.
 - License text: `third_party/termlib/LICENSE` and the copy included in every
   APK at `assets/licenses/Apache-2.0-ConnectBot-Terminal.txt`.
-- Native artifact: the four ABI `libjni_cb_term.so` files are extracted at
-  build time from the pinned Maven Central AAR (`org.connectbot:termlib:0.1.0`)
-  and are not committed to this repository.
+- Native artifact: `libjni_cb_term.so` is built from the JNI and libvterm source
+  imported from the same commit. Import mapping and ordered patches are in
+  `third_party/termlib/native-import.json`.
+- libvterm is MIT licensed; its license is preserved in the imported source and
+  packaged as `assets/licenses/MIT-libvterm.txt`.
 - Local modifications are documented in `third_party/termlib/README.md` and
   kept additive to the upstream defaults, currently a terminal-resize damage
   fix, a configurable scrollback line limit, and a configurable pinch-to-zoom

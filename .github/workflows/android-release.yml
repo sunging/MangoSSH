@@ -95,6 +95,9 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      - name: Prepare native inputs
+        uses: ./.github/actions/prepare-native
+
       - name: Verify release version and localized notes
         env:
           RELEASE_TAG: ${{ needs.release-please.outputs.tag_name || inputs.release_tag }}
@@ -137,37 +140,6 @@ jobs:
           sdkmanager_bin="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           test -x "$sdkmanager_bin"
           "$sdkmanager_bin" "build-tools;36.0.0"
-
-      - name: Cache pinned Android NDK
-        uses: actions/cache@v6
-        with:
-          path: |
-            .tools/android-ndk-linux/27.3.13750724
-            .tools/android-ndk-r27d-linux.zip
-          key: mangossh-native-r27d-v1
-
-      - name: Install native build prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            autoconf automake binutils bison cmake gettext gperf git libtool ninja-build \
-            pkg-config rsync texinfo unzip zip
-
-      - name: Fetch F-Droid source inputs at locked commits
-        run: bash tools/fetch-fdroid-sources.sh
-
-      - name: Install verified Go toolchain
-        run: bash tools/fetch-go.sh
-
-      - name: Rebuild native assets from pinned source
-        env:
-          MANGOSSH_MOSH_DEPS_DIR: ${{ github.workspace }}/.fdroid/sources
-          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.7
-        run: |
-          bash tools/fetch-android-ndk.sh
-          echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724" >> "$GITHUB_ENV"
-          export ANDROID_NDK_HOME="$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724"
-          bash tools/prepare-fdroid-native.sh
 
       - name: Restore release signing key
         env:
@@ -227,6 +199,9 @@ jobs:
             "$ANDROID_KEY_ALIAS"
           rm app/build/outputs/bundle/githubRelease/app-github-release-unsigned.aab
 
+      - name: Ensure source-built artifacts did not modify tracked files
+        run: git diff --exit-code
+
       - name: Verify signed APK and 16 KiB native alignment
         run: |
           signing_tools_dir="$ANDROID_HOME/build-tools/34.0.0"
@@ -239,9 +214,24 @@ jobs:
             "$signing_tools_dir/apksigner" verify --verbose "$apk"
             "$alignment_tools_dir/zipalign" -c -P 16 -v 4 "$apk"
             bash tools/check-16kb-elf.sh "$apk"
+            python3 tools/native/verify-apk.py "$apk"
           done
           AAPT2="$alignment_tools_dir/aapt2" \
             bash tools/check-fdroid-apk.sh app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
+
+      - name: Upload native provenance and debug symbols
+        uses: actions/upload-artifact@v7
+        with:
+          name: MangoSSH-release-native-${{ github.sha }}
+          path: |
+            app/build/generated/native/mosh/manifest.json
+            app/build/generated/tsnet/manifest.json
+            app/build/generated/tsnet/symbols
+            app/build/outputs/native-debug-symbols
+            app/build/outputs/apk/**/*.native.json
+            build/native/cache/mosh-*/**/install/mosh-client
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Create versioned release artifacts and checksums
         run: |

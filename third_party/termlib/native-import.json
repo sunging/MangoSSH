@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/connectbot/termlib.git",
+  "commit": "e3f4bdc3b3b5563fee54b0eca4b50d0e611bfd07",
+  "source": "lib/src/main/cpp",
+  "destination": "third_party/termlib/src/main/cpp",
+  "patches": [
+    "third_party/termlib/native-patches/android-build.patch"
+  ]
+}

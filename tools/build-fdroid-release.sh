@@ -39,4 +39,5 @@ bash tools/prepare-fdroid-native.sh
 APK="$PROJECT_DIR/app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk"
 [[ -f "$APK" ]] || die "unsigned release APK was not produced"
 bash tools/check-16kb-elf.sh "$APK"
+python3 tools/native/verify-apk.py "$APK"
 printf 'Built unsigned F-Droid APK: %s\n' "$APK"

@@ -23,10 +23,10 @@
 
 - Native Mosh assets are GPL-3.0-or-later and must retain their upstream source,
   commit identity, license text, build instructions, and notices.
-- Use the repository's `third_party/mosh4android` submodule and the Linux build
-  scripts. Build `libmangossh_pty.so` before the Mosh client, then run
-  `tools/install-mosh-assets.sh`; package all four ABI clients, terminfo, and
-  the GPL text in the APK.
+- Use the repository's pinned Mosh submodule and the shared Gradle native graph.
+  PTY and termlib use externalNativeBuild; Mosh and tsnet use the offline adapters
+  in build-logic and tools/native. Package all four ABIs for releases, terminfo,
+  and the GPL text. Generated binaries belong in build directories only.
 - Do not substitute Mosh with SSH. A Mosh profile must either run the bundled
   native client through the PTY bridge or report a clear runtime error.
 - Native process arguments and environment variables must be passed directly;
@@ -92,19 +92,21 @@ options. When a device is available, test SSH host key confirmation, OTP, Mosh
 bootstrap, reconnect, resize, process cleanup, and app background/foreground
 behavior.
 
-On a glibc-compatible Linux x86_64 host, run the native sequence from the
-repository root:
+On Linux x86_64, prepare the locked inputs as documented in docs/building.md,
+then use Gradle for all producers. For native changes also run:
 
 ```text
-bash tools/fetch-android-ndk.sh
-bash tools/build-pty-bridge.sh
-bash tools/build-mosh-android.sh
-bash tools/install-mosh-assets.sh
+python3 tools/native/test_native.py
+python3 tools/native/build.py verify-sources
+bash tools/test-mosh-no-gmp.sh
+bash tools/test-go-toolchain.sh
+bash tools/test-tsnet-bridge.sh
 ```
 
 After producing the debug APK, run:
 
 ```text
+python3 tools/native/verify-apk.py app/build/outputs/apk/github/debug/app-github-debug.apk
 bash tools/check-16kb-elf.sh \
   app/build/outputs/apk/github/debug/app-github-debug.apk
 ```

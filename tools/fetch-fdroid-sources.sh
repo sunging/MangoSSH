@@ -28,15 +28,15 @@ while IFS='|' read -r name repository release_ref commit; do
     target="$FETCH_ROOT/$name"
     if [[ -d "$target/.git" ]] &&
         [[ "$(git -C "$target" rev-parse HEAD 2>/dev/null || true)" == "$commit" ]]; then
-        git -C "$target" reset --hard --quiet "$commit"
-        git -C "$target" clean -dffx --quiet
+        [[ -z "$(git -C "$target" status --porcelain --untracked-files=all --ignore-submodules=none)" ]] ||
+            die "$name has local changes; preserve or revert them before preparation"
         if [[ "$name" == "protobuf" ]]; then
             git -C "$target" submodule update --init --recursive --depth 1
         fi
         printf 'Reused  %-14s %s (%s)\n' "$name" "$commit" "$release_ref"
         continue
     fi
-    rm -rf -- "$target"
+    [[ ! -e "$target" ]] || die "$target exists at a different or incomplete revision; preserve it before retrying"
     git init --quiet "$target"
     git -C "$target" remote add origin "$repository"
     fetched=0

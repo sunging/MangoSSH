@@ -25,3 +25,9 @@ local.properties
 /.tools/
 /.fdroid/
 /native/tsnetbridge/.build/
+
+/app/build/
+/build-logic/build/
+**/__pycache__/
+/app/src/main/jniLibs/
+/app/src/main/assets/mosh/terminfo.zip

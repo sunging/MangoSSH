@@ -20,3 +20,11 @@ if grep -Eq 'GMP_VERSION|build_gmp|SOURCES_DIR/gmp|libgmp|libhogweed' "$script" 
     exit 1
 fi
 echo 'Mosh patch chain excludes GMP and disables Nettle public-key support.'
+
+recipe="$PROJECT_DIR/native/mosh/recipes/nettle.sh"
+grep -Fq -- '--disable-public-key' "$recipe"
+grep -Fq -- '--disable-mini-gmp' "$recipe"
+if grep -REq 'build_gmp|SOURCES_DIR/gmp|libgmp|libhogweed' "$PROJECT_DIR/native/mosh/recipes"; then
+    echo 'Unexpected GMP dependency in native recipes.' >&2
+    exit 1
+fi

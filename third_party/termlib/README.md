@@ -30,6 +30,12 @@ upstream defaults so a future re-sync is a straightforward re-apply:
   `false`) and `TerminalEmulatorImpl` gains an internal `sendMouseWheel`.
   Inertia is suppressed for these forwarded swipes.
 
-The four ABI `libjni_cb_term.so` files are extracted during the build from the
-pinned Maven Central AAR (`org.connectbot:termlib:0.1.0`). They are not copied
-into this repository. Update the source and native artifact version together.
+JNI and libvterm sources are imported from that same commit under `src/main/cpp`
+and built by AGP/CMake with NDK r27d. The Maven AAR is no longer a native input.
+`native-import.json` records the mapping and `native-patches/android-build.patch`
+adds the r27 16 KiB linker options and path normalization. Verify the import with
+`python3 tools/native/termlib.py /path/to/pinned-upstream`; `--update` is an explicit
+source maintenance operation that replaces the imported native tree.
+
+libvterm carries its own MIT license under `src/main/cpp/libvterm/LICENSE`, also
+packaged at `assets/licenses/MIT-libvterm.txt`.

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Cross-compiles MangoSSH's JNI PTY bridge with the same Linux-host NDK used by
-# Mosh. The resulting shared libraries are source-controlled Android inputs so
-# Gradle on Windows can package them without downloading a second Windows NDK.
+# Mosh. This optional diagnostic build writes only into build/native;
+# Android packaging uses externalNativeBuild directly.
 
 set -euo pipefail
 
@@ -16,8 +16,8 @@ mangossh_require_commands awk cmake install mkdir ninja
 NDK_REVISION="27.3.13750724"
 NDK_HOME="${ANDROID_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/$NDK_REVISION}"
 SOURCE_DIR="$PROJECT_DIR/app/src/main/cpp"
-BUILD_ROOT="${BUILD_ROOT:-$PROJECT_DIR/.tools/pty-bridge-build}"
-JNI_LIBS_DIR="$PROJECT_DIR/app/src/main/jniLibs"
+BUILD_ROOT="${BUILD_ROOT:-$PROJECT_DIR/build/native/pty-standalone}"
+JNI_LIBS_DIR="$PROJECT_DIR/build/native/pty-standalone/jniLibs"
 ABIS="${ABIS:-arm64-v8a armeabi-v7a x86 x86_64}"
 READELF="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
 STRIP="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
@@ -64,7 +64,7 @@ for abi in $ABIS; do
     require_16k_load_alignment "$build_dir/libmangossh_pty.so"
     mkdir -p "$JNI_LIBS_DIR/$abi"
     install -m 0755 "$build_dir/libmangossh_pty.so" "$JNI_LIBS_DIR/$abi/libmangossh_pty.so"
-    # Keep source-controlled JNI assets free of compiler debug information even
+    # Keep diagnostic JNI output free of compiler debug information even
     # when this script is run without the later Mosh asset installation step.
     "$STRIP" --strip-unneeded "$JNI_LIBS_DIR/$abi/libmangossh_pty.so"
     require_16k_load_alignment "$JNI_LIBS_DIR/$abi/libmangossh_pty.so"
