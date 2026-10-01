@@ -95,9 +95,18 @@ gobind_tool="$(go tool -n gobind)"
     install -m 0755 "$gobind_tool" "$GOBIN/gobind"
 popd >/dev/null
 
+# tools/native/build.py passes its validated state directory, which may be
+# outside the checkout (for example on the WSL file system for Windows builds).
+STATE_WORK_DIR=""
+[[ "${MANGOSSH_NATIVE_STATE:-}" != /* ]] || STATE_WORK_DIR="${MANGOSSH_NATIVE_STATE%/}/work/tsnet/"
 case "$WORK_DIR" in
     "$PROJECT_DIR"/build/native/*|/tmp/mangossh-*) ;;
-    *) printf 'Unsafe tsnet work path: %s\n' "$WORK_DIR" >&2; exit 1 ;;
+    *)
+        [[ -n "$STATE_WORK_DIR" && "$WORK_DIR" == "$STATE_WORK_DIR"?* && "$WORK_DIR" != *..* ]] || {
+            printf 'Unsafe tsnet work path: %s\n' "$WORK_DIR" >&2
+            exit 1
+        }
+        ;;
 esac
 mkdir -p "$(dirname "$WORK_LOCK")"
 exec 9>"$WORK_LOCK"

@@ -7,6 +7,7 @@ an entry, and every published output is hashed before it can be reused.
 from __future__ import annotations
 
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
@@ -15,6 +16,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tarfile
+import time
 
 
 def run(*args: str | Path, **kwargs) -> str:
@@ -42,6 +44,16 @@ def files(root: Path) -> dict:
     return result
 
 
+def published_contents(tree: dict) -> dict:
+    """Compare a published tree by content and symlinks only.
+
+    Windows drives seen through WSL report every file as executable, and AGP does
+    not use the mode of packaged inputs, so the bit would only cause false
+    mismatches between a staging tree and its published copy.
+    """
+    return {name: {k: v for k, v in entry.items() if k != "executable"} for name, entry in tree.items()}
+
+
 def source_identity(path: Path, commit: str, mode: str = "locked") -> dict:
     """Verify the checkout AND recursive gitlinks; never silently ignore edits."""
     if mode not in ("locked", "worktree"):
@@ -56,7 +68,12 @@ def source_identity(path: Path, commit: str, mode: str = "locked") -> dict:
     raw = subprocess.check_output(["git", "-C", str(path), "submodule", "status", "--recursive"], text=True)
     if any(line and line[0] != " " for line in raw.splitlines()):
         raise ValueError(f"{path.name}: uninitialized or mismatched recursive submodule")
-    status = run("git", "-C", path, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
+    # Locked builds export Git blobs, so line endings in the work tree never reach
+    # the build. A Windows checkout made with core.autocrlf=true has CRLF files
+    # that WSL Git (which cannot read the Windows config) would report as edited.
+    eol = ["-c", "core.autocrlf=true"] if mode == "locked" else []
+    status = run("git", "--no-optional-locks", *eol, "-C", path, "status", "--porcelain",
+                 "--untracked-files=all", "--ignore-submodules=none")
     if mode == "locked" and status:
         raise ValueError(f"{path.name}: dirty source; commit/revert changes or explicitly select worktree mode")
     result = {"commit": actual, "submodules": submodules, "dirty": bool(status)}
@@ -155,18 +172,74 @@ def cached_build(root: Path, name: str, identity: dict, builder) -> Path:
         staging.mkdir(parents=True)
         shutil.copytree(install, staging / "install", symlinks=True)
         (staging / "manifest.json").write_text(json.dumps({"schema": 1, "component": name, "input": identity, "outputs": outputs}, sort_keys=True, indent=2) + "\n")
-        shutil.rmtree(entry, ignore_errors=True)
-        staging.rename(entry)
+        replace_directory(staging, entry)
         return entry
 
 
-def publish_directory(source: Path, destination: Path):
-    """Replace the complete directory, so removed ABIs cannot survive a build."""
-    if destination.exists() and files(source) == files(destination):
+def replace_directory(staging: Path, destination: Path, attempts: int = 10):
+    """Atomically move a completed staging directory over its destination.
+
+    On a Windows drive used through WSL, virus scanners and the search indexer
+    briefly hold handles to files that were just written; renaming or deleting
+    their directory then fails with EACCES. Retry with backoff instead of
+    failing a long native build at its last step.
+    """
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(destination, ignore_errors=True)
+            staging.rename(destination)
+            return
+        except OSError as error:
+            if attempt == attempts - 1 or error.errno not in (errno.EACCES, errno.EPERM, errno.ENOTEMPTY, errno.EEXIST):
+                raise
+            time.sleep(min(0.1 * 2 ** attempt, 5))
+
+
+def publish_directory(source: Path, destination: Path, extra: dict[str, Path] | None = None):
+    """Replace the complete directory, so removed ABIs cannot survive a build.
+
+    `extra` maps top-level names to files published beside the copied tree, such
+    as a manifest. They are part of the comparison, so an unchanged publication
+    is left in place instead of being deleted and copied again on every build.
+    """
+    extra = extra or {}
+    expected = files(source)
+    expected.update({name: {"sha256": sha256(path)} for name, path in extra.items()})
+    if destination.exists() and published_contents(expected) == published_contents(files(destination)):
         return
     staging = destination.with_name(destination.name + ".partial")
     shutil.rmtree(staging, ignore_errors=True)
     staging.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source, staging, symlinks=True)
-    shutil.rmtree(destination, ignore_errors=True)
-    staging.rename(destination)
+    for name, path in extra.items():
+        shutil.copy2(path, staging / name)
+    replace_directory(staging, destination)
+
+
+def referenced_entries(manifest) -> set[tuple[str, str]]:
+    """Collect (component, cache key) for a manifest and every nested dependency."""
+    found = set()
+    if isinstance(manifest, dict):
+        if {"component", "input", "outputs"} <= manifest.keys():
+            found.add((manifest["component"], digest(manifest["input"])))
+        values = manifest.values()
+    elif isinstance(manifest, list):
+        values = manifest
+    else:
+        return found
+    for value in values:
+        found |= referenced_entries(value)
+    return found
+
+
+def prune_cache(root: Path, manifests: list) -> list[Path]:
+    """Delete cache entries that none of the given published manifests reference."""
+    keep = set().union(*(referenced_entries(manifest) for manifest in manifests))
+    if not keep:
+        raise ValueError("Refusing to prune: the manifests reference no cache entries")
+    removed = []
+    for entry in sorted((root / "cache").glob("*/*")):
+        if (entry.parent.name, entry.name) not in keep:
+            shutil.rmtree(entry)
+            removed.append(entry)
+    return removed

@@ -36,9 +36,18 @@ while IFS='|' read -r name repository release_ref commit; do
         printf 'Reused  %-14s %s (%s)\n' "$name" "$commit" "$release_ref"
         continue
     fi
-    [[ ! -e "$target" ]] || die "$target exists at a different or incomplete revision; preserve it before retrying"
-    git init --quiet "$target"
-    git -C "$target" remote add origin "$repository"
+    if [[ -e "$target" ]]; then
+        # Re-fetch in place after an interrupted fetch or a lock update, but
+        # never discard local work: only a clean checkout may change revision.
+        [[ -d "$target/.git" ]] || die "$target is not a Git checkout; preserve it before retrying"
+        [[ -z "$(git -C "$target" status --porcelain --untracked-files=all --ignore-submodules=none)" ]] ||
+            die "$name has local changes; preserve or revert them before preparation"
+        git -C "$target" remote set-url origin "$repository" 2>/dev/null ||
+            git -C "$target" remote add origin "$repository"
+    else
+        git init --quiet "$target"
+        git -C "$target" remote add origin "$repository"
+    fi
     fetched=0
     for attempt in 1 2 3; do
         if git -C "$target" fetch --quiet --depth 1 origin "$commit"; then

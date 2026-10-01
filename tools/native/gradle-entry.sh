@@ -14,9 +14,16 @@ if [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
     export ANDROID_NDK_HOME="${MANGOSSH_LINUX_NDK_HOME:-$PROJECT_DIR/.tools/android-ndk-linux/27.3.13750724}"
 fi
 export ANDROID_SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+if [[ -z "${MANGOSSH_NATIVE_STATE:-}" ]]; then
+    # Gradle on Windows leaves the choice to WSL: exported sources and objects
+    # on a Windows drive are much slower than on the distribution's file system.
+    [[ -n "${WSL_DISTRO_NAME:-}" ]] || { echo 'MANGOSSH_NATIVE_STATE is required' >&2; exit 1; }
+    checkout="$(printf '%s' "$PROJECT_DIR" | sha256sum | cut -c1-16)"
+    MANGOSSH_NATIVE_STATE="${XDG_CACHE_HOME:-$HOME/.cache}/mangossh/native-state/$checkout"
+fi
 args=("$1" --state "$MANGOSSH_NATIVE_STATE")
 case "$1" in
-    mosh) args+=(--jni-dir "$MANGOSSH_JNI_DIR" --assets-dir "$MANGOSSH_ASSETS_DIR" --manifest "$MANGOSSH_MANIFEST") ;;
+    mosh) args+=(--jni-dir "$MANGOSSH_JNI_DIR" --assets-dir "$MANGOSSH_ASSETS_DIR" --symbols-dir "$MANGOSSH_SYMBOLS_DIR" --manifest "$MANGOSSH_MANIFEST") ;;
     tsnet) args+=(--output-dir "$MANGOSSH_TSNET_OUTPUT_DIR") ;;
     *) echo 'Unsupported native producer' >&2; exit 1 ;;
 esac

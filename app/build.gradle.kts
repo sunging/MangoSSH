@@ -89,6 +89,8 @@ val androidSdkPath = androidComponents.sdkComponents.sdkDirectory.get().asFile.a
 fun NativeTask.configureNativeInputs() {
     rootDirectory.set(rootProject.layout.projectDirectory)
     stateDirectory.set(rootProject.layout.buildDirectory.dir("native"))
+    // Optional per-developer override, normally in ~/.gradle/gradle.properties.
+    hostStateDirectory.set(providers.gradleProperty("mangosshNativeStateDir"))
     abis.set(nativeAbis)
     sourceMode.set(nativeSourceMode)
     offline.set(providers.gradleProperty("mangosshOfflineBuild").map { it.toBoolean() }.orElse(true))
@@ -109,6 +111,11 @@ val buildMosh = tasks.register<MoshBuild>("buildMosh") {
     description = "Builds and verifies Mosh from pinned local sources."
     configureNativeInputs()
     sourceInputs.from(rootProject.fileTree("native/mosh"), rootProject.file("tools/fdroid-sources.lock"))
+    // Explicit locations override AGP's generated-source convention, so Gradle,
+    // the standalone CLI and tools/install-mosh-assets.sh share one layout.
+    jniDirectory.set(layout.buildDirectory.dir("generated/native/mosh/jniLibs"))
+    assetsDirectory.set(layout.buildDirectory.dir("generated/native/mosh/assets"))
+    symbolsDirectory.set(layout.buildDirectory.dir("generated/native/mosh/symbols"))
     manifestFile.set(layout.buildDirectory.file("generated/native/mosh/manifest.json"))
 }
 
@@ -135,6 +142,25 @@ val verifyReleaseNativeInputs = tasks.register("verifyReleaseNativeInputs") {
     }
 }
 
+// AGP still packages src/<sourceSet>/jniLibs and assets, so a binary left there
+// by the old scripts would silently replace or collide with the generated one.
+val nativeSourceLeftovers = fileTree("src") {
+    include("*/jniLibs/**", "*/assets/mosh/terminfo.zip")
+}
+val verifyNoNativeSourceBinaries = tasks.register("verifyNoNativeSourceBinaries") {
+    group = "verification"
+    description = "Rejects native binaries or terminfo placed in app source sets."
+    val leftovers = nativeSourceLeftovers
+    val appDir = projectDir
+    inputs.files(leftovers)
+    doLast {
+        val found = leftovers.files.map { it.relativeTo(appDir).invariantSeparatorsPath }.sorted()
+        require(found.isEmpty()) {
+            "Remove native outputs from app source sets; Gradle generates them: ${found.joinToString()}"
+        }
+    }
+}
+
 // Release credentials are intentionally injected only by CI. Local release
 // builds remain unsigned unless every required environment variable is supplied,
 // which prevents a developer workstation from accidentally depending on secrets.
@@ -152,7 +178,7 @@ val hasReleaseSigning = listOf(
 android {
     // Match the native build scripts when Gradle strips and packages their libraries.
     ndkVersion = nativeConfig["ndk"].toString()
-    providers.environmentVariable("ANDROID_NDK_HOME").orNull?.let { ndkPath = it }
+    NativeSettings.agpNdkPath(project)?.let { ndkPath = it }
     namespace = "website.sung.mangossh"
     compileSdk = 37
 
@@ -281,6 +307,8 @@ val generateEmbeddedTsnetBuildInfo = tasks.register<GenerateEmbeddedTsnetBuildIn
 androidComponents.onVariants { variant ->
     variant.sources.jniLibs?.addGeneratedSourceDirectory(buildMosh, MoshBuild::getJniDirectory)
     variant.sources.assets?.addGeneratedSourceDirectory(buildMosh, MoshBuild::getAssetsDirectory)
+    tasks.matching { it.name == "pre${variant.name.replaceFirstChar(Char::uppercaseChar)}Build" }
+        .configureEach { dependsOn(verifyNoNativeSourceBinaries) }
     if (variant.buildType == "release") {
         tasks.matching { it.name == "pre${variant.name.replaceFirstChar(Char::uppercaseChar)}Build" }
             .configureEach { dependsOn(verifyReleaseNativeInputs) }

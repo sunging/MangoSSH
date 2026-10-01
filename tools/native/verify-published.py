@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from artifacts import verify_elf
 from build import CONFIG, ROOT, ndk_home, selected_abis, verified_sources
-from state import files
+from state import files, published_contents
 
 
 def main():
@@ -17,7 +17,9 @@ def main():
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
     abis = selected_abis(args.abis)
-    if manifest["abis"] != abis or manifest["jniLibs"] != files(args.jni_dir) or manifest["assets"] != files(args.assets_dir):
+    if (manifest["abis"] != abis
+            or published_contents(manifest["jniLibs"]) != published_contents(files(args.jni_dir))
+            or published_contents(manifest["assets"]) != published_contents(files(args.assets_dir))):
         raise SystemExit("Generated Mosh manifest/ABI/output mismatch; rebuild before packaging")
     current_sources = {name: identity for name, (_, identity) in verified_sources(manifest["sourceMode"]).items()}
     if current_sources != manifest["sources"]:

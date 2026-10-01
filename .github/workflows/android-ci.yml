@@ -78,6 +78,14 @@ jobs:
             :app:assembleGithubRelease \
             :app:assembleFdroidRelease
 
+      # Restore-keys bring back older cache archives; drop every entry the
+      # published Mosh/tsnet manifests do not reference before the cache is saved.
+      - name: Prune unreferenced native cache entries
+        run: |
+          python3 tools/native/build.py prune \
+            --keep app/build/generated/native/mosh/manifest.json \
+            --keep app/build/generated/tsnet/manifest.json
+
       - name: Ensure native builds did not modify tracked source files
         run: git diff --exit-code
 
@@ -133,7 +141,7 @@ jobs:
             app/build/generated/tsnet/symbols
             app/build/outputs/native-debug-symbols
             app/build/outputs/apk/**/*.native.json
-            build/native/cache/mosh-*/**/install/mosh-client
+            app/build/generated/native/mosh/symbols
           if-no-files-found: warn
           retention-days: 14
 
@@ -233,8 +241,11 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      # The verify job is the only writer of the pruned component cache.
       - name: Prepare native inputs
         uses: ./.github/actions/prepare-native
+        with:
+          component-cache: restore
 
       # Without hardware acceleration the emulator does not finish booting
       # inside the job's budget, and the runner exposes /dev/kvm only after its

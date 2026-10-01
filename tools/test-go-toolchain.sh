@@ -49,7 +49,7 @@ cp "$PROJECT_DIR/tools/lib/tsnet-version.sh" "$work_dir/tools/lib/"
 mkdir -p "$work_dir/sdk"
 expect_failure env MANGOSSH_OFFLINE_BUILD=1 ANDROID_SDK_ROOT="$work_dir/sdk" \
     MANGOSSH_GO_ROOT="$work_dir/missing" bash "$work_dir/tools/build-tsnet-android.sh"
-grep -q 'offline mode' "$work_dir/failure.log"
+grep -q 'must be preinstalled' "$work_dir/failure.log"
 sed -i 's/go1.26.7/go1.26.6/' "$work_dir/archive/go/bin/go"
 expect_failure env MANGOSSH_OFFLINE_BUILD=1 ANDROID_SDK_ROOT="$work_dir/sdk" \
     MANGOSSH_GO_ROOT="$work_dir/archive/go" bash "$work_dir/tools/build-tsnet-android.sh"

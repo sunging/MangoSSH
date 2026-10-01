@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Regression tests for source policy, cache invalidation and deterministic archives."""
+import errno
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
-from build import merge_installs, selected_abis
-from state import cached_build, digest, export_source, files, publish_directory, run, source_identity, valid_entry
+from build import generated_path, merge_installs, selected_abis
+from state import (cached_build, digest, export_source, files, prune_cache, publish_directory,
+                   replace_directory, run, source_identity, valid_entry)
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("normalizer", ROOT / "tools/normalize-tsnet-aar.py")
@@ -57,6 +61,23 @@ class NativeStateTests(unittest.TestCase):
                         run("git", "-C", self.repo, "add", ".")
                 with self.assertRaises(ValueError):
                     source_identity(self.repo, self.commit)
+
+    def test_locked_accepts_crlf_checkout_and_exports_committed_bytes(self):
+        # Reproduce a Windows core.autocrlf=true checkout inspected from WSL: the
+        # index records CRLF sizes but other stat data differs, as across OSes.
+        source = self.repo / "source.c"
+        source.unlink()
+        run("git", "-c", "core.autocrlf=true", "-C", self.repo, "checkout", "--", "source.c")
+        self.assertEqual(source.read_bytes(), b"original\r\n")
+        os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 5_000_000_000))
+        self.assertTrue(run("git", "--no-optional-locks", "-C", self.repo, "status", "--porcelain"))
+        self.assertFalse(source_identity(self.repo, self.commit)["dirty"])
+        destination = self.root / "export"
+        export_source(self.repo, destination, "locked")
+        self.assertEqual((destination / "source.c").read_bytes(), b"original\n")
+        (self.repo / "source.c").write_bytes(b"changed\r\n")
+        with self.assertRaises(ValueError):
+            source_identity(self.repo, self.commit)
 
     def test_worktree_exports_additions_edits_and_deletions(self):
         before = source_identity(self.repo, self.commit, "worktree")
@@ -138,6 +159,71 @@ class NativeStateTests(unittest.TestCase):
         publish_directory(source, output)
         self.assertEqual(files(source), files(output))
         self.assertFalse((output / "x86").exists())
+
+    def test_unchanged_publication_with_manifest_is_not_copied_again(self):
+        source, output, manifest = self.root / "install", self.root / "out", self.root / "manifest.json"
+        source.mkdir()
+        (source / "bridge.aar").write_bytes(b"aar")
+        manifest.write_text("{}\n")
+        publish_directory(source, output, {"manifest.json": manifest})
+        self.assertEqual((output / "manifest.json").read_text(), "{}\n")
+        # A Windows drive through WSL reports every published file as executable.
+        (output / "bridge.aar").chmod(0o777)
+        marker = (output / "bridge.aar").stat().st_ino, (output / "bridge.aar").stat().st_mtime_ns
+        publish_directory(source, output, {"manifest.json": manifest})
+        self.assertEqual(marker, ((output / "bridge.aar").stat().st_ino, (output / "bridge.aar").stat().st_mtime_ns))
+        manifest.write_text('{"changed": true}\n')
+        publish_directory(source, output, {"manifest.json": manifest})
+        self.assertEqual((output / "manifest.json").read_text(), '{"changed": true}\n')
+
+    def test_replace_directory_retries_transient_windows_access_denied(self):
+        staging, destination = self.root / "entry.partial", self.root / "entry"
+        staging.mkdir()
+        (staging / "out").write_text("new")
+        destination.mkdir()
+        (destination / "out").write_text("old")
+        rename, calls = Path.rename, []
+
+        def flaky(path, target):
+            calls.append(path)
+            if len(calls) < 3:
+                raise PermissionError(errno.EACCES, "held by a scanner")
+            return rename(path, target)
+
+        with mock.patch("state.time.sleep"), mock.patch.object(Path, "rename", flaky):
+            replace_directory(staging, destination)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual((destination / "out").read_text(), "new")
+        self.assertFalse(staging.exists())
+
+    def test_prune_keeps_only_entries_reachable_from_published_manifests(self):
+        def build(work, install):
+            (install / "out").write_text(work.name)
+
+        dependency = cached_build(self.root, "zlib-x86", {"source": "zlib"}, build)
+        old = cached_build(self.root, "zlib-x86", {"source": "old zlib"}, build)
+        client_identity = {"dependencies": [json.loads((dependency / "manifest.json").read_text())]}
+        client = cached_build(self.root, "mosh-x86", client_identity, build)
+        stale = cached_build(self.root, "tsnet", {"source": "old bridge"}, build)
+        (self.root / "cache/tsnet/partial.partial").mkdir()
+        published = {"component": "mosh", "components": {"x86": json.loads((client / "manifest.json").read_text())}}
+        prune_cache(self.root, [published])
+        self.assertTrue(valid_entry(dependency) and valid_entry(client))
+        self.assertFalse(old.exists() or stale.exists())
+        self.assertFalse((self.root / "cache/tsnet/partial.partial").exists())
+        with self.assertRaises(ValueError):
+            prune_cache(self.root, [{"component": "mosh"}])
+
+    def test_state_may_leave_checkout_but_outputs_and_sources_may_not(self):
+        outside = Path("/var/cache/mangossh-native-test/state")  # Not created; outside /tmp.
+        self.assertEqual(generated_path(outside, state=True), outside.resolve())
+        self.assertEqual(generated_path(ROOT / "build/native", state=True), (ROOT / "build/native").resolve())
+        for path in (outside, ROOT / "native/mosh", ROOT / "app/src/main/jniLibs"):
+            with self.assertRaises(ValueError):
+                generated_path(path)
+        for path in (ROOT / "native/mosh", ROOT, ROOT.parent, Path("/")):
+            with self.assertRaises(ValueError):
+                generated_path(path, state=True)
 
     def test_abi_selection_is_exact_and_canonical(self):
         self.assertEqual(selected_abis("x86_64,arm64-v8a"), ["arm64-v8a", "x86_64"])

@@ -2,9 +2,9 @@
 
 These recipes are derived from ConnectBot mosh4android commit
 `2de58be90449bfee4041c5d798f921f84d10dc0b`, with MangoSSH's offline-source and
-no-GMP adaptations. The original patch files in `tools/patches` remain provenance
-and an upstream compatibility regression fixture; the active build rules are
-**the individual scripts in recipes/**. Change those scripts for build changes.
+no-GMP adaptations. The build rules are **the individual scripts in recipes/**;
+their Git history records every change from upstream. The former patch files
+for the upstream build script were removed because no build applied them.
 The Android source compatibility patch is still taken from the pinned Mosh
 source (`android/mosh-android.patch`) and applied strictly on its isolated copy.
 

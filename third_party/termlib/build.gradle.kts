@@ -12,7 +12,7 @@ val nativeAbis = NativeSettings.abis(project)
 
 android {
     ndkVersion = nativeConfig["ndk"].toString()
-    providers.environmentVariable("ANDROID_NDK_HOME").orNull?.let { ndkPath = it }
+    NativeSettings.agpNdkPath(project)?.let { ndkPath = it }
     namespace = "org.connectbot.terminal"
     compileSdk = 37
 

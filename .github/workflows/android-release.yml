@@ -95,8 +95,12 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
+      # Compile every shipped native binary from source in this run; output
+      # hashes in a restored cache entry cannot prove where its bytes came from.
       - name: Prepare native inputs
         uses: ./.github/actions/prepare-native
+        with:
+          component-cache: "off"
 
       - name: Verify release version and localized notes
         env:
@@ -229,7 +233,7 @@ jobs:
             app/build/generated/tsnet/symbols
             app/build/outputs/native-debug-symbols
             app/build/outputs/apk/**/*.native.json
-            build/native/cache/mosh-*/**/install/mosh-client
+            app/build/generated/native/mosh/symbols
           if-no-files-found: error
           retention-days: 90
 

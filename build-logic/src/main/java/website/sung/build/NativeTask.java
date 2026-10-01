@@ -23,7 +23,15 @@ public abstract class NativeTask extends DefaultTask {
     @Input public abstract MapProperty<String, String> getBuildEnvironment();
     @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
     public abstract ConfigurableFileCollection getSourceInputs();
+    /** Component state for builds that run on this host; Windows builds keep state in WSL instead. */
     @LocalState public abstract DirectoryProperty getStateDirectory();
+    /**
+     * Optional state directory as the build host sees it, for example a WSL path such as
+     * {@code /home/user/.cache/mangossh} when Gradle runs on Windows. When absent, Windows
+     * builds let tools/native/gradle-entry.sh choose a directory on the WSL file system,
+     * because Windows drives are slow through WSL.
+     */
+    @Input @org.gradle.api.tasks.Optional public abstract Property<String> getHostStateDirectory();
     @Inject protected abstract ExecOperations getExecOperations();
 
     public NativeTask() {
@@ -36,17 +44,25 @@ public abstract class NativeTask extends DefaultTask {
     protected void invoke(String component, Map<String, String> paths) {
         Map<String, String> env = new LinkedHashMap<>(getBuildEnvironment().get());
         env.values().removeIf(String::isEmpty);
+        boolean windows = System.getProperty("os.name").toLowerCase(Locale.ROOT).startsWith("windows");
         env.put("MANGOSSH_PROJECT_DIR", getRootDirectory().get().getAsFile().getAbsolutePath());
-        env.put("MANGOSSH_NATIVE_STATE", getStateDirectory().get().getAsFile().getAbsolutePath());
+        String hostState = getHostStateDirectory().getOrNull();
+        if (hostState != null && !hostState.isBlank()) {
+            env.put("MANGOSSH_NATIVE_STATE", hostState);
+        } else if (!windows) {
+            env.put("MANGOSSH_NATIVE_STATE", getStateDirectory().get().getAsFile().getAbsolutePath());
+        }
         env.put("MANGOSSH_OFFLINE_BUILD", "1"); // Builds never provision or download inputs.
         env.put("ABIS", String.join(" ", getAbis().get()));
         env.put("MANGOSSH_NATIVE_SOURCE_MODE", getSourceMode().get());
         env.putAll(paths);
-        boolean windows = System.getProperty("os.name").toLowerCase(Locale.ROOT).startsWith("windows");
         if (windows) {
             List<String> translated = new ArrayList<>();
             translated.add("MANGOSSH_PROJECT_DIR/p");
-            translated.add("MANGOSSH_NATIVE_STATE/p");
+            // A WSL path is passed through unchanged; a Windows path is translated.
+            if (env.containsKey("MANGOSSH_NATIVE_STATE") && !env.get("MANGOSSH_NATIVE_STATE").startsWith("/")) {
+                translated.add("MANGOSSH_NATIVE_STATE/p");
+            }
             for (String key : paths.keySet()) translated.add(key + "/p");
             // Linux SDK/NDK/JDK identities must not be replaced with Windows tools.
             env.remove("JAVA_HOME");

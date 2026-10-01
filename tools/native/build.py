@@ -20,11 +20,27 @@ import sys
 import zipfile
 
 from artifacts import verify_elf
-from state import cached_build, digest, export_source, files, locked, publish_directory, run, sha256, source_identity
+from state import cached_build, digest, export_source, files, locked, prune_cache, publish_directory, run, sha256, source_identity
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = json.loads((ROOT / "native/toolchains.json").read_text())
 RECIPES = ROOT / "native/mosh/recipes"
+
+
+def generated_path(path: Path, state: bool = False) -> Path:
+    """Keep generated files out of source trees.
+
+    Outputs belong below build/, app/build/ or /tmp/. The component state may also
+    live outside the checkout, such as on the WSL file system for a Windows build,
+    but never at a file-system root or in a directory that contains the checkout.
+    """
+    path = path.resolve()
+    if any(path.is_relative_to(base) and path != base for base in (ROOT / "build", ROOT / "app/build", Path("/tmp"))):
+        return path
+    if state and not path.is_relative_to(ROOT) and not ROOT.is_relative_to(path) and path != Path(path.anchor):
+        return path
+    where = "below build/, app/build/, /tmp/ or outside the checkout" if state else "below build/, app/build/ or /tmp/"
+    raise ValueError(f"Generated path must be {where}: {path}")
 
 
 def selected_abis(value: str) -> list[str]:
@@ -167,13 +183,15 @@ class MoshBuilder:
         package = self.args.state / "package-mosh"
         with locked(self.args.state / "locks/package-mosh.lock"):
             shutil.rmtree(package, ignore_errors=True)
-            jni, assets = package / "jniLibs", package / "assets"
+            jni, assets, symbols = package / "jniLibs", package / "assets", package / "symbols"
             (assets / "mosh").mkdir(parents=True)
             terminfo = None
             for abi, entry in results.items():
                 library = jni / abi / "libmosh_client.so"
                 library.parent.mkdir(parents=True)
                 shutil.copy2(entry / "install/mosh-client", library)
+                (symbols / abi).mkdir(parents=True)
+                shutil.copy2(entry / "install/mosh-client", symbols / abi / "mosh-client")
                 subprocess.run([str(self.llvm / "llvm-strip"), "--strip-unneeded", str(library)], check=True)
                 verify_elf(library, abi, self.llvm / "llvm-readelf", executable=True)
                 data = (entry / "install/terminfo.zip").read_bytes()
@@ -189,6 +207,7 @@ class MoshBuilder:
             self.args.manifest.unlink(missing_ok=True)
             publish_directory(jni, self.args.jni_dir)
             publish_directory(assets, self.args.assets_dir)
+            publish_directory(symbols, self.args.symbols_dir)
             self.args.manifest.parent.mkdir(parents=True, exist_ok=True)
             self.args.manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         print(f"native: packaged Mosh for {', '.join(self.args.abis)}")
@@ -225,6 +244,7 @@ def build_tsnet(args):
         env.update(ANDROID_NDK_HOME=str(ndk), MANGOSSH_GO_ROOT=str(go_root),
                    ABIS=" ".join(args.abis), MANGOSSH_TSNET_WORK_DIR=str(work / "gomobile"),
                    MANGOSSH_GOBIN=str(work / "go-bin"), MANGOSSH_TSNET_OUTPUT_DIR=str(install),
+                   MANGOSSH_NATIVE_STATE=str(args.state),
                    MANGOSSH_ANDROID_API=str(CONFIG["androidApi"]))
         execute(["bash", ROOT / "tools/build-tsnet-android.sh"], env, work / "build.log")
         if {n: v for n, v in files(source).items() if not n.startswith(".build/")} != source_files:
@@ -239,34 +259,46 @@ def build_tsnet(args):
                 verify_elf(lib, abi, ndk / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf")
     entry = cached_build(args.state, "tsnet", identity, build)
     with locked(args.state / "locks/package-tsnet.lock"):
-        publish_directory(entry / "install", args.output_dir)
-        shutil.copy2(entry / "manifest.json", args.output_dir / "manifest.json")
+        publish_directory(entry / "install", args.output_dir, {"manifest.json": entry / "manifest.json"})
+
+
+def prune(args):
+    """Drop cache entries the published Mosh/tsnet manifests no longer reference."""
+    manifests = [json.loads(path.read_text()) for path in args.keep]
+    with locked(args.state / "locks/prune.lock"):
+        for entry in prune_cache(args.state, manifests):
+            print(f"native: pruned {entry.parent.name} {entry.name[:12]}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("component", choices=["verify-sources", "mosh", "tsnet", "host-protoc", "host-tic"])
+    parser.add_argument("component", choices=["verify-sources", "mosh", "tsnet", "host-protoc", "host-tic", "prune"])
     parser.add_argument("--abis", default=os.environ.get("ABIS", " ".join(CONFIG["abis"])))
     parser.add_argument("--source-mode", choices=["locked", "worktree"], default=os.environ.get("MANGOSSH_NATIVE_SOURCE_MODE", "locked"))
     parser.add_argument("--state", type=Path, default=ROOT / "build/native")
     parser.add_argument("--jni-dir", type=Path, default=ROOT / "app/build/generated/native/mosh/jniLibs")
     parser.add_argument("--assets-dir", type=Path, default=ROOT / "app/build/generated/native/mosh/assets")
+    parser.add_argument("--symbols-dir", type=Path, default=ROOT / "app/build/generated/native/mosh/symbols")
     parser.add_argument("--manifest", type=Path, default=ROOT / "app/build/generated/native/mosh/manifest.json")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "app/build/generated/tsnet")
+    parser.add_argument("--keep", type=Path, action="append", default=[],
+                        help="prune: published manifest whose cache entries are kept (repeatable)")
     parser.add_argument("--jobs", type=int, default=int(os.environ.get("MANGOSSH_ABI_BUILD_JOBS", "2")))
     parser.add_argument("--parallel", type=int, default=int(os.environ.get("MANGOSSH_ABI_PARALLELISM", "2")))
     args = parser.parse_args()
     args.abis = selected_abis(args.abis)
     if not 1 <= args.parallel <= 4 or args.jobs < 1:
         raise ValueError("parallel must be 1..4 and jobs must be positive")
-    for name in ("state", "jni_dir", "assets_dir", "manifest", "output_dir"):
-        path = getattr(args, name).resolve()
-        if not any(path.is_relative_to(base) and path != base for base in (ROOT / "build", ROOT / "app/build", Path("/tmp"))):
-            raise ValueError(f"Generated path must be below build/, app/build/ or /tmp/: {path}")
-        setattr(args, name, path)
+    for name in ("state", "jni_dir", "assets_dir", "symbols_dir", "manifest", "output_dir"):
+        setattr(args, name, generated_path(getattr(args, name), state=name == "state"))
     if args.component == "verify-sources":
         for name, (_, identity) in verified_sources(args.source_mode).items():
             print(f"Verified {name}: {identity['commit']} dirty={identity['dirty']}")
+        return
+    if args.component == "prune":
+        if not args.keep:
+            raise ValueError("prune requires at least one --keep manifest")
+        prune(args)
         return
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise ValueError("Mosh/tsnet recipes require Linux x86_64 (Windows: use WSL)")

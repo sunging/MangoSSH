@@ -10,12 +10,15 @@ import org.gradle.work.DisableCachingByDefault;
 public abstract class MoshBuild extends NativeTask {
     @OutputDirectory public abstract DirectoryProperty getJniDirectory();
     @OutputDirectory public abstract DirectoryProperty getAssetsDirectory();
+    /** Unstripped clients of exactly the packaged build, for provenance and debugging. */
+    @OutputDirectory public abstract DirectoryProperty getSymbolsDirectory();
     @OutputFile public abstract RegularFileProperty getManifestFile();
 
     @TaskAction public void build() {
         invoke("mosh", Map.of(
             "MANGOSSH_JNI_DIR", getJniDirectory().get().getAsFile().getAbsolutePath(),
             "MANGOSSH_ASSETS_DIR", getAssetsDirectory().get().getAsFile().getAbsolutePath(),
+            "MANGOSSH_SYMBOLS_DIR", getSymbolsDirectory().get().getAsFile().getAbsolutePath(),
             "MANGOSSH_MANIFEST", getManifestFile().get().getAsFile().getAbsolutePath()));
     }
 }

@@ -25,8 +25,9 @@ The historically named `tools/fdroid-sources.lock` is the single source lock for
 Mosh dependencies in **all** distributions. External F-Droid srclibs can provide
 the same directory layout: zlib, protobuf (recursive submodules), ncurses, nettle.
 
-Preparation refuses dirty or differently pinned existing dependency checkouts.
-Preserve local work before replacing those trees. Ordinary compilation never
+Preparation moves a clean existing dependency checkout to the locked commit and
+resumes an interrupted fetch in place. It refuses checkouts with local changes
+and non-Git directories; preserve that work before retrying. Ordinary compilation never
 fetches tools or source, even without `-PmangosshOfflineBuild=true`. Gradle Maven
 resolution is controlled separately by `--offline`; prefetch dependencies before
 using it. CI's shared preparation action follows this same separation.
@@ -49,10 +50,18 @@ JNI packaging remains enabled.
 
 The shell Mosh/tsnet producers require Linux x86_64. On Windows, PTY and termlib
 use the Windows SDK/NDK and CMake; Gradle runs Mosh/tsnet through WSL. Install the
-Linux prerequisites above inside WSL. `MANGOSSH_LINUX_JAVA_HOME`,
+Linux prerequisites above inside WSL. AGP takes `ANDROID_NDK_HOME` as `ndkPath`
+only when it is NDK `27.3.13750724` built for the current host; otherwise, for
+example when it names the Linux NDK on Windows, AGP uses the SDK's
+`ndk/27.3.13750724` and logs a warning. `MANGOSSH_LINUX_JAVA_HOME`,
 `MANGOSSH_LINUX_SDK_HOME`, and `MANGOSSH_LINUX_NDK_HOME` select Linux tools;
 Windows `JAVA_HOME` and NDK paths are not reused for Linux executables. The
-project, state and output paths are translated through WSLENV. A custom
+project and output paths are translated through WSLENV. Native component state
+(source exports, build trees and the component cache) stays on the WSL file
+system, at `${XDG_CACHE_HOME:-~/.cache}/mangossh/native-state/<checkout hash>`,
+because building on a Windows drive through WSL is much slower. Set
+`mangosshNativeStateDir` in your own `~/.gradle/gradle.properties` to choose a
+different WSL path; a Windows path there is translated through WSLENV. A custom
 `MANGOSSH_MOSH_DEPS_DIR` or `MANGOSSH_GO_ROOT` passed from Windows must already
 be a Linux path. ABI and source-mode properties are forwarded identically, and
 both adapters force the script compilation stage offline.
@@ -62,7 +71,9 @@ both adapters force the script compilation stage offline.
 Default `mangosshNativeSourceMode=locked` validates the exact commit, a clean
 working tree, and every recursive submodule before looking at cached output.
 Tracked modifications, deletions, staged changes and untracked source files are
-rejected. Ignored build output is not treated as source.
+rejected. Ignored build output is not treated as source. Line-ending-only
+differences are accepted because locked builds compile Git blobs, not the work
+tree; this lets WSL build a Windows checkout made with `core.autocrlf=true`.
 
 For deliberate development edits to a locked dependency checkout:
 
@@ -95,15 +106,18 @@ alone does not authenticate a vendor directory.
 
 | Location | Purpose |
 | --- | --- |
-| `build/native/work/<component>/<fingerprint>/` | Isolated build trees and `build.log` |
-| `build/native/cache/<component>/<fingerprint>/` | Validated install trees and manifests |
-| `app/build/generated/jniLibs/buildMosh/`, `app/build/generated/assets/buildMosh/` | AGP-assigned Mosh packaging inputs |
-| `app/build/generated/native/mosh/` | Mosh manifest and standalone CLI default outputs |
+| `<state>/work/<component>/<fingerprint>/` | Isolated build trees and `build.log` |
+| `<state>/cache/<component>/<fingerprint>/` | Validated install trees and manifests |
+| `app/build/generated/native/mosh/` | Mosh `jniLibs/` and `assets/` packaging inputs, unstripped `symbols/`, and manifest, shared by Gradle and the CLI |
 | `app/build/generated/tsnet/` | AAR, manifest, and unstripped AAR in `symbols/` |
 | app/termlib `.cxx` and `build/` | AGP-managed JNI intermediate and symbol outputs |
 
-No binary or terminfo archive is read from `app/src/main/jniLibs` or generated
-into a source directory. Root LICENSE and static license assets are maintained
+`<state>` is `build/native` when Gradle runs on Linux (including CI), the WSL
+directory above when it runs on Windows, or `mangosshNativeStateDir` when set.
+
+No binary or terminfo archive is generated into a source directory. Because AGP
+would still package them, `verifyNoNativeSourceBinaries` fails the build when
+any `app/src/*/jniLibs` file or `assets/mosh/terminfo.zip` exists. Root LICENSE and static license assets are maintained
 as source inputs, never overwritten by a build. `clean` removes generated build
 output; `.tools` toolchains and `.fdroid/sources` remain available.
 
@@ -125,8 +139,12 @@ Gradle's native script tasks intentionally consult the adapter on every run;
 remote Gradle task caching is disabled. This is necessary to check external
 source trees and output integrity. An unchanged invocation validates and reuses
 component output; it does not recompile native code. AGP owns PTY/termlib's normal
-CMake incrementality. CI archive restoration is only a retrieval hint and does
-not bypass the source/manifest checks.
+CMake incrementality. A tsnet publication whose AAR and manifest are unchanged
+is left in place. CI archive restoration is only a retrieval hint and does not
+bypass the source/manifest checks. The CI verify job prunes entries that the
+published manifests do not reference before saving the cache
+(`python3 tools/native/build.py prune --keep <manifest>...`); the release
+workflow does not restore component caches and compiles every component.
 
 ## Verification
 
