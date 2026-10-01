@@ -31,7 +31,7 @@ jobs:
   verify-and-deliver:
     name: Verify and deliver debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       # The GPL-licensed Mosh source remains reproducible through the submodule.
@@ -52,11 +52,8 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Verify the Mosh patch chain excludes GMP
-        run: bash tools/test-mosh-no-gmp.sh
-
-      - name: Verify prebuilt Go toolchain contract
-        run: bash tools/test-go-toolchain.sh
+      - name: Prepare native inputs
+        uses: ./.github/actions/prepare-native
 
       # `assembleDebugAndroidTest` compiles the instrumented tests without a
       # device. CI has no emulator, so nothing else here would catch an
@@ -81,6 +78,17 @@ jobs:
             :app:assembleGithubRelease \
             :app:assembleFdroidRelease
 
+      # Restore-keys bring back older cache archives; drop every entry the
+      # published Mosh/tsnet manifests do not reference before the cache is saved.
+      - name: Prune unreferenced native cache entries
+        run: |
+          python3 tools/native/build.py prune \
+            --keep app/build/generated/native/mosh/manifest.json \
+            --keep app/build/generated/tsnet/manifest.json
+
+      - name: Ensure native builds did not modify tracked source files
+        run: git diff --exit-code
+
       - name: Verify 16 KiB native alignment
         run: |
           build_tools_dir="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
@@ -89,6 +97,7 @@ jobs:
             app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk; do
             "$build_tools_dir/zipalign" -c -P 16 -v 4 "$apk"
             bash tools/check-16kb-elf.sh "$apk"
+            python3 tools/native/verify-apk.py "$apk"
           done
           AAPT2="$build_tools_dir/aapt2" \
             bash tools/check-fdroid-apk.sh app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk
@@ -116,9 +125,25 @@ jobs:
             apk="app/build/outputs/apk/$distribution/release/app-$distribution-release-unsigned.apk"
             "$build_tools_dir/zipalign" -c -P 16 -v 4 "$apk"
             bash tools/check-16kb-elf.sh "$apk"
+            python3 tools/native/verify-apk.py "$apk"
           done
           AAPT2="$build_tools_dir/aapt2" bash tools/check-fdroid-apk.sh \
             app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk
+
+      - name: Upload native provenance and symbols
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: MangoSSH-native-${{ github.sha }}
+          path: |
+            app/build/generated/native/mosh/manifest.json
+            app/build/generated/tsnet/manifest.json
+            app/build/generated/tsnet/symbols
+            app/build/outputs/native-debug-symbols
+            app/build/outputs/apk/**/*.native.json
+            app/build/generated/native/mosh/symbols
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload unsigned release packages for isolated signing
         if: github.event_name == 'push'
@@ -198,7 +223,7 @@ jobs:
     # The verify job still compiles instrumented tests on every event.
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_device_tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 150
 
     steps:
       - name: Check out source and native Mosh source
@@ -215,6 +240,12 @@ jobs:
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
+
+      # The verify job is the only writer of the pruned component cache.
+      - name: Prepare native inputs
+        uses: ./.github/actions/prepare-native
+        with:
+          component-cache: restore
 
       # Without hardware acceleration the emulator does not finish booting
       # inside the job's budget, and the runner exposes /dev/kvm only after its

@@ -1,0 +1,68 @@
+cmake_minimum_required(VERSION 3.18.1)
+
+project("cb_term")
+
+# libvterm static library
+add_library(vterm STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/encoding.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/keyboard.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/mouse.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/pen.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/screen.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/state.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/unicode.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/src/vterm.c
+)
+
+target_include_directories(vterm PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/include
+)
+
+target_compile_definitions(vterm PRIVATE
+    VTERM_STATIC
+)
+
+set_target_properties(vterm PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# JNI wrapper library
+add_library(jni_cb_term SHARED
+    ${CMAKE_CURRENT_SOURCE_DIR}/Terminal.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/mutf8.cpp
+)
+
+target_include_directories(jni_cb_term PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/libvterm/include
+)
+
+target_compile_features(jni_cb_term PRIVATE cxx_std_17)
+
+if(ANDROID)
+    target_link_options(jni_cb_term PRIVATE
+        "-Wl,-z,max-page-size=16384"
+        "-Wl,-z,common-page-size=16384"
+        "-Wl,--build-id=none"
+    )
+
+    target_link_libraries(jni_cb_term
+        vterm
+        android
+        log
+    )
+else()
+    find_package(JNI REQUIRED)
+    target_include_directories(jni_cb_term PRIVATE ${JNI_INCLUDE_DIRS})
+    target_link_libraries(jni_cb_term
+        vterm
+    )
+endif()
+
+# Normalize paths while retaining separate unstripped build outputs.
+foreach(native_target vterm jni_cb_term)
+    target_compile_options(${native_target} PRIVATE
+        "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+        "-ffile-prefix-map=${CMAKE_BINARY_DIR}=."
+        "-fdebug-prefix-map=${CMAKE_SOURCE_DIR}=."
+        "-fdebug-prefix-map=${CMAKE_BINARY_DIR}=."
+    )
+endforeach()

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 import shutil
@@ -12,10 +13,27 @@ import tempfile
 import zipfile
 
 
+def normalize_nested_zip(data: bytes) -> bytes:
+    """Normalize unsigned gomobile JAR contents as well as the AAR container."""
+    result = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(result, "w") as output:
+        for name in sorted(source.namelist()):
+            if name.endswith("/"):
+                continue
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            content = source.read(name)
+            if name.endswith(".jar"):
+                content = normalize_nested_zip(content)
+            output.writestr(info, content, compresslevel=9)
+    return result.getvalue()
+
+
 def main() -> int:
-    if len(sys.argv) != 6:
+    if len(sys.argv) not in (6, 7):
         print(
-            "usage: normalize-tsnet-aar.py INPUT OUTPUT LLVM_STRIP TAILSCALE_LICENSE NOTICES",
+            "usage: normalize-tsnet-aar.py INPUT OUTPUT LLVM_STRIP TAILSCALE_LICENSE NOTICES [ABIS]",
             file=sys.stderr,
         )
         return 2
@@ -32,10 +50,14 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="mangossh-tsnet-aar-") as temp:
         root = Path(temp)
         with zipfile.ZipFile(source) as archive:
+            for name in archive.namelist():
+                if not (root / name).resolve().is_relative_to(root):
+                    raise ValueError(f"Unsafe AAR entry: {name}")
             archive.extractall(root)
         libraries = sorted((root / "jni").glob("*/libgojni.so"))
-        if len(libraries) != 4:
-            print(f"expected four libgojni.so files, found {len(libraries)}", file=sys.stderr)
+        expected_abis = set(sys.argv[6].replace(",", " ").split()) if len(sys.argv) == 7 else {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
+        if not expected_abis or {library.parent.name for library in libraries} != expected_abis:
+            print(f"expected ABI set {sorted(expected_abis)}, found {[p.parent.name for p in libraries]}", file=sys.stderr)
             return 1
         for library in libraries:
             subprocess.run(
@@ -62,7 +84,8 @@ def main() -> int:
                     info = zipfile.ZipInfo(relative, date_time=(1980, 1, 1, 0, 0, 0))
                     info.compress_type = zipfile.ZIP_DEFLATED
                     info.external_attr = 0o100644 << 16
-                    archive.writestr(info, path.read_bytes(), compresslevel=9)
+                    data = normalize_nested_zip(path.read_bytes()) if path.suffix == ".jar" else path.read_bytes()
+                    archive.writestr(info, data, compresslevel=9)
             shutil.move(temporary_output, destination)
         finally:
             temporary_output.unlink(missing_ok=True)

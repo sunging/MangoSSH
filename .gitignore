@@ -25,3 +25,7 @@ local.properties
 /.tools/
 /.fdroid/
 /native/tsnetbridge/.build/
+
+/app/build/
+/build-logic/build/
+**/__pycache__/

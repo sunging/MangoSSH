@@ -50,34 +50,9 @@ export TZ=UTC
 
 bash "$PROJECT_DIR/tools/verify-fdroid-sources.sh"
 
-# Never let a failed source build fall back to binaries checked into the
-# developer repository. fdroidserver's scandelete performs the same removal
-# before this script runs; keeping it here makes local and CI builds equally
-# strict.
-for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-    rm -f -- \
-        "$PROJECT_DIR/app/src/main/jniLibs/$abi/libmangossh_pty.so" \
-        "$PROJECT_DIR/app/src/main/jniLibs/$abi/libmosh_client.so"
-done
-rm -f -- \
-    "$PROJECT_DIR/app/src/main/assets/mosh/terminfo.zip" \
-    "$PROJECT_DIR/app/build/generated/tsnet/mangossh-tsnet.aar"
-
-export MANGOSSH_PROTOBUF_SOURCE="$MANGOSSH_MOSH_DEPS_DIR/protobuf"
-bash "$PROJECT_DIR/tools/build-host-protoc.sh"
-export MANGOSSH_PROTOC="${MANGOSSH_HOST_PROTOC_BUILD_ROOT:-$PROJECT_DIR/.tools/host-protoc-29.1}/protoc"
-[[ -x "$MANGOSSH_PROTOC" ]] || die "MANGOSSH_PROTOC must provide protoc 29.1"
-[[ "$("$MANGOSSH_PROTOC" --version)" == "libprotoc 29.1" ]] || die "protoc 29.1 is required"
-
-export MANGOSSH_NCURSES_SOURCE="$MANGOSSH_MOSH_DEPS_DIR/ncurses"
-bash "$PROJECT_DIR/tools/build-host-tic.sh"
-export MANGOSSH_TIC="${MANGOSSH_HOST_TIC_BUILD_ROOT:-$PROJECT_DIR/.tools/host-tic-6.4}/progs/tic"
-[[ -x "$MANGOSSH_TIC" ]] || die "MANGOSSH_TIC must provide ncurses 6.4 tic"
-[[ "$("$MANGOSSH_TIC" -V 2>&1)" == "ncurses 6.4.20221231" ]] ||
-    die "ncurses 6.4.20221231 host tic is required"
-
-cd "$PROJECT_DIR"
-bash tools/build-pty-bridge.sh
-bash tools/build-mosh-android-parallel.sh
-bash tools/install-mosh-assets.sh
-printf 'Pinned native F-Droid inputs are ready for assembleFdroidRelease.\n'
+# PTY and termlib are built by AGP externalNativeBuild during assembly.
+# This compatibility entry prewarms the same Mosh component cache used by Gradle.
+[[ "${MANGOSSH_NATIVE_SOURCE_MODE:-locked}" == locked ]] || die "F-Droid requires locked sources"
+[[ "${ABIS:-arm64-v8a armeabi-v7a x86 x86_64}" == "arm64-v8a armeabi-v7a x86 x86_64" ]] || die "F-Droid requires all four ABIs"
+bash "$PROJECT_DIR/tools/build-mosh-android.sh"
+printf 'Pinned native sources and Mosh cache are ready for assembleFdroidRelease.\n'

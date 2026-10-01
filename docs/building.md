@@ -1,133 +1,196 @@
 # Building MangoSSH
 
-## Prerequisites
+## Prepare inputs (network enabled)
 
-- A preinstalled full JDK 17 and an Android SDK (`ANDROID_SDK_ROOT` or `ANDROID_HOME`).
-- Git submodules:
+Use a full JDK 17, Python 3.11.8+ and an Android SDK. The Android native contract
+is `native/toolchains.json`: NDK r27d (`27.3.13750724`), CMake 3.22.1, API 26,
+and four ABIs. Mosh's host CMake/Autotools versions are recorded in its cache
+identity; install autoconf, automake, bison, cmake, gperf, libtool, make, ninja,
+pkg-config, rsync, texinfo, binutils, zip and unzip on Linux x86_64.
 
-  ```text
-  git submodule update --init --recursive
-  ```
-
-- For the native Mosh client and PTY bridge: a glibc-compatible Linux x86_64
-  host. On Windows, Gradle uses WSL only as an adapter for the same Linux
-  scripts.
-
-Set `JAVA_HOME` to your JDK 17 installation before invoking Gradle. In Android
-Studio, select that installation in Settings > Build, Execution, Deployment >
-Build Tools > Gradle > Gradle JDK. The settings script rejects other Java
-versions and installations without `javac`. Gradle does not download a JDK or
-override the selected JVM with daemon toolchain criteria. GitHub workflows
-already install JDK 17 with `actions/setup-java`.
-
-On Linux, Gradle passes its own JDK installation to the tsnet build subprocess.
-On Windows, WSL uses a separate Linux JDK; the Windows `JAVA_HOME` is not
-forwarded by the adapter. Direct Linux/WSL native scripts retain their pinned
-JDK download fallback for online builds; offline builds require a supplied
-Linux JDK 17. Machine-specific paths such as Debian's
-`/usr/lib/jvm/java-17-openjdk-amd64` belong in the build environment, not in
-the application's committed Gradle properties.
-
-A debug build of the GitHub distribution:
-
-```text
-gradlew.bat :app:assembleGithubDebug
-```
-
-The test, lint and instrumentation-compile tasks that must pass before a change
-is merged are listed in [AGENTS.md](../AGENTS.md#verification).
-
-## Native Mosh build
-
-On a glibc-compatible Linux x86_64 host, run the following from the repository
-root:
-
-```text
+```sh
+git submodule update --init --recursive
+bash tools/fetch-fdroid-sources.sh
 bash tools/fetch-android-ndk.sh
-bash tools/build-pty-bridge.sh
-bash tools/build-mosh-android.sh
-bash tools/install-mosh-assets.sh
+bash tools/fetch-go.sh
+sdkmanager 'cmake;3.22.1' 'platforms;android-26' 'platforms;android-37.0' 'build-tools;36.0.0'
+export ANDROID_NDK_HOME="$PWD/.tools/android-ndk-linux/27.3.13750724"
+export MANGOSSH_MOSH_DEPS_DIR="$PWD/.fdroid/sources"
 ```
 
-The final command validates and copies the four ABI archives into the Android
-app. The scripts are distribution-neutral and report missing command-line
-dependencies without invoking a package manager. They keep downloaded compilers
-and intermediate files in `.tools`, which is not committed. On Windows, Gradle
-uses WSL only as an adapter for these same Linux scripts.
+Set `JAVA_HOME` to JDK 17 and `ANDROID_HOME` to the SDK. Android Studio must use
+the same JDK. Go 1.26.7 and gomobile remain pinned by the existing Go contracts;
+`go.mod`, `go.sum` and vendor are not replaced by a second dependency database.
+The historically named `tools/fdroid-sources.lock` is the single source lock for
+Mosh dependencies in **all** distributions. External F-Droid srclibs can provide
+the same directory layout: zlib, protobuf (recursive submodules), ncurses, nettle.
 
-Direct tsnet builds require `ANDROID_SDK_ROOT` or `ANDROID_HOME` to point to an
-existing Android SDK. Gradle resolves the configured SDK itself and passes that
-path to the generic Linux script.
+Preparation moves a clean existing dependency checkout to the locked commit and
+resumes an interrupted fetch in place. It refuses checkouts with local changes
+and non-Git directories; preserve that work before retrying. Ordinary compilation never
+fetches tools or source, even without `-PmangosshOfflineBuild=true`. Gradle Maven
+resolution is controlled separately by `--offline`; prefetch dependencies before
+using it. CI's shared preparation action follows this same separation.
 
-## 16 KiB page-size verification
+## Build
 
-After building the debug APK, validate both the ELF load segments and the APK
-alignment. This is required for Android devices that use 16 KiB memory pages:
+```sh
+./gradlew :app:assembleGithubDebug
+# Only the ABIs needed by a local debug device:
+./gradlew -PmangosshAbis=arm64-v8a :app:assembleGithubDebug
+# F-Droid, with dependencies already available locally:
+./gradlew --offline -PmangosshOfflineBuild=true :app:assembleFdroidRelease
+```
 
-```text
-bash tools/check-16kb-elf.sh \
-  app/build/outputs/apk/github/debug/app-github-debug.apk
+Release tasks require all four ABIs and locked sources. Both distributions use
+the same native producers. `build-logic` defines the script task adapters; PTY
+and termlib use AGP `externalNativeBuild`. Mosh remains an executable disguised
+as `libmosh_client.so` for Android extraction into `nativeLibraryDir`. Legacy
+JNI packaging remains enabled.
+
+The shell Mosh/tsnet producers require Linux x86_64. On Windows, PTY and termlib
+use the Windows SDK/NDK and CMake; Gradle runs Mosh/tsnet through WSL. Install the
+Linux prerequisites above inside WSL. AGP takes `ANDROID_NDK_HOME` as `ndkPath`
+only when it is NDK `27.3.13750724` built for the current host; otherwise, for
+example when it names the Linux NDK on Windows, AGP uses the SDK's
+`ndk/27.3.13750724` and logs a warning. `MANGOSSH_LINUX_JAVA_HOME`,
+`MANGOSSH_LINUX_SDK_HOME`, and `MANGOSSH_LINUX_NDK_HOME` select Linux tools;
+Windows `JAVA_HOME` and NDK paths are not reused for Linux executables. The
+project and output paths are translated through WSLENV. Native component state
+(source exports, build trees and the component cache) stays on the WSL file
+system, at `${XDG_CACHE_HOME:-~/.cache}/mangossh/native-state/<checkout hash>`,
+because building on a Windows drive through WSL is much slower. Set
+`mangosshNativeStateDir` in your own `~/.gradle/gradle.properties` to choose a
+different WSL path; a Windows path there is translated through WSLENV. A custom
+`MANGOSSH_MOSH_DEPS_DIR` or `MANGOSSH_GO_ROOT` passed from Windows must already
+be a Linux path. ABI and source-mode properties are forwarded identically, and
+both adapters force the script compilation stage offline.
+
+## Source policy and local edits
+
+Default `mangosshNativeSourceMode=locked` validates the exact commit, a clean
+working tree, and every recursive submodule before looking at cached output.
+Tracked modifications, deletions, staged changes and untracked source files are
+rejected. Ignored build output is not treated as source. Line-ending-only
+differences are accepted because locked builds compile Git blobs, not the work
+tree; this lets WSL build a Windows checkout made with `core.autocrlf=true`.
+
+For deliberate development edits to a locked dependency checkout:
+
+```sh
+./gradlew -PmangosshNativeSourceMode=worktree -PmangosshAbis=arm64-v8a :app:assembleGithubDebug
+```
+
+This mode includes actual file contents, additions, deletions, modes and symlinks
+in the identity and copies that working tree into the build sandbox. It still
+requires matching HEAD and recursive gitlinks. Dirty identities appear in the
+manifest; release builds reject worktree mode. Locked mode exports canonical Git
+blobs so Windows line-ending conversion cannot alter the compiled source.
+
+termlib JNI and libvterm come from the same upstream commit as its Kotlin import.
+To verify or replay that import against a prepared upstream checkout:
+
+```sh
+python3 tools/native/termlib.py /path/to/pinned-termlib
+# Explicit source maintenance only; preserve local changes first:
+python3 tools/native/termlib.py /path/to/pinned-termlib --update
+```
+
+`third_party/termlib/native-import.json` records the source mapping and ordered
+patches. Ordinary builds consume the checked-in source and never run the importer.
+Go source updates must regenerate vendor, replay the Tailscale patch and version
+metadata, update notices, and review the complete resulting diff. `go mod verify`
+alone does not authenticate a vendor directory.
+
+## Outputs, incrementality and concurrency
+
+| Location | Purpose |
+| --- | --- |
+| `<state>/work/<component>/<fingerprint>/` | Isolated build trees and `build.log` |
+| `<state>/cache/<component>/<fingerprint>/` | Validated install trees and manifests |
+| `app/build/generated/native/mosh/` | Mosh `jniLibs/` and `assets/` packaging inputs, unstripped `symbols/`, and manifest, shared by Gradle and the CLI |
+| `app/build/generated/tsnet/` | AAR, manifest, and unstripped AAR in `symbols/` |
+| app/termlib `.cxx` and `build/` | AGP-managed JNI intermediate and symbol outputs |
+
+`<state>` is `build/native` when Gradle runs on Linux (including CI), the WSL
+directory above when it runs on Windows, or `mangosshNativeStateDir` when set.
+
+No binary or terminfo archive is generated into a source directory. Because AGP
+would still package them, `verifyNoNativeSourceBinaries` fails the build when
+any `app/src/*/jniLibs` file or `assets/mosh/terminfo.zip` exists. Root LICENSE and static license assets are maintained
+as source inputs, never overwritten by a build. `clean` removes generated build
+output; `.tools` toolchains and `.fdroid/sources` remain available.
+
+Mosh has independent host-protoc, host-tic, zlib, protobuf, ncurses, nettle,
+terminfo and client entries. Each identity records source, recipe, toolchain,
+ABI/API, flags and dependency manifests. A changed client reuses its dependency
+entries; a changed nettle recipe invalidates nettle and the client. Common flags
+or adapter changes intentionally invalidate the components they govern.
+
+The adapter verifies every cache hit against hashes of all installed outputs.
+An empty or failed build never publishes a success manifest. Per-component locks
+serialize identical work; ABI workers own separate writable source/build trees.
+`MANGOSSH_ABI_PARALLELISM` defaults to 2, and `MANGOSSH_ABI_BUILD_JOBS` to 2.
+Publication replaces the whole ABI directory so a narrower debug build cannot
+retain stale ABIs. Do not run different Gradle invocations that publish into the
+same checkout concurrently; use separate checkouts for independent builds.
+
+Gradle's native script tasks intentionally consult the adapter on every run;
+remote Gradle task caching is disabled. This is necessary to check external
+source trees and output integrity. An unchanged invocation validates and reuses
+component output; it does not recompile native code. AGP owns PTY/termlib's normal
+CMake incrementality. A tsnet publication whose AAR and manifest are unchanged
+is left in place. CI archive restoration is only a retrieval hint and does not
+bypass the source/manifest checks. The CI verify job prunes entries that the
+published manifests do not reference before saving the cache
+(`python3 tools/native/build.py prune --keep <manifest>...`); the release
+workflow does not restore component caches and compiles every component.
+
+## Verification
+
+Run the Android unit, lint and instrumentation compilation tasks in AGENTS.md.
+Native contract checks and offline bridge tests:
+
+```sh
+python3 tools/native/test_native.py
+python3 tools/native/build.py verify-sources
+bash tools/test-mosh-no-gmp.sh
+bash tools/test-go-toolchain.sh
+bash tools/test-tsnet-bridge.sh
+```
+
+For every final APK, including transitive Maven JNI libraries:
+
+```sh
+python3 tools/native/verify-apk.py app/build/outputs/apk/github/debug/app-github-debug.apk
+bash tools/check-16kb-elf.sh app/build/outputs/apk/github/debug/app-github-debug.apk
 zipalign -c -P 16 -v 4 app/build/outputs/apk/github/debug/app-github-debug.apk
 ```
 
-The JNI PTY bridge explicitly uses the NDK r27 16 KiB linker options. The
-native build and Mosh asset installation scripts reject a binary whose
-`PT_LOAD` segments do not meet that requirement.
+The verifier checks exact ABI coverage, required native components, ELF
+Class/Machine, Android Mosh entry/interpreter, dynamic dependencies and 16 KiB
+PT_LOAD alignment. It writes an APK `.native.json` sidecar linking library hashes
+to producer manifests and local CMake source identities. ZIP alignment remains a
+separate SDK check. Neither static validation nor compilation replaces device
+acceptance for PTY lifecycle, terminal resize, Mosh reconnect and tsnet routing.
 
-## Embedded tsnet
+For reproducibility, build with two independent `--state` directories and compare
+packaged ELF, terminfo and AAR contents (including classes.jar); metadata containing
+local build paths need not match. Use `tools/native/compare-artifacts.py` for a
+byte-level output comparison. Record toolchain differences before interpreting a
+mismatch. Keep unstripped outputs for diagnosis. Mosh/tsnet compiler options and
+native dependency versions are unchanged by this migration. AGP selects Debug
+and RelWithDebInfo for JNI; the previous PTY binary was built only as Release.
 
-Gradle builds the pinned four-ABI gomobile AAR on demand through
-`tools/build-tsnet-android.sh`; the generated AAR and downloaded toolchains
-are ignored and must not be committed. See
-[embedded-tsnet.md](embedded-tsnet.md) for the exact tool versions, security
-boundaries, build commands, and emulator/lab verification checklist.
+## F-Droid compatibility
 
-The Go packages linked into that bridge are committed as source under
-`native/tsnetbridge/vendor`. Local builds may download the pinned Go, JDK, and
-NDK toolchains when they are missing, but do not download Go module source.
-The app declares NDK r27d (`27.3.13750724`) for Gradle's native-library
-processing, matching the native build scripts.
+`tools/prepare-fdroid-native.sh` verifies supplied inputs and prewarms the same Mosh
+cache Gradle uses; PTY and termlib are compiled by AGP. `tools/build-fdroid-release.sh`
+combines this with offline unsigned assembly and APK verification. Signing variables
+remain forbidden in the F-Droid wrapper. Existing `build-mosh-android*` and host-tool
+scripts delegate to the shared adapter; `install-mosh-assets.sh` is verification-only.
+The standalone PTY script is a diagnostic build and writes under `build/native`.
 
-## F-Droid source build
-
-F-Droid builds use `tools/prepare-fdroid-native.sh` followed by the standard
-`assembleFdroidRelease` Gradle task. `tools/build-fdroid-release.sh` composes
-those steps for local and CI verification with Gradle offline. The build
-environment must provide JDK 17, Android SDK/NDK r27d, and the source trees
-locked by `tools/fdroid-sources.lock`. Install the pinned Go 1.26.7 Linux amd64
-toolchain with `bash tools/fetch-go.sh` during network-enabled preparation;
-this verifies the official archive SHA-256 instead of compiling Go itself.
-Protoc 29.1 and the host `tic` used to compile terminfo are built from source;
-release-signing variables are rejected, and the result is an unsigned APK
-containing rebuilt PTY, Mosh, terminfo, and tsnet artifacts.
-
-The expected external source layout is selected by
-`MANGOSSH_MOSH_DEPS_DIR`:
-
-```text
-zlib/      v1.3.1
-protobuf/  v29.1, including its submodules
-ncurses/   v6.4
-nettle/    nettle_3.10_release_20240616
-```
-
-The Mosh build applies `tools/patches/mosh4android-no-gmp.patch` after the
-offline-source patch. It drops the upstream GMP build and configures Nettle
-with `--disable-public-key`, while `--disable-mini-gmp` keeps mini-GMP
-explicitly at its default off state. Mosh uses only Nettle AES, so neither GMP
-nor Hogweed is needed. This does not change the separate SSH or tsnet
-cryptography. Previously published releases and their fdroiddata recipes retain
-their original source requirements.
-
-`MANGOSSH_GO_ROOT`, `MANGOSSH_MOSH_DEPS_DIR`, `JAVA_HOME`, `ANDROID_HOME`,
-and `ANDROID_NDK_HOME` complete the environment contract. The source-build
-scripts set strict offline flags for Go and Gradle and fail instead of fetching
-a missing input. Go defaults to `.tools/go/1.26.7`; no automatic toolchain
-upgrade or compiler bootstrap is permitted during the build. GitHub releases
-use the same verified prebuilt toolchain. F-Droid may supply a matching Debian
-toolchain, subject to APK reproducibility verification, or the checksum-pinned
-official archive. `tools/fetch-fdroid-sources.sh` is a separate, explicitly
-network-enabled preparation helper for CI; it verifies every checkout against
-the full commit in the lock file before the isolated build begins. Offline Mosh
-builds use isolated ABI workers; tune their safe concurrency with
-`MANGOSSH_ABI_PARALLELISM` and `MANGOSSH_ABI_BUILD_JOBS` (both default to `2`).
+The authoritative fdroiddata recipe remains external. Update its SDK CMake/Python
+prerequisites for this revision; previously published versions keep their original
+build recipes. Source and compiler setup must finish before network isolation.

@@ -1,0 +1,29 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -38,7 +38,11 @@
+ target_compile_features(jni_cb_term PRIVATE cxx_std_17)
+ 
+ if(ANDROID)
+-    target_link_options(jni_cb_term PRIVATE "-Wl,-z,max-page-size=16384")
++    target_link_options(jni_cb_term PRIVATE
++        "-Wl,-z,max-page-size=16384"
++        "-Wl,-z,common-page-size=16384"
++        "-Wl,--build-id=none"
++    )
+ 
+     target_link_libraries(jni_cb_term
+         vterm
+@@ -52,3 +56,13 @@
+         vterm
+     )
+ endif()
++
++# Normalize paths while retaining separate unstripped build outputs.
++foreach(native_target vterm jni_cb_term)
++    target_compile_options(${native_target} PRIVATE
++        "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
++        "-ffile-prefix-map=${CMAKE_BINARY_DIR}=."
++        "-fdebug-prefix-map=${CMAKE_SOURCE_DIR}=."
++        "-fdebug-prefix-map=${CMAKE_BINARY_DIR}=."
++    )
++endforeach()

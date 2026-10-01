@@ -7,13 +7,12 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$PROJECT_DIR/tools/lib/linux-host.sh"
 mangossh_require_linux_x86_64
 mangossh_require_commands \
-    bash cat chmod cp find flock git grep install mkdir rm python3 sha256sum
+    bash cat chmod cp find flock git grep install mkdir rm patch python3 sha256sum
 BRIDGE_DIR="$PROJECT_DIR/native/tsnetbridge"
 TOOLS_DIR="$PROJECT_DIR/.tools"
 # shellcheck source=tools/lib/go-toolchain.sh
 source "$PROJECT_DIR/tools/lib/go-toolchain.sh"
 GO_VERSION="$MANGOSSH_GO_VERSION"
-JDK_VERSION="17.0.19+10"
 # shellcheck source=tools/lib/tsnet-version.sh
 source "$PROJECT_DIR/tools/lib/tsnet-version.sh"
 TAILSCALE_TSNET_GO_SHA256="6a8d6cc7deae3006729ef688ed5d33770284e04699f2dd040bc52c08de667ca5"
@@ -22,17 +21,16 @@ TAILSCALE_TSNET_PATCHED_SHA256="5e432071e90d527f105fe984c9aa4e81fa5e8b119b3cad76
 TAILSCALE_SOCKS5_PATCHED_SHA256="68c1b5eb44a76210f120931a83ab259b0d539f84c9b33452cd8023d6b34ea95f"
 GOMOBILE_VERSION="v0.0.0-20260709172247-6129f5bee9d5"
 NDK_REVISION="27.3.13750724"
-STRICT_OFFLINE="${MANGOSSH_OFFLINE_BUILD:-0}"
 GO_ROOT="${MANGOSSH_GO_ROOT:-${GOROOT:-$TOOLS_DIR/go/$GO_VERSION}}"
 GOBIN="${MANGOSSH_GOBIN:-$TOOLS_DIR/go-bin/$GO_VERSION}"
-WORK_DIR="/tmp/mangossh-tsnetbridge-v1.102.4"
-WORK_LOCK="/tmp/mangossh-tsnetbridge-v1.102.4.lock"
-OUTPUT_DIR="$PROJECT_DIR/app/build/generated/tsnet"
+WORK_DIR="${MANGOSSH_TSNET_WORK_DIR:-$PROJECT_DIR/build/native/tsnet-standalone}"
+WORK_LOCK="$WORK_DIR.lock"
+OUTPUT_DIR="${MANGOSSH_TSNET_OUTPUT_DIR:-$PROJECT_DIR/app/build/generated/tsnet}"
 OUTPUT_AAR="$OUTPUT_DIR/mangossh-tsnet.aar"
 PATCH_FILE="$PROJECT_DIR/tools/patches/tailscale-v1.102.4-tsnet-no-logtail.patch"
 VENDOR_DIR="$BRIDGE_DIR/vendor"
 
-ANDROID_SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+ANDROID_SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 [[ -d "$ANDROID_SDK_DIR" ]] || {
     printf 'ANDROID_SDK_ROOT or ANDROID_HOME must point to the Android SDK.\n' >&2
     exit 1
@@ -40,14 +38,6 @@ ANDROID_SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 export ANDROID_HOME="$ANDROID_SDK_DIR"
 export ANDROID_SDK_ROOT="$ANDROID_SDK_DIR"
 
-if [[ ! -x "$GO_ROOT/bin/go" ]]; then
-    if [[ "$STRICT_OFFLINE" == "1" ]]; then
-        printf 'MANGOSSH_GO_ROOT or GOROOT must provide Go %s in offline mode.\n' "$GO_VERSION" >&2
-        exit 1
-    fi
-    bash "$PROJECT_DIR/tools/fetch-go.sh"
-    GO_ROOT="$TOOLS_DIR/go/$GO_VERSION"
-fi
 mangossh_require_go "$GO_ROOT"
 [[ -f "$VENDOR_DIR/modules.txt" ]] || {
     printf 'Vendored Go sources are required at %s.\n' "$VENDOR_DIR" >&2
@@ -69,43 +59,23 @@ export PATH="$GO_ROOT/bin:$GOBIN:$PATH"
 export GOBIN
 export GOWORK=off
 export GOTOOLCHAIN=local
+export GOPROXY=off GOSUMDB=off
 export GOFLAGS="-mod=vendor -trimpath"
 export CGO_ENABLED=1
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-315532800}"
 
-if [[ -z "${JAVA_HOME:-}" || ! -x "$JAVA_HOME/bin/javac" ]]; then
-    if [[ "$STRICT_OFFLINE" == "1" ]]; then
-        printf 'JAVA_HOME must provide JDK 17 in offline mode.\n' >&2
-        exit 1
-    fi
-    JDK_CACHE_ROOT="${MANGOSSH_JDK_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mangossh}"
-    JAVA_HOME="$JDK_CACHE_ROOT/jdk/$JDK_VERSION"
-    if [[ ! -x "$JAVA_HOME/bin/javac" ]]; then
-        JDK_TOOLS_DIR="$JDK_CACHE_ROOT" \
-            JDK_ARCHIVE_PATH="$TOOLS_DIR/OpenJDK17U-jdk_x64_linux_hotspot_17.0.19_10.tar.gz" \
-            bash "$PROJECT_DIR/tools/fetch-jdk17.sh"
-    fi
-fi
+[[ -x "${JAVA_HOME:-}/bin/javac" ]] || {
+    echo 'JAVA_HOME must provide a prepared JDK 17.' >&2; exit 1;
+}
+"$JAVA_HOME/bin/javac" -version 2>&1 | grep -q '^javac 17\.' || {
+    echo 'JDK 17 is required.' >&2; exit 1;
+}
 export JAVA_HOME
 export PATH="$JAVA_HOME/bin:$PATH"
-
-if [[ -n "${ANDROID_NDK_HOME:-}" ]] && [[ -x "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]]; then
-    NDK_HOME="$ANDROID_NDK_HOME"
-else
-    if [[ "$STRICT_OFFLINE" == "1" ]]; then
-        printf 'ANDROID_NDK_HOME must provide Android NDK r27d in offline mode.\n' >&2
-        exit 1
-    fi
-    # Keep the large archive in the ignored workspace cache while extracting
-    # the toolchain into the conventional per-user cache location.
-    NDK_CACHE_ROOT="${MANGOSSH_NDK_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mangossh}"
-    NDK_HOME="$NDK_CACHE_ROOT/android-ndk-linux/$NDK_REVISION"
-    if [[ ! -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]]; then
-        TOOLS_DIR="$NDK_CACHE_ROOT" \
-            NDK_ARCHIVE_PATH="$TOOLS_DIR/android-ndk-r27d-linux.zip" \
-            bash "$PROJECT_DIR/tools/fetch-android-ndk.sh"
-    fi
-fi
+NDK_HOME="${ANDROID_NDK_HOME:-$TOOLS_DIR/android-ndk-linux/$NDK_REVISION}"
+[[ -x "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" ]] || {
+    echo 'Prepare Android NDK r27d before compilation.' >&2; exit 1;
+}
 grep -q '^Pkg.Revision = 27\.3\.13750724$' "$NDK_HOME/source.properties" || {
     printf 'Android NDK revision %s (r27d) is required at %s.\n' "$NDK_REVISION" "$NDK_HOME" >&2
     exit 1
@@ -125,10 +95,20 @@ gobind_tool="$(go tool -n gobind)"
     install -m 0755 "$gobind_tool" "$GOBIN/gobind"
 popd >/dev/null
 
+# tools/native/build.py passes its validated state directory, which may be
+# outside the checkout (for example on the WSL file system for Windows builds).
+STATE_WORK_DIR=""
+[[ "${MANGOSSH_NATIVE_STATE:-}" != /* ]] || STATE_WORK_DIR="${MANGOSSH_NATIVE_STATE%/}/work/tsnet/"
 case "$WORK_DIR" in
-    /tmp/mangossh-tsnetbridge-v1.102.4) ;;
-    *) printf 'Unsafe tsnet work path: %s\n' "$WORK_DIR" >&2; exit 1 ;;
+    "$PROJECT_DIR"/build/native/*|/tmp/mangossh-*) ;;
+    *)
+        [[ -n "$STATE_WORK_DIR" && "$WORK_DIR" == "$STATE_WORK_DIR"?* && "$WORK_DIR" != *..* ]] || {
+            printf 'Unsafe tsnet work path: %s\n' "$WORK_DIR" >&2
+            exit 1
+        }
+        ;;
 esac
+mkdir -p "$(dirname "$WORK_LOCK")"
 exec 9>"$WORK_LOCK"
 flock --wait 1800 9 || {
     printf 'Timed out waiting for the tsnet build lock.\n' >&2
@@ -145,10 +125,6 @@ find "$BRIDGE_WORK_DIR/vendor" -type f -exec chmod 0644 {} +
 
 pushd "$BRIDGE_WORK_DIR" >/dev/null
 TAILSCALE_MODULE_DIR="$BRIDGE_WORK_DIR/vendor/tailscale.com"
-case "$TAILSCALE_MODULE_DIR" in
-    /tmp/mangossh-tsnetbridge-v1.102.4/gopath/src/website.sung.mangossh/tsnetbridge/vendor/tailscale.com) ;;
-    *) printf 'Unsafe Tailscale module path: %s\n' "$TAILSCALE_MODULE_DIR" >&2; exit 1 ;;
-esac
 [[ -d "$TAILSCALE_MODULE_DIR" ]] || {
     printf 'Unable to locate vendored Tailscale module.\n' >&2
     exit 1
@@ -157,8 +133,8 @@ printf '%s  %s\n%s  %s\n' \
     "$TAILSCALE_TSNET_PATCHED_SHA256" "$TAILSCALE_MODULE_DIR/tsnet/tsnet.go" \
     "$TAILSCALE_SOCKS5_PATCHED_SHA256" "$TAILSCALE_MODULE_DIR/net/socks5/socks5.go" |
     sha256sum --check --status -
-git -C "$TAILSCALE_MODULE_DIR" apply --reverse --check "$PATCH_FILE"
-git -C "$TAILSCALE_MODULE_DIR" apply --reverse "$PATCH_FILE"
+patch --batch --fuzz=0 --dry-run --reverse -p1 -d "$TAILSCALE_MODULE_DIR" -i "$PATCH_FILE"
+patch --batch --fuzz=0 --reverse -p1 -d "$TAILSCALE_MODULE_DIR" -i "$PATCH_FILE"
 printf '%s  %s\n%s  %s\n' \
     "$TAILSCALE_TSNET_GO_SHA256" \
     "$TAILSCALE_MODULE_DIR/tsnet/tsnet.go" \
@@ -166,16 +142,16 @@ printf '%s  %s\n%s  %s\n' \
     "$TAILSCALE_MODULE_DIR/net/socks5/socks5.go" |
     sha256sum --check --status -
 chmod -R u+w "$TAILSCALE_MODULE_DIR"
-git -C "$TAILSCALE_MODULE_DIR" apply --check "$PATCH_FILE"
-git -C "$TAILSCALE_MODULE_DIR" apply "$PATCH_FILE"
+patch --batch --fuzz=0 --dry-run --forward -p1 -d "$TAILSCALE_MODULE_DIR" -i "$PATCH_FILE"
+patch --batch --fuzz=0 --forward -p1 -d "$TAILSCALE_MODULE_DIR" -i "$PATCH_FILE"
 printf '%s  %s\n%s  %s\n' \
     "$TAILSCALE_TSNET_PATCHED_SHA256" \
     "$TAILSCALE_MODULE_DIR/tsnet/tsnet.go" \
     "$TAILSCALE_SOCKS5_PATCHED_SHA256" \
     "$TAILSCALE_MODULE_DIR/net/socks5/socks5.go" |
     sha256sum --check --status -
-# Also exercise ordinary module/vendor compilation, as used by source analyzers.
-go test ./...
+# Full bridge tests are a separate verification task; production compilation
+# still validates the linker version stamp in the GOPATH layout below.
 go list -deps -json ./... > "$WORK_DIR/modules.json"
 python3 "$PROJECT_DIR/tools/generate-tsnet-notices.py" \
     "$WORK_DIR/modules.json" \
@@ -196,12 +172,24 @@ TAILSCALE_MODULE_DIR="$GOPATH_ROOT/src/tailscale.com"
 export GO111MODULE=off
 export GOPATH="$GOPATH_ROOT"
 export GOFLAGS="-trimpath"
-go test -tags mangossh_versioncheck -ldflags "$TAILSCALE_LDFLAGS" ./...
+go test -run '^TestStampedVersion$' -tags mangossh_versioncheck -ldflags "$TAILSCALE_LDFLAGS" ./...
 
 UNSTRIPPED_AAR="$WORK_DIR/mangossh-tsnet-unstripped.aar"
+ABIS="${ABIS:-arm64-v8a armeabi-v7a x86 x86_64}"
+targets=()
+for abi in $ABIS; do
+    case "$abi" in
+        arm64-v8a) targets+=(android/arm64) ;;
+        armeabi-v7a) targets+=(android/arm) ;;
+        x86) targets+=(android/386) ;;
+        x86_64) targets+=(android/amd64) ;;
+        *) echo "Unsupported ABI: $abi" >&2; exit 1 ;;
+    esac
+done
+target_csv="$(IFS=,; echo "${targets[*]}")"
 "$GOBIN/gomobile" bind \
-    -target android \
-    -androidapi 26 \
+    -target "$target_csv" \
+    -androidapi "${MANGOSSH_ANDROID_API:-26}" \
     -trimpath \
     -tags "ts_omit_cachenetmap,ts_omit_netlog" \
     -ldflags "$TAILSCALE_LDFLAGS -linkmode=external -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384 -buildid=" \
@@ -213,5 +201,8 @@ python3 "$PROJECT_DIR/tools/normalize-tsnet-aar.py" \
     "$OUTPUT_AAR" \
     "$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
     "$TAILSCALE_MODULE_DIR/LICENSE" \
-    "$WORK_DIR/tsnet-third-party-notices.txt"
+    "$WORK_DIR/tsnet-third-party-notices.txt" \
+    "$ABIS"
+mkdir -p "$OUTPUT_DIR/symbols"
+cp "$UNSTRIPPED_AAR" "$OUTPUT_DIR/symbols/mangossh-tsnet.aar"
 printf 'Built %s\n' "$OUTPUT_AAR"

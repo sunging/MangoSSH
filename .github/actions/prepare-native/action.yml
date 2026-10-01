@@ -1,0 +1,74 @@
+name: Prepare pinned native inputs
+description: Prepare source and toolchain inputs; Gradle owns native compilation.
+inputs:
+  component-cache:
+    description: >-
+      How to use build/native/cache. "save" restores and saves it (the caller
+      must prune unreferenced entries after building), "restore" only restores
+      it, and "off" compiles every component from source in this run.
+    default: save
+runs:
+  using: composite
+  steps:
+    - name: Check component cache mode
+      shell: bash
+      env:
+        COMPONENT_CACHE: ${{ inputs.component-cache }}
+      run: |
+        case "$COMPONENT_CACHE" in
+          save|restore|off) ;;
+          *) echo "Unknown component-cache mode: $COMPONENT_CACHE" >&2; exit 1 ;;
+        esac
+    - name: Install host build tools
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes autoconf automake binutils bison cmake gettext gperf \
+          libtool ninja-build pkg-config python3 rsync texinfo unzip zip
+    - name: Cache pinned toolchains
+      uses: actions/cache@v6
+      with:
+        path: |
+          .tools/android-ndk-linux/27.3.13750724
+          .tools/go/1.26.7
+        # The fetch scripts verify archive hashes; this key only avoids downloads.
+        key: native-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/toolchains.json', 'tools/fetch-android-ndk.sh', 'tools/fetch-go.sh', 'tools/lib/go-toolchain.sh') }}
+    # Every restored entry is independently checked against actual inputs and
+    # output hashes. The archive key is only a retrieval hint, and restore-keys
+    # can bring back older entries, which the saving job prunes before upload.
+    - name: Cache local component outputs
+      if: inputs.component-cache == 'save'
+      uses: actions/cache@v6
+      with:
+        path: build/native/cache
+        key: native-components-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/toolchains.json', 'tools/fdroid-sources.lock', 'native/mosh/recipes/**', 'tools/native/**', 'tools/build-tsnet-android.sh', 'tools/normalize-tsnet-aar.py', 'tools/lib/go-toolchain.sh', 'native/tsnetbridge/**') }}
+        restore-keys: native-components-v1-${{ runner.os }}-${{ runner.arch }}-
+    - name: Restore local component outputs
+      if: inputs.component-cache == 'restore'
+      uses: actions/cache/restore@v6
+      with:
+        path: build/native/cache
+        key: native-components-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/toolchains.json', 'tools/fdroid-sources.lock', 'native/mosh/recipes/**', 'tools/native/**', 'tools/build-tsnet-android.sh', 'tools/normalize-tsnet-aar.py', 'tools/lib/go-toolchain.sh', 'native/tsnetbridge/**') }}
+        restore-keys: native-components-v1-${{ runner.os }}-${{ runner.arch }}-
+    - name: Prepare locked source and compiler inputs
+      shell: bash
+      run: |
+        bash tools/fetch-fdroid-sources.sh
+        bash tools/fetch-android-ndk.sh
+        bash tools/fetch-go.sh
+        python3 tools/native/termlib.py --fetch
+        "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+          'cmake;3.22.1' 'platforms;android-26' 'platforms;android-37.0' 'build-tools;36.0.0'
+        echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724" >> "$GITHUB_ENV"
+        echo "MANGOSSH_GO_ROOT=$GITHUB_WORKSPACE/.tools/go/1.26.7" >> "$GITHUB_ENV"
+        echo "MANGOSSH_MOSH_DEPS_DIR=$GITHUB_WORKSPACE/.fdroid/sources" >> "$GITHUB_ENV"
+        echo "MANGOSSH_OFFLINE_BUILD=1" >> "$GITHUB_ENV"
+    - name: Verify native source and cache contracts
+      shell: bash
+      run: |
+        python3 tools/native/build.py verify-sources
+        python3 tools/native/test_native.py
+        python3 tools/native/check-notices.py
+        bash tools/test-mosh-no-gmp.sh
+        bash tools/test-go-toolchain.sh
+        bash tools/test-tsnet-bridge.sh

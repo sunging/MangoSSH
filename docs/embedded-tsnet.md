@@ -23,8 +23,8 @@ routing are intentionally unsupported.
 The reproducible bridge build pins:
 
 - Go `1.26.7`;
-- JDK 17 supplied by the build environment (the standalone script's download
-  fallback pins Eclipse Temurin `17.0.19+10`);
+- JDK 17 supplied by the build environment (`tools/fetch-jdk17.sh` can prepare
+  checksum-pinned Eclipse Temurin `17.0.19+10` before compilation);
 - Android NDK `27.3.13750724` (r27d);
 - `tailscale.com v1.102.4`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
@@ -42,8 +42,8 @@ The vendor tree already includes
 and source analysis see the same network-refresh API as Android builds.
 The production build verifies the patched hashes, reverses the patch in its
 disposable copy to verify the upstream hashes, then reapplies it with
-`git apply --check`. The bridge test separately downloads pristine upstream
-source and checks the same patch and hashes before testing both source paths.
+zero-fuzz `patch` dry runs. The bridge tests consume this same vendor tree with
+network access disabled; updating dependencies is a separate maintenance step.
 A source mismatch, skipped hunk, or unexpected result stops the build.
 
 `tools/lib/tsnet-version.sh` pins the upstream tag and commit and provides the
@@ -79,14 +79,13 @@ On Linux, Gradle explicitly passes its running JDK as `JAVA_HOME`, so the
 native subprocess and Gradle use the same installation. Gradle itself requires
 a preinstalled JDK 17 and does not provision Java toolchains.
 
-On Windows, normal Gradle tasks use WSL as an adapter to invoke the same generic
-Linux build script and pass Gradle's resolved Android SDK path into Linux.
-The adapter does not forward the Windows JVM path; the Linux script selects
-its own Linux JDK as described above.
+On Windows, Gradle uses WSL to invoke the same Linux adapter. Linux SDK, NDK and
+JDK installations are selected using the `MANGOSSH_LINUX_*` variables documented
+in building.md; Windows compiler installations are not used by the Linux recipes.
 
 ```text
-gradlew.bat :app:testDebugUnitTest
-gradlew.bat :app:lint :app:assembleDebug
+gradlew.bat :app:testGithubDebugUnitTest :app:testFdroidDebugUnitTest
+gradlew.bat :app:lintGithubDebug :app:assembleGithubDebug
 ```
 
 The output is `app/build/generated/tsnet/mangossh-tsnet.aar`. It contains
@@ -147,20 +146,20 @@ codes.
 Use JDK 17 and run:
 
 ```text
-gradlew.bat :app:testDebugUnitTest
-gradlew.bat :app:connectedDebugAndroidTest
-gradlew.bat :app:lint :app:assembleDebug :app:assembleRelease
+gradlew.bat :app:testGithubDebugUnitTest :app:testFdroidDebugUnitTest
+gradlew.bat :app:connectedGithubDebugAndroidTest
+gradlew.bat :app:lintGithubDebug :app:assembleGithubDebug :app:assembleGithubRelease
 ```
 
 Then inspect the APK:
 
 ```text
 bash tools/check-16kb-elf.sh \
-  app/build/outputs/apk/debug/app-debug.apk
-zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
+  app/build/outputs/apk/github/debug/app-github-debug.apk
+zipalign -c -P 16 -v 4 app/build/outputs/apk/github/debug/app-github-debug.apk
 bash tools/check-16kb-elf.sh \
-  app/build/outputs/apk/release/app-release-unsigned.apk
-zipalign -c -P 16 -v 4 app/build/outputs/apk/release/app-release-unsigned.apk
+  app/build/outputs/apk/github/release/app-github-release-unsigned.apk
+zipalign -c -P 16 -v 4 app/build/outputs/apk/github/release/app-github-release-unsigned.apk
 ```
 
 Confirm that all four ABI directories contain `libgojni.so`,
@@ -199,3 +198,14 @@ adb shell ps -A
 Do not print private-file contents. Confirm Logcat and filenames/process state
 contain no Auth Key, authorization URL, target hostname/IP, Mosh session key,
 SOCKS credential, raw Tailscale log, or orphaned native process.
+
+## Native build contract
+
+The shared Gradle adapter now validates a content-addressed local cache, builds
+only `-PmangosshAbis` for debug configurations, and records a producer manifest.
+Release builds still require all four ABIs. Work directories and gomobile tools
+are isolated per checkout and input fingerprint. All compiler inputs must be
+prepared before compilation; the producer never downloads toolchains. Full Go
+tests run separately with `bash tools/test-tsnet-bridge.sh`, using the same
+vendored sources with GOPROXY and GOSUMDB disabled. The AAR normalizer covers
+classes.jar metadata as well as the outer archive. See [building.md](building.md).

@@ -1,6 +1,11 @@
 import java.io.File
+import website.sung.build.MoshBuild
+import website.sung.build.TsnetBuild
+import website.sung.build.NativeTask
+import website.sung.build.NativeSettings
 
 plugins {
+    id("mangossh.native-tools")
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
@@ -76,58 +81,83 @@ require(
     "vendor/modules.txt does not pin tailscale.com v$embeddedTailscaleVersion"
 }
 
-val embeddedTsnetAar = layout.buildDirectory.file("generated/tsnet/mangossh-tsnet.aar")
+val nativeConfig = NativeSettings.read(rootProject.projectDir)
+val nativeAbis = NativeSettings.abis(project)
+val nativeSourceMode = providers.gradleProperty("mangosshNativeSourceMode").orElse("locked")
 val androidSdkPath = androidComponents.sdkComponents.sdkDirectory.get().asFile.absolutePath
-val buildEmbeddedTsnetAar = tasks.register<Exec>("buildEmbeddedTsnetAar") {
-    group = "build"
-    description = "Builds the pinned four-ABI embedded tsnet gomobile bridge."
-    val bridgeSources = rootProject.fileTree("native/tsnetbridge") {
-        exclude(".build/**")
-    }
-    inputs.files(bridgeSources)
-    inputs.files(
-        rootProject.file("tools/build-tsnet-android.sh"),
-        rootProject.file("tools/fetch-android-ndk.sh"),
-        rootProject.file("tools/fetch-go.sh"),
-        rootProject.file("tools/lib/go-toolchain.sh"),
-        rootProject.file("tools/fetch-jdk17.sh"),
-        rootProject.file("tools/lib/linux-host.sh"),
-        rootProject.file("tools/lib/tsnet-version.sh"),
-        rootProject.file("tools/generate-tsnet-notices.py"),
-        rootProject.file("tools/normalize-tsnet-aar.py"),
-        rootProject.file("tools/patches/tailscale-v1.102.4-tsnet-no-logtail.patch"),
-    )
-    inputs.property("androidSdkDirectory", androidSdkPath)
-    outputs.file(embeddedTsnetAar)
-    workingDir(rootProject.projectDir)
 
-    if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-        val translatedVariables =
-            "MANGOSSH_PROJECT_DIR/p:ANDROID_HOME/p:ANDROID_SDK_ROOT/p"
-        val inheritedWslEnv = providers.environmentVariable("WSLENV").orNull.orEmpty()
-        val wslEnv = listOf(inheritedWslEnv, translatedVariables)
-            .filter(String::isNotBlank)
-            .joinToString(":")
-        environment("MANGOSSH_PROJECT_DIR", rootProject.projectDir.absolutePath)
-        environment("ANDROID_HOME", androidSdkPath)
-        environment("ANDROID_SDK_ROOT", androidSdkPath)
-        environment("WSLENV", wslEnv)
-        commandLine(
-            "wsl.exe",
-            "bash",
-            "-lc",
-            "cd \"\$MANGOSSH_PROJECT_DIR\" && bash tools/build-tsnet-android.sh",
-        )
-    } else {
-        environment("ANDROID_HOME", androidSdkPath)
-        environment("ANDROID_SDK_ROOT", androidSdkPath)
-        // Native Linux tools must use the same JDK as Gradle. The Windows branch
-        // uses a separate Linux JDK inside WSL, not the Windows JVM installation.
-        environment("JAVA_HOME", System.getProperty("java.home"))
-        if (providers.gradleProperty("mangosshOfflineBuild").orNull == "true") {
-            environment("MANGOSSH_OFFLINE_BUILD", "1")
+fun NativeTask.configureNativeInputs() {
+    rootDirectory.set(rootProject.layout.projectDirectory)
+    stateDirectory.set(rootProject.layout.buildDirectory.dir("native"))
+    // Optional per-developer override, normally in ~/.gradle/gradle.properties.
+    hostStateDirectory.set(providers.gradleProperty("mangosshNativeStateDir"))
+    abis.set(nativeAbis)
+    sourceMode.set(nativeSourceMode)
+    offline.set(providers.gradleProperty("mangosshOfflineBuild").map { it.toBoolean() }.orElse(true))
+    val names = listOf(
+        "MANGOSSH_MOSH_DEPS_DIR", "MANGOSSH_GO_ROOT", "ANDROID_NDK_HOME",
+        "MANGOSSH_ABI_BUILD_JOBS", "MANGOSSH_ABI_PARALLELISM",
+        "MANGOSSH_LINUX_JAVA_HOME", "MANGOSSH_LINUX_SDK_HOME", "MANGOSSH_LINUX_NDK_HOME",
+    )
+    buildEnvironment.set(names.associateWith { providers.environmentVariable(it).orNull.orEmpty() } + mapOf(
+        "ANDROID_HOME" to androidSdkPath,
+        "JAVA_HOME" to System.getProperty("java.home"),
+    ))
+    sourceInputs.from(rootProject.fileTree("tools/native"), rootProject.file("native/toolchains.json"))
+}
+
+val buildMosh = tasks.register<MoshBuild>("buildMosh") {
+    group = "build"
+    description = "Builds and verifies Mosh from pinned local sources."
+    configureNativeInputs()
+    sourceInputs.from(rootProject.fileTree("native/mosh"), rootProject.file("tools/fdroid-sources.lock"))
+    // Explicit locations override AGP's generated-source convention, so Gradle,
+    // the standalone CLI and tools/install-mosh-assets.sh share one layout.
+    jniDirectory.set(layout.buildDirectory.dir("generated/native/mosh/jniLibs"))
+    assetsDirectory.set(layout.buildDirectory.dir("generated/native/mosh/assets"))
+    symbolsDirectory.set(layout.buildDirectory.dir("generated/native/mosh/symbols"))
+    manifestFile.set(layout.buildDirectory.file("generated/native/mosh/manifest.json"))
+}
+
+val buildEmbeddedTsnetAar = tasks.register<TsnetBuild>("buildEmbeddedTsnetAar") {
+    group = "build"
+    description = "Builds the vendored tsnet bridge for the requested ABIs."
+    configureNativeInputs()
+    sourceInputs.from(rootProject.fileTree("native/tsnetbridge") { exclude(".build/**") })
+    sourceInputs.from(rootProject.fileTree("tools") { include("*.sh", "*.py", "lib/**", "patches/tailscale-*") })
+    outputDirectory.set(layout.buildDirectory.dir("generated/tsnet"))
+}
+val embeddedTsnetAar = buildEmbeddedTsnetAar.flatMap { it.outputDirectory.file("mangossh-tsnet.aar") }
+
+val verifyReleaseNativeInputs = tasks.register("verifyReleaseNativeInputs") {
+    group = "verification"
+    val mode = nativeSourceMode
+    val selected = nativeAbis.toList()
+    val supported = (nativeConfig["abis"] as List<*>).map { it.toString() }
+    inputs.property("sourceMode", mode)
+    inputs.property("abis", selected)
+    doLast {
+        require(mode.get() == "locked") { "Release builds require locked native sources" }
+        require(selected == supported) { "Release builds require all four native ABIs" }
+    }
+}
+
+// AGP still packages src/<sourceSet>/jniLibs and assets, so a binary left there
+// by the old scripts would silently replace or collide with the generated one.
+val nativeSourceLeftovers = fileTree("src") {
+    include("*/jniLibs/**", "*/assets/mosh/terminfo.zip")
+}
+val verifyNoNativeSourceBinaries = tasks.register("verifyNoNativeSourceBinaries") {
+    group = "verification"
+    description = "Rejects native binaries or terminfo placed in app source sets."
+    val leftovers = nativeSourceLeftovers
+    val appDir = projectDir
+    inputs.files(leftovers)
+    doLast {
+        val found = leftovers.files.map { it.relativeTo(appDir).invariantSeparatorsPath }.sorted()
+        require(found.isEmpty()) {
+            "Remove native outputs from app source sets; Gradle generates them: ${found.joinToString()}"
         }
-        commandLine("bash", "tools/build-tsnet-android.sh")
     }
 }
 
@@ -147,19 +177,32 @@ val hasReleaseSigning = listOf(
 
 android {
     // Match the native build scripts when Gradle strips and packages their libraries.
-    ndkVersion = "27.3.13750724"
+    ndkVersion = nativeConfig["ndk"].toString()
+    NativeSettings.agpNdkPath(project)?.let { ndkPath = it }
     namespace = "website.sung.mangossh"
     compileSdk = 37
 
     defaultConfig {
         applicationId = "website.sung.mangossh"
-        minSdk = 26
+        minSdk = (nativeConfig["androidApi"] as Number).toInt()
+        ndk {
+            abiFilters += nativeAbis
+            debugSymbolLevel = "FULL"
+        }
+        externalNativeBuild.cmake.arguments += "-DANDROID_STL=c++_static"
         targetSdk = 37
         versionCode = appVersionCode
         versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = nativeConfig["cmake"].toString()
+        }
     }
 
     flavorDimensions += "distribution"
@@ -210,6 +253,8 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // These producers already own stripping; preserve their verified bytes.
+            keepDebugSymbols += setOf("**/libmosh_client.so", "**/libgojni.so")
         }
     }
 
@@ -223,9 +268,6 @@ android {
 
 }
 
-tasks.named("preBuild").configure {
-    dependsOn(buildEmbeddedTsnetAar)
-}
 
 /** Writes the vendored Tailscale release as a Kotlin constant for display in Settings. */
 abstract class GenerateEmbeddedTsnetBuildInfo : DefaultTask() {
@@ -263,6 +305,14 @@ val generateEmbeddedTsnetBuildInfo = tasks.register<GenerateEmbeddedTsnetBuildIn
 }
 
 androidComponents.onVariants { variant ->
+    variant.sources.jniLibs?.addGeneratedSourceDirectory(buildMosh, MoshBuild::getJniDirectory)
+    variant.sources.assets?.addGeneratedSourceDirectory(buildMosh, MoshBuild::getAssetsDirectory)
+    tasks.matching { it.name == "pre${variant.name.replaceFirstChar(Char::uppercaseChar)}Build" }
+        .configureEach { dependsOn(verifyNoNativeSourceBinaries) }
+    if (variant.buildType == "release") {
+        tasks.matching { it.name == "pre${variant.name.replaceFirstChar(Char::uppercaseChar)}Build" }
+            .configureEach { dependsOn(verifyReleaseNativeInputs) }
+    }
     requireNotNull(variant.sources.kotlin) { "Kotlin sources are required" }
         .addGeneratedSourceDirectory(
             generateEmbeddedTsnetBuildInfo,
@@ -327,7 +377,7 @@ tasks.register("verifyReleaseVersion") {
 }
 
 dependencies {
-    implementation(files(embeddedTsnetAar))
+    implementation(files(embeddedTsnetAar).builtBy(buildEmbeddedTsnetAar))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
