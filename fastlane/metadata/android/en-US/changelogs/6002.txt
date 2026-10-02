@@ -1,0 +1,1 @@
+Fixed F-Droid builds to honor the configured NDK without conflicting paths. All native components now use the same pinned toolchain on Linux, with explicit validation of the NDK version and host platform.
