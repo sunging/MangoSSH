@@ -57,6 +57,7 @@ public abstract class NativeTask extends DefaultTask {
         env.put("MANGOSSH_NATIVE_SOURCE_MODE", getSourceMode().get());
         env.putAll(paths);
         if (windows) {
+            env.put("MANGOSSH_WINDOWS_HOST", "1");
             List<String> translated = new ArrayList<>();
             translated.add("MANGOSSH_PROJECT_DIR/p");
             // A WSL path is passed through unchanged; a Windows path is translated.

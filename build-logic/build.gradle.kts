@@ -1,6 +1,12 @@
 plugins { `java-gradle-plugin` }
 
-dependencies { implementation(localGroovy()) }
+repositories { mavenCentral() }
+
+dependencies {
+    implementation(localGroovy())
+    testImplementation(gradleTestKit())
+    testImplementation("junit:junit:4.13.2")
+}
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17

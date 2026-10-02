@@ -85,6 +85,7 @@ val nativeConfig = NativeSettings.read(rootProject.projectDir)
 val nativeAbis = NativeSettings.abis(project)
 val nativeSourceMode = providers.gradleProperty("mangosshNativeSourceMode").orElse("locked")
 val androidSdkPath = androidComponents.sdkComponents.sdkDirectory.get().asFile.absolutePath
+val nativeNdk = NativeSettings.ndk(project, file(androidSdkPath))
 
 fun NativeTask.configureNativeInputs() {
     rootDirectory.set(rootProject.layout.projectDirectory)
@@ -101,6 +102,7 @@ fun NativeTask.configureNativeInputs() {
     )
     buildEnvironment.set(names.associateWith { providers.environmentVariable(it).orNull.orEmpty() } + mapOf(
         "ANDROID_HOME" to androidSdkPath,
+        "ANDROID_NDK_HOME" to nativeNdk.directory(),
         "JAVA_HOME" to System.getProperty("java.home"),
     ))
     sourceInputs.from(rootProject.fileTree("tools/native"), rootProject.file("native/toolchains.json"))
@@ -178,7 +180,7 @@ val hasReleaseSigning = listOf(
 android {
     // Match the native build scripts when Gradle strips and packages their libraries.
     ndkVersion = nativeConfig["ndk"].toString()
-    NativeSettings.agpNdkPath(project)?.let { ndkPath = it }
+    nativeNdk.agpPath()?.let { ndkPath = it }
     namespace = "website.sung.mangossh"
     compileSdk = 37
 

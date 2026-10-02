@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-if [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
+if [[ "${MANGOSSH_WINDOWS_HOST:-}" == 1 ]]; then
     if [[ -n "${MANGOSSH_LINUX_JAVA_HOME:-}" ]]; then
         export JAVA_HOME="$MANGOSSH_LINUX_JAVA_HOME"
     elif command -v javac >/dev/null 2>&1; then

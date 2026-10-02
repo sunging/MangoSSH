@@ -9,10 +9,11 @@ plugins {
 
 val nativeConfig = NativeSettings.read(rootProject.projectDir)
 val nativeAbis = NativeSettings.abis(project)
+val nativeNdk = NativeSettings.ndk(project, androidComponents.sdkComponents.sdkDirectory.get().asFile)
 
 android {
     ndkVersion = nativeConfig["ndk"].toString()
-    NativeSettings.agpNdkPath(project)?.let { ndkPath = it }
+    nativeNdk.agpPath()?.let { ndkPath = it }
     namespace = "org.connectbot.terminal"
     compileSdk = 37
 
