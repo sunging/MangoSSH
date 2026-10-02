@@ -5,7 +5,6 @@
 
 ### Bug Fixes
 
-* honor F-Droid NDK configuration across native producers ([37c79c1](https://github.com/sunging/MangoSSH/commit/37c79c156319abc99c17176174bf37abf6d001a0))
 * honor F-Droid NDK configuration across native producers ([a902f31](https://github.com/sunging/MangoSSH/commit/a902f31e2ae6644fdf7285f7061bab25e6f87ae9))
 
 ## [0.6.1](https://github.com/sunging/MangoSSH/compare/v0.6.0...v0.6.1) (2026-10-01)
