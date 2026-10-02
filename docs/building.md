@@ -50,10 +50,16 @@ JNI packaging remains enabled.
 
 The shell Mosh/tsnet producers require Linux x86_64. On Windows, PTY and termlib
 use the Windows SDK/NDK and CMake; Gradle runs Mosh/tsnet through WSL. Install the
-Linux prerequisites above inside WSL. AGP takes `ANDROID_NDK_HOME` as `ndkPath`
-only when it is NDK `27.3.13750724` built for the current host; otherwise, for
-example when it names the Linux NDK on Windows, AGP uses the SDK's
-`ndk/27.3.13750724` and logs a warning. `MANGOSSH_LINUX_JAVA_HOME`,
+Linux prerequisites above inside WSL. NDK selection first honors `ndk.dir` in
+the root `local.properties` (including F-Droid's generated file), then
+`ANDROID_NDK_HOME`, then the SDK's `ndk/27.3.13750724`. Every selected package
+must have the locked revision and match the current host; invalid explicit
+paths fail configuration. With `ndk.dir`, Gradle leaves `android.ndkPath` unset
+to avoid AGP's conflicting-selector error. Linux Mosh and tsnet receive the
+same selected directory, including when Gradle itself runs in WSL.
+The one host fallback is a valid locked Linux NDK in `ANDROID_NDK_HOME` on
+Windows: AGP uses the locked Windows SDK NDK and logs a warning.
+`MANGOSSH_LINUX_JAVA_HOME`,
 `MANGOSSH_LINUX_SDK_HOME`, and `MANGOSSH_LINUX_NDK_HOME` select Linux tools;
 Windows `JAVA_HOME` and NDK paths are not reused for Linux executables. The
 project and output paths are translated through WSLENV. Native component state

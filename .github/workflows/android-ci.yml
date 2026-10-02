@@ -60,6 +60,7 @@ jobs:
       # androidTest source set that no longer builds against the app it tests.
       - name: Verify version, test, lint, and package both distributions
         run: |
+          ./gradlew --no-daemon -p build-logic test
           ./gradlew --no-daemon \
             :app:verifyReleaseVersion \
             :app:testGithubDebugUnitTest \
