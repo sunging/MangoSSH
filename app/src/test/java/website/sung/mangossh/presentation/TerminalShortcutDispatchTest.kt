@@ -123,6 +123,19 @@ class TerminalShortcutDispatchTest {
         }
     }
 
+    @Test
+    fun onlyCtrlShiftVPastesSoPlainCtrlVReachesTheShell() {
+        val v = android.view.KeyEvent.KEYCODE_V
+
+        assertTrue(isTerminalPasteShortcut(v, ctrl = true, shift = true, alt = false))
+        assertFalse(isTerminalPasteShortcut(v, ctrl = true, shift = false, alt = false))
+        assertFalse(isTerminalPasteShortcut(v, ctrl = false, shift = true, alt = false))
+        assertFalse(isTerminalPasteShortcut(v, ctrl = true, shift = true, alt = true))
+        assertFalse(
+            isTerminalPasteShortcut(android.view.KeyEvent.KEYCODE_C, ctrl = true, shift = true, alt = false),
+        )
+    }
+
     private fun capture(action: TerminalShortcutAction, state: TerminalModifierState): Captured {
         val events = mutableListOf<Output>()
         var pasteCount = 0

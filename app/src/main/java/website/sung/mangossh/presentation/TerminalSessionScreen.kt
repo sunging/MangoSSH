@@ -67,10 +67,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.ClipEntry
@@ -476,8 +476,12 @@ fun TerminalSessionScreen(
                             onInterceptKey = { event ->
                                 if (
                                     event.type == KeyEventType.KeyDown &&
-                                    event.isCtrlPressed &&
-                                    event.key == Key.V
+                                    isTerminalPasteShortcut(
+                                        nativeKeyCode = event.nativeKeyEvent.keyCode,
+                                        ctrl = event.isCtrlPressed,
+                                        shift = event.isShiftPressed,
+                                        alt = event.isAltPressed,
+                                    )
                                 ) {
                                     pasteFromClipboard()
                                     terminalModifierState.clearTransients()

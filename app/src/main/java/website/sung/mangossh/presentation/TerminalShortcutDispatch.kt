@@ -121,6 +121,16 @@ internal fun dispatchTerminalShortcut(
 internal fun consumesUnhandledEscape(nativeKeyCode: Int, sessionOpen: Boolean): Boolean =
     sessionOpen && nativeKeyCode == android.view.KeyEvent.KEYCODE_ESCAPE
 
+/**
+ * Whether a hardware key chord pastes the clipboard instead of reaching the shell.
+ *
+ * Ctrl+Shift+V, as in common desktop terminals: plain Ctrl+V must still reach the remote
+ * program, where vim uses it for block selection, readline for quoted insert, and nano and
+ * emacs for paging.
+ */
+internal fun isTerminalPasteShortcut(nativeKeyCode: Int, ctrl: Boolean, shift: Boolean, alt: Boolean): Boolean =
+    nativeKeyCode == android.view.KeyEvent.KEYCODE_V && ctrl && shift && !alt
+
 private fun dispatchText(
     dispatchKey: (Int, Int) -> Unit,
     dispatchCharacter: (Int, Int) -> Unit,
