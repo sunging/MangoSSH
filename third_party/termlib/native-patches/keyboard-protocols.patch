@@ -1,0 +1,720 @@
+diff --git a/libvterm/src/keyboard.c b/libvterm/src/keyboard.c
+index e34e609..356000a 100644
+--- a/libvterm/src/keyboard.c
++++ b/libvterm/src/keyboard.c
+@@ -4,56 +4,113 @@
+ 
+ #include "utf8.h"
+ 
+-void vterm_keyboard_unichar(VTerm *vt, uint32_t c, VTermModifier mod)
++/*
++ * Modified keys are encoded in one of three ways:
++ *
++ *  - Legacy (default): what xterm sends without modifyOtherKeys. Ctrl folds a character into
++ *    its C0 control code where one exists, Alt prefixes ESC, and anything without a legacy
++ *    form drops the modifier. Shells and readline only understand this encoding.
++ *  - xterm modifyOtherKeys (CSI > 4 ; level m): CSI 27 ; mod ; code ~ for keys whose legacy
++ *    form loses information (level 1) or for every modified key (level 2).
++ *  - kitty "disambiguate escape codes" (CSI > 1 u): CSI code ; mod u.
++ *
++ * The application chooses; kitty takes precedence when both are enabled.
++ */
++
++/* Writes one character, ESC-prefixed when Alt is held, as a single output chunk. */
++static void push_legacy(VTerm *vt, uint32_t c, VTermModifier mod)
+ {
+-  /* The shift modifier is never important for Unicode characters
+-   * apart from Space
+-   */
+-  if(c != ' ')
+-    mod &= ~VTERM_MOD_SHIFT;
+-
+-  if(mod == 0) {
+-    // Normal text - ignore just shift
+-    char str[6];
+-    int seqlen = fill_utf8(c, str);
+-    vterm_push_output_bytes(vt, str, seqlen);
+-    return;
++  char str[7];
++  int seqlen = 0;
++  if(mod & VTERM_MOD_ALT)
++    str[seqlen++] = ESC_S[0];
++  seqlen += fill_utf8(c, str + seqlen);
++  vterm_push_output_bytes(vt, str, seqlen);
++}
++
++/* Returns 1 when an application-enabled protocol encoded the key. `ambiguous` says whether the
++ * legacy encoding would lose one of the modifiers, which is all modifyOtherKeys level 1 covers. */
++static int push_protocol_key(VTerm *vt, uint32_t code, VTermModifier mod, int ambiguous)
++{
++  VTermState *state = vt->state;
++
++  if(vterm_state_kitty_keyboard_flags(state) & KITTY_KEYBOARD_DISAMBIGUATE) {
++    if(mod != 0)
++      vterm_push_output_sprintf_ctrl(vt, C1_CSI, "%d;%du", code, mod+1);
++    else if(code == 0x1b) // Escape is the one unmodified key disambiguation changes
++      vterm_push_output_sprintf_ctrl(vt, C1_CSI, "%du", code);
++    else
++      return 0;
++    return 1;
++  }
++
++  if(mod != 0 && (state->modify_other_keys == 2 || (state->modify_other_keys == 1 && ambiguous))) {
++    vterm_push_output_sprintf_ctrl(vt, C1_CSI, "27;%d;%d~", mod+1, code);
++    return 1;
+   }
+ 
+-  int needs_CSIu;
++  return 0;
++}
++
++/* The C0 control code xterm sends for Ctrl plus this character, or -1 if there is none. */
++static int legacy_ctrl_code(uint32_t c)
++{
++  if(c >= 'a' && c <= 'z')
++    return c - 'a' + 1;
++  if(c >= 'A' && c <= 'Z')
++    return c - 'A' + 1;
++
+   switch(c) {
+-    /* Special Ctrl- letters that can't be represented elsewise */
+-    case 'i': case 'j': case 'm': case '[':
+-      needs_CSIu = 1;
+-      break;
+-    /* Ctrl-\ ] ^ _ don't need CSUu */
+-    case '\\': case ']': case '^': case '_':
+-      needs_CSIu = 0;
+-      break;
+-    /* Shift-space needs CSIu */
+-    case ' ':
+-      needs_CSIu = !!(mod & VTERM_MOD_SHIFT);
+-      break;
+-    /* All other characters needs CSIu except for letters a-z */
+-    default:
+-      needs_CSIu = (c < 'a' || c > 'z');
++    case ' ': case '@': case '`': case '2':
++      return 0x00;
++    case '[': case '3':
++      return 0x1b;
++    case '\\': case '4':
++      return 0x1c;
++    case ']': case '5':
++      return 0x1d;
++    case '^': case '~': case '6':
++      return 0x1e;
++    case '_': case '-': case '/': case '7':
++      return 0x1f;
++    case '?': case '8':
++      return 0x7f;
+   }
++  return -1;
++}
+ 
+-  /* ALT we can just prefix with ESC; anything else requires CSI u */
+-  if(needs_CSIu && (mod & ~VTERM_MOD_ALT)) {
+-    vterm_push_output_sprintf_ctrl(vt, C1_CSI, "%d;%du", c, mod+1);
++void vterm_keyboard_unichar(VTerm *vt, uint32_t c, VTermModifier mod)
++{
++  /* A control character is already fully encoded (for example a ^H Backspace); only Alt
++   * still applies to it. */
++  if(c < 0x20 || c == 0x7f) {
++    push_legacy(vt, c, mod);
+     return;
+   }
+ 
+-  if(mod & VTERM_MOD_CTRL)
+-    c &= 0x1f;
++  /* Shift alone never changes how a character is sent: the character already reflects it. */
++  if(!(mod & (VTERM_MOD_CTRL|VTERM_MOD_ALT))) {
++    push_legacy(vt, c, 0);
++    return;
++  }
+ 
+-  if(mod & VTERM_MOD_ALT)
+-    vterm_push_output_bytes(vt, ESC_S, sizeof(ESC_S) - 1);
++  int upper = (c >= 'A' && c <= 'Z');
++  if(upper)
++    mod |= VTERM_MOD_SHIFT;
+ 
+-  char str[6];
+-  int seqlen = fill_utf8(c, str);
+-  vterm_push_output_bytes(vt, str, seqlen);
++  int ctrl_code = legacy_ctrl_code(c);
++  int ambiguous = (mod & VTERM_MOD_CTRL) && (ctrl_code < 0 || (mod & VTERM_MOD_SHIFT));
++  /* kitty reports the unshifted key with Shift as a modifier; xterm reports the character. */
++  uint32_t code = c;
++  if(upper && (vterm_state_kitty_keyboard_flags(vt->state) & KITTY_KEYBOARD_DISAMBIGUATE))
++    code = c - 'A' + 'a';
++  if(push_protocol_key(vt, code, mod, ambiguous))
++    return;
++
++  if((mod & VTERM_MOD_CTRL) && ctrl_code >= 0)
++    c = ctrl_code;
++
++  push_legacy(vt, c, mod);
+ }
+ 
+ typedef struct {
+@@ -126,7 +183,7 @@ static keycodes_s keycodes_kp[] = {
+   { KEYCODE_KEYPAD, '-', 'm' }, // KP_MINUS
+   { KEYCODE_KEYPAD, '.', 'n' }, // KP_PERIOD
+   { KEYCODE_KEYPAD, '/', 'o' }, // KP_DIVIDE
+-  { KEYCODE_KEYPAD, '\n', 'M' }, // KP_ENTER
++  { KEYCODE_KEYPAD, '\r', 'M' }, // KP_ENTER
+   { KEYCODE_KEYPAD, '=', 'X' }, // KP_EQUAL
+ };
+ 
+@@ -157,9 +214,12 @@ void vterm_keyboard_key(VTerm *vt, VTermKey key, VTermModifier mod)
+     break;
+ 
+   case KEYCODE_TAB:
+-    /* Shift-Tab is CSI Z but plain Tab is 0x09 */
+-    if(mod == VTERM_MOD_SHIFT)
++    /* Shift-Tab is CSI Z but plain Tab is 0x09; modifyOtherKeys leaves Shift-Tab alone */
++    if(mod == VTERM_MOD_SHIFT &&
++        !(vterm_state_kitty_keyboard_flags(vt->state) & KITTY_KEYBOARD_DISAMBIGUATE))
+       vterm_push_output_sprintf_ctrl(vt, C1_CSI, "Z");
++    else if(push_protocol_key(vt, k.literal, mod, mod & VTERM_MOD_CTRL))
++      break;
+     else if(mod & VTERM_MOD_SHIFT)
+       vterm_push_output_sprintf_ctrl(vt, C1_CSI, "1;%dZ", mod+1);
+     else
+@@ -167,18 +227,27 @@ void vterm_keyboard_key(VTerm *vt, VTermKey key, VTermModifier mod)
+     break;
+ 
+   case KEYCODE_ENTER:
+-    /* Enter is CRLF in newline mode, but just LF in linefeed */
++    if(push_protocol_key(vt, k.literal, mod, mod & (VTERM_MOD_SHIFT|VTERM_MOD_CTRL)))
++      break;
++    /* Enter is CRLF in newline mode, but just CR in linefeed mode */
+     if(vt->state->mode.newline)
+-      vterm_push_output_sprintf(vt, "\r\n");
++      vterm_push_output_sprintf(vt, mod & VTERM_MOD_ALT ? ESC_S "\r\n" : "\r\n");
+     else
+       goto case_LITERAL;
+     break;
+ 
+-  case KEYCODE_LITERAL: case_LITERAL:
+-    if(mod & (VTERM_MOD_SHIFT|VTERM_MOD_CTRL))
+-      vterm_push_output_sprintf_ctrl(vt, C1_CSI, "%d;%du", k.literal, mod+1);
+-    else
+-      vterm_push_output_sprintf(vt, mod & VTERM_MOD_ALT ? ESC_S "%c" : "%c", k.literal);
++  case KEYCODE_LITERAL: // Backspace and Escape
++    if(push_protocol_key(vt, (unsigned char)k.literal, mod,
++          mod & (k.literal == 0x7f ? VTERM_MOD_SHIFT : (VTERM_MOD_SHIFT|VTERM_MOD_CTRL))))
++      break;
++    /* Ctrl-Backspace is ^H, as in xterm and VTE */
++    if(k.literal == 0x7f && (mod & VTERM_MOD_CTRL))
++      k.literal = 0x08;
++    goto case_LITERAL;
++
++  case_LITERAL:
++    /* Legacy keys only carry Alt, as an ESC prefix */
++    push_legacy(vt, (unsigned char)k.literal, mod);
+     break;
+ 
+   case KEYCODE_SS3: case_SS3:
+diff --git a/libvterm/src/state.c b/libvterm/src/state.c
+index ce8e034..451e0da 100644
+--- a/libvterm/src/state.c
++++ b/libvterm/src/state.c
+@@ -923,6 +923,61 @@ static void request_version_string(VTermState *state)
+       VTERM_VERSION_MAJOR, VTERM_VERSION_MINOR);
+ }
+ 
++/* Kitty progressive enhancement keeps a bounded flag stack per screen. Only the flags this
++ * terminal actually implements are stored, so a query never claims unsupported encodings. */
++#define KITTY_KEYBOARD_SUPPORTED KITTY_KEYBOARD_DISAMBIGUATE
++
++static int kitty_keyboard_screen(const VTermState *state)
++{
++  return state->mode.alt_screen ? BUFIDX_ALTSCREEN : BUFIDX_PRIMARY;
++}
++
++int vterm_state_kitty_keyboard_flags(const VTermState *state)
++{
++  int depth = state->kitty_keyboard[kitty_keyboard_screen(state)].depth;
++  return depth ? state->kitty_keyboard[kitty_keyboard_screen(state)].flags[depth - 1] : 0;
++}
++
++static void kitty_keyboard_push(VTermState *state, long flags)
++{
++  int screen = kitty_keyboard_screen(state);
++  if(state->kitty_keyboard[screen].depth == KITTY_KEYBOARD_STACK_MAX) {
++    // A full stack evicts its oldest entry.
++    memmove(state->kitty_keyboard[screen].flags, state->kitty_keyboard[screen].flags + 1,
++        KITTY_KEYBOARD_STACK_MAX - 1);
++    state->kitty_keyboard[screen].depth--;
++  }
++  state->kitty_keyboard[screen].flags[state->kitty_keyboard[screen].depth++] =
++      flags & KITTY_KEYBOARD_SUPPORTED;
++}
++
++static void kitty_keyboard_pop(VTermState *state, long count)
++{
++  int screen = kitty_keyboard_screen(state);
++  if(count >= state->kitty_keyboard[screen].depth)
++    state->kitty_keyboard[screen].depth = 0;
++  else
++    state->kitty_keyboard[screen].depth -= count;
++}
++
++static void kitty_keyboard_set(VTermState *state, long flags, long mode)
++{
++  int current = vterm_state_kitty_keyboard_flags(state);
++  switch(mode) {
++  case 1: current = flags; break;
++  case 2: current |= flags; break;
++  case 3: current &= ~flags; break;
++  default: return;
++  }
++
++  int screen = kitty_keyboard_screen(state);
++  if(state->kitty_keyboard[screen].depth == 0)
++    kitty_keyboard_push(state, current);
++  else
++    state->kitty_keyboard[screen].flags[state->kitty_keyboard[screen].depth - 1] =
++        current & KITTY_KEYBOARD_SUPPORTED;
++}
++
+ static int on_csi(const char *leader, const long args[], int argcount, const char *intermed, char command, void *user)
+ {
+   VTermState *state = user;
+@@ -937,6 +992,8 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
+     switch(leader[0]) {
+     case '?':
+     case '>':
++    case '<':
++    case '=':
+       leader_byte = leader[0];
+       break;
+     default:
+@@ -1370,6 +1427,22 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
+     }
+     break;
+ 
++  case LEADER('>', 0x6d): // XTMODKEYS - xterm set key modifier options
++    // Only modifyOtherKeys (resource 4) changes what this terminal sends. With no
++    // parameters, or no value, the resource returns to its default (off).
++    if(argcount < 1 || CSI_ARG_IS_MISSING(args[0]))
++      state->modify_other_keys = 0;
++    else if(CSI_ARG(args[0]) == 4) {
++      val = (argcount > 1) ? CSI_ARG_OR(args[1], 0) : 0;
++      state->modify_other_keys = (val >= 0 && val <= 2) ? val : 0;
++    }
++    break;
++
++  case LEADER('>', 0x6e): // XTMODKEYS - xterm disable key modifier options
++    if(CSI_ARG_OR(args[0], 4) == 4)
++      state->modify_other_keys = 0;
++    break;
++
+   case 0x6e: // DSR - ECMA-48 8.3.35
+   case LEADER('?', 0x6e): // DECDSR
+     val = CSI_ARG_OR(args[0], 0);
+@@ -1391,6 +1464,21 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
+     }
+     break;
+ 
++  case LEADER('?', 0x75): // kitty keyboard protocol - query flags
++    vterm_push_output_sprintf_ctrl(state->vt, C1_CSI, "?%du", vterm_state_kitty_keyboard_flags(state));
++    break;
++
++  case LEADER('>', 0x75): // kitty keyboard protocol - push flags
++    kitty_keyboard_push(state, CSI_ARG_OR(args[0], 0));
++    break;
++
++  case LEADER('<', 0x75): // kitty keyboard protocol - pop flags
++    kitty_keyboard_pop(state, CSI_ARG_COUNT(args[0]));
++    break;
++
++  case LEADER('=', 0x75): // kitty keyboard protocol - set flags
++    kitty_keyboard_set(state, CSI_ARG_OR(args[0], 0), argcount > 1 ? CSI_ARG_OR(args[1], 1) : 1);
++    break;
+ 
+   case INTERMED('!', 0x70): // DECSTR - DEC soft terminal reset
+     vterm_state_reset(state, 0);
+@@ -2087,6 +2175,10 @@ void vterm_state_reset(VTermState *state, int hard)
+   state->mode.bracketpaste    = 0;
+   state->mode.report_focus    = 0;
+ 
++  state->kitty_keyboard[BUFIDX_PRIMARY].depth   = 0;
++  state->kitty_keyboard[BUFIDX_ALTSCREEN].depth = 0;
++  state->modify_other_keys = 0;
++
+   state->mouse_flags = 0;
+ 
+   state->vt->mode.ctrl8bit   = 0;
+diff --git a/libvterm/src/vterm_internal.h b/libvterm/src/vterm_internal.h
+index e79d74b..a6aa8a5 100644
+--- a/libvterm/src/vterm_internal.h
++++ b/libvterm/src/vterm_internal.h
+@@ -27,6 +27,9 @@
+ #define BUFIDX_PRIMARY   0
+ #define BUFIDX_ALTSCREEN 1
+ 
++#define KITTY_KEYBOARD_STACK_MAX 8
++#define KITTY_KEYBOARD_DISAMBIGUATE 0x01
++
+ typedef struct VTermEncoding VTermEncoding;
+ 
+ typedef struct {
+@@ -122,6 +125,14 @@ struct VTermState
+     unsigned int report_focus:1;
+   } mode;
+ 
++  /* Keyboard encodings an application opted into. Without either, keys use the xterm legacy
++   * encoding. Kitty keeps one flag stack per screen (main and alternate). */
++  struct {
++    uint8_t flags[KITTY_KEYBOARD_STACK_MAX];
++    uint8_t depth;
++  } kitty_keyboard[2];
++  unsigned int modify_other_keys:2;
++
+   VTermEncodingInstance encoding[4], encoding_utf8;
+   int gl_set, gr_set, gsingle_set;
+ 
+@@ -277,6 +288,8 @@ void vterm_state_setpen(VTermState *state, const long args[], int argcount);
+ int  vterm_state_getpen(VTermState *state, long args[], int argcount);
+ void vterm_state_savepen(VTermState *state, int save);
+ 
++int  vterm_state_kitty_keyboard_flags(const VTermState *state);
++
+ enum {
+   C1_SS3 = 0x8f,
+   C1_DCS = 0x90,
+diff --git a/libvterm/t/25state_input.test b/libvterm/t/25state_input.test
+index 11013ed..4c82c5a 100644
+--- a/libvterm/t/25state_input.test
++++ b/libvterm/t/25state_input.test
+@@ -9,9 +9,11 @@ INCHAR 0 61
+ 
+ !Ctrl modifier on ASCII letters
+ INCHAR C 41
+-  output "\e[65;5u"
++  output "\x01"
+ INCHAR C 61
+   output "\x01"
++INCHAR SC 41
++  output "\x01"
+ 
+ !Alt modifier on ASCII letters
+ INCHAR A 41
+@@ -21,45 +23,97 @@ INCHAR A 61
+ 
+ !Ctrl-Alt modifier on ASCII letters
+ INCHAR CA 41
+-  output "\e[65;7u"
++  output "\e\x01"
+ INCHAR CA 61
+   output "\e\x01"
+ 
+-!Special handling of Ctrl-I
++!Ctrl-I, Ctrl-J, Ctrl-M and Ctrl-[ are their legacy control codes
+ INCHAR 0 49
+   output "I"
+ INCHAR 0 69
+   output "i"
+ INCHAR C 49
+-  output "\e[73;5u"
++  output "\x09"
+ INCHAR C 69
+-  output "\e[105;5u"
++  output "\x09"
+ INCHAR A 49
+   output "\eI"
+ INCHAR A 69
+   output "\ei"
+ INCHAR CA 49
+-  output "\e[73;7u"
++  output "\e\x09"
+ INCHAR CA 69
+-  output "\e[105;7u"
++  output "\e\x09"
++INCHAR C 6a
++  output "\x0a"
++INCHAR C 6d
++  output "\x0d"
++INCHAR C 5b
++  output "\e"
++
++!Ctrl on digits and punctuation follows xterm
++INCHAR C 40
++  output "\0"
++INCHAR C 32
++  output "\0"
++INCHAR C 33
++  output "\e"
++INCHAR C 34
++  output "\x1c"
++INCHAR C 5c
++  output "\x1c"
++INCHAR C 35
++  output "\x1d"
++INCHAR C 5d
++  output "\x1d"
++INCHAR C 36
++  output "\x1e"
++INCHAR C 5e
++  output "\x1e"
++INCHAR C 37
++  output "\x1f"
++INCHAR C 2f
++  output "\x1f"
++INCHAR C 5f
++  output "\x1f"
++INCHAR C 38
++  output "\x7f"
++INCHAR C 3f
++  output "\x7f"
++INCHAR C 31
++  output "1"
++INCHAR CA 2e
++  output "\e."
++
++!Modified control characters keep their byte
++INCHAR C 08
++  output "\x08"
++INCHAR A 08
++  output "\e\x08"
+ 
+ !Special handling of Space
+ INCHAR 0 20
+   output " "
+ INCHAR S 20
+-  output "\e[32;2u"
++  output " "
+ INCHAR C 20
+   output "\0"
+ INCHAR SC 20
+-  output "\e[32;6u"
++  output "\0"
+ INCHAR A 20
+   output "\e "
+ INCHAR SA 20
+-  output "\e[32;4u"
++  output "\e "
+ INCHAR CA 20
+   output "\e\0"
+ INCHAR SCA 20
+-  output "\e[32;8u"
++  output "\e\0"
++
++!Non-ASCII characters drop Ctrl
++INCHAR C e9
++  output "\xc3\xa9"
++INCHAR A e9
++  output "\e\xc3\xa9"
+ 
+ !Cursor keys in reset (cursor) mode
+ INKEY 0 Up
+@@ -96,16 +150,192 @@ INKEY 0 Tab
+ INKEY S Tab
+   output "\e[Z"
+ INKEY C Tab
+-  output "\e[9;5u"
++  output "\x09"
+ INKEY A Tab
+   output "\e\x09"
+ INKEY CA Tab
+-  output "\e[9;7u"
++  output "\e\x09"
++INKEY SC Tab
++  output "\e[1;6Z"
+ 
+ !Enter in linefeed mode
+ INKEY 0 Enter
+   output "\x0d"
+ 
++!Modified Enter, Backspace and Escape use the legacy encoding
++INKEY C Enter
++  output "\x0d"
++INKEY S Enter
++  output "\x0d"
++INKEY A Enter
++  output "\e\x0d"
++INKEY SC Enter
++  output "\x0d"
++INKEY 0 Backspace
++  output "\x7f"
++INKEY C Backspace
++  output "\x08"
++INKEY S Backspace
++  output "\x7f"
++INKEY A Backspace
++  output "\e\x7f"
++INKEY 0 Escape
++  output "\e"
++INKEY C Escape
++  output "\e"
++INKEY A Escape
++  output "\e\e"
++INKEY 0 KPEnter
++  output "\x0d"
++INKEY C KPEnter
++  output "\x0d"
++
++!kitty keyboard protocol disambiguates modified keys
++PUSH "\e[?u"
++  output "\e[?0u"
++PUSH "\e[>1u"
++PUSH "\e[?u"
++  output "\e[?1u"
++INKEY 0 Enter
++  output "\x0d"
++INKEY C Enter
++  output "\e[13;5u"
++INKEY S Enter
++  output "\e[13;2u"
++INKEY 0 Tab
++  output "\x09"
++INKEY S Tab
++  output "\e[9;2u"
++INKEY C Tab
++  output "\e[9;5u"
++INKEY 0 Backspace
++  output "\x7f"
++INKEY C Backspace
++  output "\e[127;5u"
++INKEY 0 Escape
++  output "\e[27u"
++INKEY A Escape
++  output "\e[27;3u"
++INKEY C Up
++  output "\e[1;5A"
++INCHAR 0 61
++  output "a"
++INCHAR S 41
++  output "A"
++INCHAR C 61
++  output "\e[97;5u"
++INCHAR C 69
++  output "\e[105;5u"
++INCHAR SC 41
++  output "\e[97;6u"
++INCHAR A 61
++  output "\e[97;3u"
++
++!kitty unsupported flags are not reported
++PUSH "\e[>31u"
++PUSH "\e[?u"
++  output "\e[?1u"
++
++!kitty pop restores the previous flags
++PUSH "\e[<u"
++PUSH "\e[?u"
++  output "\e[?1u"
++PUSH "\e[<u"
++PUSH "\e[?u"
++  output "\e[?0u"
++INKEY C Enter
++  output "\x0d"
++
++!kitty set modifies the current flags
++PUSH "\e[=1u"
++PUSH "\e[?u"
++  output "\e[?1u"
++PUSH "\e[=1;3u"
++PUSH "\e[?u"
++  output "\e[?0u"
++PUSH "\e[=1;2u"
++PUSH "\e[?u"
++  output "\e[?1u"
++PUSH "\e[<10u"
++
++!kitty flags are kept per screen
++PUSH "\e[>1u"
++PUSH "\e[?1049h"
++PUSH "\e[?u"
++  output "\e[?0u"
++PUSH "\e[?1049l"
++PUSH "\e[?u"
++  output "\e[?1u"
++PUSH "\e[<u"
++
++!kitty stack evicts the oldest entry when full
++PUSH "\e[>1u\e[>0u\e[>0u\e[>0u\e[>0u\e[>0u\e[>0u\e[>0u\e[>0u"
++PUSH "\e[<7u"
++PUSH "\e[?u"
++  output "\e[?0u"
++PUSH "\e[<u"
++PUSH "\e[?u"
++  output "\e[?0u"
++
++!modifyOtherKeys level 1 only changes ambiguous keys
++PUSH "\e[>4;1m"
++INKEY 0 Enter
++  output "\x0d"
++INKEY C Enter
++  output "\e[27;5;13~"
++INKEY S Enter
++  output "\e[27;2;13~"
++INKEY A Enter
++  output "\e\x0d"
++INKEY C Tab
++  output "\e[27;5;9~"
++INKEY S Tab
++  output "\e[Z"
++INKEY C Backspace
++  output "\x08"
++INCHAR C 61
++  output "\x01"
++INCHAR C 31
++  output "\e[27;5;49~"
++INCHAR SC 41
++  output "\e[27;6;65~"
++INCHAR A 61
++  output "\ea"
++
++!modifyOtherKeys level 2 changes every modified key
++PUSH "\e[>4;2m"
++INCHAR C 61
++  output "\e[27;5;97~"
++INCHAR A 61
++  output "\e[27;3;97~"
++INCHAR S 41
++  output "A"
++INKEY C Backspace
++  output "\e[27;5;127~"
++INKEY S Tab
++  output "\e[Z"
++INKEY C Up
++  output "\e[1;5A"
++
++!kitty takes precedence over modifyOtherKeys
++PUSH "\e[>1u"
++INKEY C Enter
++  output "\e[13;5u"
++PUSH "\e[<u"
++
++!modifyOtherKeys reset
++PUSH "\e[>4n"
++INKEY C Enter
++  output "\x0d"
++PUSH "\e[>4;2m"
++PUSH "\e[>4m"
++INKEY C Enter
++  output "\x0d"
++PUSH "\e[>4;2m"
++PUSH "\e[!p"
++INKEY C Enter
++  output "\x0d"
++
+ !Enter in newline mode
+ PUSH "\e[20h"
+ INKEY 0 Enter
+diff --git a/libvterm/t/harness.c b/libvterm/t/harness.c
+index ddd5917..211e49b 100644
+--- a/libvterm/t/harness.c
++++ b/libvterm/t/harness.c
+@@ -48,7 +48,10 @@ static VTermKey strp_key(char *str)
+     { "Up",    VTERM_KEY_UP },
+     { "Tab",   VTERM_KEY_TAB },
+     { "Enter", VTERM_KEY_ENTER },
++    { "Backspace", VTERM_KEY_BACKSPACE },
++    { "Escape", VTERM_KEY_ESCAPE },
+     { "KP0",   VTERM_KEY_KP_0 },
++    { "KPEnter", VTERM_KEY_KP_ENTER },
+     { "F1",    VTERM_KEY_FUNCTION(1) },
+     { NULL,    VTERM_KEY_NONE },
+   };

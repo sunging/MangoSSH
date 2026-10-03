@@ -4,56 +4,113 @@
 
 #include "utf8.h"
 
+/*
+ * Modified keys are encoded in one of three ways:
+ *
+ *  - Legacy (default): what xterm sends without modifyOtherKeys. Ctrl folds a character into
+ *    its C0 control code where one exists, Alt prefixes ESC, and anything without a legacy
+ *    form drops the modifier. Shells and readline only understand this encoding.
+ *  - xterm modifyOtherKeys (CSI > 4 ; level m): CSI 27 ; mod ; code ~ for keys whose legacy
+ *    form loses information (level 1) or for every modified key (level 2).
+ *  - kitty "disambiguate escape codes" (CSI > 1 u): CSI code ; mod u.
+ *
+ * The application chooses; kitty takes precedence when both are enabled.
+ */
+
+/* Writes one character, ESC-prefixed when Alt is held, as a single output chunk. */
+static void push_legacy(VTerm *vt, uint32_t c, VTermModifier mod)
+{
+  char str[7];
+  int seqlen = 0;
+  if(mod & VTERM_MOD_ALT)
+    str[seqlen++] = ESC_S[0];
+  seqlen += fill_utf8(c, str + seqlen);
+  vterm_push_output_bytes(vt, str, seqlen);
+}
+
+/* Returns 1 when an application-enabled protocol encoded the key. `ambiguous` says whether the
+ * legacy encoding would lose one of the modifiers, which is all modifyOtherKeys level 1 covers. */
+static int push_protocol_key(VTerm *vt, uint32_t code, VTermModifier mod, int ambiguous)
+{
+  VTermState *state = vt->state;
+
+  if(vterm_state_kitty_keyboard_flags(state) & KITTY_KEYBOARD_DISAMBIGUATE) {
+    if(mod != 0)
+      vterm_push_output_sprintf_ctrl(vt, C1_CSI, "%d;%du", code, mod+1);
+    else if(code == 0x1b) // Escape is the one unmodified key disambiguation changes
+      vterm_push_output_sprintf_ctrl(vt, C1_CSI, "%du", code);
+    else
+      return 0;
+    return 1;
+  }
+
+  if(mod != 0 && (state->modify_other_keys == 2 || (state->modify_other_keys == 1 && ambiguous))) {
+    vterm_push_output_sprintf_ctrl(vt, C1_CSI, "27;%d;%d~", mod+1, code);
+    return 1;
+  }
+
+  return 0;
+}
+
+/* The C0 control code xterm sends for Ctrl plus this character, or -1 if there is none. */
+static int legacy_ctrl_code(uint32_t c)
+{
+  if(c >= 'a' && c <= 'z')
+    return c - 'a' + 1;
+  if(c >= 'A' && c <= 'Z')
+    return c - 'A' + 1;
+
+  switch(c) {
+    case ' ': case '@': case '`': case '2':
+      return 0x00;
+    case '[': case '3':
+      return 0x1b;
+    case '\\': case '4':
+      return 0x1c;
+    case ']': case '5':
+      return 0x1d;
+    case '^': case '~': case '6':
+      return 0x1e;
+    case '_': case '-': case '/': case '7':
+      return 0x1f;
+    case '?': case '8':
+      return 0x7f;
+  }
+  return -1;
+}
+
 void vterm_keyboard_unichar(VTerm *vt, uint32_t c, VTermModifier mod)
 {
-  /* The shift modifier is never important for Unicode characters
-   * apart from Space
-   */
-  if(c != ' ')
-    mod &= ~VTERM_MOD_SHIFT;
-
-  if(mod == 0) {
-    // Normal text - ignore just shift
-    char str[6];
-    int seqlen = fill_utf8(c, str);
-    vterm_push_output_bytes(vt, str, seqlen);
+  /* A control character is already fully encoded (for example a ^H Backspace); only Alt
+   * still applies to it. */
+  if(c < 0x20 || c == 0x7f) {
+    push_legacy(vt, c, mod);
     return;
   }
 
-  int needs_CSIu;
-  switch(c) {
-    /* Special Ctrl- letters that can't be represented elsewise */
-    case 'i': case 'j': case 'm': case '[':
-      needs_CSIu = 1;
-      break;
-    /* Ctrl-\ ] ^ _ don't need CSUu */
-    case '\\': case ']': case '^': case '_':
-      needs_CSIu = 0;
-      break;
-    /* Shift-space needs CSIu */
-    case ' ':
-      needs_CSIu = !!(mod & VTERM_MOD_SHIFT);
-      break;
-    /* All other characters needs CSIu except for letters a-z */
-    default:
-      needs_CSIu = (c < 'a' || c > 'z');
-  }
-
-  /* ALT we can just prefix with ESC; anything else requires CSI u */
-  if(needs_CSIu && (mod & ~VTERM_MOD_ALT)) {
-    vterm_push_output_sprintf_ctrl(vt, C1_CSI, "%d;%du", c, mod+1);
+  /* Shift alone never changes how a character is sent: the character already reflects it. */
+  if(!(mod & (VTERM_MOD_CTRL|VTERM_MOD_ALT))) {
+    push_legacy(vt, c, 0);
     return;
   }
 
-  if(mod & VTERM_MOD_CTRL)
-    c &= 0x1f;
+  int upper = (c >= 'A' && c <= 'Z');
+  if(upper)
+    mod |= VTERM_MOD_SHIFT;
 
-  if(mod & VTERM_MOD_ALT)
-    vterm_push_output_bytes(vt, ESC_S, sizeof(ESC_S) - 1);
+  int ctrl_code = legacy_ctrl_code(c);
+  int ambiguous = (mod & VTERM_MOD_CTRL) && (ctrl_code < 0 || (mod & VTERM_MOD_SHIFT));
+  /* kitty reports the unshifted key with Shift as a modifier; xterm reports the character. */
+  uint32_t code = c;
+  if(upper && (vterm_state_kitty_keyboard_flags(vt->state) & KITTY_KEYBOARD_DISAMBIGUATE))
+    code = c - 'A' + 'a';
+  if(push_protocol_key(vt, code, mod, ambiguous))
+    return;
 
-  char str[6];
-  int seqlen = fill_utf8(c, str);
-  vterm_push_output_bytes(vt, str, seqlen);
+  if((mod & VTERM_MOD_CTRL) && ctrl_code >= 0)
+    c = ctrl_code;
+
+  push_legacy(vt, c, mod);
 }
 
 typedef struct {
@@ -126,7 +183,7 @@ static keycodes_s keycodes_kp[] = {
   { KEYCODE_KEYPAD, '-', 'm' }, // KP_MINUS
   { KEYCODE_KEYPAD, '.', 'n' }, // KP_PERIOD
   { KEYCODE_KEYPAD, '/', 'o' }, // KP_DIVIDE
-  { KEYCODE_KEYPAD, '\n', 'M' }, // KP_ENTER
+  { KEYCODE_KEYPAD, '\r', 'M' }, // KP_ENTER
   { KEYCODE_KEYPAD, '=', 'X' }, // KP_EQUAL
 };
 
@@ -157,9 +214,12 @@ void vterm_keyboard_key(VTerm *vt, VTermKey key, VTermModifier mod)
     break;
 
   case KEYCODE_TAB:
-    /* Shift-Tab is CSI Z but plain Tab is 0x09 */
-    if(mod == VTERM_MOD_SHIFT)
+    /* Shift-Tab is CSI Z but plain Tab is 0x09; modifyOtherKeys leaves Shift-Tab alone */
+    if(mod == VTERM_MOD_SHIFT &&
+        !(vterm_state_kitty_keyboard_flags(vt->state) & KITTY_KEYBOARD_DISAMBIGUATE))
       vterm_push_output_sprintf_ctrl(vt, C1_CSI, "Z");
+    else if(push_protocol_key(vt, k.literal, mod, mod & VTERM_MOD_CTRL))
+      break;
     else if(mod & VTERM_MOD_SHIFT)
       vterm_push_output_sprintf_ctrl(vt, C1_CSI, "1;%dZ", mod+1);
     else
@@ -167,18 +227,27 @@ void vterm_keyboard_key(VTerm *vt, VTermKey key, VTermModifier mod)
     break;
 
   case KEYCODE_ENTER:
-    /* Enter is CRLF in newline mode, but just LF in linefeed */
+    if(push_protocol_key(vt, k.literal, mod, mod & (VTERM_MOD_SHIFT|VTERM_MOD_CTRL)))
+      break;
+    /* Enter is CRLF in newline mode, but just CR in linefeed mode */
     if(vt->state->mode.newline)
-      vterm_push_output_sprintf(vt, "\r\n");
+      vterm_push_output_sprintf(vt, mod & VTERM_MOD_ALT ? ESC_S "\r\n" : "\r\n");
     else
       goto case_LITERAL;
     break;
 
-  case KEYCODE_LITERAL: case_LITERAL:
-    if(mod & (VTERM_MOD_SHIFT|VTERM_MOD_CTRL))
-      vterm_push_output_sprintf_ctrl(vt, C1_CSI, "%d;%du", k.literal, mod+1);
-    else
-      vterm_push_output_sprintf(vt, mod & VTERM_MOD_ALT ? ESC_S "%c" : "%c", k.literal);
+  case KEYCODE_LITERAL: // Backspace and Escape
+    if(push_protocol_key(vt, (unsigned char)k.literal, mod,
+          mod & (k.literal == 0x7f ? VTERM_MOD_SHIFT : (VTERM_MOD_SHIFT|VTERM_MOD_CTRL))))
+      break;
+    /* Ctrl-Backspace is ^H, as in xterm and VTE */
+    if(k.literal == 0x7f && (mod & VTERM_MOD_CTRL))
+      k.literal = 0x08;
+    goto case_LITERAL;
+
+  case_LITERAL:
+    /* Legacy keys only carry Alt, as an ESC prefix */
+    push_legacy(vt, (unsigned char)k.literal, mod);
     break;
 
   case KEYCODE_SS3: case_SS3:

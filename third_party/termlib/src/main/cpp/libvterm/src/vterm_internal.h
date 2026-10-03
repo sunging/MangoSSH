@@ -27,6 +27,9 @@
 #define BUFIDX_PRIMARY   0
 #define BUFIDX_ALTSCREEN 1
 
+#define KITTY_KEYBOARD_STACK_MAX 8
+#define KITTY_KEYBOARD_DISAMBIGUATE 0x01
+
 typedef struct VTermEncoding VTermEncoding;
 
 typedef struct {
@@ -121,6 +124,14 @@ struct VTermState
     unsigned int bracketpaste:1;
     unsigned int report_focus:1;
   } mode;
+
+  /* Keyboard encodings an application opted into. Without either, keys use the xterm legacy
+   * encoding. Kitty keeps one flag stack per screen (main and alternate). */
+  struct {
+    uint8_t flags[KITTY_KEYBOARD_STACK_MAX];
+    uint8_t depth;
+  } kitty_keyboard[2];
+  unsigned int modify_other_keys:2;
 
   VTermEncodingInstance encoding[4], encoding_utf8;
   int gl_set, gr_set, gsingle_set;
@@ -276,6 +287,8 @@ void vterm_state_resetpen(VTermState *state);
 void vterm_state_setpen(VTermState *state, const long args[], int argcount);
 int  vterm_state_getpen(VTermState *state, long args[], int argcount);
 void vterm_state_savepen(VTermState *state, int save);
+
+int  vterm_state_kitty_keyboard_flags(const VTermState *state);
 
 enum {
   C1_SS3 = 0x8f,

@@ -48,7 +48,10 @@ static VTermKey strp_key(char *str)
     { "Up",    VTERM_KEY_UP },
     { "Tab",   VTERM_KEY_TAB },
     { "Enter", VTERM_KEY_ENTER },
+    { "Backspace", VTERM_KEY_BACKSPACE },
+    { "Escape", VTERM_KEY_ESCAPE },
     { "KP0",   VTERM_KEY_KP_0 },
+    { "KPEnter", VTERM_KEY_KP_ENTER },
     { "F1",    VTERM_KEY_FUNCTION(1) },
     { NULL,    VTERM_KEY_NONE },
   };
