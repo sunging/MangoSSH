@@ -462,27 +462,32 @@ fun MangoSshApp(
                 if (activeSession.phase == TerminalSessionPhase.CLOSED) activeSessionId = null else leaveSessionId = activeSession.id
             }
         }
-        TerminalSessionScreen(
-            session = activeSession,
-            attention = sessionAttention[activeSession.id] ?: SessionAttention.NONE,
-            terminalEmulator = terminalEmulator,
-            appearance = terminalAppearance,
-            behavior = terminalBehavior,
-            shortcutConfig = terminalShortcutConfig,
-            clipboardCopies = viewModel.terminalClipboardCopies,
-            onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
-            resourceSnapshot = resourceSnapshots[activeSession.id],
-            onRequestResources = { viewModel.requestServerResources(activeSession.id) },
-            onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
-            onRequestLeave = { if (activeSession.phase == TerminalSessionPhase.CLOSED) activeSessionId = null else leaveSessionId = activeSession.id },
-            onReconnect = { showReconnect = true },
-            onWorkspaces = { showWorkspaces = true },
-            onDiagnostics = { showDiagnostics = true },
-            sessionFontSizeSp = sessionFontSizeOverrides[activeSession.id],
-            onSessionFontSizeChange = { fontSizeSp ->
-                viewModel.setSessionTerminalFontSize(activeSession.id, fontSizeSp)
-            },
-        )
+        // A notification can switch sessions while this screen is showing. Rebuild it per
+        // session so no focus target, IME view or modifier state from the previous session
+        // keeps receiving keyboard input.
+        androidx.compose.runtime.key(activeSession.id) {
+            TerminalSessionScreen(
+                session = activeSession,
+                attention = sessionAttention[activeSession.id] ?: SessionAttention.NONE,
+                terminalEmulator = terminalEmulator,
+                appearance = terminalAppearance,
+                behavior = terminalBehavior,
+                shortcutConfig = terminalShortcutConfig,
+                clipboardCopies = viewModel.terminalClipboardCopies,
+                onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
+                resourceSnapshot = resourceSnapshots[activeSession.id],
+                onRequestResources = { viewModel.requestServerResources(activeSession.id) },
+                onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
+                onRequestLeave = { if (activeSession.phase == TerminalSessionPhase.CLOSED) activeSessionId = null else leaveSessionId = activeSession.id },
+                onReconnect = { showReconnect = true },
+                onWorkspaces = { showWorkspaces = true },
+                onDiagnostics = { showDiagnostics = true },
+                sessionFontSizeSp = sessionFontSizeOverrides[activeSession.id],
+                onSessionFontSizeChange = { fontSizeSp ->
+                    viewModel.setSessionTerminalFontSize(activeSession.id, fontSizeSp)
+                },
+            )
+        }
         visiblePrompt?.let { prompt ->
             SessionPromptDialog(
                 prompt = prompt,

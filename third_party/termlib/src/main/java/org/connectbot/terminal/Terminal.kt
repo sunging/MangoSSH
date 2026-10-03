@@ -513,6 +513,7 @@ internal fun TerminalWithAccessibility(
     }
     SideEffect {
         keyboardHandler.onInterceptKey = currentOnInterceptKey
+        keyboardHandler.modifierManager = modifierManager
     }
 
     // Font size and zoom state
@@ -1782,27 +1783,33 @@ internal fun TerminalWithAccessibility(
         // This provides proper backspace, enter key, and keyboard type handling
         // Must have non-zero size for Android to accept IME focus
         if (keyboardEnabled) {
-            AndroidView(
-                factory = { context ->
-                    ImeInputView(context, keyboardHandler).apply {
-                        // Set up key event handling
-                        setOnKeyListener { _, _, event ->
-                            if (event.action == KeyEvent.ACTION_DOWN) {
-                                resetImeBuffer()
+            // The view and its key listener capture keyboardHandler, which belongs to one
+            // terminalEmulator. When the caller swaps in another emulator (e.g. switches
+            // sessions) the view must be rebuilt, or soft-keyboard input keeps reaching the
+            // previous terminal.
+            key(keyboardHandler) {
+                AndroidView(
+                    factory = { context ->
+                        ImeInputView(context, keyboardHandler).apply {
+                            // Set up key event handling
+                            setOnKeyListener { _, _, event ->
+                                if (event.action == KeyEvent.ACTION_DOWN) {
+                                    resetImeBuffer()
+                                }
+                                keyboardHandler.onKeyEvent(
+                                    androidx.compose.ui.input.key.KeyEvent(event),
+                                )
                             }
-                            keyboardHandler.onKeyEvent(
-                                androidx.compose.ui.input.key.KeyEvent(event),
-                            )
+                            // Store reference for IME control
+                            imeInputView = this
                         }
-                        // Store reference for IME control
-                        imeInputView = this
-                    }
-                },
-                modifier = Modifier
-                    .size(1.dp)
-                    .focusRequester(focusRequester)
-                    .focusable(),
-            )
+                    },
+                    modifier = Modifier
+                        .size(1.dp)
+                        .focusRequester(focusRequester)
+                        .focusable(),
+                )
+            }
         }
     }
 }
