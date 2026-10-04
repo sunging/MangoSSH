@@ -1,0 +1,6 @@
+Use a self-hosted Tailscale control server such as Headscale.
+Warn when a known server presents a new type of host key, and prefer key types you already trust.
+Fixed the terminal layout with the keyboard open: leaving immersive mode or rotating no longer shifts the screen, and shortcut keys fit in landscape.
+Ctrl+Shift+V pastes, so Ctrl+V reaches the shell. Ctrl+Enter and similar keys work in shells.
+Typing goes to the session opened from a notification.
+Removed an unused library.
