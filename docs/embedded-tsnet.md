@@ -14,9 +14,24 @@ MangoSSH has three explicit profile routes:
 
 The embedded node handles only profiles that select `TSNET`. It does not
 request Android VPN permission, install routes for other apps, or depend on the
-Tailscale Android app. The first release supports only the official Tailscale
-control plane. Headscale, custom `ControlURL`, exit nodes, and full-device VPN
-routing are intentionally unsupported.
+Tailscale Android app. Exit nodes and full-device VPN routing are
+intentionally unsupported.
+
+## Control server
+
+Enrollment uses Tailscale's own control plane unless the user enters another
+coordination server, such as a self-hosted Headscale instance, in
+Settings → Embedded Tailscale. The bridge passes that URL to
+`tsnet.Server.ControlURL`; an empty value keeps tsnet's default.
+
+- Only `https://` URLs without credentials, a query, or a fragment are
+  accepted. Android normalizes the value and the Go bridge rejects anything
+  else before starting, so registration never runs over cleartext.
+- The URL is stored in the node's encrypted state next to the identity it
+  belongs to. It can change only while no registration exists; logging out
+  clears it. Choosing a different server before a pending enrollment completes
+  discards that half-enrolled state first.
+- A registered node always re-authenticates with its own server.
 
 ## Pinned toolchain and source
 
@@ -111,9 +126,11 @@ MangoSSH vault in `noBackupFilesDir`, encrypted with a dedicated Android
 Keystore AES-256-GCM key, and committed through `AtomicFile`. It is excluded
 from Android backup, portable exports, and WebDAV.
 
-Browser authorization URLs are one-shot in-memory events. The UI validates the
-official `https://login.tailscale.com` origin before sending the URL to the
-system browser; it never displays or persists the complete URL. Auth Key input
+Browser authorization URLs are one-shot in-memory events. Before sending the
+URL to the system browser, the UI requires `https` and the identity's own
+server: `login.tailscale.com` for the default control plane, otherwise the
+configured server's host and port. It never displays or persists the complete
+URL. Auth Key input
 is not saveable UI state. It is converted to a mutable character array, passed
 directly through the restricted bridge, and cleared on every completion path.
 Failures use fixed categories and require fresh input.

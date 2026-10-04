@@ -32,6 +32,6 @@ Backup and more:
 * Import hosts from an OpenSSH config file
 * English and Simplified Chinese; two-pane layout on tablets
 
-Mosh is rebuilt from the included GPL-licensed source for arm64-v8a, armeabi-v7a, x86, and x86_64. Embedded Tailscale is opt-in, does not request Android VPN access, and requires the user to authorize their own Tailnet account.
+Mosh is rebuilt from the included GPL-licensed source for arm64-v8a, armeabi-v7a, x86, and x86_64. Embedded Tailscale is opt-in, does not request Android VPN access, and requires the user to authorize their own Tailnet account, on Tailscale or on a self-hosted control server such as Headscale.
 
 MangoSSH does not include advertisements or analytics. Credentials, private keys, host fingerprints, OTP answers, and session keys are never included in diagnostics.

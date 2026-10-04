@@ -6,10 +6,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
@@ -31,9 +34,9 @@ class EmbeddedTsnetCardInstrumentedTest {
                     EmbeddedTsnetCard(
                         status = EmbeddedTsnetStatus(EmbeddedTsnetPhase.UNENROLLED),
                         onBeginBrowserEnrollment = {},
-                        onBeginAuthKeyEnrollment = {
-                            submittedLength = it.size
-                            it.fill('\u0000')
+                        onBeginAuthKeyEnrollment = { key, _ ->
+                            submittedLength = key.size
+                            key.fill('\u0000')
                         },
                         onLogout = {},
                     )
@@ -47,5 +50,48 @@ class EmbeddedTsnetCardInstrumentedTest {
         composeRule.onNodeWithTag("embedded_tsnet_auth_key_confirm").performClick()
         composeRule.onAllNodesWithTag("embedded_tsnet_auth_key_input").assertCountEquals(0)
         composeRule.runOnIdle { assertEquals(2, submittedLength) }
+    }
+
+    @Test
+    fun controlServerIsValidatedAndNormalizedForNewEnrollment() {
+        var submittedServer: String? = null
+        composeRule.setContent {
+            MaterialTheme {
+                EmbeddedTsnetCard(
+                    status = EmbeddedTsnetStatus(EmbeddedTsnetPhase.UNENROLLED),
+                    onBeginBrowserEnrollment = { submittedServer = it },
+                    onBeginAuthKeyEnrollment = { key, _ -> key.fill('\u0000') },
+                    onLogout = {},
+                )
+            }
+        }
+
+        val field = composeRule.onNodeWithTag("embedded_tsnet_control_url")
+        field.performTextInput("http://headscale.example.com")
+        composeRule.onNodeWithTag("embedded_tsnet_browser_login").assertIsNotEnabled()
+        composeRule.onNodeWithTag("embedded_tsnet_auth_key_login").assertIsNotEnabled()
+
+        field.performTextClearance()
+        field.performTextInput("https://Headscale.example.com/")
+        composeRule.onNodeWithTag("embedded_tsnet_browser_login").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals("https://headscale.example.com", submittedServer) }
+    }
+
+    @Test
+    fun registeredNodeShowsItsServerReadOnly() {
+        composeRule.setContent {
+            MaterialTheme {
+                EmbeddedTsnetCard(
+                    status = EmbeddedTsnetStatus(EmbeddedTsnetPhase.READY_IDLE, authKeyAllowed = false),
+                    controlUrl = "https://headscale.example.com",
+                    onBeginBrowserEnrollment = {},
+                    onBeginAuthKeyEnrollment = { key, _ -> key.fill('\u0000') },
+                    onLogout = {},
+                )
+            }
+        }
+
+        composeRule.onAllNodesWithTag("embedded_tsnet_control_url").assertCountEquals(0)
+        composeRule.onNodeWithTag("embedded_tsnet_control_url_current").assertIsDisplayed()
     }
 }

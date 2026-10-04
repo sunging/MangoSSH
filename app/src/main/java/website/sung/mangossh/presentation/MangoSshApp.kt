@@ -136,6 +136,7 @@ import website.sung.mangossh.session.PortForwardStopOutcome
 import website.sung.mangossh.session.SessionAttention
 import website.sung.mangossh.session.TerminalSessionPhase
 import org.connectbot.terminal.VTermKey
+import website.sung.mangossh.session.tsnet.EmbeddedTsnetControlServer
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.presentation.settings.AboutSettingsState
 import website.sung.mangossh.presentation.settings.AppearanceSettingsState
@@ -182,6 +183,7 @@ fun MangoSshApp(
     val embeddedTsnetNetwork by viewModel.embeddedTsnetNetwork.collectAsStateWithLifecycle()
     val embeddedTsnetNodeName by viewModel.embeddedTsnetNodeName.collectAsStateWithLifecycle()
     val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
+    val embeddedTsnetControlUrl by viewModel.embeddedTsnetControlUrl.collectAsStateWithLifecycle()
     val sessionFontSizeOverrides by viewModel.sessionFontSizeOverrides.collectAsStateWithLifecycle()
     val terminalBehavior by viewModel.terminalBehavior.collectAsStateWithLifecycle()
     val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
@@ -197,7 +199,11 @@ fun MangoSshApp(
     LaunchedEffect(viewModel) {
         viewModel.embeddedTsnetAuthorizationUrls.collect { value ->
             val uri = runCatching { value.toUri() }.getOrNull()
-            if (uri?.scheme != "https" || uri.host != "login.tailscale.com") {
+            // Only the identity's own control server may open a sign-in page.
+            if (
+                uri == null ||
+                !EmbeddedTsnetControlServer.isAllowedAuthorizationUrl(value, viewModel.embeddedTsnetControlUrl.value)
+            ) {
                 viewModel.reportUserMessage(R.string.embedded_tsnet_invalid_authorization_url)
                 return@collect
             }
@@ -731,6 +737,7 @@ fun MangoSshApp(
                                     tsnet = TsnetSettingsState(
                                         status = embeddedTsnetStatus,
                                         nodeName = embeddedTsnetNodeName,
+                                        controlUrl = embeddedTsnetControlUrl,
                                         network = embeddedTsnetNetwork,
                                         hosts = hosts,
                                         keys = keys,

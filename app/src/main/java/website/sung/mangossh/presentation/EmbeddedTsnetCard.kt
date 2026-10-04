@@ -3,6 +3,7 @@ package website.sung.mangossh.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -14,28 +15,41 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
+import website.sung.mangossh.session.tsnet.EmbeddedTsnetControlServer
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetPhase
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetStatus
 import website.sung.mangossh.ui.components.MangoSettingsCard
 
-/** Controls enrollment into MangoSSH's embedded, process-scoped Tailscale (tsnet) node. */
+/**
+ * Controls enrollment into MangoSSH's embedded, process-scoped Tailscale (tsnet) node.
+ *
+ * [controlUrl] is the server of the stored identity or pending enrollment. It
+ * is editable only while no registration exists; sign-in callbacks receive
+ * the normalized value, "" meaning Tailscale's own control plane.
+ */
 @Composable
 internal fun EmbeddedTsnetCard(
     status: EmbeddedTsnetStatus,
-    onBeginBrowserEnrollment: () -> Unit,
-    onBeginAuthKeyEnrollment: (CharArray) -> Unit,
+    onBeginBrowserEnrollment: (controlUrl: String) -> Unit,
+    onBeginAuthKeyEnrollment: (authKey: CharArray, controlUrl: String) -> Unit,
     onLogout: () -> Unit,
+    controlUrl: String = "",
 ) {
     var showAuthKeyDialog by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
+    // A server URL is not a secret, so the draft may survive recreation.
+    var controlUrlDraft by rememberSaveable(controlUrl) { mutableStateOf(controlUrl) }
+    val normalizedControlUrl = EmbeddedTsnetControlServer.normalize(controlUrlDraft)
     val statusText = if (!status.identityResolved) {
         stringResource(R.string.embedded_tsnet_status_checking)
     } else when (status.phase) {
@@ -67,6 +81,8 @@ internal fun EmbeddedTsnetCard(
         )
     val canLogout = status.phase == EmbeddedTsnetPhase.READY_IDLE ||
         status.phase == EmbeddedTsnetPhase.ACTIVE
+    // A registered identity stays with its server; changing it needs a logout.
+    val canChooseServer = canStartEnrollment && status.authKeyAllowed
 
     // No in-card heading: the settings page this card fills is already titled
     // "Embedded Tailscale" in the top bar.
@@ -82,9 +98,44 @@ internal fun EmbeddedTsnetCard(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
         )
+        if (canChooseServer) {
+            OutlinedTextField(
+                value = controlUrlDraft,
+                onValueChange = { controlUrlDraft = it.take(EmbeddedTsnetControlServer.MAX_LENGTH) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("embedded_tsnet_control_url"),
+                label = { Text(stringResource(R.string.embedded_tsnet_control_server_label)) },
+                supportingText = {
+                    Text(
+                        stringResource(
+                            if (normalizedControlUrl == null) {
+                                R.string.embedded_tsnet_control_server_invalid
+                            } else {
+                                R.string.embedded_tsnet_control_server_hint
+                            },
+                        ),
+                    )
+                },
+                isError = normalizedControlUrl == null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                singleLine = true,
+            )
+        } else if (controlUrl.isNotEmpty()) {
+            Text(
+                stringResource(R.string.embedded_tsnet_control_server_current, controlUrl),
+                modifier = Modifier.testTag("embedded_tsnet_control_url_current"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         if (canStartEnrollment) {
+            // A registered node re-authenticates with its own server, so only
+            // a fresh enrollment depends on the draft being valid.
+            val enrollmentServer = if (canChooseServer) normalizedControlUrl else controlUrl
             Button(
-                onClick = onBeginBrowserEnrollment,
+                onClick = { enrollmentServer?.let(onBeginBrowserEnrollment) },
+                enabled = enrollmentServer != null,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("embedded_tsnet_browser_login"),
@@ -94,6 +145,7 @@ internal fun EmbeddedTsnetCard(
             if (status.authKeyAllowed) {
                 OutlinedButton(
                     onClick = { showAuthKeyDialog = true },
+                    enabled = enrollmentServer != null,
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("embedded_tsnet_auth_key_login"),
@@ -120,7 +172,8 @@ internal fun EmbeddedTsnetCard(
             onDismiss = { showAuthKeyDialog = false },
             onConfirm = { key ->
                 showAuthKeyDialog = false
-                onBeginAuthKeyEnrollment(key)
+                val server = EmbeddedTsnetControlServer.normalize(controlUrlDraft)
+                if (server == null) key.fill('\u0000') else onBeginAuthKeyEnrollment(key, server)
             },
         )
     }

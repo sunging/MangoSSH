@@ -112,6 +112,58 @@ class EmbeddedTsnetManagerInstrumentedTest {
     }
 
     @Test
+    fun controlServerIsBoundToTheIdentityAndClearedOnLogout() = runBlocking {
+        val state = FakeStateStore(enrolled = false)
+        // Keys a half-finished enrollment presented to the default server.
+        state.values["_machinekey"] = byteArrayOf(7)
+        val factory = FakeBackendFactory()
+        val manager = EmbeddedTsnetManager(
+            context = isolatedContext(),
+            scope = isolatedScope(),
+            stateStore = state,
+            backendFactory = factory,
+            foregroundStarter = {},
+        )
+
+        manager.beginBrowserEnrollment("https://Headscale.example.com/")
+        withTimeout(5_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.READY_IDLE } }
+        assertEquals(listOf("https://headscale.example.com"), factory.controlUrls)
+        assertEquals("https://headscale.example.com", manager.controlUrl.value)
+        assertFalse(state.values.containsKey("_machinekey"))
+
+        // Re-authenticating a registered node never moves it to another server.
+        manager.beginBrowserEnrollment("https://other.example.com")
+        assertEquals("https://headscale.example.com", factory.controlUrls.last())
+        assertEquals("https://headscale.example.com", state.controlUrl())
+        // Let the re-authenticated node report running and detach, as the UI
+        // only offers logout once the node is idle or active.
+        withTimeout(5_000) { while (factory.closed.get() != 2) delay(10) }
+        withTimeout(5_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.READY_IDLE } }
+
+        // Logout is offered on the settings page, which keeps the node up while visible.
+        manager.setDeviceBrowsing(true)
+        withTimeout(5_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.ACTIVE } }
+        manager.logout()
+        assertEquals("", manager.controlUrl.value)
+        assertEquals("", state.controlUrl())
+    }
+
+    @Test
+    fun cleartextControlServerIsRefusedBeforeStarting() = runBlocking {
+        val factory = FakeBackendFactory()
+        val manager = EmbeddedTsnetManager(
+            context = isolatedContext(),
+            scope = isolatedScope(),
+            stateStore = FakeStateStore(enrolled = false),
+            backendFactory = factory,
+            foregroundStarter = {},
+        )
+
+        assertTrue(runCatching { manager.beginBrowserEnrollment("http://headscale.example.com") }.isFailure)
+        assertEquals(0, factory.created.get())
+    }
+
+    @Test
     fun enrollmentRequiresForegroundBeforeServiceLaunch() = runBlocking {
         lateinit var manager: EmbeddedTsnetManager
         var phaseAtServiceLaunch: EmbeddedTsnetPhase? = null
@@ -195,6 +247,8 @@ class EmbeddedTsnetManagerInstrumentedTest {
         manager.setDeviceBrowsing(false)
         withTimeout(10_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.READY_IDLE } }
         assertEquals(null, manager.network.value)
+        // The detached backend is closed just after the status changes, outside the lock.
+        withTimeout(5_000) { while (factory.closed.get() == 0) delay(10) }
         assertEquals(1, factory.closed.get())
     }
 
@@ -362,6 +416,12 @@ class EmbeddedTsnetManagerInstrumentedTest {
             values["__marker"] = byteArrayOf(1)
         }
 
+        override fun controlUrl(): String = values["__control_url"]?.decodeToString().orEmpty()
+
+        override fun setControlUrl(value: String) {
+            if (value.isEmpty()) values.remove("__control_url") else values["__control_url"] = value.encodeToByteArray()
+        }
+
         override fun clearIdentity() {
             values.clear()
         }
@@ -376,14 +436,17 @@ class EmbeddedTsnetManagerInstrumentedTest {
         val created = AtomicInteger()
         val closed = AtomicInteger()
         val authKeyWasNonEmpty = AtomicBoolean()
+        val controlUrls = java.util.concurrent.CopyOnWriteArrayList<String>()
 
         override fun create(
             stateDirectory: String,
             hostname: String,
+            controlUrl: String,
             store: StateStore,
             listener: StatusListener,
         ): EmbeddedTsnetBackend {
             listeners += listener
+            controlUrls += controlUrl
             created.incrementAndGet()
             return object : EmbeddedTsnetBackend {
                 override fun start(authKey: String) {

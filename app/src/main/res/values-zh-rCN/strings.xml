@@ -38,6 +38,10 @@
     <string name="embedded_tsnet_invalid_authorization_url">内嵌 Tailscale 返回了无效的授权请求。</string>
     <string name="embedded_tsnet_enrollment_required">请先在设置中登录内嵌 Tailscale，再连接此配置。</string>
     <string name="embedded_tsnet_version">内嵌节点版本 %1$s</string>
+    <string name="embedded_tsnet_control_server_label">控制服务器（可选）</string>
+    <string name="embedded_tsnet_control_server_hint">留空则使用 Tailscale 官方服务。使用 Headscale 等自建服务器时，填写其 https:// 地址。</string>
+    <string name="embedded_tsnet_control_server_invalid">请输入不含用户名、查询参数或片段的 https:// 地址。</string>
+    <string name="embedded_tsnet_control_server_current">控制服务器：%1$s</string>
     <string name="embedded_tsnet_status_connected">已登录 · 已连接</string>
     <string name="embedded_tsnet_status_checking">正在检查登录状态…</string>
     <string name="embedded_tsnet_self_title">本机</string>

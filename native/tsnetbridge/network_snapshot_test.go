@@ -105,7 +105,7 @@ func TestBuildNetworkSnapshotWithoutSelfUsesEmptyLists(t *testing.T) {
 }
 
 func TestNetworkSnapshotRequiresRunningNode(t *testing.T) {
-	runtime := NewRuntime("", "", nil, nil, nil)
+	runtime := NewRuntime("", "", "", nil, nil, nil)
 	if _, err := runtime.NetworkSnapshotJson(); err != errNotRunning {
 		t.Fatalf("NetworkSnapshotJson() error = %v", err)
 	}

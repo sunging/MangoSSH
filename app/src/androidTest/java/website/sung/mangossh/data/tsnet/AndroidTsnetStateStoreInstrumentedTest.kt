@@ -36,12 +36,16 @@ class AndroidTsnetStateStoreInstrumentedTest {
             val nodeName = store.nodeName()
             store.writeState("profile", byteArrayOf(1, 2, 3, 4))
             store.markEnrolled()
+            assertEquals("", store.controlUrl())
+            store.setControlUrl("https://headscale.example.com")
             assertArrayEquals(byteArrayOf(1, 2, 3, 4), store.readState("profile"))
             assertTrue(store.hasEnrolledIdentity())
+            assertEquals("https://headscale.example.com", store.controlUrl())
 
             val encrypted = File(directory, stateName)
             val plaintext = encrypted.readBytes().decodeToString()
             assertTrue(!plaintext.contains("profile"))
+            assertTrue(!plaintext.contains("headscale"))
             RandomAccessFile(encrypted, "rw").use { file ->
                 file.seek(file.length() - 1)
                 val lastByte = file.read()
@@ -51,6 +55,7 @@ class AndroidTsnetStateStoreInstrumentedTest {
 
             assertEquals(0, store.readState("profile").size)
             assertTrue(!store.hasEnrolledIdentity())
+            assertEquals("", store.controlUrl())
             assertEquals(nodeName, store.nodeName())
         } finally {
             store.clearIdentity()

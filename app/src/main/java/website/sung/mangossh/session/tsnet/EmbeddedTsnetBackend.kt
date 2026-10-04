@@ -28,9 +28,11 @@ internal interface EmbeddedTsnetUdpRelay : Closeable {
 }
 
 internal fun interface EmbeddedTsnetBackendFactory {
+    /** [controlUrl] is the identity's coordination server; "" selects Tailscale's default. */
     fun create(
         stateDirectory: String,
         hostname: String,
+        controlUrl: String,
         store: StateStore,
         listener: StatusListener,
     ): EmbeddedTsnetBackend
@@ -43,6 +45,7 @@ internal class GomobileTsnetBackendFactory(context: Context) : EmbeddedTsnetBack
     override fun create(
         stateDirectory: String,
         hostname: String,
+        controlUrl: String,
         store: StateStore,
         listener: StatusListener,
     ): EmbeddedTsnetBackend {
@@ -50,6 +53,7 @@ internal class GomobileTsnetBackendFactory(context: Context) : EmbeddedTsnetBack
         val runtime = Tsnetbridge.newRuntime(
             stateDirectory,
             hostname,
+            controlUrl,
             store,
             networkState,
             listener,

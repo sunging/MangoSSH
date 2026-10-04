@@ -79,9 +79,11 @@ Each profile picks one route:
 - **Tailnet** uses the device's system Tailscale VPN.
 - **tsnet** uses an embedded, process-scoped userspace Tailscale node. It does
   not request Android VPN access or depend on the Tailscale app, and supports
-  official Tailscale browser enrollment and one-time Auth Key enrollment.
-  Headscale, custom control servers, exit nodes, and device-wide VPN routing are
-  intentionally out of scope. See [embedded-tsnet.md](embedded-tsnet.md).
+  browser enrollment and one-time Auth Key enrollment. It signs in to
+  Tailscale by default; enter a self-hosted control server such as Headscale
+  (`https://` only) before signing in to use that instead. The server is fixed
+  for the enrolled node, so log out to switch. Exit nodes and device-wide VPN
+  routing are intentionally out of scope. See [embedded-tsnet.md](embedded-tsnet.md).
 
 Once enrolled, **Settings → Embedded Tailscale** shows this device's Tailnet
 name and addresses and lists the other devices on the Tailnet, with their

@@ -65,7 +65,7 @@ func TestEncryptedStateStoreMissing(t *testing.T) {
 }
 
 func TestRuntimeRejectsInvalidStart(t *testing.T) {
-	runtime := NewRuntime("", "", nil, nil, nil)
+	runtime := NewRuntime("", "", "", nil, nil, nil)
 	if err := runtime.Start(""); !errors.Is(err, errInvalidArgument) {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -74,6 +74,32 @@ func TestRuntimeRejectsInvalidStart(t *testing.T) {
 	}
 	if err := runtime.Close(); err != nil {
 		t.Fatal("Close must be idempotent")
+	}
+}
+
+func TestRuntimeRejectsCleartextControlURL(t *testing.T) {
+	store := &memoryStateStore{values: make(map[string][]byte)}
+	runtime := NewRuntime(t.TempDir(), "node", "http://headscale.example", store, staticNetworkState{}, nil)
+	if err := runtime.Start(""); !errors.Is(err, errInvalidArgument) {
+		t.Fatalf("Start() error = %v", err)
+	}
+}
+
+func TestValidControlURL(t *testing.T) {
+	for value, want := range map[string]bool{
+		"":                                  true,
+		"https://headscale.example":         true,
+		"https://headscale.example:8443/hs": true,
+		"http://headscale.example":          false,
+		"https://":                          false,
+		"https://user@headscale.example":    false,
+		"https://headscale.example/?a=b":    false,
+		"https://headscale.example/#top":    false,
+		"headscale.example":                 false,
+	} {
+		if got := validControlURL(value); got != want {
+			t.Errorf("validControlURL(%q) = %v, want %v", value, got, want)
+		}
 	}
 }
 
