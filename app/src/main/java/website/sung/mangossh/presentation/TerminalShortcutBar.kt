@@ -78,6 +78,8 @@ import website.sung.mangossh.domain.TerminalSpecialKey
 /**
  * Shared compact keyboard layout. Missing callbacks make a visually faithful, inert preview.
  * Repeats belong to this composition and its resumed lifecycle, never to a remote session job.
+ * [singleRow] lays the configured rows end to end in one scrollable row, for windows too short
+ * to spare the height of several.
  */
 @Composable
 internal fun TerminalShortcutBar(
@@ -85,10 +87,13 @@ internal fun TerminalShortcutBar(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     activeModifiers: Set<TerminalModifier> = emptySet(),
+    singleRow: Boolean = false,
     onAction: ((TerminalShortcutItem) -> Unit)? = null,
     onStartRepeat: ((TerminalShortcutItem) -> (() -> Unit))? = null,
 ) {
-    val rows = remember(config) { config.displayRows() }
+    val rows = remember(config, singleRow) {
+        config.displayRows().let { configured -> if (singleRow && configured.size > 1) listOf(configured.flatten()) else configured }
+    }
     if (rows.isEmpty()) return
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var resumed by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
