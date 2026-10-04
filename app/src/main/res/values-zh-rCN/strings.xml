@@ -38,6 +38,10 @@
     <string name="embedded_tsnet_invalid_authorization_url">内嵌 Tailscale 返回了无效的授权请求。</string>
     <string name="embedded_tsnet_enrollment_required">请先在设置中登录内嵌 Tailscale，再连接此配置。</string>
     <string name="embedded_tsnet_version">内嵌节点版本 %1$s</string>
+    <string name="embedded_tsnet_control_server_label">控制服务器（可选）</string>
+    <string name="embedded_tsnet_control_server_hint">留空则使用 Tailscale 官方服务。使用 Headscale 等自建服务器时，填写其 https:// 地址。</string>
+    <string name="embedded_tsnet_control_server_invalid">请输入不含用户名、查询参数或片段的 https:// 地址。</string>
+    <string name="embedded_tsnet_control_server_current">控制服务器：%1$s</string>
     <string name="embedded_tsnet_status_connected">已登录 · 已连接</string>
     <string name="embedded_tsnet_status_checking">正在检查登录状态…</string>
     <string name="embedded_tsnet_self_title">本机</string>
@@ -392,6 +396,10 @@
     <string name="ui_secure_vault_unavailable">安全保险库：不可用</string>
     <string name="ui_security_first">安全优先</string>
     <string name="ui_server_fingerprint_changed">服务器指纹已变更</string>
+    <string name="ui_server_key_type_new">服务器密钥类型变化</string>
+    <string name="ui_server_key_type_new_message">此服务器已信任另一种类型的密钥，但本次连接出示了尚未确认的密钥类型。服务器重新配置或遭到攻击都可能导致这种情况。请先与管理员核对新指纹后再信任。</string>
+    <string name="ui_already_trusted_keys">已信任：</string>
+    <string name="ui_trust_additional_key">同时信任此密钥</string>
     <string name="ui_server_resources">服务器资源</string>
     <string name="ui_set_app_pin">设置应用 PIN</string>
     <string name="ui_set_pin">设置 PIN</string>

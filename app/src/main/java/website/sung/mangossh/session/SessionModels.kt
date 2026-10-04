@@ -278,10 +278,27 @@ data class ServerResourceSnapshot(
     val report: String,
 )
 
+/** Why a presented host key needs the user's decision. */
+enum class HostKeyPromptKind {
+    /** Nothing is trusted for this endpoint yet. */
+    FIRST_USE,
+
+    /** A different key of the same type is trusted for this endpoint. */
+    CHANGED,
+
+    /** Only keys of other types are trusted for this endpoint. */
+    NEW_KEY_TYPE,
+}
+
 sealed interface SessionPrompt {
     val requestId: String
     val sessionId: String
 
+    /**
+     * Asks whether to trust a host key. [previousFingerprint] is set for
+     * [HostKeyPromptKind.CHANGED]; [trustedKeys] lists the "type fingerprint"
+     * pairs already trusted for [HostKeyPromptKind.NEW_KEY_TYPE].
+     */
     @Immutable
     data class HostKeyVerification(
         override val requestId: String,
@@ -290,8 +307,9 @@ sealed interface SessionPrompt {
         val port: Int,
         val algorithm: String,
         val fingerprint: String,
-        val isChanged: Boolean,
-        val previousFingerprint: String?,
+        val kind: HostKeyPromptKind,
+        val previousFingerprint: String? = null,
+        val trustedKeys: List<String> = emptyList(),
     ) : SessionPrompt
 
     @Immutable

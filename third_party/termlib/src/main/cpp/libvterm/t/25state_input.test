@@ -9,8 +9,10 @@ INCHAR 0 61
 
 !Ctrl modifier on ASCII letters
 INCHAR C 41
-  output "\e[65;5u"
+  output "\x01"
 INCHAR C 61
+  output "\x01"
+INCHAR SC 41
   output "\x01"
 
 !Alt modifier on ASCII letters
@@ -21,45 +23,97 @@ INCHAR A 61
 
 !Ctrl-Alt modifier on ASCII letters
 INCHAR CA 41
-  output "\e[65;7u"
+  output "\e\x01"
 INCHAR CA 61
   output "\e\x01"
 
-!Special handling of Ctrl-I
+!Ctrl-I, Ctrl-J, Ctrl-M and Ctrl-[ are their legacy control codes
 INCHAR 0 49
   output "I"
 INCHAR 0 69
   output "i"
 INCHAR C 49
-  output "\e[73;5u"
+  output "\x09"
 INCHAR C 69
-  output "\e[105;5u"
+  output "\x09"
 INCHAR A 49
   output "\eI"
 INCHAR A 69
   output "\ei"
 INCHAR CA 49
-  output "\e[73;7u"
+  output "\e\x09"
 INCHAR CA 69
-  output "\e[105;7u"
+  output "\e\x09"
+INCHAR C 6a
+  output "\x0a"
+INCHAR C 6d
+  output "\x0d"
+INCHAR C 5b
+  output "\e"
+
+!Ctrl on digits and punctuation follows xterm
+INCHAR C 40
+  output "\0"
+INCHAR C 32
+  output "\0"
+INCHAR C 33
+  output "\e"
+INCHAR C 34
+  output "\x1c"
+INCHAR C 5c
+  output "\x1c"
+INCHAR C 35
+  output "\x1d"
+INCHAR C 5d
+  output "\x1d"
+INCHAR C 36
+  output "\x1e"
+INCHAR C 5e
+  output "\x1e"
+INCHAR C 37
+  output "\x1f"
+INCHAR C 2f
+  output "\x1f"
+INCHAR C 5f
+  output "\x1f"
+INCHAR C 38
+  output "\x7f"
+INCHAR C 3f
+  output "\x7f"
+INCHAR C 31
+  output "1"
+INCHAR CA 2e
+  output "\e."
+
+!Modified control characters keep their byte
+INCHAR C 08
+  output "\x08"
+INCHAR A 08
+  output "\e\x08"
 
 !Special handling of Space
 INCHAR 0 20
   output " "
 INCHAR S 20
-  output "\e[32;2u"
+  output " "
 INCHAR C 20
   output "\0"
 INCHAR SC 20
-  output "\e[32;6u"
+  output "\0"
 INCHAR A 20
   output "\e "
 INCHAR SA 20
-  output "\e[32;4u"
+  output "\e "
 INCHAR CA 20
   output "\e\0"
 INCHAR SCA 20
-  output "\e[32;8u"
+  output "\e\0"
+
+!Non-ASCII characters drop Ctrl
+INCHAR C e9
+  output "\xc3\xa9"
+INCHAR A e9
+  output "\e\xc3\xa9"
 
 !Cursor keys in reset (cursor) mode
 INKEY 0 Up
@@ -96,14 +150,190 @@ INKEY 0 Tab
 INKEY S Tab
   output "\e[Z"
 INKEY C Tab
-  output "\e[9;5u"
+  output "\x09"
 INKEY A Tab
   output "\e\x09"
 INKEY CA Tab
-  output "\e[9;7u"
+  output "\e\x09"
+INKEY SC Tab
+  output "\e[1;6Z"
 
 !Enter in linefeed mode
 INKEY 0 Enter
+  output "\x0d"
+
+!Modified Enter, Backspace and Escape use the legacy encoding
+INKEY C Enter
+  output "\x0d"
+INKEY S Enter
+  output "\x0d"
+INKEY A Enter
+  output "\e\x0d"
+INKEY SC Enter
+  output "\x0d"
+INKEY 0 Backspace
+  output "\x7f"
+INKEY C Backspace
+  output "\x08"
+INKEY S Backspace
+  output "\x7f"
+INKEY A Backspace
+  output "\e\x7f"
+INKEY 0 Escape
+  output "\e"
+INKEY C Escape
+  output "\e"
+INKEY A Escape
+  output "\e\e"
+INKEY 0 KPEnter
+  output "\x0d"
+INKEY C KPEnter
+  output "\x0d"
+
+!kitty keyboard protocol disambiguates modified keys
+PUSH "\e[?u"
+  output "\e[?0u"
+PUSH "\e[>1u"
+PUSH "\e[?u"
+  output "\e[?1u"
+INKEY 0 Enter
+  output "\x0d"
+INKEY C Enter
+  output "\e[13;5u"
+INKEY S Enter
+  output "\e[13;2u"
+INKEY 0 Tab
+  output "\x09"
+INKEY S Tab
+  output "\e[9;2u"
+INKEY C Tab
+  output "\e[9;5u"
+INKEY 0 Backspace
+  output "\x7f"
+INKEY C Backspace
+  output "\e[127;5u"
+INKEY 0 Escape
+  output "\e[27u"
+INKEY A Escape
+  output "\e[27;3u"
+INKEY C Up
+  output "\e[1;5A"
+INCHAR 0 61
+  output "a"
+INCHAR S 41
+  output "A"
+INCHAR C 61
+  output "\e[97;5u"
+INCHAR C 69
+  output "\e[105;5u"
+INCHAR SC 41
+  output "\e[97;6u"
+INCHAR A 61
+  output "\e[97;3u"
+
+!kitty unsupported flags are not reported
+PUSH "\e[>31u"
+PUSH "\e[?u"
+  output "\e[?1u"
+
+!kitty pop restores the previous flags
+PUSH "\e[<u"
+PUSH "\e[?u"
+  output "\e[?1u"
+PUSH "\e[<u"
+PUSH "\e[?u"
+  output "\e[?0u"
+INKEY C Enter
+  output "\x0d"
+
+!kitty set modifies the current flags
+PUSH "\e[=1u"
+PUSH "\e[?u"
+  output "\e[?1u"
+PUSH "\e[=1;3u"
+PUSH "\e[?u"
+  output "\e[?0u"
+PUSH "\e[=1;2u"
+PUSH "\e[?u"
+  output "\e[?1u"
+PUSH "\e[<10u"
+
+!kitty flags are kept per screen
+PUSH "\e[>1u"
+PUSH "\e[?1049h"
+PUSH "\e[?u"
+  output "\e[?0u"
+PUSH "\e[?1049l"
+PUSH "\e[?u"
+  output "\e[?1u"
+PUSH "\e[<u"
+
+!kitty stack evicts the oldest entry when full
+PUSH "\e[>1u\e[>0u\e[>0u\e[>0u\e[>0u\e[>0u\e[>0u\e[>0u\e[>0u"
+PUSH "\e[<7u"
+PUSH "\e[?u"
+  output "\e[?0u"
+PUSH "\e[<u"
+PUSH "\e[?u"
+  output "\e[?0u"
+
+!modifyOtherKeys level 1 only changes ambiguous keys
+PUSH "\e[>4;1m"
+INKEY 0 Enter
+  output "\x0d"
+INKEY C Enter
+  output "\e[27;5;13~"
+INKEY S Enter
+  output "\e[27;2;13~"
+INKEY A Enter
+  output "\e\x0d"
+INKEY C Tab
+  output "\e[27;5;9~"
+INKEY S Tab
+  output "\e[Z"
+INKEY C Backspace
+  output "\x08"
+INCHAR C 61
+  output "\x01"
+INCHAR C 31
+  output "\e[27;5;49~"
+INCHAR SC 41
+  output "\e[27;6;65~"
+INCHAR A 61
+  output "\ea"
+
+!modifyOtherKeys level 2 changes every modified key
+PUSH "\e[>4;2m"
+INCHAR C 61
+  output "\e[27;5;97~"
+INCHAR A 61
+  output "\e[27;3;97~"
+INCHAR S 41
+  output "A"
+INKEY C Backspace
+  output "\e[27;5;127~"
+INKEY S Tab
+  output "\e[Z"
+INKEY C Up
+  output "\e[1;5A"
+
+!kitty takes precedence over modifyOtherKeys
+PUSH "\e[>1u"
+INKEY C Enter
+  output "\e[13;5u"
+PUSH "\e[<u"
+
+!modifyOtherKeys reset
+PUSH "\e[>4n"
+INKEY C Enter
+  output "\x0d"
+PUSH "\e[>4;2m"
+PUSH "\e[>4m"
+INKEY C Enter
+  output "\x0d"
+PUSH "\e[>4;2m"
+PUSH "\e[!p"
+INKEY C Enter
   output "\x0d"
 
 !Enter in newline mode

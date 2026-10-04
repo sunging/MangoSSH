@@ -92,7 +92,7 @@ MangoSSH is built in two flavors from the same source:
   or when you turn on the automatic check (at most once every 24 hours). It
   never sends a GitHub token.
 - Embedded Tailscale stays off until you enable it and sign in to your own
-  tailnet.
+  tailnet, on Tailscale or on a self-hosted control server such as Headscale.
 
 ## Building from source
 

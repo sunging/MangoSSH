@@ -923,6 +923,61 @@ static void request_version_string(VTermState *state)
       VTERM_VERSION_MAJOR, VTERM_VERSION_MINOR);
 }
 
+/* Kitty progressive enhancement keeps a bounded flag stack per screen. Only the flags this
+ * terminal actually implements are stored, so a query never claims unsupported encodings. */
+#define KITTY_KEYBOARD_SUPPORTED KITTY_KEYBOARD_DISAMBIGUATE
+
+static int kitty_keyboard_screen(const VTermState *state)
+{
+  return state->mode.alt_screen ? BUFIDX_ALTSCREEN : BUFIDX_PRIMARY;
+}
+
+int vterm_state_kitty_keyboard_flags(const VTermState *state)
+{
+  int depth = state->kitty_keyboard[kitty_keyboard_screen(state)].depth;
+  return depth ? state->kitty_keyboard[kitty_keyboard_screen(state)].flags[depth - 1] : 0;
+}
+
+static void kitty_keyboard_push(VTermState *state, long flags)
+{
+  int screen = kitty_keyboard_screen(state);
+  if(state->kitty_keyboard[screen].depth == KITTY_KEYBOARD_STACK_MAX) {
+    // A full stack evicts its oldest entry.
+    memmove(state->kitty_keyboard[screen].flags, state->kitty_keyboard[screen].flags + 1,
+        KITTY_KEYBOARD_STACK_MAX - 1);
+    state->kitty_keyboard[screen].depth--;
+  }
+  state->kitty_keyboard[screen].flags[state->kitty_keyboard[screen].depth++] =
+      flags & KITTY_KEYBOARD_SUPPORTED;
+}
+
+static void kitty_keyboard_pop(VTermState *state, long count)
+{
+  int screen = kitty_keyboard_screen(state);
+  if(count >= state->kitty_keyboard[screen].depth)
+    state->kitty_keyboard[screen].depth = 0;
+  else
+    state->kitty_keyboard[screen].depth -= count;
+}
+
+static void kitty_keyboard_set(VTermState *state, long flags, long mode)
+{
+  int current = vterm_state_kitty_keyboard_flags(state);
+  switch(mode) {
+  case 1: current = flags; break;
+  case 2: current |= flags; break;
+  case 3: current &= ~flags; break;
+  default: return;
+  }
+
+  int screen = kitty_keyboard_screen(state);
+  if(state->kitty_keyboard[screen].depth == 0)
+    kitty_keyboard_push(state, current);
+  else
+    state->kitty_keyboard[screen].flags[state->kitty_keyboard[screen].depth - 1] =
+        current & KITTY_KEYBOARD_SUPPORTED;
+}
+
 static int on_csi(const char *leader, const long args[], int argcount, const char *intermed, char command, void *user)
 {
   VTermState *state = user;
@@ -937,6 +992,8 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
     switch(leader[0]) {
     case '?':
     case '>':
+    case '<':
+    case '=':
       leader_byte = leader[0];
       break;
     default:
@@ -1370,6 +1427,22 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
     }
     break;
 
+  case LEADER('>', 0x6d): // XTMODKEYS - xterm set key modifier options
+    // Only modifyOtherKeys (resource 4) changes what this terminal sends. With no
+    // parameters, or no value, the resource returns to its default (off).
+    if(argcount < 1 || CSI_ARG_IS_MISSING(args[0]))
+      state->modify_other_keys = 0;
+    else if(CSI_ARG(args[0]) == 4) {
+      val = (argcount > 1) ? CSI_ARG_OR(args[1], 0) : 0;
+      state->modify_other_keys = (val >= 0 && val <= 2) ? val : 0;
+    }
+    break;
+
+  case LEADER('>', 0x6e): // XTMODKEYS - xterm disable key modifier options
+    if(CSI_ARG_OR(args[0], 4) == 4)
+      state->modify_other_keys = 0;
+    break;
+
   case 0x6e: // DSR - ECMA-48 8.3.35
   case LEADER('?', 0x6e): // DECDSR
     val = CSI_ARG_OR(args[0], 0);
@@ -1391,6 +1464,21 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
     }
     break;
 
+  case LEADER('?', 0x75): // kitty keyboard protocol - query flags
+    vterm_push_output_sprintf_ctrl(state->vt, C1_CSI, "?%du", vterm_state_kitty_keyboard_flags(state));
+    break;
+
+  case LEADER('>', 0x75): // kitty keyboard protocol - push flags
+    kitty_keyboard_push(state, CSI_ARG_OR(args[0], 0));
+    break;
+
+  case LEADER('<', 0x75): // kitty keyboard protocol - pop flags
+    kitty_keyboard_pop(state, CSI_ARG_COUNT(args[0]));
+    break;
+
+  case LEADER('=', 0x75): // kitty keyboard protocol - set flags
+    kitty_keyboard_set(state, CSI_ARG_OR(args[0], 0), argcount > 1 ? CSI_ARG_OR(args[1], 1) : 1);
+    break;
 
   case INTERMED('!', 0x70): // DECSTR - DEC soft terminal reset
     vterm_state_reset(state, 0);
@@ -2086,6 +2174,10 @@ void vterm_state_reset(VTermState *state, int hard)
   state->mode.leftrightmargin = 0;
   state->mode.bracketpaste    = 0;
   state->mode.report_focus    = 0;
+
+  state->kitty_keyboard[BUFIDX_PRIMARY].depth   = 0;
+  state->kitty_keyboard[BUFIDX_ALTSCREEN].depth = 0;
+  state->modify_other_keys = 0;
 
   state->mouse_flags = 0;
 

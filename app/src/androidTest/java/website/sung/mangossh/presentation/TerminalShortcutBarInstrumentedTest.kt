@@ -68,6 +68,7 @@ class TerminalShortcutBarInstrumentedTest {
     private var size by mutableStateOf(DpSize(320.dp, 480.dp))
     private var fontScale by mutableStateOf(1f)
     private var locale by mutableStateOf("en")
+    private var singleRow by mutableStateOf(false)
     private val modifiers = TerminalModifierState()
     private val output = mutableListOf<Pair<Int, Int>>()
     private val actions = mutableListOf<String>()
@@ -116,6 +117,24 @@ class TerminalShortcutBarInstrumentedTest {
         saveBarImage("terminal-shortcuts-default.png")
         button("ctrl-z").performScrollTo().assertIsDisplayed()
         button("slash").assertIsDisplayed()
+    }
+
+    @Test
+    fun singleRowKeepsEveryKeyInConfiguredOrderAndRestoresTheRows() {
+        mount()
+        val ids = listOf("paste", "page-up", "ctrl-z", "escape", "page-down", "slash")
+        composeRule.runOnIdle { singleRow = true }
+        bar().assertHeightIsEqualTo(52.dp)
+        val tops = ids.map { button(it).getUnclippedBoundsInRoot().top.value }
+        tops.forEach { assertEquals(tops.first(), it, 0.5f) }
+        val lefts = ids.map { button(it).getUnclippedBoundsInRoot().left }
+        assertEquals(lefts.sorted(), lefts)
+        button("slash").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.runOnIdle { assertEquals(listOf("default-slash"), actions) }
+
+        composeRule.runOnIdle { singleRow = false }
+        bar().assertHeightIsEqualTo(102.dp)
+        assertTrue(button("paste").getUnclippedBoundsInRoot().bottom < button("escape").getUnclippedBoundsInRoot().top)
     }
 
     @Test
@@ -290,6 +309,7 @@ class TerminalShortcutBarInstrumentedTest {
                                     config = config,
                                     enabled = enabled,
                                     activeModifiers = modifiers.activeModifiers,
+                                    singleRow = singleRow,
                                     onAction = { actions += it.id; dispatch(it) },
                                     onStartRepeat = { item ->
                                         val captured = item.copy(action = captureTerminalShortcutRepeat(item.action, modifiers))

@@ -32,6 +32,6 @@ MangoSSH 是面向 Android 手机和平板电脑的自由开源 SSH 与 Mosh 客
 * 从 OpenSSH config 文件导入主机
 * 支持英文和简体中文；平板上使用双栏布局
 
-Mosh 针对 arm64-v8a、armeabi-v7a、x86 和 x86_64 从随附的 GPL 源码重新构建。内嵌 Tailscale 功能须由用户主动启用，不申请 Android VPN 权限，并需要用户授权自己的 Tailnet 账户。
+Mosh 针对 arm64-v8a、armeabi-v7a、x86 和 x86_64 从随附的 GPL 源码重新构建。内嵌 Tailscale 功能须由用户主动启用，不申请 Android VPN 权限，并需要用户授权自己的 Tailnet 账户，可使用 Tailscale 官方服务或 Headscale 等自建控制服务器。
 
 MangoSSH 不含广告或分析统计。凭据、私钥、主机指纹、一次性密码答案及会话密钥不会出现在诊断信息中。

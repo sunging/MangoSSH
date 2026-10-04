@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -67,16 +68,18 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -159,7 +162,15 @@ fun TerminalSessionScreen(
     var topBarVisible by rememberSaveable(session.id) { mutableStateOf(true) }
     var shortcutBarVisible by rememberSaveable(session.id) { mutableStateOf(true) }
     var chromeMenuExpanded by remember(session.id) { mutableStateOf(false) }
-    val showTopBar = topBarVisible && !immersive
+    // A phone in landscape has too little height above the keyboard for the title bar, a
+    // multi-row shortcut bar and any terminal rows at once. While the keyboard is (or is
+    // becoming) open there, the title bar steps aside and the shortcut rows merge into one
+    // scrollable row; both come back as soon as the keyboard starts to close.
+    val density = LocalDensity.current
+    val keyboardHeight = with(density) { WindowInsets.imeAnimationTarget.getBottom(density).toDp() }
+    val compactForKeyboard = keyboardHeight > 0.dp &&
+        LocalWindowInfo.current.containerDpSize.height - keyboardHeight < COMPACT_KEYBOARD_MIN_HEIGHT
+    val showTopBar = topBarVisible && !immersive && !compactForKeyboard
     val showShortcutBar = shortcutBarVisible && !immersive
 
     // The floating exit-immersive button fades to a low alpha after a few idle seconds so
@@ -223,6 +234,27 @@ fun TerminalSessionScreen(
             controller?.show(WindowInsetsCompat.Type.systemBars())
         }
         onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+
+    // The window's default soft-input mode resolves to pan: the system shifts the whole
+    // window to keep the focused view above the keyboard. This screen already pads itself
+    // for the IME, so a pan on top of that misplaces the chrome once the system bars
+    // change under an open keyboard (leaving immersive mode, rotating). Resize mode stops
+    // the pan; with edge-to-edge it only dispatches insets. Restored for the other screens,
+    // which still rely on the pan to keep their text fields visible.
+    DisposableEffect(activity) {
+        val window = activity?.window
+        val previousMode = window?.attributes?.softInputMode
+        if (window != null && previousMode != null) {
+            @Suppress("DEPRECATION")
+            window.setSoftInputMode(
+                (previousMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv()) or
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+            )
+        }
+        onDispose {
+            if (window != null && previousMode != null) window.setSoftInputMode(previousMode)
+        }
     }
 
     // Let immersive mode draw all the way under the display cutout too; restore whatever
@@ -476,8 +508,12 @@ fun TerminalSessionScreen(
                             onInterceptKey = { event ->
                                 if (
                                     event.type == KeyEventType.KeyDown &&
-                                    event.isCtrlPressed &&
-                                    event.key == Key.V
+                                    isTerminalPasteShortcut(
+                                        nativeKeyCode = event.nativeKeyEvent.keyCode,
+                                        ctrl = event.isCtrlPressed,
+                                        shift = event.isShiftPressed,
+                                        alt = event.isAltPressed,
+                                    )
                                 ) {
                                     pasteFromClipboard()
                                     terminalModifierState.clearTransients()
@@ -547,6 +583,7 @@ fun TerminalSessionScreen(
                             enabled = isOpen,
                             config = shortcutConfig,
                             activeModifiers = terminalModifierState.activeModifiers,
+                            singleRow = compactForKeyboard,
                             onAction = { item ->
                                 dispatchTerminalShortcut(item.action, terminalModifierState, terminalEmulator, pasteFromClipboard)
                             },
@@ -636,6 +673,9 @@ internal fun TerminalFont.fontResourceId(): Int = when (this) {
 private const val IME_REOPEN_RESET_DELAY_MS = 50L
 private const val IMMERSIVE_EXIT_FADE_DELAY_MS = 3_000L
 private const val IMMERSIVE_EXIT_FADED_ALPHA = 0.18f
+
+/** Height left above the keyboard below which the terminal chrome compacts. */
+private val COMPACT_KEYBOARD_MIN_HEIGHT = 280.dp
 
 /** Returns the localized, application-owned label for a live session phase. */
 @Composable

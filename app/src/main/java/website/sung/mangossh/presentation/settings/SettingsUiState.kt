@@ -44,6 +44,8 @@ internal data class AppearanceSettingsState(
 @Immutable
 internal data class TsnetSettingsState(
     val status: EmbeddedTsnetStatus,
+    /** Coordination server of the identity or pending enrollment; "" is Tailscale's default. */
+    val controlUrl: String = "",
     val nodeName: String? = null,
     val network: TsnetNetworkSnapshot? = null,
     val hosts: List<ConnectionProfile> = emptyList(),
@@ -199,8 +201,9 @@ internal data class SnippetSettingsCallbacks(
 
 @Immutable
 internal data class TsnetSettingsCallbacks(
-    val onBeginBrowserEnrollment: () -> Unit,
-    val onBeginAuthKeyEnrollment: (CharArray) -> Unit,
+    /** Receives the normalized control server URL ("" for Tailscale's default). */
+    val onBeginBrowserEnrollment: (controlUrl: String) -> Unit,
+    val onBeginAuthKeyEnrollment: (authKey: CharArray, controlUrl: String) -> Unit,
     val onLogout: () -> Unit,
     /** Holds (true) or releases (false) the embedded node for the visible device list. */
     val onBrowsingChanged: (Boolean) -> Unit = {},

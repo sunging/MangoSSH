@@ -158,7 +158,7 @@ class TsnetSettingsPageInstrumentedTest {
         onQuickConnect: (ConnectionProfile) -> Unit = {},
     ) = TsnetSettingsCallbacks(
         onBeginBrowserEnrollment = {},
-        onBeginAuthKeyEnrollment = {},
+        onBeginAuthKeyEnrollment = { _, _ -> },
         onLogout = {},
         onBrowsingChanged = onBrowsingChanged,
         onConnectSavedHost = onConnectSavedHost,

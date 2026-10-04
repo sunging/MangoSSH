@@ -40,6 +40,10 @@
     <string name="embedded_tsnet_invalid_authorization_url">Embedded Tailscale returned an invalid authorization request.</string>
     <string name="embedded_tsnet_enrollment_required">Sign in to Embedded Tailscale in Settings before connecting this profile.</string>
     <string name="embedded_tsnet_version">Embedded node version %1$s</string>
+    <string name="embedded_tsnet_control_server_label">Control server (optional)</string>
+    <string name="embedded_tsnet_control_server_hint">Leave blank to use Tailscale. For Headscale or another self-hosted server, enter its https:// URL.</string>
+    <string name="embedded_tsnet_control_server_invalid">Enter an https:// URL without a user name, query, or fragment.</string>
+    <string name="embedded_tsnet_control_server_current">Control server: %1$s</string>
     <string name="embedded_tsnet_status_connected">Signed in · connected</string>
     <string name="embedded_tsnet_status_checking">Checking sign-in…</string>
     <string name="embedded_tsnet_self_title">This device</string>
@@ -411,6 +415,10 @@
     <string name="ui_secure_vault_unavailable">Secure vault: unavailable</string>
     <string name="ui_security_first">Security first</string>
     <string name="ui_server_fingerprint_changed">Server fingerprint changed</string>
+    <string name="ui_server_key_type_new">New server key type</string>
+    <string name="ui_server_key_type_new_message">This server is already trusted with a key of another type, but this connection presented a type you have not confirmed. A server reconfiguration can cause this, and so can an attacker. Trust it only after confirming the new fingerprint with the administrator.</string>
+    <string name="ui_already_trusted_keys">Already trusted:</string>
+    <string name="ui_trust_additional_key">Also trust this key</string>
     <string name="ui_server_resources">Server resources</string>
     <string name="ui_set_app_pin">Set app PIN</string>
     <string name="ui_set_pin">Set PIN</string>

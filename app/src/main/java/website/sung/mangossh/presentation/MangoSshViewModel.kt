@@ -243,6 +243,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     val terminalClipboardCopies = sessionController.clipboardCopies
     internal val embeddedTsnetStatus = embeddedTsnetManager.status
     val embeddedTsnetAuthorizationUrls = embeddedTsnetManager.authorizationUrls
+    internal val embeddedTsnetControlUrl = embeddedTsnetManager.controlUrl
     internal val embeddedTsnetNetwork = embeddedTsnetManager.network
     private val _embeddedTsnetNodeName = MutableStateFlow<String?>(null)
 
@@ -1371,9 +1372,10 @@ class MangoSshViewModel @JvmOverloads constructor(
         _userMessage.value = null
     }
 
-    fun beginEmbeddedTsnetBrowserEnrollment() {
+    /** [controlUrl] is a normalized server URL; "" signs in to Tailscale's own control plane. */
+    fun beginEmbeddedTsnetBrowserEnrollment(controlUrl: String = "") {
         viewModelScope.launch {
-            runCatching { embeddedTsnetManager.beginBrowserEnrollment() }
+            runCatching { embeddedTsnetManager.beginBrowserEnrollment(controlUrl) }
                 .onFailure {
                     _userMessage.value = uiText(R.string.embedded_tsnet_browser_start_failed)
                 }
@@ -1381,10 +1383,10 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     /** Hands a one-shot mutable key directly to the runtime and clears it on every path. */
-    fun beginEmbeddedTsnetAuthKeyEnrollment(authKey: CharArray) {
+    fun beginEmbeddedTsnetAuthKeyEnrollment(authKey: CharArray, controlUrl: String = "") {
         viewModelScope.launch {
             try {
-                runCatching { embeddedTsnetManager.beginAuthKeyEnrollment(authKey) }
+                runCatching { embeddedTsnetManager.beginAuthKeyEnrollment(authKey, controlUrl) }
                     .onFailure {
                         _userMessage.value = uiText(R.string.embedded_tsnet_auth_key_failed)
                     }

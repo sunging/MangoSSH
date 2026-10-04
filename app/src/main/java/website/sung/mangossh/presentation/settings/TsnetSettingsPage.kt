@@ -62,6 +62,7 @@ internal fun TsnetSettingsPage(
         item {
             EmbeddedTsnetCard(
                 status = status,
+                controlUrl = state.controlUrl,
                 onBeginBrowserEnrollment = callbacks.onBeginBrowserEnrollment,
                 onBeginAuthKeyEnrollment = callbacks.onBeginAuthKeyEnrollment,
                 onLogout = callbacks.onLogout,

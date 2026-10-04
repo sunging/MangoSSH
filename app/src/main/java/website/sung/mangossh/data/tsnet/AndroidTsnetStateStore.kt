@@ -31,6 +31,14 @@ internal interface EmbeddedTsnetStateStore : StateStore {
     fun nodeName(): String
     fun hasEnrolledIdentity(): Boolean
     fun markEnrolled()
+
+    /**
+     * Control server the stored identity belongs to; "" means Tailscale's
+     * default. It lives in the same encrypted state, so [clearIdentity] and
+     * corrupt-state recovery reset it together with the identity.
+     */
+    fun controlUrl(): String
+    fun setControlUrl(value: String)
     fun clearIdentity()
 }
 
@@ -107,6 +115,28 @@ internal class AndroidTsnetStateStore(
         val values = readValuesRecoveringCorruption().toMutableMap()
         try {
             values[ENROLLED_MARKER_KEY] = ENROLLED_MARKER_VALUE.copyOf()
+            writeValues(values)
+        } finally {
+            values.values.forEach { it.fill(0) }
+        }
+    }
+
+    @Synchronized
+    override fun controlUrl(): String {
+        val values = readValuesRecoveringCorruption()
+        return try {
+            values[CONTROL_URL_KEY]?.decodeToString().orEmpty()
+        } finally {
+            values.values.forEach { it.fill(0) }
+        }
+    }
+
+    @Synchronized
+    override fun setControlUrl(value: String) {
+        val values = readValuesRecoveringCorruption().toMutableMap()
+        try {
+            values.remove(CONTROL_URL_KEY)?.fill(0)
+            if (value.isNotEmpty()) values[CONTROL_URL_KEY] = value.encodeToByteArray()
             writeValues(values)
         } finally {
             values.values.forEach { it.fill(0) }
@@ -241,6 +271,7 @@ internal class AndroidTsnetStateStore(
         const val MAX_STATE_KEY_CHARS = 256
         const val ENROLLED_MARKER_KEY = "__mangossh_enrolled_v1"
         val ENROLLED_MARKER_VALUE = byteArrayOf(1)
+        const val CONTROL_URL_KEY = "__mangossh_control_url_v1"
         val FILE_MAGIC = byteArrayOf('M'.code.toByte(), 'T'.code.toByte(), 'S'.code.toByte(), 'N'.code.toByte())
         val ASSOCIATED_DATA = "MangoSSH embedded tsnet state v1".encodeToByteArray()
         val NODE_NAME_PATTERN = Regex("""mangossh-android-[0-9a-f]{8}""")

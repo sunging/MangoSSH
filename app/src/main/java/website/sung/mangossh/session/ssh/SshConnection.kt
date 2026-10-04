@@ -158,8 +158,13 @@ internal class SshConnection(
             }
         }
 
-    /** Connects directly or over a previous hop without opening a local listener. */
+    /**
+     * Connects directly or over a previous hop without opening a local listener.
+     * [trustedHostKeyFamilies] are the key types already trusted for this endpoint;
+     * their algorithms are negotiated first.
+     */
     suspend fun connect(timeoutMillis: Long, transportTimeoutMillis: Long = timeoutMillis,
+        trustedHostKeyFamilies: Set<String> = emptySet(),
         verify: suspend (String, ByteArray) -> Boolean) {
         try {
             withTimeout(timeoutMillis) {
@@ -195,7 +200,7 @@ internal class SshConnection(
                         hostKeyVerifier = object : HostKeyVerifier {
                             override suspend fun verify(key: PublicKey): Boolean = verify(key.type, key.encoded.copyOf())
                         }
-                        applyMangoAlgorithmPolicy(legacyAlgorithms)
+                        applyMangoAlgorithmPolicy(legacyAlgorithms, trustedHostKeyFamilies)
                     }
                     val active = SshClient(config)
                     check(client.compareAndSet(null, active)) { "Connection already started" }

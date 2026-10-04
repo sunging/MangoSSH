@@ -107,6 +107,11 @@ internal class EmbeddedTsnetManager(
     )
     val status = _status.asStateFlow()
 
+    private val _controlUrl = MutableStateFlow("")
+
+    /** Coordination server of the stored identity, or of the pending enrollment; "" is Tailscale's default. */
+    val controlUrl = _controlUrl.asStateFlow()
+
     private val _authorizationUrls = MutableSharedFlow<String>(
         replay = 0,
         extraBufferCapacity = 1,
@@ -131,6 +136,7 @@ internal class EmbeddedTsnetManager(
             // An unreadable store resolves as not enrolled rather than
             // leaving the status unresolved forever.
             val enrolled = runCatching { stateStore.hasEnrolledIdentity() }.getOrDefault(false)
+            runCatching { stateStore.controlUrl() }.onSuccess { _controlUrl.value = it }
             mutex.withLock {
                 if (backend == null && _status.value.phase == EmbeddedTsnetPhase.UNENROLLED) {
                     enrolledIdentity = enrolled
@@ -228,9 +234,15 @@ internal class EmbeddedTsnetManager(
         }
     }
 
-    suspend fun beginBrowserEnrollment() {
+    /**
+     * Starts browser sign-in. [controlUrl] selects the server for a new
+     * identity and is ignored while one is registered: re-authentication
+     * always returns to the server the identity already belongs to.
+     */
+    suspend fun beginBrowserEnrollment(controlUrl: String = "") {
+        val server = requireNotNull(EmbeddedTsnetControlServer.normalize(controlUrl))
         checkNoActiveSessions()
-        restartForEnrollment(null)
+        restartForEnrollment(null, server)
     }
 
     /**
@@ -238,11 +250,12 @@ internal class EmbeddedTsnetManager(
      * on every path. The generated Java String is passed directly to Go and is
      * not retained in manager state, exceptions, SavedState, or persistence.
      */
-    suspend fun beginAuthKeyEnrollment(authKey: CharArray) {
+    suspend fun beginAuthKeyEnrollment(authKey: CharArray, controlUrl: String = "") {
         try {
+            val server = requireNotNull(EmbeddedTsnetControlServer.normalize(controlUrl))
             require(authKey.isNotEmpty() && !hasIdentity())
             checkNoActiveSessions()
-            restartForEnrollment(authKey)
+            restartForEnrollment(authKey, server)
         } finally {
             authKey.fill('\u0000')
         }
@@ -313,6 +326,7 @@ internal class EmbeddedTsnetManager(
         checkNoActiveSessions()
         if (!hasIdentity()) {
             withContext(Dispatchers.IO) { stateStore.clearIdentity() }
+            _controlUrl.value = ""
             mutex.withLock {
                 enrolledIdentity = false
                 registrationExists = false
@@ -343,6 +357,7 @@ internal class EmbeddedTsnetManager(
                 withContext(Dispatchers.IO) { current.logout() }
             }
             withContext(Dispatchers.IO) { stateStore.clearIdentity() }
+            _controlUrl.value = ""
             MangoLog.info(MangoLogEvent.TSNET_LOGOUT_SUCCEEDED)
         } catch (error: Exception) {
             MangoLog.warn(MangoLogEvent.TSNET_LOGOUT_FAILED, error)
@@ -389,7 +404,7 @@ internal class EmbeddedTsnetManager(
         }
     }
 
-    private suspend fun restartForEnrollment(authKey: CharArray?) {
+    private suspend fun restartForEnrollment(authKey: CharArray?, controlUrl: String) {
         val previous = mutex.withLock {
             enrollmentHold = true
             backend.also {
@@ -415,7 +430,33 @@ internal class EmbeddedTsnetManager(
             throw error
         }
         previous?.let(::closeBackend)
+        // The previous node is closed, so nothing else writes the state now.
+        try {
+            withContext(Dispatchers.IO) { bindControlUrl(controlUrl) }
+        } catch (error: Exception) {
+            mutex.withLock {
+                runtimeStarting = false
+                enrollmentHold = false
+                updateStatusLocked(EmbeddedTsnetPhase.FAILED)
+            }
+            MangoLog.warn(MangoLogEvent.TSNET_FAILED, error)
+            throw error
+        }
         startRuntime(authKey)
+    }
+
+    /**
+     * Records [requested] as the server of a new identity. A registered
+     * identity keeps its server. Switching servers before registration
+     * completes discards the half-enrolled state, so the new server never
+     * sees keys that were presented to the old one.
+     */
+    private fun bindControlUrl(requested: String) {
+        if (!stateStore.hasEnrolledIdentity() && stateStore.controlUrl() != requested) {
+            stateStore.clearIdentity()
+            stateStore.setControlUrl(requested)
+        }
+        _controlUrl.value = stateStore.controlUrl()
     }
 
     private suspend fun startRuntime(authKey: CharArray?) {
@@ -429,9 +470,11 @@ internal class EmbeddedTsnetManager(
         val created = try {
             withContext(Dispatchers.IO) {
                 check(stateDirectory.mkdirs() || stateDirectory.isDirectory)
+                val controlUrl = stateStore.controlUrl().also { _controlUrl.value = it }
                 backendFactory.create(
                     stateDirectory = stateDirectory.absolutePath,
                     hostname = stateStore.nodeName(),
+                    controlUrl = controlUrl,
                     store = stateStore,
                     listener = listener,
                 ).let { delegate ->

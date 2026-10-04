@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,6 +86,7 @@ type Runtime struct {
 	mu           sync.Mutex
 	stateDir     string
 	hostname     string
+	controlURL   string
 	store        StateStore
 	networkState NetworkStateSource
 	listener     StatusListener
@@ -102,10 +104,15 @@ type Runtime struct {
 }
 
 // NewRuntime constructs a stopped embedded node.
-func NewRuntime(stateDir, hostname string, store StateStore, networkState NetworkStateSource, listener StatusListener) *Runtime {
+//
+// controlURL selects the coordination server the identity in store belongs to.
+// Empty means Tailscale's default; anything else must be an https URL, such as
+// a self-hosted Headscale server.
+func NewRuntime(stateDir, hostname, controlURL string, store StateStore, networkState NetworkStateSource, listener StatusListener) *Runtime {
 	return &Runtime{
 		stateDir:     stateDir,
 		hostname:     hostname,
+		controlURL:   controlURL,
 		store:        store,
 		networkState: networkState,
 		listener:     listener,
@@ -119,7 +126,7 @@ func NewRuntime(stateDir, hostname string, store StateStore, networkState Networ
 // enrollment and is not retained by Runtime after startup returns.
 func (r *Runtime) Start(authKey string) error {
 	r.mu.Lock()
-	if r.closed || r.server != nil || r.stateDir == "" || r.hostname == "" || r.store == nil || r.networkState == nil {
+	if r.closed || r.server != nil || r.stateDir == "" || r.hostname == "" || r.store == nil || r.networkState == nil || !validControlURL(r.controlURL) {
 		r.mu.Unlock()
 		return errInvalidArgument
 	}
@@ -137,10 +144,11 @@ func (r *Runtime) Start(authKey string) error {
 	netmon.RegisterInterfaceGetter(androidInterfaceGetter(r.networkState))
 
 	server := &tsnet.Server{
-		Dir:      r.stateDir,
-		Store:    encryptedStateStore{delegate: r.store},
-		Hostname: r.hostname,
-		AuthKey:  authKey,
+		Dir:        r.stateDir,
+		Store:      encryptedStateStore{delegate: r.store},
+		Hostname:   r.hostname,
+		ControlURL: r.controlURL,
+		AuthKey:    authKey,
 		// Never forward upstream text. It can include peer and endpoint data.
 		UserLogf: discardLog,
 		Logf:     discardLog,
@@ -460,6 +468,22 @@ func (r *Runtime) removeRelay(relay *UDPRelay) {
 }
 
 func discardLog(string, ...any) {}
+
+// validControlURL accepts Tailscale's default (empty) or an absolute https URL
+// without credentials, query or fragment. Android normalizes the value first;
+// this check keeps the bridge from ever coordinating over cleartext.
+func validControlURL(value string) bool {
+	if value == "" {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	return err == nil &&
+		parsed.Scheme == "https" &&
+		parsed.Hostname() != "" &&
+		parsed.User == nil &&
+		parsed.RawQuery == "" &&
+		parsed.Fragment == ""
+}
 
 type androidNetworkSnapshot struct {
 	DefaultRoute   string                    `json:"defaultRoute"`

@@ -33,4 +33,45 @@ class HostKeyTrustTest {
         assertTrue(isTrustedHostKey(replaced, approved.hostname, 22, "rsa-sha2-512", approved.keyBlobBase64))
         assertFalse(isTrustedHostKey(replaced, first.hostname, 22, "ssh-rsa", first.keyBlobBase64))
     }
+
+    @Test fun classificationSeparatesFirstUseChangedKeyAndNewKeyType() {
+        val rsa = key("ssh-rsa").copy(fingerprint = "SHA256:rsa")
+        val known = listOf(rsa, key("ssh-ed25519").copy(port = 23))
+
+        assertEquals(HostKeyCheck.Trusted, classifyHostKey(known, rsa.hostname, 22, "rsa-sha2-512", rsa.keyBlobBase64))
+        assertEquals(HostKeyCheck.FirstUse, classifyHostKey(known, "other.invalid", 22, "ssh-rsa", rsa.keyBlobBase64))
+        assertEquals(
+            HostKeyCheck.Changed("SHA256:rsa"),
+            classifyHostKey(known, rsa.hostname, 22, "ssh-rsa", key().keyBlobBase64),
+        )
+        // The ed25519 key trusted on port 23 says nothing about port 22.
+        assertEquals(
+            HostKeyCheck.NewKeyType(listOf(rsa)),
+            classifyHostKey(known, rsa.hostname, 22, "ssh-ed25519", key().keyBlobBase64),
+        )
+    }
+
+    @Test fun approvingANewKeyTypeKeepsTheOtherTrustedTypes() {
+        val rsa = key("ssh-rsa")
+        val ed25519 = key("ssh-ed25519")
+        val trusted = replaceTrustedHostKey(listOf(rsa), ed25519)
+        assertEquals(listOf(rsa, ed25519), trusted)
+        assertEquals(setOf("ssh-rsa", "ssh-ed25519"), trustedHostKeyFamilies(trusted, rsa.hostname, 22))
+        assertEquals(emptySet<String>(), trustedHostKeyFamilies(trusted, rsa.hostname, 23))
+    }
+
+    @Test fun trustedFamiliesMoveForwardWithoutAddingOrReorderingWithinGroups() {
+        val offered = "ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-256,rsa-sha2-512"
+        assertEquals(offered, preferTrustedHostKeyAlgorithms(offered, emptySet()))
+        assertEquals(
+            "rsa-sha2-256,rsa-sha2-512,ssh-ed25519,ecdsa-sha2-nistp256",
+            preferTrustedHostKeyAlgorithms(offered, setOf("ssh-rsa")),
+        )
+        // Several trusted families keep the offered order relative to each other.
+        assertEquals(
+            "ecdsa-sha2-nistp256,rsa-sha2-256,rsa-sha2-512,ssh-ed25519",
+            preferTrustedHostKeyAlgorithms(offered, setOf("ssh-rsa", "ecdsa-sha2-nistp256")),
+        )
+        assertEquals(offered, preferTrustedHostKeyAlgorithms(offered, setOf("ssh-dss")))
+    }
 }
