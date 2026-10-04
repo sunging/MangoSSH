@@ -396,7 +396,6 @@ dependencies {
     implementation(project(":third_party:cbssh"))
     runtimeOnly(libs.slf4j.nop)
     implementation(project(":third_party:termlib"))
-    implementation(libs.conscrypt.android)
     implementation(libs.androidx.biometric)
 
     implementation(libs.okhttp)

@@ -12,7 +12,6 @@ espressoCore = "3.7.0"
 material = "1.14.0"
 appcompat = "1.8.0"
 termlib = "0.1.0"
-conscrypt = "2.7.0"
 biometric = "1.4.0-alpha07"
 json = "20260814"
 slf4j = "2.0.20"
@@ -43,7 +42,6 @@ androidx-compose-foundation = { group = "androidx.compose.foundation", name = "f
 androidx-compose-runtime = { group = "androidx.compose.runtime", name = "runtime" }
 androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
 connectbot-termlib = { group = "org.connectbot", name = "termlib", version.ref = "termlib" }
-conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 json = { group = "org.json", name = "json", version.ref = "json" }
 slf4j-nop = { group = "org.slf4j", name = "slf4j-nop", version.ref = "slf4j" }
