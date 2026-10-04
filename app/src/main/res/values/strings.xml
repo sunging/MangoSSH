@@ -415,6 +415,10 @@
     <string name="ui_secure_vault_unavailable">Secure vault: unavailable</string>
     <string name="ui_security_first">Security first</string>
     <string name="ui_server_fingerprint_changed">Server fingerprint changed</string>
+    <string name="ui_server_key_type_new">New server key type</string>
+    <string name="ui_server_key_type_new_message">This server is already trusted with a key of another type, but this connection presented a type you have not confirmed. A server reconfiguration can cause this, and so can an attacker. Trust it only after confirming the new fingerprint with the administrator.</string>
+    <string name="ui_already_trusted_keys">Already trusted:</string>
+    <string name="ui_trust_additional_key">Also trust this key</string>
     <string name="ui_server_resources">Server resources</string>
     <string name="ui_set_app_pin">Set app PIN</string>
     <string name="ui_set_pin">Set PIN</string>

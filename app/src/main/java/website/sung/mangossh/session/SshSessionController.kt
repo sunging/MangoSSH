@@ -3,8 +3,9 @@ package website.sung.mangossh.session
 import android.content.Context
 import android.net.Uri
 import website.sung.mangossh.R
-import website.sung.mangossh.data.vault.isTrustedHostKey
-import website.sung.mangossh.data.vault.sameHostKeySlot
+import website.sung.mangossh.data.vault.HostKeyCheck
+import website.sung.mangossh.data.vault.classifyHostKey
+import website.sung.mangossh.data.vault.trustedHostKeyFamilies
 import website.sung.mangossh.session.ssh.SshAuthenticationFailure
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshAgent
@@ -1134,7 +1135,7 @@ class SshSessionController internal constructor(
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, profile, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
 
             updateSession(
                 sessionId,
@@ -1238,7 +1239,7 @@ class SshSessionController internal constructor(
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, profile, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
 
             updateSession(
                 sessionId,
@@ -1293,7 +1294,7 @@ class SshSessionController internal constructor(
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, profile, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
             updateSession(
                 sessionId,
                 TerminalSessionPhase.AUTHENTICATING,
@@ -1426,7 +1427,7 @@ class SshSessionController internal constructor(
                 prepareDirectRoute(hop, managed, connection)
             } else connection.useJump(previous)
             val preferences = hop.overrides.resolve(managed.defaultPreferences)
-            connection.connect(preferences.connectTimeoutSeconds * 1_000L + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, hop, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connection.connect(preferences.connectTimeoutSeconds * 1_000L + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
             if (!authenticate(connection, sessionId, hop, snapshot)) throw SshAuthenticationException()
             if (!managed.lifecycle.isOpen) throw CancellationException()
             previous = connection
@@ -1857,7 +1858,7 @@ class SshSessionController internal constructor(
             if (profile.route == ConnectionRoute.TSNET) {
                 connection.useSocketRoute(requireNotNull(managed.tsnetLease).proxyData)
             }
-            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L) { algorithm, blob -> HostKeyVerifier(sessionId, profile, snapshot.knownHosts).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
             if (!authenticate(connection, sessionId, profile, snapshot)) {
                 throw SshAuthenticationException()
             }
@@ -2067,10 +2068,17 @@ class SshSessionController internal constructor(
         }
     }
 
+    /** Key families already trusted for [connection]'s endpoint, read from the live vault. */
+    private fun trustedHostKeyFamiliesFor(connection: SshConnection): Set<String> =
+        trustedHostKeyFamilies(vault.snapshot.value.knownHosts, connection.hostname, connection.port)
+
+    /**
+     * Checks every key exchange of one connection, including rekeys, against the live
+     * vault. A key approved earlier in the same session is therefore not asked about
+     * again when the connection rekeys.
+     */
     private inner class HostKeyVerifier(
         private val sessionId: String,
-        private val profile: ConnectionProfile,
-        private val knownHosts: List<TrustedHostKey>,
     ) {
         fun verifyServerHostKey(
             hostname: String,
@@ -2093,10 +2101,9 @@ class SshSessionController internal constructor(
         ): Boolean {
             val encoded = Base64.getEncoder().encodeToString(hostKey)
             val fingerprint = hostKeyFingerprint(hostKey)
-            val known = knownHosts.filter { it.hostname == hostname && it.port == port }
-            if (isTrustedHostKey(known, hostname, port, algorithm, encoded)) return true
+            val check = classifyHostKey(vault.snapshot.value.knownHosts, hostname, port, algorithm, encoded)
+            if (check == HostKeyCheck.Trusted) return true
 
-            val previous = known.firstOrNull { it.sameHostKeySlot(hostname, port, algorithm) }
             MangoLog.info(MangoLogEvent.SSH_HOST_KEY_PROMPTED)
             val accepted = requestPrompt(
                 SessionPrompt.HostKeyVerification(
@@ -2106,8 +2113,15 @@ class SshSessionController internal constructor(
                     port = port,
                     algorithm = algorithm,
                     fingerprint = fingerprint,
-                    isChanged = previous != null,
-                    previousFingerprint = previous?.fingerprint,
+                    kind = when (check) {
+                        is HostKeyCheck.Changed -> HostKeyPromptKind.CHANGED
+                        is HostKeyCheck.NewKeyType -> HostKeyPromptKind.NEW_KEY_TYPE
+                        else -> HostKeyPromptKind.FIRST_USE
+                    },
+                    previousFingerprint = (check as? HostKeyCheck.Changed)?.previousFingerprint,
+                    trustedKeys = (check as? HostKeyCheck.NewKeyType)?.trusted
+                        ?.map { "${it.algorithm} ${it.fingerprint}" }
+                        .orEmpty(),
                 ),
             )?.firstOrNull() == TRUST_APPROVAL
             if (accepted) {

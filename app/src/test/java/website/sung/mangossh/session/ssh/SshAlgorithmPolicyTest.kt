@@ -30,4 +30,17 @@ class SshAlgorithmPolicyTest {
             "diffie-hellman-group-exchange-sha1", "aes128-cbc", "aes256-cbc", "hmac-sha1")))
         assertFalse(names.any { it in setOf("ssh-dss", "diffie-hellman-group1-sha1", "3des-cbc", "blowfish-cbc") })
     }
+
+    @Test fun trustedHostKeyFamiliesAreOfferedFirstWithoutChangingTheSet() {
+        val modern = SshClientConfig.Builder()
+        val preferred = SshClientConfig.Builder().apply { applyMangoAlgorithmPolicy(false, setOf("ssh-rsa")) }
+        val names = preferred.hostKeyAlgorithms.split(',')
+        assertEquals(modern.hostKeyAlgorithms.split(',').toSet(), names.toSet())
+        assertTrue(names.first().startsWith("rsa-sha2-"))
+        assertFalse("ssh-rsa" in names)
+
+        val legacy = SshClientConfig.Builder().apply { applyMangoAlgorithmPolicy(true, setOf("ssh-rsa")) }
+        val legacyNames = legacy.hostKeyAlgorithms.split(',')
+        assertTrue(legacyNames.indexOf("ssh-rsa") < legacyNames.indexOf("ssh-ed25519"))
+    }
 }

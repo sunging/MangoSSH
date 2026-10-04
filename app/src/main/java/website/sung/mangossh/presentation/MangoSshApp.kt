@@ -125,6 +125,7 @@ import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.domain.HostSortMode
+import website.sung.mangossh.session.HostKeyPromptKind
 import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
 import website.sung.mangossh.session.SessionPromptText
@@ -135,8 +136,8 @@ import website.sung.mangossh.session.PortForwardRuntimeState
 import website.sung.mangossh.session.PortForwardStopOutcome
 import website.sung.mangossh.session.SessionAttention
 import website.sung.mangossh.session.TerminalSessionPhase
-import org.connectbot.terminal.VTermKey
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetControlServer
+import org.connectbot.terminal.VTermKey
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.presentation.settings.AboutSettingsState
 import website.sung.mangossh.presentation.settings.AppearanceSettingsState
@@ -182,8 +183,8 @@ fun MangoSshApp(
     val embeddedTsnetStatus by viewModel.embeddedTsnetStatus.collectAsStateWithLifecycle()
     val embeddedTsnetNetwork by viewModel.embeddedTsnetNetwork.collectAsStateWithLifecycle()
     val embeddedTsnetNodeName by viewModel.embeddedTsnetNodeName.collectAsStateWithLifecycle()
-    val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
     val embeddedTsnetControlUrl by viewModel.embeddedTsnetControlUrl.collectAsStateWithLifecycle()
+    val terminalAppearance by viewModel.terminalAppearance.collectAsStateWithLifecycle()
     val sessionFontSizeOverrides by viewModel.sessionFontSizeOverrides.collectAsStateWithLifecycle()
     val terminalBehavior by viewModel.terminalBehavior.collectAsStateWithLifecycle()
     val terminalShortcutConfig by viewModel.terminalShortcuts.collectAsStateWithLifecycle()
@@ -198,8 +199,8 @@ fun MangoSshApp(
     val currentActiveSessionId by rememberUpdatedState(activeSessionId)
     LaunchedEffect(viewModel) {
         viewModel.embeddedTsnetAuthorizationUrls.collect { value ->
-            val uri = runCatching { value.toUri() }.getOrNull()
             // Only the identity's own control server may open a sign-in page.
+            val uri = runCatching { value.toUri() }.getOrNull()
             if (
                 uri == null ||
                 !EmbeddedTsnetControlServer.isAllowedAuthorizationUrl(value, viewModel.embeddedTsnetControlUrl.value)
@@ -736,8 +737,8 @@ fun MangoSshApp(
                                     snippets = SnippetSettingsState(snippets = snippets),
                                     tsnet = TsnetSettingsState(
                                         status = embeddedTsnetStatus,
-                                        nodeName = embeddedTsnetNodeName,
                                         controlUrl = embeddedTsnetControlUrl,
+                                        nodeName = embeddedTsnetNodeName,
                                         network = embeddedTsnetNetwork,
                                         hosts = hosts,
                                         keys = keys,
@@ -1803,16 +1804,28 @@ private fun SessionPromptDialog(
             AlertDialog(
                 onDismissRequest = { onRespond(null) },
                 title = {
-                    Text(if (prompt.isChanged) stringResource(R.string.ui_server_fingerprint_changed) else stringResource(R.string.ui_verify_server_fingerprint))
+                    Text(
+                        stringResource(
+                            when (prompt.kind) {
+                                HostKeyPromptKind.FIRST_USE -> R.string.ui_verify_server_fingerprint
+                                HostKeyPromptKind.CHANGED -> R.string.ui_server_fingerprint_changed
+                                HostKeyPromptKind.NEW_KEY_TYPE -> R.string.ui_server_key_type_new
+                            },
+                        ),
+                    )
                 },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            if (prompt.isChanged) {
-                                stringResource(R.string.ui_the_saved_server_key_differs_from_this_connection_continue_only_after_co)
-                            } else {
-                                stringResource(R.string.ui_this_is_the_first_connection_to_this_server_verify_the_fingerprint_with)
-                            },
+                            stringResource(
+                                when (prompt.kind) {
+                                    HostKeyPromptKind.FIRST_USE ->
+                                        R.string.ui_this_is_the_first_connection_to_this_server_verify_the_fingerprint_with
+                                    HostKeyPromptKind.CHANGED ->
+                                        R.string.ui_the_saved_server_key_differs_from_this_connection_continue_only_after_co
+                                    HostKeyPromptKind.NEW_KEY_TYPE -> R.string.ui_server_key_type_new_message
+                                },
+                            ),
                         )
                         Text("${prompt.hostname}:${prompt.port} · ${prompt.algorithm}")
                         SelectionContainer {
@@ -1824,11 +1837,26 @@ private fun SessionPromptDialog(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
+                        if (prompt.trustedKeys.isNotEmpty()) {
+                            Text(
+                                stringResource(R.string.ui_already_trusted_keys) +
+                                    prompt.trustedKeys.joinToString(separator = "\n", prefix = "\n"),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = { onRespond(listOf("trust")) }) {
-                        Text(if (prompt.isChanged) stringResource(R.string.ui_replace_and_trust) else stringResource(R.string.ui_trust_and_connect))
+                        Text(
+                            stringResource(
+                                when (prompt.kind) {
+                                    HostKeyPromptKind.FIRST_USE -> R.string.ui_trust_and_connect
+                                    HostKeyPromptKind.CHANGED -> R.string.ui_replace_and_trust
+                                    HostKeyPromptKind.NEW_KEY_TYPE -> R.string.ui_trust_additional_key
+                                },
+                            ),
+                        )
                     }
                 },
                 dismissButton = {

@@ -396,6 +396,10 @@
     <string name="ui_secure_vault_unavailable">安全保险库：不可用</string>
     <string name="ui_security_first">安全优先</string>
     <string name="ui_server_fingerprint_changed">服务器指纹已变更</string>
+    <string name="ui_server_key_type_new">服务器密钥类型变化</string>
+    <string name="ui_server_key_type_new_message">此服务器已信任另一种类型的密钥，但本次连接出示了尚未确认的密钥类型。服务器重新配置或遭到攻击都可能导致这种情况。请先与管理员核对新指纹后再信任。</string>
+    <string name="ui_already_trusted_keys">已信任：</string>
+    <string name="ui_trust_additional_key">同时信任此密钥</string>
     <string name="ui_server_resources">服务器资源</string>
     <string name="ui_set_app_pin">设置应用 PIN</string>
     <string name="ui_set_pin">设置 PIN</string>
