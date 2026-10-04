@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/sunging/MangoSSH/compare/v0.6.2...v0.7.0) (2026-10-04)
+
+
+### Features
+
+* **tsnet:** support self-hosted control servers such as Headscale ([77a845c](https://github.com/sunging/MangoSSH/commit/77a845c6090a4e12c0635047c3e66a07a4945075))
+
+
+### Bug Fixes
+
+* **build:** drop the unused Conscrypt dependency ([524c62f](https://github.com/sunging/MangoSSH/commit/524c62f24a7db5e0e4a17ecf6f2ed901a6a9b660))
+* **ssh:** prefer trusted host key types and flag new ones ([b9b88af](https://github.com/sunging/MangoSSH/commit/b9b88afd79144445a6f5e97a128455fd6ea3f90f))
+* **terminal:** encode modified keys like xterm unless the app opts in ([b2d20d6](https://github.com/sunging/MangoSSH/commit/b2d20d6937e5cd450dbc221a3cfce380e943edcd))
+* **terminal:** keep the chrome usable when the keyboard is open ([edd9cc7](https://github.com/sunging/MangoSSH/commit/edd9cc7298aa2fda813c0eb4a04cb22d8546858b))
+* **terminal:** paste with Ctrl+Shift+V so Ctrl+V reaches the shell ([bb9d374](https://github.com/sunging/MangoSSH/commit/bb9d374a0bd40a44fae02d8e3424ee949462908a))
+* **terminal:** send soft-keyboard input to the session being shown ([e4cc34a](https://github.com/sunging/MangoSSH/commit/e4cc34ab8cb109e397dc0440b9150ca150b98941))
+
 ## [0.6.2](https://github.com/sunging/MangoSSH/compare/v0.6.1...v0.6.2) (2026-10-02)
 
 
