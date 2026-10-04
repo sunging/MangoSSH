@@ -1,15 +1,23 @@
 package website.sung.mangossh.presentation.settings
 
 import android.content.Intent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,10 +29,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,9 +44,7 @@ import kotlinx.coroutines.withContext
 import website.sung.mangossh.R
 import website.sung.mangossh.core.CrashReporter
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
-import website.sung.mangossh.ui.components.MangoSectionHeader
-import website.sung.mangossh.ui.components.MangoSettingsCard
-import website.sung.mangossh.ui.components.SettingsActionRow
+import website.sung.mangossh.ui.components.SettingsCategoryRow
 
 /** Public source repository, available in every distribution without coupling About to the self-updater. */
 internal fun projectRepositoryUrl(): String = "https://github.com/sunging/MangoSSH"
@@ -46,80 +56,65 @@ internal fun AboutSettingsPage(
     callbacks: AboutSettingsCallbacks,
     modifier: Modifier = Modifier,
 ) {
-    var openNotice by remember { mutableStateOf<ThirdPartyNotice?>(null) }
-
+    val context = LocalContext.current
+    var report by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(context) {
+        report = withContext(Dispatchers.IO) { CrashReporter.lastReport(context) }
+    }
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            MangoPreferenceGroup(modifier = Modifier.testTag("about_identity_card")) {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Text("MangoSSH", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        stringResource(R.string.settings_about_version, state.versionName, state.versionCode),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).testTag("about_identity_card"),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(Modifier.size(80.dp).clip(RoundedCornerShape(20.dp))) {
+                    Image(painterResource(R.drawable.ic_launcher_background), null, Modifier.matchParentSize())
+                    Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.matchParentSize())
                 }
-                SettingsActionRow(
-                    title = "GitHub",
-                    actionLabel = stringResource(R.string.settings_about_release_page),
-                    onAction = callbacks.onOpenReleasePage,
+                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    stringResource(R.string.settings_about_version, state.versionName, state.versionCode),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+        item {
+            MangoPreferenceGroup {
+                SettingsCategoryRow(
+                    icon = Icons.Outlined.Code,
+                    title = stringResource(R.string.settings_about_repository),
+                    summary = "GitHub",
+                    onClick = callbacks.onOpenReleasePage,
                     modifier = Modifier.testTag("settings_about_release_page"),
                 )
-            }
-        }
-        item {
-            MangoSettingsCard(modifier = Modifier.testTag("about_mosh_gpl_card")) {
-                Text(stringResource(R.string.settings_about_mosh_gpl_notice), style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        item {
-            CrashReportRow()
-        }
-        item {
-            // Section intro for the per-library cards below: a header and its
-            // one-line explanation, not a card of its own.
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                MangoSectionHeader(text = stringResource(R.string.settings_about_licenses_title))
-                Text(
-                    stringResource(R.string.settings_about_licenses_summary),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                SettingsCategoryRow(
+                    icon = Icons.Outlined.Description,
+                    title = stringResource(R.string.settings_about_licenses_title),
+                    summary = null,
+                    onClick = callbacks.onOpenLicenses,
+                    modifier = Modifier.testTag("settings_about_licenses"),
                 )
             }
         }
-        items(thirdPartyNotices, key = { it.name }) { notice ->
-            MangoPreferenceGroup(modifier = Modifier.testTag("about_license_${notice.name}")) {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Text(notice.name, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        notice.license,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (notice.licenseAsset == null) {
-                        Text(notice.url, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                if (notice.licenseAsset != null) {
-                    SettingsActionRow(
-                        title = notice.url,
-                        actionLabel = stringResource(R.string.settings_about_view_license_text),
-                        onAction = { openNotice = notice },
-                    )
-                }
-            }
+        report?.let { storedReport ->
+            item { CrashReportRow(storedReport, onCleared = { report = null }) }
         }
-    }
-
-    openNotice?.let { notice ->
-        LicenseTextDialog(notice = notice, onDismiss = { openNotice = null })
+        item {
+            Text(
+                "GPL-3.0-or-later",
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -132,33 +127,16 @@ internal fun AboutSettingsPage(
  * messages, so the text here carries type names and stack frames only.
  */
 @Composable
-private fun CrashReportRow() {
+private fun CrashReportRow(storedReport: String, onCleared: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var report by remember { mutableStateOf<String?>(null) }
     var showReport by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        report = withContext(Dispatchers.IO) { CrashReporter.lastReport(context) }
-    }
-
-    val storedReport = report ?: return
     MangoPreferenceGroup(modifier = Modifier.testTag("about_crash_report_card")) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Text(
-                stringResource(R.string.settings_about_crash_report_title),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                stringResource(R.string.settings_about_crash_report_summary),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        SettingsActionRow(
-            title = stringResource(R.string.settings_about_crash_report_action_title),
-            actionLabel = stringResource(R.string.settings_about_crash_report_view),
-            onAction = { showReport = true },
+        SettingsCategoryRow(
+            icon = Icons.Outlined.BugReport,
+            title = stringResource(R.string.settings_about_crash_report_title),
+            summary = null,
+            onClick = { showReport = true },
             modifier = Modifier.testTag("settings_about_crash_report"),
         )
     }
@@ -170,11 +148,14 @@ private fun CrashReportRow() {
             title = { Text(stringResource(R.string.settings_about_crash_report_title)) },
             text = {
                 SelectionContainer {
-                    Text(
-                        text = storedReport,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.verticalScroll(rememberScrollState()),
-                    )
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        Text(
+                            stringResource(R.string.settings_about_crash_report_summary),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(bottom = 12.dp),
+                        )
+                        Text(storedReport, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             },
             confirmButton = {
@@ -194,7 +175,7 @@ private fun CrashReportRow() {
                     onClick = {
                         scope.launch {
                             withContext(Dispatchers.IO) { CrashReporter.clear(context) }
-                            report = null
+                            onCleared()
                             showReport = false
                         }
                     },
@@ -204,54 +185,4 @@ private fun CrashReportRow() {
             },
         )
     }
-}
-
-/**
- * Loads a bundled license file and shows it verbatim.
- *
- * Reads the asset off the main thread (AGENTS.md forbids blocking I/O in a
- * composable) and renders the server- and vendor-owned text through
- * [SelectionContainer] rather than [stringResource], since it must never be
- * translated or altered before rendering.
- */
-@Composable
-private fun LicenseTextDialog(notice: ThirdPartyNotice, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    var licenseText by remember(notice) { mutableStateOf<String?>(null) }
-    var loadFailed by remember(notice) { mutableStateOf(false) }
-
-    LaunchedEffect(notice) {
-        val asset = notice.licenseAsset
-        if (asset == null) {
-            loadFailed = true
-            return@LaunchedEffect
-        }
-        val text = withContext(Dispatchers.IO) {
-            runCatching { context.assets.open(asset).bufferedReader().use { it.readText() } }.getOrNull()
-        }
-        if (text != null) licenseText = text else loadFailed = true
-    }
-
-    AlertDialog(
-        modifier = Modifier.testTag("about_license_dialog"),
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_about_license_dialog_title, notice.name, notice.license)) },
-        text = {
-            val text = licenseText
-            if (text != null) {
-                SelectionContainer {
-                    Text(
-                        text = text,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.verticalScroll(rememberScrollState()),
-                    )
-                }
-            } else if (loadFailed) {
-                Text(stringResource(R.string.settings_about_license_unavailable))
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_close)) }
-        },
-    )
 }

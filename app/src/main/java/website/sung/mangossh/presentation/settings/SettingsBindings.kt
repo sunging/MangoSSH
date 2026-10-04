@@ -109,6 +109,7 @@ internal fun rememberSettingsCallbacks(
             ),
             about = AboutSettingsCallbacks(
                 onOpenReleasePage = { openGithubUrl(context, viewModel, projectRepositoryUrl()) },
+                onOpenLicenses = { viewModel.openSettingsDestination(SettingsDestination.LICENSES) },
             ),
         )
     }
@@ -129,7 +130,7 @@ internal data class TsnetDeviceActions(
  * Opens a URL in the browser, refusing anything but an `https://github.com` link.
  *
  * Shared by the update card's release-notes link and the About page's
- * releases link, both of which only ever point at this project's own GitHub
+ * repository link, both of which only ever point at this project's own GitHub
  * repository.
  */
 private fun openGithubUrl(context: Context, viewModel: MangoSshViewModel, url: String?) {

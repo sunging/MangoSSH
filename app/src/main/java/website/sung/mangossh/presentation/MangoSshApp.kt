@@ -147,6 +147,7 @@ import website.sung.mangossh.presentation.settings.SecuritySettingsState
 import website.sung.mangossh.presentation.settings.SETTINGS_TWO_PANE_MIN_WIDTH
 import website.sung.mangossh.presentation.settings.SettingsScreen
 import website.sung.mangossh.presentation.settings.SettingsScreenState
+import website.sung.mangossh.presentation.settings.showsBack
 import website.sung.mangossh.presentation.settings.title
 import website.sung.mangossh.presentation.settings.ShortcutSettingsState
 import website.sung.mangossh.presentation.settings.SnippetSettingsState
@@ -572,8 +573,9 @@ fun MangoSshApp(
                     val selectedSettingsDetail = settingsDestination.takeIf {
                         selectedSection == AppSection.SETTINGS
                     }
-                    val showSettingsBack = selectedSettingsDetail != null &&
-                        LocalWindowInfo.current.containerDpSize.width < SETTINGS_TWO_PANE_MIN_WIDTH
+                    val showSettingsBack = selectedSettingsDetail?.showsBack(
+                        LocalWindowInfo.current.containerDpSize.width >= SETTINGS_TWO_PANE_MIN_WIDTH,
+                    ) == true
                     CenterAlignedTopAppBar(
                         navigationIcon = {
                             if (showSettingsBack) {

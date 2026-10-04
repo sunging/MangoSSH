@@ -217,6 +217,7 @@ internal data class TsnetSettingsCallbacks(
 @Immutable
 internal data class AboutSettingsCallbacks(
     val onOpenReleasePage: () -> Unit,
+    val onOpenLicenses: () -> Unit,
 )
 
 /**

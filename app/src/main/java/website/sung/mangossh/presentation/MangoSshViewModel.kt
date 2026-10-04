@@ -72,6 +72,7 @@ import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.SessionAttention
 import website.sung.mangossh.session.sessionAttention
 import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
+import website.sung.mangossh.presentation.settings.parent
 import website.sung.mangossh.presentation.settings.SettingsDestination
 import website.sung.mangossh.presentation.update.DistributionUpdateManager
 
@@ -374,8 +375,9 @@ class MangoSshViewModel @JvmOverloads constructor(
         _settingsDestination.value = destination
     }
 
+    /** Returns child pages to their category before returning a category to the hub. */
     internal fun closeSettingsDestination() {
-        _settingsDestination.value = null
+        _settingsDestination.value = _settingsDestination.value?.parent
     }
 
     private val _remoteEditor = MutableStateFlow<RemoteEditorUiState?>(null)
