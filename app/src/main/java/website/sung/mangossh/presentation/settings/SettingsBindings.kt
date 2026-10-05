@@ -52,6 +52,7 @@ internal fun rememberSettingsCallbacks(
                 onSaveShortcuts = viewModel::saveTerminalShortcuts,
                 onSetRightAltMode = viewModel::setTerminalRightAltMode,
                 onSetDelKeyMode = viewModel::setTerminalDelKeyMode,
+                onSetCtrlEnterSendsLineFeed = viewModel::setTerminalCtrlEnterSendsLineFeed,
             ),
             connection = ConnectionSettingsCallbacks(
                 onSetKeepaliveSeconds = viewModel::setConnectionKeepaliveSeconds,

@@ -524,6 +524,7 @@ fun TerminalSessionScreen(
                             },
                             rightAltMode = behavior.rightAltMode.toTermlib(),
                             delKeyMode = behavior.delKeyMode.toTermlib(),
+                            ctrlEnterSendsLineFeed = behavior.ctrlEnterSendsLineFeed,
                             maxZoomScale = behavior.maxPinchZoomScale,
                             fontSizeOverride = sessionFontSizeSp?.sp,
                             onFontSizeCommit = { onSessionFontSizeChange(it.value.roundToInt()) },

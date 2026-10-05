@@ -755,6 +755,11 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalCtrlEnterSendsLineFeed(enabled: Boolean) {
+        terminalBehaviorStore.setCtrlEnterSendsLineFeed(enabled)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
     fun setTerminalMaxPinchZoomScale(scale: Float) {
         terminalBehaviorStore.setMaxPinchZoomScale(scale)
     }

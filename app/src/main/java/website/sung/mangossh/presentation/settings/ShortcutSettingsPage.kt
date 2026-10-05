@@ -17,8 +17,9 @@ import website.sung.mangossh.presentation.TerminalShortcutSettingsCard
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.SettingsChoiceRow
+import website.sung.mangossh.ui.components.SettingsSwitchRow
 
-/** Keys & shortcuts detail page: the shortcut bar editor, plus right-Alt and backspace-key input modes. */
+/** Keys & shortcuts detail page: the shortcut bar editor, plus right-Alt, backspace-key and Ctrl+Enter input modes. */
 @Composable
 internal fun ShortcutSettingsPage(
     state: ShortcutSettingsState,
@@ -79,6 +80,13 @@ private fun TerminalInputModesCard(
             supportingText = stringResource(R.string.settings_shortcuts_del_key_summary),
             optionTestTag = { "settings_del_key_${it.preferenceValue}" },
             modifier = Modifier.testTag("settings_del_key_control"),
+        )
+        SettingsSwitchRow(
+            title = stringResource(R.string.settings_shortcuts_ctrl_enter_line_feed_title),
+            summary = stringResource(R.string.settings_shortcuts_ctrl_enter_line_feed_summary),
+            checked = behavior.ctrlEnterSendsLineFeed,
+            onCheckedChange = callbacks.onSetCtrlEnterSendsLineFeed,
+            modifier = Modifier.testTag("settings_ctrl_enter_line_feed_switch"),
         )
     }
 }

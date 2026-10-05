@@ -501,6 +501,8 @@
     <string name="settings_shortcuts_del_key_summary">退格键发送的字节。</string>
     <string name="settings_shortcuts_del_key_delete">DEL（0x7f）</string>
     <string name="settings_shortcuts_del_key_backspace">Ctrl+H（0x08）</string>
+    <string name="settings_shortcuts_ctrl_enter_line_feed_title">Ctrl+Enter 换行</string>
+    <string name="settings_shortcuts_ctrl_enter_line_feed_summary">发送 Ctrl+J：在 Claude Code、Codex 中插入换行，在 shell 中仍会执行命令。关闭后按程序请求的方式发送 Ctrl+Enter。</string>
     <string name="settings_applies_to_new_connections">仅对此更改后建立的连接生效，已建立的连接不受影响。</string>
     <string name="settings_connection_keepalive_title">SSH 保活</string>
     <string name="settings_connection_keepalive_summary">空闲 SSH 传输发送保活包的频率，用于在路由器和防火墙前保持可见。</string>

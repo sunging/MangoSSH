@@ -520,6 +520,8 @@
     <string name="settings_shortcuts_del_key_summary">Which byte the backspace key sends.</string>
     <string name="settings_shortcuts_del_key_delete">DEL (0x7f)</string>
     <string name="settings_shortcuts_del_key_backspace">Ctrl+H (0x08)</string>
+    <string name="settings_shortcuts_ctrl_enter_line_feed_title">Ctrl+Enter sends a newline</string>
+    <string name="settings_shortcuts_ctrl_enter_line_feed_summary">Sends Ctrl+J, which inserts a line break in Claude Code and Codex and still runs commands in a shell. Off sends Ctrl+Enter as the program requests.</string>
     <string name="settings_applies_to_new_connections">Applies to connections opened after this change; connections already open are unaffected.</string>
     <string name="settings_connection_keepalive_title">SSH keepalive</string>
     <string name="settings_connection_keepalive_summary">How often an idle SSH transport sends a keepalive packet to stay visible to routers and firewalls.</string>

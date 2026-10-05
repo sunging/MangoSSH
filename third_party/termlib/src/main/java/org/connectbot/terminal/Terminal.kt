@@ -350,6 +350,7 @@ private const val DOUBLE_UNDERLINE_SPACING = 2f
  * @param selectionBackgroundColor Background color for selected text (default: 0xFFB3D7FF)
  * @param selectionForegroundColor Foreground color for selected text (default: Black)
  * @param delKeyMode How the backspace/delete keys should map to terminal characters
+ * @param ctrlEnterSendsLineFeed When true, Ctrl+Enter sends a line feed (Ctrl+J) instead of an encoded Enter
  * @param onInterceptKey Optional callback to intercept raw Compose KeyEvents before the terminal emulator handles them. Return true to consume the event.
  * @param selectionMenuExtras Optional extra items appended (below a divider) to the selection
  *                            overflow menu, for host-app entries such as chrome visibility
@@ -391,6 +392,7 @@ fun Terminal(
     onPasteRequest: (() -> Unit)? = null,
     rightAltMode: RightAltMode = RightAltMode.CharacterModifier,
     delKeyMode: DelKeyMode = DelKeyMode.Delete,
+    ctrlEnterSendsLineFeed: Boolean = false,
     onInterceptKey: ((ComposeKeyEvent) -> Boolean)? = null,
     minZoomScale: Float = MIN_ZOOM_SCALE,
     maxZoomScale: Float = MAX_ZOOM_SCALE,
@@ -429,6 +431,7 @@ fun Terminal(
         selectionBackgroundColor = selectionBackgroundColor,
         selectionForegroundColor = selectionForegroundColor,
         delKeyMode = delKeyMode,
+        ctrlEnterSendsLineFeed = ctrlEnterSendsLineFeed,
         minZoomScale = minZoomScale,
         maxZoomScale = maxZoomScale,
         fontSizeOverride = fontSizeOverride,
@@ -471,6 +474,7 @@ internal fun TerminalWithAccessibility(
     selectionBackgroundColor: Color = Color(0xFFB3D7FF),
     selectionForegroundColor: Color = Color.Black,
     delKeyMode: DelKeyMode = DelKeyMode.Delete,
+    ctrlEnterSendsLineFeed: Boolean = false,
     minZoomScale: Float = MIN_ZOOM_SCALE,
     maxZoomScale: Float = MAX_ZOOM_SCALE,
     fontSizeOverride: TextUnit? = null,
@@ -822,9 +826,10 @@ internal fun TerminalWithAccessibility(
     }
 
     // Update keyboard handler modes without triggering recomposition
-    LaunchedEffect(keyboardHandler, rightAltMode, delKeyMode) {
+    LaunchedEffect(keyboardHandler, rightAltMode, delKeyMode, ctrlEnterSendsLineFeed) {
         keyboardHandler.rightAltMode = rightAltMode
         keyboardHandler.delKeyMode = delKeyMode
+        keyboardHandler.ctrlEnterSendsLineFeed = ctrlEnterSendsLineFeed
     }
 
     // Provide compose controller to caller

@@ -38,6 +38,10 @@ enum class TerminalDelKeyMode(val preferenceValue: String) {
  * fixed 1000-line buffer, [boldAsBright] and [autoDetectUrls] match the
  * factory defaults MangoSSH already relied on, and [maxPinchZoomScale]
  * matches termlib's old fixed 3x pinch-zoom ceiling.
+ *
+ * [ctrlEnterSendsLineFeed] is the exception: it defaults to on, so Ctrl+Enter
+ * inserts a newline in Claude Code and Codex (both bind Ctrl+J to newline but
+ * not Ctrl+Enter) instead of submitting.
  */
 data class TerminalBehavior(
     val scrollbackLines: Int = DEFAULT_SCROLLBACK_LINES,
@@ -46,6 +50,7 @@ data class TerminalBehavior(
     val keepScreenOn: Boolean = false,
     val rightAltMode: TerminalRightAltMode = TerminalRightAltMode.DEFAULT,
     val delKeyMode: TerminalDelKeyMode = TerminalDelKeyMode.DEFAULT,
+    val ctrlEnterSendsLineFeed: Boolean = true,
     val maxPinchZoomScale: Float = DEFAULT_MAX_PINCH_ZOOM_SCALE,
 ) {
     /**

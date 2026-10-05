@@ -153,6 +153,7 @@ internal data class ShortcutSettingsCallbacks(
     val onSaveShortcuts: (TerminalShortcutConfig) -> Unit,
     val onSetRightAltMode: (TerminalRightAltMode) -> Unit,
     val onSetDelKeyMode: (TerminalDelKeyMode) -> Unit,
+    val onSetCtrlEnterSendsLineFeed: (Boolean) -> Unit,
 )
 
 @Immutable
