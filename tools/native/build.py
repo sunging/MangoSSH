@@ -237,7 +237,7 @@ def build_tsnet(args):
     if not android_jar.is_file():
         raise ValueError(f"Install SDK platform android-{CONFIG['androidApi']} before building tsnet")
     source = ROOT / "native/tsnetbridge"
-    source_files = {name: value for name, value in files(source).items() if not name.startswith(".build/")}
+    source_files = files(source, exclude={".build"})
     scripts = [ROOT / "tools/build-tsnet-android.sh", ROOT / "tools/normalize-tsnet-aar.py", ROOT / "tools/generate-tsnet-notices.py"]
     scripts += sorted((ROOT / "tools/lib").glob("*.sh"))
     scripts += sorted((ROOT / "tools/patches").glob("tailscale-*.patch"))
@@ -257,7 +257,7 @@ def build_tsnet(args):
                    MANGOSSH_NATIVE_STATE=str(args.state),
                    MANGOSSH_ANDROID_API=str(CONFIG["androidApi"]))
         execute(["bash", ROOT / "tools/build-tsnet-android.sh"], env, work / "build.log")
-        if {n: v for n, v in files(source).items() if not n.startswith(".build/")} != source_files:
+        if files(source, exclude={".build"}) != source_files:
             raise ValueError("tsnet sources changed during build")
         with zipfile.ZipFile(install / "mangossh-tsnet.aar") as archive:
             actual = {name.split("/")[1] for name in archive.namelist() if re.fullmatch(r"jni/[^/]+/libgojni\.so", name)}
