@@ -1213,6 +1213,7 @@ internal fun TerminalWithAccessibility(
                         // Wheel ticks already forwarded to the remote program
                         // this gesture while mouse tracking is active.
                         var emittedRemoteScrollSteps = 0
+                        var releasedByCancel = false
 
                         // 4. Main event loop
                         try {
@@ -1329,7 +1330,14 @@ internal fun TerminalWithAccessibility(
                                     else -> {}
                                 }
 
-                                if (event.changes.all { !it.pressed }) break
+                                if (event.changes.all { !it.pressed }) {
+                                    // A real lift arrives unconsumed. When the platform cancels
+                                    // the touch instead (the system claiming an edge swipe as
+                                    // Back, say), Compose sends a synthetic up that is already
+                                    // consumed; that gesture must not count as a tap.
+                                    releasedByCancel = change.isConsumed
+                                    break
+                                }
                                 change.consume()
                             }
                         } finally {
@@ -1404,6 +1412,13 @@ internal fun TerminalWithAccessibility(
                         // 6. Gesture ended - cleanup
                         gestureEnded = true
                         longPressJob?.cancel()
+
+                        // A cancelled touch is not a tap. Forwarding it would raise the keyboard
+                        // in the middle of a system Back gesture, and the IME's Back callback
+                        // registered by that would then swallow the Back.
+                        if (releasedByCancel && gestureType == GestureType.Undetermined) {
+                            return@awaitEachGesture
+                        }
 
                         when (gestureType) {
                             GestureType.Scroll -> {
