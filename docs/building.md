@@ -121,6 +121,15 @@ alone does not authenticate a vendor directory.
 `<state>` is `build/native` when Gradle runs on Linux (including CI), the WSL
 directory above when it runs on Windows, or `mangosshNativeStateDir` when set.
 
+Gradle skips `buildEmbeddedTsnetAar` as UP-TO-DATE when its declared inputs
+(bridge sources, scripts, `toolchains.json`, ABIs and environment) and its
+published outputs are unchanged, so an unchanged debug build never reaches WSL.
+`buildMosh` is skipped the same way in locked mode, where `tools/fdroid-sources.lock`
+pins every source; worktree mode always consults the adapter because Gradle
+cannot see external worktree edits. Toolchains used inside WSL are verified only
+by the adapter: after replacing one in place, run once with
+`-PmangosshNativeAlwaysRun=true` (or `--rerun-tasks`).
+
 No binary or terminfo archive is generated into a source directory. Because AGP
 would still package them, `verifyNoNativeSourceBinaries` fails the build when
 any `app/src/*/jniLibs` file or `assets/mosh/terminfo.zip` exists. Root LICENSE and static license assets are maintained

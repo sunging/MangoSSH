@@ -95,6 +95,8 @@ fun NativeTask.configureNativeInputs() {
     abis.set(nativeAbis)
     sourceMode.set(nativeSourceMode)
     offline.set(providers.gradleProperty("mangosshOfflineBuild").map { it.toBoolean() }.orElse(true))
+    // Opt out of Gradle UP-TO-DATE skipping, e.g. after upgrading a WSL toolchain in place.
+    alwaysRun.set(providers.gradleProperty("mangosshNativeAlwaysRun").map { it.toBoolean() }.orElse(false))
     val names = listOf(
         "MANGOSSH_MOSH_DEPS_DIR", "MANGOSSH_GO_ROOT", "ANDROID_NDK_HOME",
         "MANGOSSH_ABI_BUILD_JOBS", "MANGOSSH_ABI_PARALLELISM",
