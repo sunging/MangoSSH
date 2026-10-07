@@ -111,6 +111,13 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
         snapshot.copy(keys = snapshot.keys.filterNot { it.id == key.id }.plus(key))
     }
 
+    /** Replaces an existing key in place so its list position and profile references stay intact. */
+    suspend fun replaceKey(key: StoredSshKey) = mutate { snapshot ->
+        // A key removed while it was being edited must not be resurrected.
+        if (snapshot.keys.none { it.id == key.id }) null
+        else snapshot.copy(keys = snapshot.keys.map { if (it.id == key.id) key else it })
+    }
+
     suspend fun removeKey(id: String) = mutate { snapshot ->
         snapshot.copy(
             keys = snapshot.keys.filterNot { it.id == id },
@@ -186,11 +193,12 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
      * Validates references under the write lock and reports why a mutation could not commit.
      * Only Success may acknowledge a save or retain a newly generated key. A failed write
      * leaves the published snapshot and revision unchanged so the caller can preserve its draft.
+     * A transform returns null to reject a mutation whose target no longer exists.
      */
-    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot): VaultMutationResult = withContext(Dispatchers.IO) {
+    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot?): VaultMutationResult = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
             if (_status.value !is VaultStatus.Ready) return@withLock VaultMutationResult.NotReady
-            val updated = transform(_snapshot.value)
+            val updated = transform(_snapshot.value) ?: return@withLock VaultMutationResult.Invalid
             val removedOrIncompatible = _snapshot.value.profiles.filter { old ->
                 val next = updated.profiles.firstOrNull { it.id == old.id }
                 next == null || next.protocol != website.sung.mangossh.domain.ConnectionProtocol.SSH || next.jumpProfileIds.isNotEmpty()

@@ -166,6 +166,8 @@ internal object BackupValidator {
             valid(it.position >= 0 && it.connectionCount >= 0 && it.lastConnectedAtEpochMillis >= 0)
         }
         snapshot.keys.forEach { valid(it.privateKeyPem.isNotBlank() && it.publicKey.isNotBlank() && it.algorithm.isNotBlank() && it.createdAtEpochMillis >= 0) }
+        // A remembered passphrase is meaningful only for an encrypted private key.
+        snapshot.keys.forEach { valid(it.savedPassphrase == null || it.requiresPassphrase) }
         snapshot.knownHosts.forEach { valid(it.hostname.isNotBlank() && it.port in 1..65535 && it.algorithm.isNotBlank() && it.keyBlobBase64.isNotBlank() && it.trustedAtEpochMillis >= 0) }
         snapshot.portForwards.forEach {
             valid(it.profileId in profiles && it.bindPort in 1..65535 && it.bindHost.isNotBlank())

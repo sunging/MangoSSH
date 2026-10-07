@@ -135,6 +135,9 @@ enum class MangoLogEvent(val code: String) {
 
     /** Generating or encoding a new client key failed before it reached the vault. */
     KEY_GENERATION_FAILED("key.generation.failed"),
+
+    /** Renaming or re-encrypting a stored client key failed before it reached the vault. */
+    KEY_EDIT_FAILED("key.edit.failed"),
     TSNET_STARTING("tsnet.starting"),
     TSNET_RUNNING("tsnet.running"),
     TSNET_FAILED("tsnet.failed"),

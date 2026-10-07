@@ -2251,7 +2251,7 @@ class SshSessionController internal constructor(
         private val authorized: () -> Boolean,
         private val authorizeSignature: () -> Boolean,
     ) : SshAgent {
-        private val keys = keys.filter { !it.requiresPassphrase && it.algorithm != "ssh-dss" }.mapNotNull { stored ->
+        private val keys = keys.filter { (!it.requiresPassphrase || it.savedPassphrase != null) && it.algorithm != "ssh-dss" }.mapNotNull { stored ->
             runCatching { keyManager.decodeKeyPair(stored).let { pair -> Triple(stored.label, SshKeyCodec.publicKey(pair).publicKeyBlob, pair) } }.getOrNull()
         }
         override fun identities(): List<SshAgentIdentity> = if (authorized()) keys.map { SshAgentIdentity(it.first, it.second) } else emptyList()

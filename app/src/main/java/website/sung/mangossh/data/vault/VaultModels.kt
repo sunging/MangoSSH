@@ -29,6 +29,11 @@ data class StoredSshKey(
     val privateKeyPem: String,
     val requiresPassphrase: Boolean = false,
     val createdAtEpochMillis: Long = System.currentTimeMillis(),
+    /**
+     * The passphrase for [privateKeyPem], kept only when the user chose to remember it.
+     * It is protected by the same vault encryption as the private key and is never shown or logged.
+     */
+    val savedPassphrase: String? = null,
 ) {
     override fun toString(): String =
         "StoredSshKey(id=$id, label=$label, algorithm=$algorithm, fingerprint=$fingerprint, privateKeyPem=<redacted>)"

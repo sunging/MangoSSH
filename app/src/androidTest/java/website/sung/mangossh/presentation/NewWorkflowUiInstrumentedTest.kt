@@ -57,12 +57,60 @@ class NewWorkflowUiInstrumentedTest {
         compose.setContent {
             MaterialTheme {
                 KeysScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, emptyList(),
-                    { _, _ -> fail("Repeated generation") }, { _, _, _ -> fail("Repeated import") },
-                    { fail("Unexpected removal") }, { _, _ -> fail("Unexpected export") }, busy = true)
+                    { _, _, _, _ -> fail("Repeated generation") }, { _, _, _, _ -> fail("Repeated import") },
+                    { fail("Unexpected removal") }, { _, _, _ -> fail("Unexpected export") }, busy = true)
             }
         }
         compose.onNodeWithText(text(R.string.ui_generate_key)).assertIsNotEnabled()
         compose.onNodeWithText(text(R.string.ui_import_private_key)).assertIsNotEnabled()
+    }
+    @Test fun editingAKeySubmitsTheNewNameWithoutTouchingItsEncryption() {
+        // Placeholder key material: the dialog only inspects headers and never decodes it.
+        val key = website.sung.mangossh.data.vault.StoredSshKey("key", "Old name", "ssh-ed25519",
+            "ssh-ed25519 AAAA Old name", "SHA256:placeholder", "placeholder")
+        var edit: Pair<String, website.sung.mangossh.data.keys.KeyEditRequest>? = null
+        compose.setContent {
+            MaterialTheme {
+                KeysScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, listOf(key),
+                    { _, _, _, _ -> fail("Unexpected generation") }, { _, _, _, _ -> fail("Unexpected import") },
+                    { fail("Unexpected removal") }, { _, _, _ -> fail("Unexpected export") }, busy = false,
+                    onEdit = { id, request -> edit = id to request })
+            }
+        }
+        compose.onNodeWithText(text(R.string.common_edit)).performClick()
+        compose.onNode(hasSetTextAction() and hasText("Old name")).performTextReplacement("New name")
+        compose.onNodeWithText(text(R.string.common_save)).performClick()
+        compose.runOnIdle {
+            assertEquals("key", edit?.first)
+            assertEquals("New name", edit?.second?.label)
+            assertEquals(website.sung.mangossh.data.keys.KeyPassphraseChange.Keep, edit?.second?.passphrase)
+            assertEquals(false, edit?.second?.rememberPassphrase)
+        }
+    }
+    @Test fun exportMenuOffersClipboardFileAndShareForBothKeyHalves() {
+        val key = website.sung.mangossh.data.vault.StoredSshKey("key", "Key", "ssh-ed25519",
+            "ssh-ed25519 AAAA Key", "SHA256:placeholder", "placeholder")
+        val exports = mutableListOf<Triple<String, KeyExportPart, KeyExportTarget>>()
+        compose.setContent {
+            MaterialTheme {
+                KeysScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, listOf(key),
+                    { _, _, _, _ -> fail("Unexpected generation") }, { _, _, _, _ -> fail("Unexpected import") },
+                    { fail("Unexpected removal") }, { id, part, target -> exports += Triple(id, part, target) }, busy = false)
+            }
+        }
+        // The public half is preselected and carries no private-key warning.
+        compose.onNodeWithText(text(R.string.ui_export)).performClick()
+        compose.onNodeWithText(text(R.string.ui_export_to_file)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.ui_private_key_export_warning)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.ui_copy_to_clipboard)).performClick()
+        compose.onNodeWithText(text(R.string.ui_export)).performClick()
+        compose.onNodeWithText(text(R.string.ui_private_key)).performClick()
+        compose.onNodeWithText(text(R.string.ui_private_key_export_warning)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.ui_share_to_app)).performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(Triple("key", KeyExportPart.PUBLIC, KeyExportTarget.Clipboard),
+                Triple("key", KeyExportPart.PRIVATE, KeyExportTarget.Share)), exports)
+        }
     }
 
 }

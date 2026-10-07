@@ -4,7 +4,6 @@ package website.sung.mangossh.presentation
 
 import androidx.compose.runtime.DisposableEffect
 
-import android.content.ClipData
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
@@ -46,6 +45,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
@@ -91,8 +91,6 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.ClipEntry
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -101,6 +99,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.core.net.toUri
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -115,6 +114,7 @@ import kotlinx.coroutines.withContext
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.data.vault.VaultFailureReason
 import website.sung.mangossh.R
+import website.sung.mangossh.data.keys.KeyEditRequest
 import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.data.vault.PortForwardRule
@@ -685,9 +685,10 @@ fun MangoSshApp(
                             keys = keys,
                             onGenerate = viewModel::generateKey,
                             onImport = viewModel::importPrivateKey,
-                            onExport = viewModel::exportPrivateKey,
+                            onExport = viewModel::exportKey,
                             busy = viewModel.keyOperationBusy.collectAsStateWithLifecycle().value,
                             onRemove = { pendingRemoval = PendingRemovalRequest.Key(it) },
+                            onEdit = viewModel::editKey,
                         )
                         AppSection.FORWARDS -> PortForwardsScreen(
                             hosts = hosts,
@@ -1099,16 +1100,18 @@ private fun AppLockScreen(
 internal fun KeysScreen(
     vaultStatus: VaultStatus,
     keys: List<StoredSshKey>,
-    onGenerate: (type: SshKeyGenerationType, label: String) -> Unit,
-    onImport: (label: String, contents: String, passphrase: String?) -> Unit,
+    onGenerate: (type: SshKeyGenerationType, label: String, passphrase: String?, rememberPassphrase: Boolean) -> Unit,
+    onImport: (label: String, contents: String, passphrase: String?, rememberPassphrase: Boolean) -> Unit,
     onRemove: (String) -> Unit,
-    onExport: (String, android.net.Uri) -> Unit,
+    onExport: (String, KeyExportPart, KeyExportTarget) -> Unit,
     busy: Boolean,
+    onEdit: (String, KeyEditRequest) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
-    val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var showGenerator by rememberSaveable { mutableStateOf(false) }
+    var editingKeyId by rememberSaveable { mutableStateOf<String?>(null) }
+    var exportingKeyId by rememberSaveable { mutableStateOf<String?>(null) }
     var importBusy by remember { mutableStateOf(false) }
     var importFailed by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<String?>(null) }
@@ -1130,11 +1133,16 @@ internal fun KeysScreen(
             finally { importBusy = false }
         }
     }
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-pem-file")) { uri ->
+    fun onFilePicked(part: KeyExportPart, uri: android.net.Uri?) {
         val keyId = pendingExportId
         pendingExportId = null
-        if (uri == null || keyId == null) return@rememberLauncherForActivityResult
-        onExport(keyId, uri)
+        if (uri != null && keyId != null) onExport(keyId, part, KeyExportTarget.File(uri))
+    }
+    val publicFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) {
+        onFilePicked(KeyExportPart.PUBLIC, it)
+    }
+    val privateFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-pem-file")) {
+        onFilePicked(KeyExportPart.PRIVATE, it)
     }
 
     LazyColumn(
@@ -1178,45 +1186,48 @@ internal fun KeysScreen(
         }
         items(keys, key = { it.id }) { key ->
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
+                Column(Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)) {
                     Text(key.label, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${key.algorithm} · ${key.fingerprint}",
+                        key.algorithm,
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        key.fingerprint,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (key.requiresPassphrase) {
                         Text(
-                            stringResource(R.string.ui_this_private_key_also_requires_its_passphrase),
+                            stringResource(
+                                if (key.savedPassphrase != null) R.string.ui_passphrase_saved_in_vault
+                                else R.string.ui_this_private_key_also_requires_its_passphrase,
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.padding(top = 4.dp),
                         )
                     }
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(
-                            onClick = {
-                                scope.launch {
-                                    clipboard.setClipEntry(
-                                        ClipEntry(ClipData.newPlainText("SSH public key", key.publicKey)),
-                                    )
-                                }
-                            },
-                        ) {
-                            Text(stringResource(R.string.ui_copy_public_key))
-                        }
-                        TextButton(
-                            enabled = !busy,
-                            onClick = {
-                                pendingExportId = key.id
-                                exportLauncher.launch("${key.label.replace(' ', '_')}.pem")
-                            },
-                        ) {
-                            Text(stringResource(R.string.ui_export_private_key))
-                        }
-                        TextButton(enabled = !busy, onClick = { onRemove(key.id) }) {
-                            Text(stringResource(R.string.common_remove))
-                        }
+                }
+                // Text buttons carry their own padding, so the row sits closer to the card edge.
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    TextButton(
+                        enabled = !busy,
+                        onClick = { onRemove(key.id) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    ) {
+                        Text(stringResource(R.string.common_remove))
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(enabled = !busy, onClick = { editingKeyId = key.id }) {
+                        Text(stringResource(R.string.common_edit))
+                    }
+                    TextButton(enabled = !busy, onClick = { exportingKeyId = key.id }) {
+                        Text(stringResource(R.string.ui_export))
                     }
                 }
             }
@@ -1226,8 +1237,8 @@ internal fun KeysScreen(
     if (showGenerator) {
         GenerateKeyDialog(
             onDismiss = { showGenerator = false },
-            onConfirm = { type, label ->
-                onGenerate(type, label)
+            onConfirm = { type, label, passphrase, rememberPassphrase ->
+                onGenerate(type, label, passphrase.takeIf(String::isNotEmpty), rememberPassphrase)
                 showGenerator = false
             },
         )
@@ -1235,24 +1246,62 @@ internal fun KeysScreen(
     pendingImport?.let { contents ->
         ImportKeyDialog(
             onDismiss = { pendingImport = null },
-            onConfirm = { label, passphrase ->
-                onImport(label, contents, passphrase.takeIf(String::isNotEmpty))
+            onConfirm = { label, passphrase, rememberPassphrase ->
+                onImport(label, contents, passphrase.takeIf(String::isNotEmpty), rememberPassphrase)
                 pendingImport = null
+            },
+        )
+    }
+    exportingKeyId?.let { id -> keys.firstOrNull { it.id == id } }?.let { key ->
+        ExportKeyDialog(
+            key = key,
+            onDismiss = { exportingKeyId = null },
+            onSelect = { part, destination ->
+                exportingKeyId = null
+                when (destination) {
+                    KeyExportDestination.CLIPBOARD -> onExport(key.id, part, KeyExportTarget.Clipboard)
+                    KeyExportDestination.SHARE -> onExport(key.id, part, KeyExportTarget.Share)
+                    KeyExportDestination.FILE -> {
+                        pendingExportId = key.id
+                        val name = keyFileBaseName(key.label)
+                        if (part == KeyExportPart.PUBLIC) publicFileLauncher.launch("$name.pub")
+                        else privateFileLauncher.launch("$name.pem")
+                    }
+                }
+            },
+        )
+    }
+    // A key removed elsewhere closes its editor instead of editing a stale record.
+    editingKeyId?.let { id -> keys.firstOrNull { it.id == id } }?.let { key ->
+        EditKeyDialog(
+            key = key,
+            onDismiss = { editingKeyId = null },
+            onConfirm = { request ->
+                onEdit(key.id, request)
+                editingKeyId = null
             },
         )
     }
 }
 
+/** A suggested file name: the user's label with characters that file systems reject replaced. */
+private fun keyFileBaseName(label: String): String =
+    label.replace(Regex("""[\\/:*?"<>|\s]"""), "_").ifBlank { "ssh_key" }
+
 @Composable
 private fun GenerateKeyDialog(
     onDismiss: () -> Unit,
-    onConfirm: (type: SshKeyGenerationType, label: String) -> Unit,
+    onConfirm: (type: SshKeyGenerationType, label: String, passphrase: String, rememberPassphrase: Boolean) -> Unit,
 ) {
     var algorithm by rememberSaveable { mutableStateOf(KeyGenerationAlgorithm.ED25519) }
     var keyLength by rememberSaveable { mutableIntStateOf(algorithm.defaultLength) }
     var label by rememberSaveable {
         mutableStateOf(defaultGeneratedKeyLabel(algorithm, keyLength))
     }
+    // Passphrases stay out of saved instance state.
+    var passphrase by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
+    var rememberPassphrase by rememberSaveable { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.ui_generate_ssh_key)) },
@@ -1295,11 +1344,20 @@ private fun GenerateKeyDialog(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
+                NewPassphraseFields(passphrase, { passphrase = it }, confirmation, { confirmation = it },
+                    stringResource(R.string.ui_key_passphrase_optional))
+                RememberPassphraseRow(rememberPassphrase && passphrase.isNotEmpty(), passphrase.isNotEmpty()) {
+                    rememberPassphrase = it
+                }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(algorithm.toGenerationType(keyLength), label.trim()) },
+                enabled = passphrase == confirmation,
+                onClick = {
+                    onConfirm(algorithm.toGenerationType(keyLength), label.trim(), passphrase,
+                        rememberPassphrase && passphrase.isNotEmpty())
+                },
             ) {
                 Text(stringResource(R.string.ui_generate))
             }
@@ -1389,11 +1447,13 @@ private fun defaultGeneratedKeyLabel(algorithm: KeyGenerationAlgorithm, keyLengt
 @Composable
 private fun ImportKeyDialog(
     onDismiss: () -> Unit,
-    onConfirm: (label: String, passphrase: String) -> Unit,
+    onConfirm: (label: String, passphrase: String, rememberPassphrase: Boolean) -> Unit,
 ) {
     val defaultLabel = stringResource(R.string.ui_imported_private_key)
     var label by rememberSaveable { mutableStateOf(defaultLabel) }
-    var passphrase by rememberSaveable { mutableStateOf("") }
+    // The passphrase stays out of saved instance state, like the key contents themselves.
+    var passphrase by remember { mutableStateOf("") }
+    var rememberPassphrase by rememberSaveable { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.ui_import_private_key)) },
@@ -1416,10 +1476,15 @@ private fun ImportKeyDialog(
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                 )
+                RememberPassphraseRow(rememberPassphrase && passphrase.isNotEmpty(), passphrase.isNotEmpty()) {
+                    rememberPassphrase = it
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(label.trim(), passphrase) }) { Text(stringResource(R.string.ui_import)) }
+            TextButton(onClick = { onConfirm(label.trim(), passphrase, rememberPassphrase && passphrase.isNotEmpty()) }) {
+                Text(stringResource(R.string.ui_import))
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )

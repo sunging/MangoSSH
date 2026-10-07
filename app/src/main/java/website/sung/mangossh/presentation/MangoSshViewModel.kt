@@ -1,7 +1,10 @@
 package website.sung.mangossh.presentation
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
 import androidx.annotation.StringRes
@@ -35,6 +38,8 @@ import website.sung.mangossh.MangoSshApplication
 import website.sung.mangossh.R
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
+import website.sung.mangossh.data.keys.IncorrectKeyPassphraseException
+import website.sung.mangossh.data.keys.KeyEditRequest
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
 import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
@@ -1292,21 +1297,51 @@ class MangoSshViewModel @JvmOverloads constructor(
     private val _keyOperationBusy = MutableStateFlow(false)
     val keyOperationBusy = _keyOperationBusy.asStateFlow()
 
-    /** Performs a selected private-key export only after the configured access check. */
-    fun exportPrivateKey(id: String, destination: Uri) {
-        if (_keyOperationBusy.value || !authorizeSensitive { exportPrivateKey(id, destination) }) return
+    /**
+     * Copies, saves or shares one half of a stored key pair. Private-key exports run only after
+     * the configured access check and only while that authorization is still current; the
+     * public key is not secret and is exported without one.
+     */
+    fun exportKey(id: String, part: KeyExportPart, target: KeyExportTarget) {
+        val private = part == KeyExportPart.PRIVATE
+        if (_keyOperationBusy.value || (private && !authorizeSensitive { exportKey(id, part, target) })) return
         val key = vault.snapshot.value.keys.firstOrNull { it.id == id } ?: return
         val authorizationGeneration = runtime.accessState.generation
+        fun stillAuthorized() = !private ||
+            (!runtime.accessState.locked.value && authorizationGeneration == runtime.accessState.generation)
+        val application = getApplication<Application>()
         _keyOperationBusy.value = true
         viewModelScope.launch {
             try {
-                withContext(cryptoDispatcher) {
-                    check(!runtime.accessState.locked.value && authorizationGeneration == runtime.accessState.generation)
-                    val bytes = key.privateKeyPem.encodeToByteArray()
-                    try {
-                        getApplication<Application>().contentResolver.openOutputStream(destination, "wt")?.use { it.write(bytes) }
-                            ?: throw java.io.IOException()
-                    } finally { bytes.fill(0) }
+                val text = if (private) key.privateKeyPem else key.publicKey.trim() + "\n"
+                when (target) {
+                    is KeyExportTarget.File -> withContext(cryptoDispatcher) {
+                        check(stillAuthorized())
+                        val bytes = text.encodeToByteArray()
+                        try {
+                            application.contentResolver.openOutputStream(target.uri, "wt")?.use { it.write(bytes) }
+                                ?: throw java.io.IOException()
+                        } finally { bytes.fill(0) }
+                    }
+                    KeyExportTarget.Clipboard -> {
+                        check(stillAuthorized())
+                        copyKeyToClipboard(application, text, private)
+                        // Android 13 and later confirm a copy with their own clipboard preview.
+                        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+                            _userMessage.value = uiText(if (private) R.string.message_private_key_copied else R.string.message_public_key_copied)
+                        }
+                    }
+                    KeyExportTarget.Share -> {
+                        check(stillAuthorized())
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(Intent.EXTRA_TEXT, text)
+                            .putExtra(Intent.EXTRA_TITLE, key.label)
+                        try {
+                            application.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (_: android.content.ActivityNotFoundException) {
+                            _userMessage.value = uiText(R.string.message_key_share_unavailable)
+                        }
+                    }
                 }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Exception) { _userMessage.value = uiText(R.string.message_key_export_failed)
@@ -1314,15 +1349,25 @@ class MangoSshViewModel @JvmOverloads constructor(
         }
     }
 
+    /** A private key is flagged sensitive so the system clipboard preview and keyboards hide it. */
+    private fun copyKeyToClipboard(context: Context, text: String, private: Boolean) {
+        val clip = ClipData.newPlainText(if (private) "SSH private key" else "SSH public key", text)
+        if (private) {
+            // ClipDescription.EXTRA_IS_SENSITIVE (API 33); older releases honor the same key.
+            clip.description.extras = android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+        }
+        context.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
+    }
+
     /** Generates the selected key type away from the main dispatcher and saves it encrypted. */
-    fun generateKey(type: SshKeyGenerationType, label: String) {
-        if (_keyOperationBusy.value || !authorizeSensitive { generateKey(type, label) }) return
+    fun generateKey(type: SshKeyGenerationType, label: String, passphrase: String?, rememberPassphrase: Boolean) {
+        if (_keyOperationBusy.value || !authorizeSensitive { generateKey(type, label, passphrase, rememberPassphrase) }) return
         _keyOperationBusy.value = true
         viewModelScope.launch {
           try {
             runCatching {
                 withContext(cryptoDispatcher) {
-                    keyManager.generateKey(type, label)
+                    keyManager.generateKey(type, label, passphrase, rememberPassphrase)
                 }
             }
                 .onSuccess {
@@ -1340,12 +1385,12 @@ class MangoSshViewModel @JvmOverloads constructor(
         }
     }
 
-    fun importPrivateKey(label: String, contents: String, passphrase: String?) {
-        if (_keyOperationBusy.value || !authorizeSensitive { importPrivateKey(label, contents, passphrase) }) return
+    fun importPrivateKey(label: String, contents: String, passphrase: String?, rememberPassphrase: Boolean) {
+        if (_keyOperationBusy.value || !authorizeSensitive { importPrivateKey(label, contents, passphrase, rememberPassphrase) }) return
         _keyOperationBusy.value = true
         viewModelScope.launch {
           try {
-            runCatching { withContext(cryptoDispatcher) { keyManager.importPrivateKey(label, contents, passphrase) } }
+            runCatching { withContext(cryptoDispatcher) { keyManager.importPrivateKey(label, contents, passphrase, rememberPassphrase) } }
                 .onSuccess {
                     _userMessage.value = if (vault.upsertKey(it).isSuccess) {
                         uiText(R.string.message_key_imported, it.label)
@@ -1367,6 +1412,39 @@ class MangoSshViewModel @JvmOverloads constructor(
                     )
                 }
           } finally { _keyOperationBusy.value = false }
+        }
+    }
+
+    /**
+     * Renames a key and changes its passphrase after the configured access check. Decryption and
+     * re-encoding run on the crypto dispatcher; the result replaces the key in place in the vault.
+     */
+    fun editKey(id: String, request: KeyEditRequest) {
+        if (_keyOperationBusy.value || !authorizeSensitive { editKey(id, request) }) return
+        val key = vault.snapshot.value.keys.firstOrNull { it.id == id } ?: return
+        val authorizationGeneration = runtime.accessState.generation
+        _keyOperationBusy.value = true
+        viewModelScope.launch {
+            try {
+                val edited = withContext(cryptoDispatcher) {
+                    check(!runtime.accessState.locked.value && authorizationGeneration == runtime.accessState.generation)
+                    keyManager.editKey(key, request)
+                }
+                val result = vault.replaceKey(edited)
+                _userMessage.value = mutationError(result) ?: uiText(R.string.message_key_updated, edited.label)
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (error: Exception) {
+                MangoLog.warn(MangoLogEvent.KEY_EDIT_FAILED, error)
+                _userMessage.value = uiText(
+                    when (error) {
+                        is IncorrectKeyPassphraseException -> R.string.message_key_passphrase_incorrect
+                        is KeyPassphraseRequiredException -> R.string.message_key_passphrase_required
+                        is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> R.string.ssh_dsa_unsupported
+                        is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException -> R.string.ssh_key_encryption_unsupported
+                        else -> R.string.message_key_update_failed
+                    },
+                )
+            } finally { _keyOperationBusy.value = false }
         }
     }
 

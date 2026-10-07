@@ -14,7 +14,9 @@ internal object SshKeyCodec {
                 line.substringAfter(':').trim().substringBefore(',').uppercase() in setOf("DES-CBC", "DES-EDE3-CBC"))
     }
     fun generateEd25519(): KeyPair = SshKeys.generateEd25519KeyPair()
-    fun encodePrivate(key: KeyPair): String = SshKeys.encodeOpenSshPrivateKey(key)
+    /** A non-empty [passphrase] produces an OpenSSH key encrypted with bcrypt and aes256-ctr. */
+    fun encodePrivate(key: KeyPair, passphrase: String? = null): String =
+        SshKeys.encodeOpenSshPrivateKey(key, passphrase?.takeIf(String::isNotEmpty))
     fun decodePrivate(pem: String, passphrase: String?): KeyPair = SshKeys.decodePemPrivateKey(pem, passphrase)
     fun isEncrypted(pem: String): Boolean = SshKeys.isEncrypted(pem)
     /** OpenSSH exposes its public key before the encrypted private payload; inspect only that prefix. */

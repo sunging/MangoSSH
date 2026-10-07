@@ -18,7 +18,7 @@ internal object VaultPayloadCodec {
         fun checkObject(value: JSONObject, top: Boolean) {
             value.keys().forEach { name ->
                 val item = value.get(name)
-                val nullable = name in setOf("keyId", "startupSnippetId", "destinationHost", "destinationPort", "webDavConfig", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "terminalType", "allowedKeyIds", "requireReauthentication")
+                val nullable = name in setOf("keyId", "startupSnippetId", "destinationHost", "destinationPort", "webDavConfig", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "terminalType", "allowedKeyIds", "requireReauthentication", "savedPassphrase")
                 if (item == JSONObject.NULL) {
                     require(nullable)
                 } else when {
@@ -38,7 +38,7 @@ internal object VaultPayloadCodec {
                         if (name in setOf("schemaVersion", "port", "position", "connectionCount", "bindPort", "destinationPort", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "authorizationSeconds")) require((item as Number).toLong() in Int.MIN_VALUE..Int.MAX_VALUE)
                     }
                     name in booleans -> require(item is Boolean)
-                    name in setOf("id", "label", "hostname", "username", "protocol", "route", "authentication", "keyId", "startupSnippetId", "algorithm", "publicKey", "fingerprint", "privateKeyPem", "keyBlobBase64", "script", "profileId", "type", "bindHost", "destinationHost", "endpoint", "password", "remoteFileName") -> require(item is String)
+                    name in setOf("id", "label", "hostname", "username", "protocol", "route", "authentication", "keyId", "startupSnippetId", "algorithm", "publicKey", "fingerprint", "privateKeyPem", "keyBlobBase64", "script", "profileId", "type", "bindHost", "destinationHost", "endpoint", "password", "remoteFileName", "savedPassphrase") -> require(item is String)
                 }
             }
         }
@@ -100,6 +100,7 @@ internal object VaultPayloadCodec {
                         put("privateKeyPem", key.privateKeyPem)
                         put("requiresPassphrase", key.requiresPassphrase)
                         put("createdAtEpochMillis", key.createdAtEpochMillis)
+                        key.savedPassphrase?.let { put("savedPassphrase", it) }
                     },
                 )
             }
@@ -259,6 +260,7 @@ internal object VaultPayloadCodec {
                     privateKeyPem = value.optString("privateKeyPem"),
                     requiresPassphrase = value.optBoolean("requiresPassphrase", false),
                     createdAtEpochMillis = value.optLong("createdAtEpochMillis", 0L),
+                    savedPassphrase = if (value.isNull("savedPassphrase")) null else value.getString("savedPassphrase"),
                 ),
             )
         }

@@ -32,6 +32,10 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
                 if (profile.authentication != AuthenticationMethod.PRIVATE_KEY) return null
                 val stored = snapshot.keys.firstOrNull { it.id == profile.keyId } ?: throw IllegalStateException()
                 if (stored.algorithm == "ssh-dss") throw website.sung.mangossh.data.keys.UnsupportedDsaKeyException()
+                // A remembered passphrase skips the prompt; if it no longer decrypts, ask instead.
+                if (stored.savedPassphrase != null) {
+                    runCatching { keyManager.decodeKeyPair(stored) }.getOrNull()?.let { return it }
+                }
                 val passphrase = if (stored.requiresPassphrase) ask(
                     SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, stored.label),
                     SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
