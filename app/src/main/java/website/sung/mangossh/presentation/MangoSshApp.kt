@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.focusGroup
@@ -96,6 +98,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.core.net.toUri
@@ -125,6 +128,7 @@ import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.domain.HostSortMode
+import website.sung.mangossh.session.AuthenticationField
 import website.sung.mangossh.session.HostKeyPromptKind
 import website.sung.mangossh.session.SessionKind
 import website.sung.mangossh.session.SessionPrompt
@@ -1862,7 +1866,7 @@ internal fun authenticationAfterRouteSelection(
 }
 
 @Composable
-private fun SessionPromptDialog(
+internal fun SessionPromptDialog(
     prompt: SessionPrompt,
     onRespond: (List<String>?) -> Unit,
 ) {
@@ -1934,7 +1938,9 @@ private fun SessionPromptDialog(
 
         is SessionPrompt.Authentication -> {
             val answers = remember(prompt.requestId) {
-                mutableStateListOf<String>().apply { repeat(prompt.fields.size) { add("") } }
+                mutableStateListOf<String>().apply {
+                    prompt.fields.forEach { add(if (it.toggle && it.initiallyChecked) AuthenticationField.TOGGLE_ON else "") }
+                }
             }
             AlertDialog(
                 onDismissRequest = { onRespond(null) },
@@ -1945,6 +1951,19 @@ private fun SessionPromptDialog(
                             SelectionContainer { Text(instruction.asString()) }
                         }
                         prompt.fields.forEachIndexed { index, field ->
+                            if (field.toggle) {
+                                val checked = answers[index] == AuthenticationField.TOGGLE_ON
+                                Row(
+                                    Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = checked, role = Role.Checkbox) {
+                                        answers[index] = if (it) AuthenticationField.TOGGLE_ON else ""
+                                    },
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Checkbox(checked = checked, onCheckedChange = null)
+                                    Text(field.label.asString(), Modifier.padding(start = 8.dp))
+                                }
+                                return@forEachIndexed
+                            }
                             OutlinedTextField(
                                 value = answers[index],
                                 onValueChange = { answers[index] = it },
@@ -2073,6 +2092,8 @@ private fun SessionPromptText.asString(): String = when (this) {
             stringResource(R.string.authentication_key_passphrase_instruction)
         SessionPromptTextKind.KEY_PASSPHRASE_FIELD ->
             stringResource(R.string.authentication_key_passphrase_field)
+        SessionPromptTextKind.REMEMBER_KEY_PASSPHRASE ->
+            stringResource(R.string.ui_remember_passphrase)
         SessionPromptTextKind.TAILSCALE_LOGIN_TITLE ->
             stringResource(R.string.authentication_tailscale_login_title)
         SessionPromptTextKind.INTERACTIVE_LOGIN_TITLE ->

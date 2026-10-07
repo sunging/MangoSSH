@@ -5,13 +5,19 @@ import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshCredentials
 import website.sung.mangossh.session.ssh.SshPromptField
 import website.sung.mangossh.data.keys.SshKeyManager
+import website.sung.mangossh.data.vault.StoredSshKey
 import website.sung.mangossh.data.vault.VaultSnapshot
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 
-/** Only configured credentials may be offered; cancelling a prompt cancels its authentication. */
+/**
+ * Only configured credentials may be offered; cancelling a prompt cancels its authentication.
+ * [savePassphrase] stores (or, with null, clears) a key's remembered passphrase after the user
+ * chose so in the unlock prompt; it is only called with a passphrase that just decrypted the key.
+ */
 internal class SshAuthentication(private val keyManager: SshKeyManager,
-    private val prompt: (String, SessionPromptText, SessionPromptText?, List<AuthenticationField>) -> List<String>?) {
+    private val prompt: (String, SessionPromptText, SessionPromptText?, List<AuthenticationField>) -> List<String>?,
+    private val savePassphrase: suspend (StoredSshKey, String?) -> Unit = { _, _ -> }) {
     suspend fun authenticate(connection: SshConnection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean {
         if (profile.authentication == AuthenticationMethod.PRIVATE_KEY &&
             snapshot.keys.any { it.id == profile.keyId && it.algorithm == "ssh-dss" })
@@ -19,7 +25,12 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
         if (profile.authentication == AuthenticationMethod.PRIVATE_KEY) {
             snapshot.keys.firstOrNull { it.id == profile.keyId }?.let { keyManager.requireSupportedEncryption(it.privateKeyPem) }
         }
-        return connection.authenticate(profile.username, object : SshCredentials {
+        return connection.authenticate(profile.username, credentials(sessionId, profile, snapshot))
+    }
+
+    /** The credentials offered for [profile]; each callback prompts only when the server asks for it. */
+    internal fun credentials(sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): SshCredentials =
+        object : SshCredentials {
             override val supportedMethods: Set<String> = profile.authentication.sshMethods()
             override val preferPasswordAuth: Boolean = profile.authentication == AuthenticationMethod.PASSWORD
             override suspend fun password(): String? {
@@ -33,14 +44,25 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
                 val stored = snapshot.keys.firstOrNull { it.id == profile.keyId } ?: throw IllegalStateException()
                 if (stored.algorithm == "ssh-dss") throw website.sung.mangossh.data.keys.UnsupportedDsaKeyException()
                 // A remembered passphrase skips the prompt; if it no longer decrypts, ask instead.
-                if (stored.savedPassphrase != null) {
+                val stale = stored.savedPassphrase != null
+                if (stale) {
                     runCatching { keyManager.decodeKeyPair(stored) }.getOrNull()?.let { return it }
                 }
-                val passphrase = if (stored.requiresPassphrase) ask(
+                if (!stored.requiresPassphrase) return keyManager.decodeKeyPair(stored)
+                val answers = ask(
                     SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, stored.label),
                     SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
-                    listOf(AuthenticationField(SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD), false))).single() else null
-                return keyManager.decodeKeyPair(stored, passphrase)
+                    listOf(
+                        AuthenticationField(SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD), false),
+                        AuthenticationField(SessionPromptText.App(SessionPromptTextKind.REMEMBER_KEY_PASSPHRASE), true,
+                            toggle = true, initiallyChecked = stale),
+                    ))
+                val passphrase = answers[0]
+                val keyPair = keyManager.decodeKeyPair(stored, passphrase)
+                // Save only a passphrase proven above; unticking replaces a stale one with nothing.
+                val remember = answers[1] == AuthenticationField.TOGGLE_ON
+                if (remember || stale) savePassphrase(stored, passphrase.takeIf { remember })
+                return keyPair
             }
             override suspend fun interactive(name: String, instruction: String, fields: List<SshPromptField>): List<String>? {
                 if ("keyboard-interactive" !in supportedMethods) return null
@@ -52,8 +74,7 @@ internal class SshAuthentication(private val keyManager: SshKeyManager,
             }
             private fun ask(title: SessionPromptText, instruction: SessionPromptText?, fields: List<AuthenticationField>): List<String> =
                 prompt(sessionId, title, instruction, fields)?.takeIf { it.size == fields.size } ?: throw CancellationException("Authentication cancelled")
-        })
-    }
+        }
 }
 
 /** Password fallback is explicit user input; key profiles never offer other credentials. */

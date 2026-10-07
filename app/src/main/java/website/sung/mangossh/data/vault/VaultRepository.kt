@@ -118,6 +118,15 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
         else snapshot.copy(keys = snapshot.keys.map { if (it.id == key.id) key else it })
     }
 
+    /**
+     * Saves or clears the remembered passphrase of key [id], or does nothing when that key is gone
+     * or its private key changed since [privateKeyPem] was read, so a stale answer never lands on
+     * an edited key.
+     */
+    suspend fun setSavedKeyPassphrase(id: String, privateKeyPem: String, passphrase: String?) = mutate { snapshot ->
+        snapshot.withSavedKeyPassphrase(id, privateKeyPem, passphrase)
+    }
+
     suspend fun removeKey(id: String) = mutate { snapshot ->
         snapshot.copy(
             keys = snapshot.keys.filterNot { it.id == id },
@@ -218,4 +227,14 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
             }
         }
     }
+}
+
+/**
+ * This snapshot with key [id]'s remembered passphrase set to [passphrase], or null when that key
+ * is gone, no longer holds [privateKeyPem], or is not encrypted.
+ */
+internal fun VaultSnapshot.withSavedKeyPassphrase(id: String, privateKeyPem: String, passphrase: String?): VaultSnapshot? {
+    val current = keys.firstOrNull { it.id == id }
+    if (current == null || current.privateKeyPem != privateKeyPem || !current.requiresPassphrase) return null
+    return copy(keys = keys.map { if (it.id == id) it.copy(savedPassphrase = passphrase) else it })
 }

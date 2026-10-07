@@ -39,5 +39,16 @@ class SavedKeyPassphraseVaultTest {
         assertToStringRedacts(key())
     }
 
+    @Test fun connectTimeRememberAppliesOnlyToTheUnchangedEncryptedKey() {
+        val snapshot = VaultSnapshot(keys = listOf(key(savedPassphrase = null)))
+        assertEquals(secret, snapshot.withSavedKeyPassphrase("key", "placeholder", secret)?.keys?.single()?.savedPassphrase)
+        assertNull(VaultSnapshot(keys = listOf(key())).withSavedKeyPassphrase("key", "placeholder", null)!!.keys.single().savedPassphrase)
+        // Removed, re-encrypted or decrypted meanwhile: the stale answer is dropped.
+        assertNull(snapshot.withSavedKeyPassphrase("other", "placeholder", secret))
+        assertNull(snapshot.withSavedKeyPassphrase("key", "edited", secret))
+        assertNull(VaultSnapshot(keys = listOf(key(requiresPassphrase = false, savedPassphrase = null)))
+            .withSavedKeyPassphrase("key", "placeholder", secret))
+    }
+
     private fun assertToStringRedacts(key: StoredSshKey) = assertFalse(key.toString().contains(secret))
 }

@@ -112,5 +112,19 @@ class NewWorkflowUiInstrumentedTest {
                 Triple("key", KeyExportPart.PRIVATE, KeyExportTarget.Share)), exports)
         }
     }
+    @Test fun keyUnlockPromptReturnsThePassphraseAndTheRememberChoice() {
+        val prompt = SessionPrompt.Authentication("request", "session",
+            SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, "Key"),
+            SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
+            listOf(AuthenticationField(SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD), false),
+                AuthenticationField(SessionPromptText.App(SessionPromptTextKind.REMEMBER_KEY_PASSPHRASE), true, toggle = true)))
+        var answer: List<String>? = null
+        compose.setContent { MaterialTheme { SessionPromptDialog(prompt) { answer = it } } }
+        // Placeholder input: the dialog only relays text and never decrypts anything.
+        compose.onNode(hasSetTextAction()).performTextInput("placeholder")
+        compose.onNodeWithText(text(R.string.ui_remember_passphrase)).assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithText(text(R.string.common_submit)).performClick()
+        compose.runOnIdle { assertEquals(listOf("placeholder", AuthenticationField.TOGGLE_ON), answer) }
+    }
 
 }

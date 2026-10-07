@@ -1457,7 +1457,15 @@ class SshSessionController internal constructor(
     }
 
     private suspend fun authenticate(connection: SshConnection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean =
-        SshAuthentication(keyManager, ::requestAuthentication).authenticate(connection, sessionId, profile, snapshot)
+        SshAuthentication(keyManager, ::requestAuthentication) { key, passphrase ->
+            // Remembering is a convenience for the next connection; a vault write failure
+            // must not fail an authentication that already has its decrypted key.
+            runCatching { vault.setSavedKeyPassphrase(key.id, key.privateKeyPem, passphrase) }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error)
+                }
+        }.authenticate(connection, sessionId, profile, snapshot)
 
     /**
      * Starts stdout and stderr readers for an interactive SSH shell.

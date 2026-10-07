@@ -322,11 +322,22 @@ sealed interface SessionPrompt {
     ) : SessionPrompt
 }
 
+/**
+ * One answer in an authentication prompt. A [toggle] field renders as a checkbox, starts at
+ * [initiallyChecked], and answers [TOGGLE_ON] when checked or an empty string otherwise.
+ */
 @Immutable
 data class AuthenticationField(
     val label: SessionPromptText,
     val echo: Boolean,
-)
+    val toggle: Boolean = false,
+    val initiallyChecked: Boolean = false,
+) {
+    companion object {
+        /** The answer of a checked [toggle] field. */
+        const val TOGGLE_ON = "true"
+    }
+}
 
 /** Distinguishes fixed application prompts from SSH server-provided wording. */
 @Immutable
@@ -351,6 +362,7 @@ enum class SessionPromptTextKind {
     UNLOCK_KEY_TITLE,
     KEY_PASSPHRASE_INSTRUCTION,
     KEY_PASSPHRASE_FIELD,
+    REMEMBER_KEY_PASSPHRASE,
     TAILSCALE_LOGIN_TITLE,
     INTERACTIVE_LOGIN_TITLE,
 }

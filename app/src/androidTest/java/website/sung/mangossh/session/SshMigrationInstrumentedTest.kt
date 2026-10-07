@@ -112,11 +112,11 @@ class SshMigrationInstrumentedTest {
             for (user in listOf("fixture-mixed", "fixture-otp")) {
                 val connection = connect(port)
                 var prompts = 0
-                val authentication = SshAuthentication(SshKeyManager()) { _, _, _, fields ->
+                val authentication = SshAuthentication(SshKeyManager(), { _, _, _, fields ->
                     assertEquals(1, fields.size)
                     prompts++
                     listOf(answers.getString(if (user == "fixture-otp") "otp" else "password"))
-                }
+                })
                 try {
                     assertTrue(authentication.authenticate(connection, "fixture",
                         website.sung.mangossh.domain.ConnectionProfile(
@@ -129,7 +129,7 @@ class SshMigrationInstrumentedTest {
             val cancelled = connect(port)
             try {
                 assertSuspendingThrows(CancellationException::class.java) {
-                    SshAuthentication(SshKeyManager()) { _, _, _, _ -> null }.authenticate(cancelled, "fixture",
+                    SshAuthentication(SshKeyManager(), { _, _, _, _ -> null }).authenticate(cancelled, "fixture",
                         website.sung.mangossh.domain.ConnectionProfile(label = "fixture", hostname = "127.0.0.1",
                             username = "fixture-otp", authentication = website.sung.mangossh.domain.AuthenticationMethod.PASSWORD),
                         website.sung.mangossh.data.vault.VaultSnapshot())
