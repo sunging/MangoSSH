@@ -838,4 +838,8 @@
     <string name="vault_saving">Saving…</string>
     <string name="settings_about_repository">Project repository</string>
     <string name="settings_about_license_loading">Loading license…</string>
+    <string name="port_forward_waiting_network">Waiting for network</string>
+    <string name="port_forward_reconnecting">Reconnecting tunnel</string>
+    <string name="port_forward_waiting_operation">Waiting for your action</string>
+    <string name="port_forward_bind_failed">Cannot start the listener. Check the listen address, port availability and server forwarding permissions.</string>
 </resources>

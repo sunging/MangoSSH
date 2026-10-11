@@ -136,6 +136,7 @@ import website.sung.mangossh.session.SessionPromptText
 import website.sung.mangossh.session.SessionPromptTextKind
 import website.sung.mangossh.session.PortForwardCarrier
 import website.sung.mangossh.session.PortForwardRuntimePhase
+import website.sung.mangossh.session.isRunning
 import website.sung.mangossh.session.PortForwardRuntimeState
 import website.sung.mangossh.session.PortForwardStopOutcome
 import website.sung.mangossh.session.SessionAttention
@@ -1572,7 +1573,7 @@ private fun PortForwardsScreen(
             val profile = hosts.firstOrNull { it.id == rule.profileId }
             val running = activeForwards.firstOrNull {
                 it.rule.id == rule.id &&
-                    (it.phase == PortForwardRuntimePhase.ACTIVE || it.phase == PortForwardRuntimePhase.STARTING || it.phase == PortForwardRuntimePhase.STOPPING)
+                    it.phase.isRunning
             }
             val failed = activeForwards.lastOrNull {
                 it.rule.id == rule.id && it.phase == PortForwardRuntimePhase.FAILED
@@ -1615,6 +1616,9 @@ private fun PortForwardsScreen(
                         when (runtime.phase) {
                             PortForwardRuntimePhase.ACTIVE -> stringResource(R.string.ui_running)
                             PortForwardRuntimePhase.STARTING -> stringResource(R.string.ui_starting)
+                            PortForwardRuntimePhase.WAITING_FOR_NETWORK -> stringResource(R.string.port_forward_waiting_network)
+                            PortForwardRuntimePhase.RECONNECTING -> stringResource(R.string.port_forward_reconnecting)
+                            PortForwardRuntimePhase.WAITING_FOR_OPERATION -> stringResource(R.string.port_forward_waiting_operation)
                             PortForwardRuntimePhase.STOPPING -> stringResource(R.string.port_forward_stopping)
                             PortForwardRuntimePhase.FAILED -> stringResource(R.string.ui_failed)
                             PortForwardRuntimePhase.STOPPED -> stringResource(R.string.port_forward_status_stop_sent)

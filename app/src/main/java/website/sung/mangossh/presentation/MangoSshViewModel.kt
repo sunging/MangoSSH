@@ -546,6 +546,16 @@ class MangoSshViewModel @JvmOverloads constructor(
 
     init {
         viewModelScope.launch { vault.open() }
+        viewModelScope.launch {
+            var handled: String? = null
+            sessionController.forwardAuthorization.collect { requests ->
+                val request = requests.firstOrNull()
+                if (request != null && request.id != handled) {
+                    handled = request.id
+                    authorizeForwardRequest(request)
+                }
+            }
+        }
         // A browsed connection can fail while authenticating or drop mid-listing;
         // surface that in the browser instead of leaving a spinner running.
         viewModelScope.launch {
@@ -609,6 +619,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     fun removeHost(id: String) {
+        sessionController.stopPortForwardsForProfile(id)
         viewModelScope.launch {
             val removed = vault.removeProfile(id)
             if (removed == website.sung.mangossh.data.vault.VaultMutationResult.Success) draftWork { deleteProfile(id) }
@@ -843,6 +854,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     fun removePortForward(ruleId: String) {
+        sessionController.stopPortForward("", ruleId)
         viewModelScope.launch { _userMessage.value = mutationError(vault.removePortForward(ruleId)) }
     }
 
@@ -870,7 +882,20 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     fun startPortForward(sessionId: String, rule: PortForwardRule) {
+        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == rule.profileId } ?: return
+        if (!authorizeSensitive(profile.requireReauthentication) { startPortForward(sessionId, rule) }) return
         sessionController.startPortForward(sessionId, rule)
+    }
+
+    /** Recovery uses the existing PIN/biometric grant and cancels cleanly when declined. */
+    private fun authorizeForwardRequest(request: website.sung.mangossh.session.ForwardAuthorizationRequest) {
+        if (sessionController.forwardAuthorization.value.none { it.id == request.id }) return
+        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == request.profileId }
+        if (profile == null) { sessionController.respondToForwardAuthorization(request.id, false); return }
+        if (authorizeSensitive(profile.requireReauthentication,
+                onCancelled = { sessionController.respondToForwardAuthorization(request.id, false) }) {
+                authorizeForwardRequest(request)
+            }) sessionController.respondToForwardAuthorization(request.id, true)
     }
 
     /**

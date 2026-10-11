@@ -103,6 +103,9 @@ enum class SessionEndMessageKind {
 
 enum class PortForwardRuntimePhase {
     STARTING,
+    WAITING_FOR_NETWORK,
+    RECONNECTING,
+    WAITING_FOR_OPERATION,
     STOPPING,
     ACTIVE,
     FAILED,
@@ -141,10 +144,22 @@ data class PortForwardRuntimeState(
     val boundAddress: String? = null,
     val carrier: PortForwardCarrier? = null,
     val activeConnections: Int = 0,
+    /** Clients still negotiating SOCKS or opening an SSH data channel. */
+    val pendingConnections: Int = 0,
     val totalConnections: Long = 0,
     val lastActivityEpochMillis: Long? = null,
     val stopOutcome: PortForwardStopOutcome? = null,
 )
+
+/** States in which stopping must also cancel a possible future listener. */
+internal val PortForwardRuntimePhase.isRunning: Boolean
+    get() = this != PortForwardRuntimePhase.FAILED && this != PortForwardRuntimePhase.STOPPED
+
+/** Disconnected intents retain service ownership without retaining a CPU lease. */
+internal data class ForwardingWork(val pending: Boolean = false, val awake: Boolean = false)
+
+/** UI authorization request containing identifiers only, never credentials. */
+internal data class ForwardAuthorizationRequest(val id: String, val profileId: String)
 
 /** Marks only live forwards on [sessionId] failed when their SSH carrier disappears. */
 internal fun failPortForwardsForSession(

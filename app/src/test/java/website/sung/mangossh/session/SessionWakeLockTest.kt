@@ -7,6 +7,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionWakeLockTest {
+    @Test fun backgroundForwardClientsAcquireAndReleaseWithoutKeepingIdleListenersAwake() {
+        val fixture = Fixture()
+        fixture.owner.update(true, true, uiForeground = false)
+        assertFalse(fixture.held)
+        fixture.owner.update(true, true, uiForeground = false, activeForwards = true)
+        assertTrue(fixture.held)
+        fixture.owner.update(true, true, uiForeground = false)
+        assertFalse(fixture.held)
+        assertEquals(1, fixture.releases)
+    }
     @Test
     fun idleServiceDoesNotAcquireALock() {
         val fixture = Fixture()

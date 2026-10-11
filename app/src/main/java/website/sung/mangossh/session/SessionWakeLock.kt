@@ -29,8 +29,9 @@ internal class SessionWakeLock(
      * alarm instead of a CPU-bound `delay`. A paused transfer does not count as
      * active. Holding the lock does not exempt a transfer from Doze network limits.
      */
-    fun update(hasSessions: Boolean, foregroundOwned: Boolean, uiForeground: Boolean = true, activeTransfers: Boolean = false) {
-        val nextRequired = hasSessions && foregroundOwned && (uiForeground || activeTransfers)
+    fun update(hasSessions: Boolean, foregroundOwned: Boolean, uiForeground: Boolean = true, activeTransfers: Boolean = false,
+        activeForwards: Boolean = false) {
+        val nextRequired = hasSessions && foregroundOwned && (uiForeground || activeTransfers || activeForwards)
         if (nextRequired == required) return
         required = nextRequired
         if (required) {

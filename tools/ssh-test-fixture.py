@@ -24,6 +24,7 @@ from paramiko.sftp import CMD_INIT, CMD_VERSION
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=22349)
+parser.add_argument("--echo-port", type=int, default=0, help="Optional loopback echo target for persistent forwarding tests")
 tool_mode = parser.add_mutually_exclusive_group()
 tool_mode.add_argument("--wsl-tmux", action="store_true")
 tool_mode.add_argument("--native-tools", action="store_true", help="Run isolated tmux and Mosh fixtures directly on Linux")
@@ -160,7 +161,7 @@ class Sftp(paramiko.SFTPServer):
 
 class Server(paramiko.ServerInterface):
     def __init__(self, transport):
-        self.forward = set()
+        self.forward = {}
         self.transport = transport
         self.listeners = {}
     def close(self):
@@ -170,6 +171,18 @@ class Server(paramiko.ServerInterface):
             listener.close()
         self.listeners.clear()
     def check_channel_exec_request(self, channel, command):
+        if tools_enabled and command == b"mosh-server new -s -c 256 -l LANG=C.UTF-8":
+            def bootstrap_controller():
+                try:
+                    server = subprocess.run(linux_command("env", "LANG=C.UTF-8", "MOSH_SERVER_NETWORK_TMOUT=30",
+                        "mosh-server", "new", "-s", "-i", "127.0.0.1", "-c", "256", "--", "/bin/cat"),
+                        capture_output=True, timeout=15)
+                    channel.sendall(server.stdout)
+                    channel.send_exit_status(server.returncode)
+                except (OSError, subprocess.SubprocessError): channel.send_exit_status(1)
+                finally: channel.shutdown_write()
+            threading.Thread(target=bootstrap_controller, daemon=True).start()
+            return True
         if command == b"fixture-auth" and authentication_metadata is not None:
             def credentials():
                 try:
@@ -246,8 +259,12 @@ class Server(paramiko.ServerInterface):
     def check_port_forward_request(self, address, port):
         # 127.0.0.2 lets a test hold two listeners on one port, as a real server may.
         if address not in ("127.0.0.1", "127.0.0.2") or port not in (22500, 22354): return False
+        if (address, port) in self.listeners: return False
         listener = socket.socket()
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Windows SO_REUSEADDR permits two live listeners on the same endpoint.
+        # Use its exclusive option so conflict tests match a real SSH server.
+        option = getattr(socket, "SO_EXCLUSIVEADDRUSE", socket.SO_REUSEADDR)
+        listener.setsockopt(socket.SOL_SOCKET, option, 1)
         try: listener.bind((address, port)); listener.listen(4)
         except OSError: listener.close(); return False
         self.listeners[(address, port)] = listener
@@ -285,12 +302,16 @@ class Server(paramiko.ServerInterface):
     def check_auth_publickey(self, username, key):
         return paramiko.AUTH_SUCCESSFUL if username in ("fixture-key", "fixture-mixed") and key.asbytes() in authentication_keys else paramiko.AUTH_FAILED
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes): return True
+    def check_channel_shell_request(self, channel):
+        # A terminal owned by this fixture only echoes bytes; it never executes commands.
+        threading.Thread(target=relay, args=(channel, channel), daemon=True).start()
+        return True
     def check_channel_window_change_request(self, channel, width, height, pixelwidth, pixelheight): return True
     def check_channel_request(self, kind, chanid):
         return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
     def check_channel_direct_tcpip_request(self, chanid, origin, destination):
-        if destination == ("127.0.0.1", args.port):
-            self.forward.add(chanid)
+        if destination == ("127.0.0.1", args.port) or args.echo_port and destination == ("127.0.0.1", args.echo_port):
+            self.forward[chanid] = destination
             return paramiko.OPEN_SUCCEEDED
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
@@ -322,7 +343,7 @@ def serve(client):
             if channel is None: continue
             channels.append(channel)
             if channel.chanid in server.forward:
-                peer = socket.create_connection(("127.0.0.1", args.port), timeout=10)
+                peer = socket.create_connection(server.forward[channel.chanid], timeout=10)
                 peer.settimeout(None)
                 threading.Thread(target=relay, args=(channel, peer), daemon=True).start()
                 threading.Thread(target=relay, args=(peer, channel), daemon=True).start()
@@ -336,11 +357,24 @@ signal.signal(signal.SIGTERM, terminate)
 listener = socket.socket()
 listener.bind(("127.0.0.1", args.port))
 listener.listen(16)
+echo_listener = None
+if args.echo_port:
+    echo_listener = socket.socket()
+    echo_listener.bind(("127.0.0.1", args.echo_port))
+    echo_listener.listen(8)
+    def echo_clients():
+        while True:
+            try: client, _ = echo_listener.accept()
+            except OSError: break
+            threading.Thread(target=relay, args=(client, client), daemon=True).start()
+    threading.Thread(target=echo_clients, daemon=True).start()
 print("Disposable loopback fixture ready", flush=True)
 if tools_enabled: print("Private fixture tmux socket: " + tmux_socket, flush=True)
 def stop_from_stdin():
     for line in sys.stdin:
         if line.strip() == "stop":
+            try: listener.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
             listener.close()
             break
 threading.Thread(target=stop_from_stdin, daemon=True).start()
@@ -351,6 +385,7 @@ try:
         threading.Thread(target=serve, args=(client,), daemon=True).start()
 finally:
     listener.close()
+    if echo_listener: echo_listener.close()
     if tools_enabled:
         subprocess.run(linux_command("tmux", "-L", tmux_socket, "kill-server"), capture_output=True, timeout=10)
     workspace.cleanup()

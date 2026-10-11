@@ -5,6 +5,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -38,13 +40,16 @@ internal class SessionKeepaliveScheduler(
     private val now: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     /** Matches `runSshKeepaliveLoop`'s `waitForNextKeepalive` seam. */
-    suspend fun waitForNextKeepalive(foregroundIntervalMillis: Long, multiplier: Int = backgroundMultiplier()) {
+    suspend fun waitForNextKeepalive(foregroundIntervalMillis: Long, multiplier: Int = backgroundMultiplier(),
+        forwardWork: StateFlow<Boolean>? = null, forwarding: Boolean = false) {
         val started = now()
-        if (appForeground.value) {
+        val work = forwardWork ?: MutableStateFlow(false)
+        val awake = combine(appForeground, work) { foreground, busy -> foreground || busy }
+        if (appForeground.value || work.value) {
             val elapsed = CompletableDeferred<Boolean>()
             coroutineScope {
                 val timer = launch { foregroundWait(foregroundIntervalMillis); elapsed.complete(true) }
-                val background = launch { appForeground.first { !it }; elapsed.complete(false) }
+                val background = launch { awake.first { !it }; elapsed.complete(false) }
                 try { elapsed.await() } finally { timer.cancel(); background.cancel() }
             }
             if (elapsed.await()) return
@@ -52,14 +57,15 @@ internal class SessionKeepaliveScheduler(
 
         val fired = CompletableDeferred<Unit>()
         val cancelAlarm = alarm.schedule(
-            (backgroundInterval(foregroundIntervalMillis, multiplier) - (now() - started)).coerceAtLeast(0),
+            ((if (forwarding) forwardBackgroundInterval(foregroundIntervalMillis, multiplier)
+                else backgroundInterval(foregroundIntervalMillis, multiplier)) - (now() - started)).coerceAtLeast(0),
         ) {
             fired.complete(Unit)
         }
         try {
             coroutineScope {
                 val resumeOnForeground = launch {
-                    appForeground.first { it }
+                    awake.first { it }
                     fired.complete(Unit)
                 }
                 fired.await()
@@ -85,6 +91,11 @@ internal class SessionKeepaliveScheduler(
         fun backgroundInterval(foregroundIntervalMillis: Long, multiplier: Int): Long =
             (foregroundIntervalMillis * multiplier.coerceAtLeast(1))
                 .coerceIn(MIN_BACKGROUND_INTERVAL_MILLIS, MAX_BACKGROUND_INTERVAL_MILLIS)
+
+        /** Idle tunnels normally wake once a minute, without shortening a longer user base interval. */
+        fun forwardBackgroundInterval(foregroundIntervalMillis: Long, multiplier: Int): Long =
+            backgroundInterval(foregroundIntervalMillis, multiplier).coerceAtMost(60_000L)
+                .coerceAtLeast(foregroundIntervalMillis)
     }
 }
 

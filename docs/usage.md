@@ -6,12 +6,31 @@ Details of behavior that the [README](../README.md) only summarizes.
 
 Local, remote, and SOCKS5 rules live on the **Forwarding** page. Starting a rule
 reuses an open SSH terminal or a Mosh terminal's authenticated companion SSH
-connection for the same host. Otherwise it opens a connection dedicated to the
-forward, so a tunnel does not require keeping a terminal open. A dedicated
-connection closes as soon as its last forward stops, and its host-key or
-password prompt appears over the page that started it. If a Mosh companion SSH
-disconnects, its forwards are marked failed without ending the UDP terminal;
-start a failed rule again to reconnect it.
+connection for the same profile. Multiple rules share that connection; otherwise
+MangoSSH opens a dedicated SSH connection. Closing an SSH or Mosh terminal with
+running forwards retains the carrier as a forwarding-only connection, including
+existing forwarded TCP streams. Its last forward releases the connection when
+no file transfer or stream still uses it.
+
+Unexpected disconnects automatically recreate SSH carriers and listeners, with
+bounded exponential backoff and jitter up to 60 seconds. Network loss or system
+blocking pauses attempts; internet validation is not required for LAN hosts.
+Recovery never reopens a terminal or reruns its startup command. Losing a Mosh
+SSH companion leaves its UDP terminal running. Clients must reconnect TCP streams
+lost with a real transport failure. Password, OTP, unlock and host confirmation
+still require the normal security checks; authentication, host-key and bind
+failures stop retries. Waiting, recovery and prompt states can all be stopped.
+Stopping or deleting a rule, deleting its profile, or closing all connections
+cancels recovery first. Process death and reboot do not restore running intent.
+
+Connecting/recovering and connected clients request a renewable, timed CPU wake
+lease. Idle background listeners, network waits and prompt waits release it.
+Idle forwarding normally sends a keepalive about every 60 seconds, with normal
+intervals while clients are connected. A longer configured base interval or
+disabled keepalives remain respected. Background alarms are shared across idle
+connections. Android's [Doze restrictions](https://developer.android.com/training/monitoring-device-state/doze-standby)
+can delay alarms and block networking, so deep sleep does not guarantee continuous
+reachability.
 
 ## File transfers
 

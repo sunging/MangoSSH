@@ -810,4 +810,8 @@
     <string name="vault_saving">正在保存…</string>
     <string name="settings_about_repository">项目仓库</string>
     <string name="settings_about_license_loading">正在加载许可证…</string>
+    <string name="port_forward_waiting_network">等待网络恢复</string>
+    <string name="port_forward_reconnecting">正在恢复隧道</string>
+    <string name="port_forward_waiting_operation">等待你完成操作</string>
+    <string name="port_forward_bind_failed">无法启动监听，请检查监听地址、端口是否被占用，以及服务器是否允许转发。</string>
 </resources>

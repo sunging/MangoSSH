@@ -25,6 +25,23 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class ForwardConnectionsTest {
+    @Test fun negotiationAndListenerEventsArePublishedWithoutPerChunkUpdates() {
+        val connections = ForwardConnections<String>()
+        val finish = connections.opening()
+        assertEquals(1, connections.status.value.pendingConnections)
+        connections.add("client") { true }
+        finish()
+        finish()
+        assertEquals(0, connections.status.value.pendingConnections)
+        assertEquals(1, connections.status.value.activeConnections)
+        val before = connections.status.value
+        repeat(100) { connections.touch() }
+        assertTrue(before === connections.status.value)
+        connections.remove("client")
+        assertEquals(0, connections.status.value.activeConnections)
+        connections.stopped()
+        assertFalse(connections.status.value.isActive)
+    }
     @Test
     fun finishedConnectionsLeaveButStayCounted() {
         val connections = ForwardConnections<String>()
