@@ -12,6 +12,15 @@ running forwards retains the carrier as a forwarding-only connection, including
 existing forwarded TCP streams. Its last forward releases the connection when
 no file transfer or stream still uses it.
 
+- **Local:** phone listener → SSH → a destination reached from the server.
+- **Remote:** server listener → SSH → a destination reached from the phone.
+- **SOCKS5:** phone proxy listener → SSH → a client-selected destination reached
+  from the server.
+
+New address fields start at `127.0.0.1`; ports must be entered. Destination names
+resolve on the destination side described above. Editing or switching types
+preserves addresses, and existing rules and backup files are unchanged.
+
 Unexpected disconnects automatically recreate SSH carriers and listeners, with
 bounded exponential backoff and jitter up to 60 seconds. Network loss or system
 blocking pauses attempts; internet validation is not required for LAN hosts.

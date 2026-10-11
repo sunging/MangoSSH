@@ -350,6 +350,7 @@
     <string name="ui_generated_or_imported_private_keys_stay_only_in_the_encrypted_vault_and">生成或导入的私钥仅保存在加密保险库内，可复用到多个主机。</string>
     <string name="ui_home_directory">主目录</string>
     <string name="ui_host">所属主机</string>
+    <string name="port_forward_select_host">选择主机</string>
     <string name="ui_host_actions">%1$s 的操作</string>
     <string name="ui_hostname_or_ip_address">主机名或 IP 地址</string>
     <string name="ui_import">导入</string>
@@ -813,5 +814,19 @@
     <string name="port_forward_waiting_network">等待网络恢复</string>
     <string name="port_forward_reconnecting">正在恢复隧道</string>
     <string name="port_forward_waiting_operation">等待你完成操作</string>
+    <string name="port_forward_local_summary">在手机上监听端口，经 SSH 转发到服务器可访问的目标服务。</string>
+    <string name="port_forward_remote_summary">在 SSH 服务器上监听端口，经 SSH 转发到手机可访问的目标服务。</string>
+    <string name="port_forward_dynamic_summary">在手机上提供 SOCKS5 代理，由 SSH 服务器访问客户端指定的目标。</string>
+    <string name="port_forward_phone_bind">手机端监听地址</string>
+    <string name="port_forward_server_bind">服务器端监听地址</string>
+    <string name="port_forward_phone_port">手机端监听端口</string>
+    <string name="port_forward_server_port">服务器端监听端口</string>
+    <string name="port_forward_phone_destination">手机侧目标地址</string>
+    <string name="port_forward_server_destination">服务器侧目标地址</string>
+    <string name="port_forward_phone_destination_summary">地址由手机解析和访问；127.0.0.1 指这台手机。</string>
+    <string name="port_forward_server_destination_summary">地址由 SSH 服务器解析和访问；127.0.0.1 指该服务器。</string>
+    <string name="port_forward_local_direction">手机 %1$s → 服务器 %2$s</string>
+    <string name="port_forward_remote_direction">服务器 %1$s → 手机 %2$s</string>
+    <string name="port_forward_dynamic_direction">手机 %1$s → 经 SSH 服务器的 SOCKS5 代理</string>
     <string name="port_forward_bind_failed">无法启动监听，请检查监听地址、端口是否被占用，以及服务器是否允许转发。</string>
 </resources>

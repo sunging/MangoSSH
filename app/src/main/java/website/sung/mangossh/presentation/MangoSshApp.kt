@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -1723,8 +1724,10 @@ private fun PortForwardsScreen(
     }
 }
 
+/** Edits forwarding endpoints without overwriting saved or user-entered addresses. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun PortForwardRuleDialog(
+internal fun PortForwardRuleDialog(
     initial: PortForwardRule?,
     hosts: List<ConnectionProfile>,
     onDismiss: () -> Unit,
@@ -1736,14 +1739,16 @@ private fun PortForwardRuleDialog(
     var type by rememberSaveable(initial?.id) { mutableStateOf(initial?.type ?: PortForwardType.LOCAL) }
     var bindHost by rememberSaveable(initial?.id) { mutableStateOf(initial?.bindHost ?: "127.0.0.1") }
     var bindPort by rememberSaveable(initial?.id) { mutableStateOf(initial?.bindPort?.toString().orEmpty()) }
-    var destinationHost by rememberSaveable(initial?.id) { mutableStateOf(initial?.destinationHost.orEmpty()) }
+    var destinationHost by rememberSaveable(initial?.id) { mutableStateOf(if (initial == null) "127.0.0.1" else initial.destinationHost.orEmpty()) }
     var destinationPort by rememberSaveable(initial?.id) { mutableStateOf(initial?.destinationPort?.toString().orEmpty()) }
     var startOnConnect by rememberSaveable(initial?.id) { mutableStateOf(initial?.startOnConnect ?: false) }
+    val hostsById = remember(hosts) { hosts.associateBy { it.id } }
+    val selectedHost = hostsById[profileId]
     val bindPortValue = bindPort.toIntOrNull()
     val destinationPortValue = destinationPort.toIntOrNull()
     val validDestination = type == PortForwardType.DYNAMIC ||
         (destinationHost.isNotBlank() && destinationPortValue in 1..65535)
-    val canSave = profileId.isNotBlank() && bindPortValue in 1..65535 && validDestination
+    val canSave = selectedHost != null && bindPortValue in 1..65535 && validDestination
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1753,35 +1758,44 @@ private fun PortForwardRuleDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(stringResource(R.string.ui_host), style = MaterialTheme.typography.titleSmall)
-                hosts.forEach { host ->
-                    FilterChip(
-                        selected = profileId == host.id,
-                        onClick = { profileId = host.id },
-                        label = { Text(host.label) },
-                    )
-                }
+                HostEditorChoice(
+                    title = stringResource(R.string.ui_host),
+                    summary = selectedHost?.label ?: stringResource(R.string.port_forward_select_host),
+                    selected = profileId,
+                    options = hosts.map { it.id },
+                    optionLabel = { id -> hostsById.getValue(id).let { "${it.label}\n${it.username}@${it.endpoint}" } },
+                    onSelect = { profileId = it },
+                    tag = "forward_host",
+                    searchable = true,
+                    error = selectedHost == null,
+                )
                 Text(stringResource(R.string.ui_type), style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     PortForwardType.entries.forEach { option ->
                         FilterChip(
                             selected = type == option,
                             onClick = { type = option },
                             label = { Text(option.label()) },
+                            modifier = Modifier.testTag("forward_type_${option.name}"),
                         )
                     }
                 }
+                Text(stringResource(when (type) {
+                    PortForwardType.LOCAL -> R.string.port_forward_local_summary
+                    PortForwardType.REMOTE -> R.string.port_forward_remote_summary
+                    PortForwardType.DYNAMIC -> R.string.port_forward_dynamic_summary
+                }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = bindHost,
                     onValueChange = { bindHost = it },
-                    label = { Text(if (type == PortForwardType.REMOTE) stringResource(R.string.ui_remote_bind_address) else stringResource(R.string.ui_local_bind_address)) },
+                    label = { Text(stringResource(if (type == PortForwardType.REMOTE) R.string.port_forward_server_bind else R.string.port_forward_phone_bind)) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("forward_bind_address"),
                 )
                 OutlinedTextField(
                     value = bindPort,
                     onValueChange = { bindPort = it.filter(Char::isDigit).take(5) },
-                    label = { Text(if (type == PortForwardType.REMOTE) stringResource(R.string.ui_remote_listen_port) else stringResource(R.string.ui_local_listen_port)) },
+                    label = { Text(stringResource(if (type == PortForwardType.REMOTE) R.string.port_forward_server_port else R.string.port_forward_phone_port)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     isError = bindPort.isNotEmpty() && bindPortValue !in 1..65535,
@@ -1791,9 +1805,10 @@ private fun PortForwardRuleDialog(
                     OutlinedTextField(
                         value = destinationHost,
                         onValueChange = { destinationHost = it },
-                        label = { Text(stringResource(R.string.ui_destination_host)) },
+                        label = { Text(stringResource(if (type == PortForwardType.REMOTE) R.string.port_forward_phone_destination else R.string.port_forward_server_destination)) },
+                        supportingText = { Text(stringResource(if (type == PortForwardType.REMOTE) R.string.port_forward_phone_destination_summary else R.string.port_forward_server_destination_summary)) },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().testTag("forward_destination_address"),
                     )
                     OutlinedTextField(
                         value = destinationPort,
@@ -1851,10 +1866,16 @@ internal fun android.net.Uri.displayName(context: android.content.Context): Stri
         ?: "upload"
 }
 
-private fun PortForwardRule.displayDescription(): String = when (type) {
-    PortForwardType.LOCAL -> "$bindHost:$bindPort → ${destinationHost.orEmpty()}:${destinationPort ?: "?"}"
-    PortForwardType.REMOTE -> "$bindHost:$bindPort ← ${destinationHost.orEmpty()}:${destinationPort ?: "?"}"
-    PortForwardType.DYNAMIC -> "$bindHost:$bindPort · SOCKS5"
+@Composable
+private fun PortForwardRule.displayDescription(): String {
+    fun endpoint(host: String, port: String) = if (':' in host) "[$host]:$port" else "$host:$port"
+    val bind = endpoint(bindHost, bindPort.toString())
+    val destination = endpoint(destinationHost.orEmpty(), destinationPort?.toString() ?: "?")
+    return when (type) {
+        PortForwardType.LOCAL -> stringResource(R.string.port_forward_local_direction, bind, destination)
+        PortForwardType.REMOTE -> stringResource(R.string.port_forward_remote_direction, bind, destination)
+        PortForwardType.DYNAMIC -> stringResource(R.string.port_forward_dynamic_direction, bind)
+    }
 }
 
 /** Route changes preserve the established Tailnet authentication semantics. */

@@ -369,6 +369,7 @@
     <string name="ui_generated_or_imported_private_keys_stay_only_in_the_encrypted_vault_and">Generated or imported private keys stay only in the encrypted vault and can be reused by multiple hosts.</string>
     <string name="ui_home_directory">Home directory</string>
     <string name="ui_host">Host</string>
+    <string name="port_forward_select_host">Select a host</string>
     <string name="ui_host_actions">%1$s actions</string>
     <string name="ui_hostname_or_ip_address">Hostname or IP address</string>
     <string name="ui_import">Import</string>
@@ -841,5 +842,19 @@
     <string name="port_forward_waiting_network">Waiting for network</string>
     <string name="port_forward_reconnecting">Reconnecting tunnel</string>
     <string name="port_forward_waiting_operation">Waiting for your action</string>
+    <string name="port_forward_local_summary">Listen on this phone and forward through SSH to a service reachable from the server.</string>
+    <string name="port_forward_remote_summary">Listen on the SSH server and forward through SSH to a service reachable from this phone.</string>
+    <string name="port_forward_dynamic_summary">Provide a SOCKS5 proxy on this phone. The SSH server connects to each destination requested by the client.</string>
+    <string name="port_forward_phone_bind">Phone listen address</string>
+    <string name="port_forward_server_bind">Server listen address</string>
+    <string name="port_forward_phone_port">Phone listen port</string>
+    <string name="port_forward_server_port">Server listen port</string>
+    <string name="port_forward_phone_destination">Phone-side destination address</string>
+    <string name="port_forward_server_destination">Server-side destination address</string>
+    <string name="port_forward_phone_destination_summary">Resolved and reached from this phone. 127.0.0.1 means this phone.</string>
+    <string name="port_forward_server_destination_summary">Resolved and reached from the SSH server. 127.0.0.1 means that server.</string>
+    <string name="port_forward_local_direction">Phone %1$s → Server %2$s</string>
+    <string name="port_forward_remote_direction">Server %1$s → Phone %2$s</string>
+    <string name="port_forward_dynamic_direction">Phone %1$s → SOCKS5 via SSH server</string>
     <string name="port_forward_bind_failed">Cannot start the listener. Check the listen address, port availability and server forwarding permissions.</string>
 </resources>
