@@ -54,12 +54,15 @@ gradlew.bat :app:verifyReleaseVersion -PreleaseTag=v0.0.1
 
 Android CI runs on `main` and `develop`, for both pushes and pull requests.
 Validation builds both unsigned release packages without signing secrets. On
-protected `main`/`develop` pushes, a separate `ci-signing` environment job signs
-those same-run artifacts using SDK tools, without checkout or Gradle execution.
-Configure that environment to admit only those protected branches and hold the
-four Android signing secrets. PRs never enter the signing job. Signed test APKs
-remain `MangoSSH-ci-<commit>.apk` artifacts, distinct from published releases;
-missing signing secrets skip delivery. See [CI isolation](ci-signing.md).
+`develop` pushes and protected `main` pushes, a separate `ci-signing` environment
+job signs those same-run artifacts using SDK tools, without checkout or Gradle
+execution.
+Configure that environment to admit only the named `main`/`develop` branches and
+hold the four Android signing secrets. PRs and manual runs never enter the
+signing job. The GitHub and F-Droid signed release APKs remain
+`MangoSSH-ci-<commit>.apk` and `MangoSSH-ci-<commit>-fdroid.apk` in the
+`MangoSSH-release-test-<full commit SHA>` Actions artifact, retained for 14 days;
+missing signing secrets fail the job. See [CI isolation](ci-signing.md).
 
 ## In-app update contract
 
