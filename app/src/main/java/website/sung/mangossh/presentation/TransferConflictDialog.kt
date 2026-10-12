@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -26,8 +27,11 @@ internal fun TransferConflictDialog(
     resolve: (TransferConflictDecision) -> Unit,
 ) {
     val contentDensity = LocalDensity.current
+    val context = LocalContext.current
+    val directoryPreview = conflict.promptKind == TransferPromptKind.DIRECTORY_PREVIEW
+    val singleUpload = conflict.direction == ScpTransferDirection.UPLOAD && conflict.taskKind == ScpTransferKind.FILE
     var applyAll by remember { mutableStateOf(false) }
-    var verify by remember { mutableStateOf(false) }
+    var verify by remember { mutableStateOf(conflict.verifySha256) }
     var direct by remember { mutableStateOf(false) }
     var saveAs by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
@@ -47,10 +51,17 @@ internal fun TransferConflictDialog(
                 tonalElevation = AlertDialogDefaults.TonalElevation,
             ) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp)) {
-                    Text(stringResource(R.string.transfer_preview_title),
+                    Text(stringResource(if (directoryPreview) R.string.transfer_directory_preview_title else R.string.transfer_preview_title),
                         style = MaterialTheme.typography.headlineSmall, color = AlertDialogDefaults.titleContentColor)
                     Spacer(Modifier.height(16.dp))
                     Text(conflict.name, style = MaterialTheme.typography.bodyMedium, color = AlertDialogDefaults.textContentColor)
+                    if (directoryPreview) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(stringResource(R.string.transfer_directory_destination, conflict.destinationDirectory.orEmpty()))
+                        Text(stringResource(R.string.transfer_directory_files, conflict.totalFiles ?: 0))
+                        Text(if (conflict.totalBytes == null) stringResource(R.string.transfer_directory_size_unknown)
+                            else stringResource(R.string.transfer_directory_size, formatByteSize(context, conflict.totalBytes)))
+                    }
                     if (conflict.targetExists) {
                         Spacer(Modifier.height(8.dp))
                         Text(stringResource(if (conflict.atomicReplace) R.string.transfer_target_exists else R.string.editor_no_atomic),
@@ -58,18 +69,28 @@ internal fun TransferConflictDialog(
                     }
                     Spacer(Modifier.height(16.dp))
                     TransferOptionRow(verify, { verify = it }, stringResource(R.string.transfer_verify_sha256))
-                    TransferOptionRow(applyAll, { applyAll = it }, stringResource(R.string.transfer_apply_task))
+                    if (!directoryPreview && !singleUpload) {
+                        TransferOptionRow(applyAll, { applyAll = it }, stringResource(R.string.transfer_apply_task))
+                    }
                     Spacer(Modifier.height(24.dp))
                     FlowRow(Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = { choose(TransferConflictAction.SKIP) }) { Text(stringResource(R.string.transfer_skip)) }
                         TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = {
-                            if (conflict.direction == ScpTransferDirection.DOWNLOAD) picker.launch(conflict.name) else saveAs = true
-                        }) { Text(stringResource(R.string.editor_save_as)) }
-                        TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = {
-                            if (conflict.targetExists && !conflict.atomicReplace) direct = true else choose(TransferConflictAction.REPLACE)
-                        }) { Text(stringResource(if (conflict.targetExists && !conflict.atomicReplace) R.string.editor_direct else R.string.editor_save)) }
+                            choose(if (directoryPreview || singleUpload) TransferConflictAction.CANCEL else TransferConflictAction.SKIP)
+                        }) { Text(stringResource(if (directoryPreview || singleUpload) R.string.common_cancel else R.string.transfer_skip)) }
+                        if (directoryPreview) {
+                            TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = { choose(TransferConflictAction.PROCEED) }) {
+                                Text(stringResource(R.string.transfer_start_upload))
+                            }
+                        } else {
+                            TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = {
+                                if (conflict.direction == ScpTransferDirection.DOWNLOAD) picker.launch(conflict.name) else saveAs = true
+                            }) { Text(stringResource(R.string.editor_save_as)) }
+                            TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = {
+                                if (conflict.targetExists && !conflict.atomicReplace) direct = true else choose(TransferConflictAction.REPLACE)
+                            }) { Text(stringResource(if (conflict.targetExists && !conflict.atomicReplace) R.string.editor_direct else R.string.editor_save)) }
+                        }
                     }
                 }
             }

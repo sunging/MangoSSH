@@ -744,7 +744,7 @@
     <string name="editor_save_as">Save as</string>
     <string name="editor_conflict">The remote file changed. Your draft is preserved. Reload or save with a different name.</string>
     <string name="editor_reload">Reload remote file</string>
-    <string name="editor_no_atomic">The server does not support atomic replacement. Save as preserves the original.</string>
+    <string name="editor_no_atomic">Safe atomic replacement is unavailable for this file. Save as preserves the original.</string>
     <string name="editor_direct">Direct overwrite</string>
     <string name="editor_direct_risk">Direct overwrite can leave a partial file if interrupted. Replace the original anyway?</string>
     <string name="editor_failure">Unable to edit or save this file. Only complete UTF-8 text up to 128 KiB is supported. Your draft is kept, encrypted on this device.</string>
@@ -767,6 +767,12 @@
     <string name="settings_editor_drafts_clear">Clear editor drafts</string>
     <string name="settings_editor_drafts_confirm">Delete all unsaved editor drafts on this device?</string>
     <string name="transfer_preview_title">Transfer preview</string>
+    <string name="transfer_directory_preview_title">Folder upload preview</string>
+    <string name="transfer_directory_destination">Destination: %1$s</string>
+    <string name="transfer_directory_files">Files: %1$d</string>
+    <string name="transfer_directory_size">Total size: %1$s</string>
+    <string name="transfer_directory_size_unknown">Total size: unknown (some file sizes are unavailable)</string>
+    <string name="transfer_start_upload">Start upload</string>
     <string name="transfer_target_exists">The target exists. A verified temporary file will replace it.</string>
     <string name="transfer_verify_sha256">Verify SHA-256</string>
     <string name="transfer_apply_task">Apply this choice to this task</string>

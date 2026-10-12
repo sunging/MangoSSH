@@ -47,6 +47,8 @@ internal fun interface TransferControl {
     fun progressed() = Unit
     fun ownLocal(resource: java.io.Closeable) = Unit
     fun releaseLocal(resource: java.io.Closeable) { resource.close() }
+    /** Runs blocking provider I/O without holding the caller hostage to an unresponsive provider. */
+    fun <T> localIo(action: () -> T): T = action()
 }
 
 /** Where an upload stopped, and the path it was writing to. */
@@ -297,13 +299,13 @@ internal class RemoteFileClient {
             }
             // The stream arrives at position zero, so a resume has to consume
             // the bytes the remote file already holds before writing again.
-            if (offset > 0L) skipFully(input, offset, buffer)
+            if (offset > 0L) control.localIo { skipFully(input, offset, buffer) }
             onProgress(offset, totalBytes)
             var issued = offset
             offset = SftpPipeline.write(SFTP_PIPELINE_DEPTH, offset,
                 nextChunk = {
                     var read: Int
-                    do { read = input.read(buffer) } while (read == 0)
+                    do { read = control.localIo { input.read(buffer) } } while (read == 0 && control.shouldContinue())
                     if (read < 0) null else {
                         if (issued + read > maxBytes) throw RemoteFileException(RemoteFileFailure.TOO_LARGE)
                         issued += read
@@ -378,7 +380,10 @@ internal class RemoteFileClient {
             if (error.status == 2 || error.status == 10) null else throw error
         }
         if (attributes != null && attributes.toKind() != RemoteFileKind.FILE) throw RemoteFileException(RemoteFileFailure.NOT_A_FILE)
-        RemoteTarget(attributes?.let { SourceIdentity(path, it.size, it.mtime?.times(1_000L)) }, attributes?.permissions, client.atomicReplaceSupported, attributes?.uid, attributes?.gid)
+        // SFTP mode bits cannot preserve a Windows target's full NTFS ACL across replacement.
+        // In-place writing keeps the original security descriptor and needs explicit approval.
+        RemoteTarget(attributes?.let { SourceIdentity(path, it.size, it.mtime?.times(1_000L)) }, attributes?.permissions,
+            client.atomicReplaceSupported && !RemoteStagingIdentity.isWindowsPath(path), attributes?.uid, attributes?.gid)
     }
 
     /** Calculates SHA-256 through SFTP reads; no remote shell command or external utility is invoked. */
@@ -414,8 +419,8 @@ internal class RemoteFileClient {
             val uid = target.uid ?: throw MetadataPreservationException()
             val gid = target.gid ?: throw MetadataPreservationException()
             val mode = target.permissions?.and(0xfff) ?: throw MetadataPreservationException()
-            if (!client.atomicReplaceSupported && mode and 0xe00 != 0) throw MetadataPreservationException()
-            if (client.atomicReplaceSupported) {
+            if (!target.atomicReplace && mode and 0xe00 != 0) throw MetadataPreservationException()
+            if (target.atomicReplace) {
                 try {
                     val before = client.lstat(temporary)
                     if (before.uid != uid || before.gid != gid) client.setstat(temporary,
@@ -433,7 +438,7 @@ internal class RemoteFileClient {
             // change keeps the file private rather than failing the upload.
             runCatching { client.setstat(temporary, SshFileAttributes(permissions = NEW_FILE_PERMISSIONS)) }
             client.rename(temporary, destination)
-        } else if (client.atomicReplaceSupported) client.replaceAtomically(temporary, destination)
+        } else if (target.atomicReplace) client.replaceAtomically(temporary, destination)
         else {
             if (!allowDirectOverwrite) throw AtomicReplaceUnavailableException()
             val source = client.open(temporary)
@@ -454,7 +459,11 @@ internal class RemoteFileClient {
                     val written = client.fstat(output)
                     if (client.fstat(source).size != written.size) throw java.io.IOException()
                     if (written.uid != target.uid || written.gid != target.gid ||
+                        !RemoteStagingIdentity.isWindowsPath(destination) &&
                         written.permissions?.and(0xfff) != target.permissions?.and(0xfff)) throw java.io.IOException()
+                    val committed = client.lstat(destination)
+                    if (!committed.isRegularFile || committed.uid != target.uid || committed.gid != target.gid ||
+                        committed.permissions != target.permissions || committed.size != written.size) throw java.io.IOException()
                 } finally { client.close(output) }
             } finally { client.close(source) }
             client.remove(temporary)
@@ -464,9 +473,9 @@ internal class RemoteFileClient {
     /**
      * Claims a sibling temporary with exclusive-create before any upload or cleanup can own it.
      *
-     * The file is created owner-only: it holds the full new content for as long as the
-     * transfer is paused or failed, and its directory may be readable by other accounts.
-     * A server that ignores the creation mode is asked once more with SETSTAT.
+     * Requests owner-only POSIX access for staged content. Windows access is governed
+     * by the server's NTFS ACL policy, not its synthetic mode bits. A server that
+     * ignores the requested mode is asked once more with SETSTAT.
      */
     suspend fun reserveTemporary(connection: SshConnection, directory: String, token: String, control: TransferControl): String = withClient(connection, control) { client ->
         val path = RemoteFilePaths.join(directory, stagingName(token))
@@ -490,12 +499,19 @@ internal class RemoteFileClient {
      */
     private suspend fun openStaging(client: SshFiles, path: String, before: SshFileAttributes?, truncate: Boolean): SshFileHandle {
         if (before == null || before.permissions != null && !before.isRegularFile) throw SourceChangedException()
-        val handle = client.open(path, write = true, truncate = truncate)
+        // Opening without TRUNCATE lets us validate the handle before it can change a file.
+        val handle = client.open(path, write = true)
         try {
             val opened = client.fstat(handle)
-            if (opened.permissions != null && !opened.isRegularFile) throw SourceChangedException()
-            if (opened.uid != before.uid || opened.permissions != before.permissions) throw SourceChangedException()
-            if (!truncate && opened.size != before.size) throw SourceChangedException()
+            RemoteStagingIdentity.requireMatches(path, before, opened, client.lstat(path))
+            if (truncate && opened.size != 0L) {
+                try { client.fsetstat(handle, SshFileAttributes(size = 0)) }
+                catch (_: SshFileFailure) {
+                    RemoteStagingIdentity.requireMatches(path, before, client.fstat(handle), client.lstat(path))
+                    client.setstat(path, SshFileAttributes(size = 0))
+                }
+                if (client.fstat(handle).size != 0L) throw SourceChangedException()
+            }
             return handle
         } catch (error: Exception) {
             runCatching { client.close(handle) }
@@ -540,7 +556,7 @@ internal class RemoteFileClient {
      * Servers report an existing name as a generic failure, so an error is only
      * swallowed when a follow-up stat proves a directory now exists.
      */
-    suspend fun mkdirIfMissing(connection: SshConnection, path: String) = withClient(connection) { client ->
+    suspend fun mkdirIfMissing(connection: SshConnection, path: String, control: TransferControl? = null) = withClient(connection, control) { client ->
         try {
             client.mkdir(path, DIRECTORY_PERMISSIONS)
         } catch (error: IOException) {

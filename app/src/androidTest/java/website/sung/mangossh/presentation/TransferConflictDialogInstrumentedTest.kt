@@ -28,14 +28,61 @@ import website.sung.mangossh.session.ScpTransferDirection
 import website.sung.mangossh.session.TransferConflict
 import website.sung.mangossh.session.TransferConflictAction
 import website.sung.mangossh.session.TransferConflictDecision
+import website.sung.mangossh.session.ScpTransferKind
+import website.sung.mangossh.session.TransferPromptKind
 
 /** Synthetic previews use memory callbacks only; no production ViewModel, preferences, vault, or transfers. */
 class TransferConflictDialogInstrumentedTest {
     @get:Rule val compose = createComposeRule()
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
-    private val conflict = TransferConflict("preview-layout-test", "synthetic-upload.png", ScpTransferDirection.UPLOAD, false, true)
+    private val conflict = TransferConflict("preview-layout-test", "synthetic-upload.png", ScpTransferDirection.UPLOAD, false, true,
+        taskKind = ScpTransferKind.DIRECTORY, promptKind = TransferPromptKind.FILE_CONFLICT)
     private fun text(id: Int) = context.getString(id)
     private fun option(id: Int) = compose.onNode(hasText(text(id)) and isToggleable())
+
+    @Test fun singleUploadCancelsInsteadOfSkippingAndHasNoTaskWideOption() {
+        var decision: TransferConflictDecision? = null
+        compose.setContent { MaterialTheme {
+            TransferConflictDialog(conflict.copy(taskKind = ScpTransferKind.FILE, promptKind = TransferPromptKind.FILE_PREVIEW)) { decision = it }
+        } }
+        compose.onNodeWithText(text(R.string.transfer_skip)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.transfer_apply_task)).assertDoesNotExist()
+        compose.onAllNodes(isToggleable()).assertCountEquals(1)
+        compose.onNodeWithText(text(R.string.common_cancel)).performClick()
+        compose.runOnIdle { assertEquals(TransferConflictDecision(TransferConflictAction.CANCEL), decision) }
+    }
+
+    @Test fun folderPreviewShowsWholeTaskAndStartsWithVerification() {
+        var decision: TransferConflictDecision? = null
+        compose.setContent { MaterialTheme {
+            TransferConflictDialog(conflict.copy(name = "synthetic-folder", promptKind = TransferPromptKind.DIRECTORY_PREVIEW,
+                destinationDirectory = "/synthetic-destination/synthetic-folder", totalFiles = 3, totalBytes = 1024)) { decision = it }
+        } }
+        compose.onNodeWithText(text(R.string.transfer_directory_preview_title)).assertIsDisplayed()
+        compose.onNodeWithText("synthetic-folder").assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_files, 3)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_destination, "/synthetic-destination/synthetic-folder")).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.transfer_apply_task)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.editor_save_as)).assertDoesNotExist()
+        option(R.string.transfer_verify_sha256).performClick()
+        compose.onNodeWithText(text(R.string.transfer_start_upload)).performClick()
+        compose.runOnIdle { assertEquals(TransferConflictDecision(TransferConflictAction.PROCEED, verifySha256 = true), decision) }
+    }
+
+    @Test fun unknownFolderSizeAndCancelRemainReachableWithLargeText() {
+        var decision: TransferConflictDecision? = null
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, 2f)) {
+                MaterialTheme { TransferConflictDialog(conflict.copy(name = "synthetic-long-folder-name-0123456789",
+                    promptKind = TransferPromptKind.DIRECTORY_PREVIEW, destinationDirectory = "/synthetic-folder", totalFiles = 0),
+                    Modifier.width(280.dp).heightIn(max = 360.dp)) { decision = it } }
+            }
+        }
+        compose.onNodeWithText(text(R.string.transfer_directory_size_unknown)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.transfer_start_upload)).performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText(text(R.string.common_cancel)).performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(TransferConflictDecision(TransferConflictAction.CANCEL), decision) }
+    }
 
     @Test fun optionsAreCenteredAndActionsAreEvenlyDistributed() {
         compose.setContent { MaterialTheme { TransferConflictDialog(conflict) {} } }

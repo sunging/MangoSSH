@@ -1,6 +1,6 @@
 package website.sung.mangossh.session
 
-/** Metadata captured before conflict approval; capability is explicitly advertised by the peer. */
+/** Metadata captured before approval; atomic replacement also requires preserving the target's access policy. */
 internal data class RemoteTarget(val identity: SourceIdentity?, val permissions: Int?, val atomicReplace: Boolean,
     val uid: Int? = null, val gid: Int? = null) {
     /** Capability is not identity; ownership and mode changes invalidate an approval. */

@@ -719,7 +719,7 @@
     <string name="editor_save_as">另存为</string>
     <string name="editor_conflict">远端文件已变化，草稿已保留。请重新加载或另存。</string>
     <string name="editor_reload">重新加载远端文件</string>
-    <string name="editor_no_atomic">服务器不支持原子替换，另存可保留原文件。</string>
+    <string name="editor_no_atomic">无法安全地原子替换此文件，另存可保留原文件。</string>
     <string name="editor_direct">直接覆盖</string>
     <string name="editor_direct_risk">直接覆盖若中断可能留下不完整文件。仍要替换原文件吗？</string>
     <string name="editor_failure">无法编辑或保存此文件。仅支持完整读取且不超过 128 KiB 的 UTF-8 文本，草稿已加密保存在本机。</string>
@@ -742,6 +742,12 @@
     <string name="settings_editor_drafts_clear">清除编辑草稿</string>
     <string name="settings_editor_drafts_confirm">删除本机所有未保存的编辑草稿？</string>
     <string name="transfer_preview_title">传输预览</string>
+    <string name="transfer_directory_preview_title">文件夹上传预览</string>
+    <string name="transfer_directory_destination">目标目录：%1$s</string>
+    <string name="transfer_directory_files">文件数：%1$d</string>
+    <string name="transfer_directory_size">总大小：%1$s</string>
+    <string name="transfer_directory_size_unknown">总大小：未知（部分文件大小不可用）</string>
+    <string name="transfer_start_upload">开始上传</string>
     <string name="transfer_target_exists">目标已存在，将用校验完成的临时文件替换。</string>
     <string name="transfer_verify_sha256">校验 SHA-256</string>
     <string name="transfer_apply_task">将此选择应用到本次任务</string>

@@ -5,12 +5,12 @@ set -euo pipefail
 python="${RUNNER_TEMP:?}/ssh-fixture-venv/bin/python"
 pids=()
 cleanup() {
-  for port in 22349 22350 22351 22352 22353 22354; do adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true; done
+  for port in 22349 22350 22351 22352 22353 22354 22355 22356; do adb reverse --remove "tcp:$port" >/dev/null 2>&1 || true; done
   for pid in "${pids[@]}"; do sudo kill "$pid" >/dev/null 2>&1 || true; done
   for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
 }
 trap cleanup EXIT
-for mode in normal fallback metadata cancel legacy; do
+for mode in normal fallback metadata cancel legacy stalled-write windows-stat; do
   options=()
   case "$mode" in
     normal) port=22349; options=(--native-tools) ;;
@@ -18,6 +18,8 @@ for mode in normal fallback metadata cancel legacy; do
     metadata) port=22351; options=(--reject-metadata) ;;
     cancel) port=22352; options=(--stall-forward-cancel) ;;
     legacy) port=22353; options=(--legacy-algorithms) ;;
+    stalled-write) port=22355; options=(--stall-sftp-writes) ;;
+    windows-stat) port=22356; options=(--windows-stat-projection) ;;
   esac
   # Root is confined to the disposable runner fixture's TemporaryDirectory. It enables real chown assertions.
   sudo "$python" tools/ssh-test-fixture.py --port "$port" "${options[@]}" >"$RUNNER_TEMP/fixture-$mode.log" 2>&1 &
@@ -38,6 +40,8 @@ set +e
   -Pandroid.testInstrumentationRunnerArguments.fixtureMetadataPort=22351 \
   -Pandroid.testInstrumentationRunnerArguments.fixtureCancelPort=22352 \
   -Pandroid.testInstrumentationRunnerArguments.fixtureLegacyPort=22353 \
+  -Pandroid.testInstrumentationRunnerArguments.fixtureStalledWritePort=22355 \
+  -Pandroid.testInstrumentationRunnerArguments.fixtureWindowsPort=22356 \
   -Pandroid.testInstrumentationRunnerArguments.requireFixtures=true \
   -Pandroid.testInstrumentationRunnerArguments.fixtureOwnership=true \
   -Pandroid.testInstrumentationRunnerArguments.fixtureTmux=true \

@@ -37,7 +37,10 @@ internal data class LocalTreeWalk(
     val files: List<LocalTreeEntry>,
     val totalBytes: Long,
     val truncated: Boolean = false,
-)
+) {
+    /** Unknown provider sizes must not be presented as a complete byte total. */
+    val knownTotalBytes: Long? get() = totalBytes.takeIf { files.all { file -> file.sizeBytes != null && file.sizeBytes >= 0 } }
+}
 
 /**
  * Directory-tree operations over the Storage Access Framework.
@@ -101,13 +104,13 @@ internal object LocalDocumentTree {
         val cancellation = java.io.Closeable { signal.cancel() }
         try {
             operation.ownLocal(cancellation)
-            resolver.query(uri, columns, null, null, null, signal)?.use { cursor ->
-                if (!operation.shouldContinue()) throw java.io.InterruptedIOException()
-                read(cursor).also { if (!operation.shouldContinue()) throw java.io.InterruptedIOException() }
-            } ?: throw LocalDocumentException()
+            operation.localIo {
+                val cursor = resolver.query(uri, columns, null, null, null, signal) ?: throw LocalDocumentException()
+                operation.ownLocal(cursor)
+                try { read(cursor) } finally { operation.releaseLocal(cursor) }
+            }
         } finally {
-            operation.releaseLocal(cancellation)
-            parent?.releaseLocal(operation)
+            try { operation.releaseLocal(cancellation) } finally { parent?.releaseLocal(operation) }
         }
     }
 

@@ -28,6 +28,9 @@ class TransferSafetyInstrumentedTest {
         var corruptReadback = false
         var committed = false
         var blockReads = false
+        var unknownSizes = false
+        var stallReadContent = false
+        val stalledWriters = java.util.concurrent.CopyOnWriteArrayList<ParcelFileDescriptor>()
         val openedRead = java.util.concurrent.CountDownLatch(1)
         val allowRead = java.util.concurrent.CountDownLatch(1)
         val modes = java.util.concurrent.CopyOnWriteArrayList<String>()
@@ -50,7 +53,7 @@ class TransferSafetyInstrumentedTest {
                     DocumentsContract.Document.COLUMN_DOCUMENT_ID -> if (entry == root) "root" else "root/" + entry.relativeTo(root).invariantSeparatorsPath
                     DocumentsContract.Document.COLUMN_DISPLAY_NAME -> entry.name
                     DocumentsContract.Document.COLUMN_MIME_TYPE -> if (entry.isDirectory) DocumentsContract.Document.MIME_TYPE_DIR else "application/octet-stream"
-                    DocumentsContract.Document.COLUMN_SIZE -> entry.length()
+                    DocumentsContract.Document.COLUMN_SIZE -> if (unknownSizes) null else entry.length()
                     DocumentsContract.Document.COLUMN_LAST_MODIFIED -> entry.lastModified()
                     else -> null
                 } }.toTypedArray<Any?>()) }
@@ -60,6 +63,12 @@ class TransferSafetyInstrumentedTest {
             modes += mode
             if (mode == "wt") committed = true
             if (mode == "r" && blockReads) { openedRead.countDown(); check(allowRead.await(10, java.util.concurrent.TimeUnit.SECONDS)) }
+            if (mode == "r" && stallReadContent) {
+                val pipe = ParcelFileDescriptor.createPipe()
+                stalledWriters += pipe[1]
+                openedRead.countDown()
+                return pipe[0]
+            }
             if (mode == "r" && committed && corruptReadback) file(uri).writeText("corrupt readback")
             // Deliberately emulate a provider whose plain "w" does not truncate.
             val flags = when (mode) {
@@ -93,7 +102,7 @@ class TransferSafetyInstrumentedTest {
     private lateinit var testContext: Context
     private lateinit var testScope: CoroutineScope
 
-    private fun fixture(block: suspend (SshConnection, Documents, FileTransferManager) -> Unit) = runBlocking {
+    private fun fixture(idleMillis: Long = 30_000L, block: suspend (SshConnection, Documents, FileTransferManager) -> Unit) = runBlocking {
         val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
         if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
         assumeTrue(port != null)
@@ -112,11 +121,14 @@ class TransferSafetyInstrumentedTest {
         try {
             connection.connect(10_000) { _, _ -> true }
             assertTrue(connection.authenticate("fixture", object : SshCredentials {}))
-            val manager = FileTransferManager(context, scope, RemoteFileClient(), { connection }, {})
+            val manager = FileTransferManager(context, scope, RemoteFileClient(), { connection }, {}, idleMillis = idleMillis)
             testContext = context
             testScope = scope
             withTimeout(20_000) { block(connection, provider, manager) }
         } finally {
+            provider.blockReads = false
+            provider.allowRead.countDown()
+            provider.stalledWriters.forEach { it.close() }
             scope.coroutineContext[Job]!!.cancelAndJoin()
             connection.close()
             root.deleteRecursively()
@@ -140,6 +152,209 @@ class TransferSafetyInstrumentedTest {
         assertFalse("w" in provider.modes)
     }
 
+    @Test fun cancellingWhileSourceOpenIsBlockedEndsTheTask() = fixture { connection, provider, manager ->
+        val directory = "/" + UUID.randomUUID().toString()
+        val files = RemoteFileClient()
+        files.mkdirIfMissing(connection, directory)
+        File(provider.root, "source").writeText("small upload")
+        provider.blockReads = true
+        manager.uploadFile("fixture", provider.uri("source"), "target", directory)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+        withContext(Dispatchers.IO) { check(provider.openedRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
+        try {
+            manager.cancel(manager.transfers.value.single().id)
+            val state = withTimeout(2_000) { manager.transfers.first { it.single().isFinished }.single() }
+            assertEquals(ScpTransferPhase.CANCELLED, state.phase)
+            assertEquals(0, state.skippedItems)
+            withTimeout(5_000) {
+                while (files.list(connection, "fixture", directory, 20).entries.isNotEmpty()) delay(50)
+            }
+        } finally { provider.blockReads = false; provider.allowRead.countDown() }
+    }
+
+    @Test fun blockedSourceOpenTimesOutWithoutLeavingATemporaryFile() = fixture(idleMillis = 1_000) { connection, provider, manager ->
+        val directory = "/" + UUID.randomUUID().toString()
+        val files = RemoteFileClient()
+        files.mkdirIfMissing(connection, directory)
+        File(provider.root, "source").writeText("small upload")
+        provider.blockReads = true
+        manager.uploadFile("fixture", provider.uri("source"), "target", directory)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+        try {
+            val state = withTimeout(5_000) { manager.transfers.first { it.single().isFinished }.single() }
+            assertEquals(ScpTransferPhase.FAILED, state.phase)
+            assertNotNull(state.detail)
+            assertTrue(files.list(connection, "fixture", directory, 20).entries.isEmpty())
+        } finally { provider.blockReads = false; provider.allowRead.countDown() }
+    }
+
+    @Test fun blockedSourceReadTimesOutAndPreservesTheOriginalTarget() = blockedSourceRead(false)
+    @Test fun blockedSourceReadCanBeCancelledAndCleansItsTemporary() = blockedSourceRead(true)
+
+    private fun blockedSourceRead(cancel: Boolean) = fixture(idleMillis = 1_500) { connection, provider, manager ->
+        val directory = "/" + UUID.randomUUID().toString()
+        val files = RemoteFileClient()
+        files.mkdirIfMissing(connection, directory)
+        BlockingOperation().use { files.upload(connection, "original".byteInputStream(), directory, "target", 0, 8, 1024, it) { _, _ -> } }
+        File(provider.root, "source").writeText("new contents")
+        provider.stallReadContent = true
+        manager.uploadFile("fixture", provider.uri("source"), "target", directory)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+        withContext(Dispatchers.IO) { check(provider.openedRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
+        if (cancel) manager.cancel(manager.transfers.value.single().id)
+        val state = withTimeout(5_000) { manager.transfers.first { it.single().isFinished }.single() }
+        assertEquals(if (cancel) ScpTransferPhase.CANCELLED else ScpTransferPhase.FAILED, state.phase)
+        BlockingOperation().use { assertEquals("original", files.readEditable(connection, "$directory/target", it).text) }
+        if (cancel) withTimeout(5_000) {
+            while (files.list(connection, "fixture", directory, 20).entries.any { it.name.endsWith(".part") }) delay(50)
+        }
+    }
+
+    @Test fun singleUploadPreviewCancelIsNotASkippedSuccess() = fixture { connection, provider, manager ->
+        val directory = "/" + UUID.randomUUID().toString()
+        val files = RemoteFileClient()
+        files.mkdirIfMissing(connection, directory)
+        File(provider.root, "source").writeText("small upload")
+        manager.uploadFile("fixture", provider.uri("source"), "target", directory)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(manager.transfers.value.single().id, preview.taskId)
+        assertEquals(ScpTransferKind.FILE, preview.taskKind)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.CANCEL))
+        val state = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.CANCELLED, state.phase)
+        assertEquals(0, state.skippedItems)
+        assertTrue(files.list(connection, "fixture", directory, 20).entries.isEmpty())
+    }
+
+    @Test fun smallMultiChunkAndEmptyUploadsCommitExactContents() = fixture { connection, provider, manager ->
+        val directory = "/" + UUID.randomUUID().toString()
+        val files = RemoteFileClient()
+        files.mkdirIfMissing(connection, directory)
+        for (length in listOf(13, 300_000, 0)) {
+            val name = "file-$length"
+            val bytes = ByteArray(length) { (it % 251).toByte() }
+            File(provider.root, name).writeBytes(bytes)
+            manager.uploadFile("fixture", provider.uri(name), name, directory)
+            val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+            manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE, verifySha256 = true))
+            val state = manager.transfers.first { it.last().isFinished }.last()
+            assertEquals(ScpTransferPhase.COMPLETED, state.phase)
+            assertEquals(length.toLong(), state.transferredBytes)
+            BlockingOperation().use { control ->
+                val output = java.io.ByteArrayOutputStream()
+                files.download(connection, "$directory/$name", output, 0, null, control) { _, _ -> }
+                assertArrayEquals(bytes, output.toByteArray())
+            }
+        }
+        assertFalse(files.list(connection, "fixture", directory, 20).entries.any { it.name.endsWith(".part") })
+    }
+
+    @Test fun directoryPreviewPrecedesAllRemoteChangesAndNonconflictingFilesNeedNoMorePrompts() = fixture { connection, provider, manager ->
+        File(provider.root, "small").writeText("small contents")
+        File(provider.root, "nested").mkdir()
+        File(provider.root, "nested/large").writeBytes(ByteArray(80_000) { (it % 251).toByte() })
+        File(provider.root, "empty-folder").mkdir()
+        val files = RemoteFileClient()
+        val destination = "/" + UUID.randomUUID().toString()
+        files.mkdirIfMissing(connection, destination)
+        manager.uploadDirectory("fixture", provider.tree, destination, provider.root.name)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, preview.promptKind)
+        assertEquals(provider.root.name, preview.name)
+        assertEquals(2, preview.totalFiles)
+        assertEquals(80_014L, preview.totalBytes)
+        assertTrue(files.list(connection, "fixture", destination, 20).entries.isEmpty())
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.PROCEED, verifySha256 = true))
+        val state = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.COMPLETED, state.phase)
+        assertEquals(2, state.completedItems)
+        assertTrue(manager.conflicts.value.isEmpty())
+        assertEquals(RemoteFileKind.DIRECTORY, files.statKind(connection, "$destination/${provider.root.name}/empty-folder"))
+        assertEquals(80_000L, files.identity(connection, "$destination/${provider.root.name}/nested/large").size)
+    }
+
+    @Test fun emptyDirectoryCancelAndRestartRequireApprovalBeforeCreation() = fixture { connection, provider, manager ->
+        val files = RemoteFileClient()
+        val destination = "/" + UUID.randomUUID().toString()
+        files.mkdirIfMissing(connection, destination)
+        manager.uploadDirectory("fixture", provider.tree, destination, provider.root.name)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(0, preview.totalFiles)
+        assertEquals(0L, preview.totalBytes)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.CANCEL))
+        val cancelled = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.CANCELLED, cancelled.phase)
+        assertTrue(files.list(connection, "fixture", destination, 20).entries.isEmpty())
+        manager.retry(cancelled.id)
+        val retry = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(retry.id, TransferConflictDecision(TransferConflictAction.PROCEED))
+        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertEquals(RemoteFileKind.DIRECTORY, files.statKind(connection, "$destination/${provider.root.name}"))
+    }
+
+    @Test fun unknownDirectorySizesAreNotReportedAsZero() = fixture { _, provider, manager ->
+        File(provider.root, "source").writeText("unknown size")
+        provider.unknownSizes = true
+        manager.uploadDirectory("fixture", provider.tree, "/", provider.root.name)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(1, preview.totalFiles)
+        assertNull(preview.totalBytes)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.CANCEL))
+        assertEquals(ScpTransferPhase.CANCELLED, manager.transfers.first { it.single().isFinished }.single().phase)
+    }
+
+    @Test fun directoryConflictUsesRelativePathAndSkipAppliesOnlyToExistingFiles() = fixture { connection, provider, manager ->
+        File(provider.root, "new").writeText("new file")
+        File(provider.root, "nested").mkdir()
+        File(provider.root, "nested/b").writeText("replacement b")
+        File(provider.root, "nested/c").writeText("replacement c")
+        val files = RemoteFileClient()
+        val destination = "/" + UUID.randomUUID().toString()
+        val remoteRoot = "$destination/${provider.root.name}"
+        files.mkdirIfMissing(connection, destination)
+        files.mkdirIfMissing(connection, remoteRoot)
+        files.mkdirIfMissing(connection, "$remoteRoot/nested")
+        BlockingOperation().use { control ->
+            for (name in listOf("b", "c")) files.upload(connection, "original".byteInputStream(), "$remoteRoot/nested", name, 0, 8, 1024, control) { _, _ -> }
+        }
+        manager.uploadDirectory("fixture", provider.tree, destination, provider.root.name)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.PROCEED, verifySha256 = true))
+        val conflict = manager.conflicts.first { it.any { prompt -> prompt.id != preview.id } }.single()
+        assertEquals("nested/b", conflict.name)
+        assertEquals(TransferPromptKind.FILE_CONFLICT, conflict.promptKind)
+        assertTrue(conflict.verifySha256)
+        manager.resolveConflict(conflict.id, TransferConflictDecision(TransferConflictAction.SKIP, applyToTask = true, verifySha256 = true))
+        val state = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.COMPLETED, state.phase)
+        assertEquals(2, state.skippedItems)
+        assertEquals(1, state.completedItems)
+        BlockingOperation().use { control ->
+            assertEquals("new file", files.readEditable(connection, "$remoteRoot/new", control).text)
+            for (name in listOf("b", "c")) assertEquals("original", files.readEditable(connection, "$remoteRoot/nested/$name", control).text)
+        }
+    }
+
+    @Test fun uploadSaveAsPreservesTheOriginalAndCommitsTheAlternate() = fixture { connection, provider, manager ->
+        val directory = "/" + UUID.randomUUID().toString()
+        val files = RemoteFileClient()
+        files.mkdirIfMissing(connection, directory)
+        BlockingOperation().use { files.upload(connection, "original".byteInputStream(), directory, "target", 0, 8, 1024, it) { _, _ -> } }
+        File(provider.root, "source").writeText("new contents")
+        manager.uploadFile("fixture", provider.uri("source"), "target", directory)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertTrue(preview.targetExists)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.SAVE_AS, alternateName = "alternate", verifySha256 = true))
+        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        BlockingOperation().use { control ->
+            assertEquals("original", files.readEditable(connection, "$directory/target", control).text)
+            assertEquals("new contents", files.readEditable(connection, "$directory/alternate", control).text)
+        }
+    }
+
     @Test fun resumedDirectoryUsesOriginalManifestDespiteOrderAndNewFiles() = fixture { connection, provider, manager ->
         File(provider.root, "a").writeText("first")
         File(provider.root, "b").writeText("second")
@@ -149,7 +364,8 @@ class TransferSafetyInstrumentedTest {
         BlockingOperation().use { control -> files.upload(connection, "old".byteInputStream(), remote, "b", 0, 3, 1024, control) { _, _ -> } }
         manager.uploadDirectory("fixture", provider.tree, "/", provider.root.name)
         val first = manager.conflicts.first { it.isNotEmpty() }.single()
-        manager.resolveConflict(first.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+        assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, first.promptKind)
+        manager.resolveConflict(first.id, TransferConflictDecision(TransferConflictAction.PROCEED))
         val second = manager.conflicts.first { it.any { conflict -> conflict.id != first.id } }.single()
         val id = manager.transfers.value.single().id
         assertEquals(1, manager.transfers.value.single().completedItems)
@@ -177,7 +393,7 @@ class TransferSafetyInstrumentedTest {
         BlockingOperation().use { control -> files.upload(connection, "old".byteInputStream(), remote, "b", 0, 3, 1024, control) { _, _ -> } }
         manager.uploadDirectory("fixture", provider.tree, "/", provider.root.name)
         val first = manager.conflicts.first { it.isNotEmpty() }.single()
-        manager.resolveConflict(first.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+        manager.resolveConflict(first.id, TransferConflictDecision(TransferConflictAction.PROCEED))
         manager.conflicts.first { it.any { question -> question.id != first.id } }
         val id = manager.transfers.value.single().id
         manager.pause(id)
@@ -190,7 +406,9 @@ class TransferSafetyInstrumentedTest {
         BlockingOperation().use { assertEquals("old", files.readEditable(connection, "$remote/b", it).text) }
         manager.retry(id)
         val retry = manager.conflicts.first { it.isNotEmpty() }.single()
-        manager.resolveConflict(retry.id, TransferConflictDecision(TransferConflictAction.REPLACE, applyToTask = true))
+        manager.resolveConflict(retry.id, TransferConflictDecision(TransferConflictAction.PROCEED))
+        val retryConflict = manager.conflicts.first { it.any { prompt -> prompt.id != retry.id } }.single()
+        manager.resolveConflict(retryConflict.id, TransferConflictDecision(TransferConflictAction.REPLACE, applyToTask = true))
         assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
         BlockingOperation().use { assertEquals(source.readText(), files.readEditable(connection, "$remote/b", it).text) }
     }

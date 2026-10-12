@@ -18,6 +18,7 @@ import uuid
 import re
 import json
 import shutil
+import stat
 from pathlib import Path
 import paramiko
 from paramiko.sftp import CMD_INIT, CMD_VERSION
@@ -31,6 +32,8 @@ tool_mode.add_argument("--native-tools", action="store_true", help="Run isolated
 parser.add_argument("--no-posix-rename", action="store_true")
 parser.add_argument("--reject-metadata", action="store_true")
 parser.add_argument("--stall-forward-cancel", action="store_true")
+parser.add_argument("--stall-sftp-writes", action="store_true", help="Keep staged WRITE requests unanswered until the test connection closes")
+parser.add_argument("--windows-stat-projection", action="store_true", help="Reproduce Windows OpenSSH LSTAT ACL and FSTAT CRT mode projections")
 parser.add_argument("--legacy-algorithms", action="store_true")
 args = parser.parse_args()
 tmux_socket = "mangossh-fixture-" + uuid.uuid4().hex
@@ -91,28 +94,45 @@ def set_attributes(attr, target):
     target is a path or, for FSETSTAT, an open descriptor."""
     if args.reject_metadata: return paramiko.SFTP_PERMISSION_DENIED
     try:
-        if attr._flags & attr.FLAG_PERMISSIONS: os.chmod(target, attr.st_mode & 0o7777)
-        if attr._flags & attr.FLAG_UIDGID: os.chown(target, attr.st_uid, attr.st_gid)
+        if attr._flags & attr.FLAG_PERMISSIONS and not args.windows_stat_projection: os.chmod(target, attr.st_mode & 0o7777)
+        if attr._flags & attr.FLAG_UIDGID and not args.windows_stat_projection: os.chown(target, attr.st_uid, attr.st_gid)
         if attr._flags & attr.FLAG_AMTIME: os.utime(target, (attr.st_atime, attr.st_mtime))
         if attr._flags & attr.FLAG_SIZE: os.truncate(target, attr.st_size)
         return paramiko.SFTP_OK
     except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
 
 class Files(paramiko.SFTPServerInterface):
+    def __init__(self, server, *args, **kwargs):
+        super().__init__(server, *args, **kwargs)
+        self.transport = server.transport
+
     def local(self, path):
+        if args.windows_stat_projection and (path == "/C:/fixture" or path.startswith("/C:/fixture/")):
+            path = path[len("/C:/fixture"):]
         result = (root / path.lstrip("/")).resolve()
         if result != root and root not in result.parents:
             raise PermissionError()
         return result
+    def canonicalize(self, path):
+        if not args.windows_stat_projection: return super().canonicalize(path)
+        relative = self.local(path).relative_to(root).as_posix()
+        return "/C:/fixture" + ("/" + relative if relative != "." else "")
+    def project(self, attributes, handle=False):
+        if args.windows_stat_projection:
+            attributes.st_uid = attributes.st_gid = 0
+            if stat.S_ISREG(attributes.st_mode):
+                # Measured with Windows OpenSSH 9.5: LSTAT reflects ACLs; FSTAT uses CRT bits.
+                attributes.st_mode = stat.S_IFREG | (0o666 if handle else 0o607)
+        return attributes
     def stat(self, path):
-        try: return paramiko.SFTPAttributes.from_stat(self.local(path).stat())
+        try: return self.project(paramiko.SFTPAttributes.from_stat(self.local(path).stat()))
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     lstat = stat
     def list_folder(self, path):
         try:
             entries = []
             for child in sorted(self.local(path).iterdir(), reverse=True):
-                item = paramiko.SFTPAttributes.from_stat(child.stat())
+                item = self.project(paramiko.SFTPAttributes.from_stat(child.stat()))
                 item.filename = child.name
                 entries.append(item)
             return entries
@@ -126,8 +146,15 @@ class Files(paramiko.SFTPServerInterface):
             handle = paramiko.SFTPHandle(flags)
             handle.readfile = stream
             handle.writefile = stream
-            handle.stat = lambda: paramiko.SFTPAttributes.from_stat(os.fstat(stream.fileno()))
+            handle.stat = lambda: self.project(paramiko.SFTPAttributes.from_stat(os.fstat(stream.fileno())), handle=True)
             handle.chattr = lambda attr: set_attributes(attr, stream.fileno())
+            if args.stall_sftp_writes and self.local(path).name.startswith(".mangossh-"):
+                def stalled_write(offset, data):
+                    # Only app-generated staging files stall; ordinary writes seed original targets.
+                    while self.transport.is_active():
+                        threading.Event().wait(0.1)
+                    return paramiko.SFTP_FAILURE
+                handle.write = stalled_write
             return handle
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def remove(self, path):
