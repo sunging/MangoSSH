@@ -15,7 +15,8 @@ internal object RemoteStagingIdentity {
         (path.length == 3 || path[3] == '/')
 
     /** Refuses links, path substitution and changed metadata before the handle can modify content. */
-    fun requireMatches(path: String, before: SshFileAttributes?, opened: SshFileAttributes, after: SshFileAttributes) {
+    fun requireMatches(path: String, before: SshFileAttributes?, opened: SshFileAttributes, after: SshFileAttributes,
+        windows: Boolean = isWindowsPath(path)) {
         if (before == null || before.permissions != null && !before.isRegularFile ||
             opened.permissions != null && !opened.isRegularFile || after.permissions != null && !after.isRegularFile)
             throw SourceChangedException()
@@ -24,6 +25,6 @@ internal object RemoteStagingIdentity {
             throw SourceChangedException()
         if (opened.uid != after.uid || opened.gid != after.gid || opened.size != after.size || opened.mtime != after.mtime)
             throw SourceChangedException()
-        if (!isWindowsPath(path) && opened.permissions != after.permissions) throw SourceChangedException()
+        if (!windows && opened.permissions != after.permissions) throw SourceChangedException()
     }
 }

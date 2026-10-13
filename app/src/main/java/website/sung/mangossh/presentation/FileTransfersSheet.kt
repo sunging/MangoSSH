@@ -88,8 +88,9 @@ internal fun aggregateTransferProgress(transfers: List<ScpTransferState>): Float
 internal fun FileTransferStatusAction(
     transfers: List<ScpTransferState>,
     onClick: () -> Unit,
+    remoteActiveCount: Int = 0,
 ) {
-    val activeCount = transfers.count { it.isActive }
+    val activeCount = transfers.count { it.isActive } + remoteActiveCount
     val progress = aggregateTransferProgress(transfers)
     BadgedBox(
         badge = {
@@ -141,6 +142,8 @@ internal fun FileTransfersSheet(
     onClearFinished: () -> Unit,
     onDismiss: () -> Unit,
     onReconnect: (ScpTransferState) -> Unit = {},
+    operations: List<website.sung.mangossh.session.RemoteOperationState> = emptyList(),
+    onCancelOperation: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -157,7 +160,7 @@ internal fun FileTransfersSheet(
             )
             TextButton(
                 onClick = onClearFinished,
-                enabled = transfers.any { it.isFinished },
+                enabled = transfers.any { it.isFinished } || operations.any { !it.active },
             ) {
                 Text(stringResource(R.string.ui_clear_finished))
             }
@@ -169,6 +172,9 @@ internal fun FileTransfersSheet(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            items(operations.reversed(), key = { "operation-${it.id}" }) { operation ->
+                RemoteOperationCard(operation) { onCancelOperation(operation.id) }
+            }
             items(transfers.reversed(), key = { it.id }) { transfer ->
                 TransferCard(
                     transfer = transfer,

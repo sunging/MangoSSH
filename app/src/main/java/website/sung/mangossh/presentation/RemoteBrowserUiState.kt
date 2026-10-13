@@ -36,6 +36,9 @@ data class RemoteBrowserUiState(
     val opening: RemoteOpenUiState? = null,
     /** A prepared file the screen must hand to another app once, then consume. */
     val pendingLaunch: RemoteLaunchRequest? = null,
+    val selectedPaths: Set<String> = emptySet(),
+    val clipboard: website.sung.mangossh.session.RemoteClipboard? = null,
+    val platform: website.sung.mangossh.session.RemotePlatform = website.sung.mangossh.session.RemotePlatform.AUTO,
 )
 
 /**

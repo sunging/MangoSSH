@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -73,6 +74,9 @@ import website.sung.mangossh.session.MAX_REMOTE_DIRECTORY_ENTRIES
 import website.sung.mangossh.session.RemoteFileEntry
 import website.sung.mangossh.session.RemoteFileKind
 import website.sung.mangossh.session.RemoteFilePaths
+import website.sung.mangossh.session.RemoteOperationRequest
+import website.sung.mangossh.session.RemoteOperationKind
+import website.sung.mangossh.session.RemotePlatform
 import android.text.format.Formatter
 import androidx.compose.ui.res.stringResource
 
@@ -102,8 +106,22 @@ fun RemoteFileBrowserScreen(
     onStream: (String) -> Unit = {},
     onCancelOpen: () -> Unit = {},
     onLaunchConsumed: () -> Unit = {},
+    onOperation: (RemoteOperationRequest) -> Unit = {},
+    onToggleSelection: (String) -> Unit = {},
+    onSelectAll: () -> Unit = {},
+    onClearSelection: () -> Unit = {},
+    onCopy: (List<String>, Boolean) -> Unit = { _, _ -> },
+    onClearClipboard: () -> Unit = {},
+    onPlatform: (RemotePlatform) -> Unit = {},
+    onTasks: () -> Unit = {},
+    operationBusy: Boolean = false,
 ) {
     val context = LocalContext.current
+    var managementAction by remember(state.sessionId) { mutableStateOf<RemoteManagementAction?>(null) }
+    val manage: (RemoteManagementAction) -> Unit = { action ->
+        if (action.kind == RemoteOperationKind.DELETE) onOperation(RemoteOperationRequest(state.sessionId, RemoteOperationKind.DELETE, action.paths))
+        else managementAction = action
+    }
     // Starting another app needs this Activity, so the view model only prepares
     // the URI and the screen hands it over exactly once.
     LaunchedEffect(state.pendingLaunch) {
@@ -160,6 +178,7 @@ fun RemoteFileBrowserScreen(
 
     BackHandler {
         when {
+            state.selectedPaths.isNotEmpty() -> onClearSelection()
             state.opening != null -> onCancelOpen()
             state.preview != null -> onDismissPreview()
             state.path != RemoteFilePaths.ROOT -> onUp()
@@ -255,6 +274,7 @@ fun RemoteFileBrowserScreen(
             }
 
             if (!state.isConnecting) {
+                RemoteManagementToolbar(state, operationBusy, manage, onCopy, onOperation, onSelectAll, onClearSelection, onClearClipboard, onTasks)
                 RemoteBreadcrumbs(path = state.path, onNavigate = onNavigate)
             }
 
@@ -298,7 +318,13 @@ fun RemoteFileBrowserScreen(
                     items(state.entries, key = { it.path }) { entry ->
                         RemoteFileRow(
                             entry = entry,
-                            onOpen = { onOpenEntry(entry) },
+                            onOpen = { if (state.selectedPaths.isNotEmpty()) onToggleSelection(entry.path) else onOpenEntry(entry) },
+                            onSelect = { onToggleSelection(entry.path) },
+                            selected = entry.path in state.selectedPaths,
+                            selectionMode = state.selectedPaths.isNotEmpty(),
+                            onManage = manage,
+                            onCopy = onCopy,
+                            onEdit = { onEditText(entry.path) },
                             onDownload = {
                                 if (entry.kind == RemoteFileKind.DIRECTORY) {
                                     startDirectoryDownload(entry.path)
@@ -327,6 +353,7 @@ fun RemoteFileBrowserScreen(
         }
 
         state.opening?.let { opening -> RemoteOpenProgressDialog(opening, onCancel = onCancelOpen) }
+        managementAction?.let { action -> RemoteManagementDialog(action, state, onPlatform, onOperation) { managementAction = null } }
     }
 }
 
@@ -453,16 +480,23 @@ private fun RemoteFileRow(
     onDownload: () -> Unit,
     onOpenWithApp: () -> Unit,
     onStream: () -> Unit,
+    onSelect: () -> Unit,
+    selected: Boolean,
+    selectionMode: Boolean,
+    onManage: (RemoteManagementAction) -> Unit,
+    onCopy: (List<String>, Boolean) -> Unit,
+    onEdit: () -> Unit,
 ) {
     val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
+            .combinedClickable(onClick = onOpen, onLongClick = onSelect)
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .testTag("remote-file-entry"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (selectionMode) androidx.compose.material3.Checkbox(selected, { onSelect() })
         Icon(
             imageVector = when (entry.kind) {
                 RemoteFileKind.DIRECTORY -> Icons.Outlined.Folder
@@ -496,11 +530,7 @@ private fun RemoteFileRow(
                 )
             }
         }
-        if (entry.kind == RemoteFileKind.DIRECTORY) {
-            IconButton(onClick = onDownload) {
-                Icon(Icons.Outlined.Download, contentDescription = stringResource(R.string.ui_download_folder))
-            }
-        } else {
+        run {
             // A symlink may point at a directory; the actions then fail with a
             // "not a file" message instead of being hidden on a guess.
             var showMenu by remember { mutableStateOf(false) }
@@ -509,7 +539,8 @@ private fun RemoteFileRow(
                     Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.remote_file_actions))
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    OpenElsewhereMenuItems(onOpenWithApp, onStream, dismiss = { showMenu = false })
+                    RemoteEntryManagementMenuItems(entry, onManage, onCopy, onEdit) { showMenu = false }
+                    if (entry.kind != RemoteFileKind.DIRECTORY) OpenElsewhereMenuItems(onOpenWithApp, onStream, dismiss = { showMenu = false })
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.common_download)) },
                         leadingIcon = { Icon(Icons.Outlined.Download, contentDescription = null) },

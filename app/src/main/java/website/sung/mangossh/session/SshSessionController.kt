@@ -196,6 +196,29 @@ class SshSessionController internal constructor(
      * paused, resumed, and retried after the browser screen that started them
      * is gone, so the engine is kept separate from session lifetime.
      */
+    private val fileOperationSupervisor = TransferSupervisor()
+    private val remoteOperations = RemoteOperationManager(scope, fileOperationSupervisor,
+        backendOf = { request, control ->
+            val connection = requireSshFeatureConnection(request.sessionId)
+            remoteFiles.setPlatform(connection, request.platform)
+            SftpRemoteOperationBackend(remoteFiles, connection, request.platform, control)
+        }, onSessionIdle = ::closeFileTransferIfIdle)
+    val remoteOperationStates = remoteOperations.operations
+    val remoteOperationPrompts = remoteOperations.prompts
+
+    /** Starts a process-local task on the already authenticated connection. */
+    fun startRemoteOperation(request: RemoteOperationRequest): String = remoteOperations.start(request)
+    /** Cancels only outside a final commit; completed side effects remain reported. */
+    fun cancelRemoteOperation(id: String) = remoteOperations.cancel(id)
+    /** Stale or disconnected confirmations are ignored by the task owner. */
+    fun decideRemoteOperation(id: String, decision: RemoteOperationDecision) = remoteOperations.decide(id, decision)
+    /** Changes only this live connection's file semantics. */
+    internal suspend fun setRemotePlatform(sessionId: String, platform: RemotePlatform) {
+        fileOperationSupervisor.run(sessionId) {
+            remoteFiles.setPlatform(requireSshFeatureConnection(sessionId), platform)
+        }
+    }
+
     private val fileTransfers = FileTransferManager(
         context = context,
         scope = scope,
@@ -203,11 +226,13 @@ class SshSessionController internal constructor(
         connectionOf = ::requireSshFeatureConnection,
         onSessionIdle = ::closeFileTransferIfIdle,
         identityOf = { sessionId -> sessionsById[sessionId]?.transferIdentity() },
+        supervisor = fileOperationSupervisor,
     )
     val scpTransfers: StateFlow<List<ScpTransferState>> = fileTransfers.transfers
     /** True while any transfer is queued or moving bytes; paused and finished ones do not count. */
-    val hasActiveTransfers: StateFlow<Boolean> = fileTransfers.transfers
-        .map { transfers -> transfers.any { it.isActive } }
+    val hasActiveTransfers: StateFlow<Boolean> = kotlinx.coroutines.flow.combine(fileTransfers.transfers, remoteOperations.operations) { transfers, operations ->
+        transfers.any { it.isActive } || operations.any { it.active && it.phase != RemoteOperationPhase.WAITING }
+    }
         .stateIn(scope, SharingStarted.Eagerly, false)
     val transferConflicts = fileTransfers.conflicts
 
@@ -495,7 +520,7 @@ class SshSessionController internal constructor(
         val managed = sessionsById[sessionId] ?: return
         if (managed.kind == SessionKind.PORT_FORWARD) { closePortForwardSessionIfIdle(sessionId); return }
         if (managed.kind != SessionKind.FILE_TRANSFER || !managed.releaseRequested) return
-        if (!fileTransfers.hasBusyTransfers(sessionId) && !remoteStreams.isBusy(sessionId)) {
+        if (!fileTransfers.hasBusyTransfers(sessionId) && !remoteOperations.busy(sessionId) && !remoteStreams.isBusy(sessionId)) {
             finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
         }
     }
@@ -810,7 +835,7 @@ class SshSessionController internal constructor(
 
     private fun closePortForwardSessionIfIdle(sessionId: String) {
         val managed = sessionsById[sessionId] ?: return
-        if (managed.kind != SessionKind.PORT_FORWARD || fileTransfers.hasBusyTransfers(sessionId) || remoteStreams.isBusy(sessionId)) return
+        if (managed.kind != SessionKind.PORT_FORWARD || fileTransfers.hasBusyTransfers(sessionId) || remoteOperations.busy(sessionId) || remoteStreams.isBusy(sessionId)) return
         val busy = _portForwards.value.any { it.sessionId == sessionId && it.phase.isRunning }
         if (!busy) finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
     }
@@ -948,7 +973,7 @@ class SshSessionController internal constructor(
     fun retryTransfer(transferId: String) = fileTransfers.retry(transferId)
 
     /** Drops finished transfer records; unfinished transfers are kept. */
-    fun clearFinishedTransfers() = fileTransfers.clearFinished()
+    fun clearFinishedTransfers() { fileTransfers.clearFinished(); remoteOperations.clearFinished() }
 
     /** Fixed application wording for a failure raised by a remote file operation. */
     fun remoteFileMessage(error: Throwable): RemoteFileMessage = error.toRemoteFileMessage()
@@ -1194,6 +1219,7 @@ class SshSessionController internal constructor(
 
         step { _resourceSnapshots.update { snapshots -> snapshots - sessionId } }
         step { fileTransfers.onSessionEnded(sessionId) }
+        step { remoteOperations.sessionEnded(sessionId) }
         step { remoteStreams.onSessionEnded(sessionId) }
         // The emulator is released only after the screen has stopped reading it,
         // which the session withdrawal above already guaranteed.
@@ -1898,7 +1924,9 @@ class SshSessionController internal constructor(
 
     internal suspend fun saveEditableText(sessionId: String, source: EditableRemoteText, draft: String,
         alternateName: String?, allowDirectOverwrite: Boolean) = withContext(Dispatchers.IO) {
-        BlockingOperation().use { remoteFiles.saveEditable(requireSshFeatureConnection(sessionId), source, draft, alternateName, allowDirectOverwrite, it) }
+        fileOperationSupervisor.run(sessionId) {
+            BlockingOperation().use { remoteFiles.saveEditable(requireSshFeatureConnection(sessionId), source, draft, alternateName, allowDirectOverwrite, it) }
+        }
     }
 
     /** Reads workspace metadata through the session's SSH feature connection. */

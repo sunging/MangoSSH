@@ -67,6 +67,7 @@ internal class FileTransferManager(
     private val identityOf: (String) -> TransferHostIdentity? = { null },
     /** Injectable only to exercise the same idle-deadline behavior without thirty-second tests. */
     private val idleMillis: Long = 30_000L,
+    private val supervisor: TransferSupervisor = TransferSupervisor(),
 ) {
     private val stagingBudget = StagingBudget(availableBytes = { android.os.StatFs(context.cacheDir.absolutePath).availableBytes })
     private val stagingReady = scope.launch(Dispatchers.IO) {
@@ -126,7 +127,6 @@ internal class FileTransferManager(
 
     private val handles = ConcurrentHashMap<String, TransferHandle>()
     private val runs = ConcurrentHashMap<String, Pair<String, TransferHandle>>()
-    private val supervisor = TransferSupervisor()
 
     /** Downloads one remote file into a document the user selected. */
     fun downloadFile(sessionId: String, remotePath: String, destination: Uri) {

@@ -106,10 +106,13 @@ class Files(paramiko.SFTPServerInterface):
         super().__init__(server, *args, **kwargs)
         self.transport = server.transport
 
-    def local(self, path):
+    def local(self, path, follow_final=True):
         if args.windows_stat_projection and (path == "/C:/fixture" or path.startswith("/C:/fixture/")):
             path = path[len("/C:/fixture"):]
-        result = (root / path.lstrip("/")).resolve()
+        # Normalize dot components without following the final symlink. In particular,
+        # a lexical root/.. must not pass the parent containment check below.
+        candidate = Path(os.path.abspath(root / path.lstrip("/")))
+        result = candidate.resolve() if follow_final else candidate.parent.resolve() / candidate.name
         if result != root and root not in result.parents:
             raise PermissionError()
         return result
@@ -127,12 +130,14 @@ class Files(paramiko.SFTPServerInterface):
     def stat(self, path):
         try: return self.project(paramiko.SFTPAttributes.from_stat(self.local(path).stat()))
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
-    lstat = stat
+    def lstat(self, path):
+        try: return self.project(paramiko.SFTPAttributes.from_stat(self.local(path, False).lstat()))
+        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def list_folder(self, path):
         try:
             entries = []
             for child in sorted(self.local(path).iterdir(), reverse=True):
-                item = self.project(paramiko.SFTPAttributes.from_stat(child.stat()))
+                item = self.project(paramiko.SFTPAttributes.from_stat(child.lstat()))
                 item.filename = child.name
                 entries.append(item)
             return entries
@@ -158,20 +163,32 @@ class Files(paramiko.SFTPServerInterface):
             return handle
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def remove(self, path):
-        try: self.local(path).unlink(); return paramiko.SFTP_OK
+        try: self.local(path, False).unlink(); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def rename(self, old, new):
         try:
-            if self.local(new).exists(): return paramiko.SFTP_FAILURE
-            self.local(old).rename(self.local(new)); return paramiko.SFTP_OK
+            if os.path.lexists(self.local(new, False)): return paramiko.SFTP_FAILURE
+            self.local(old, False).rename(self.local(new, False)); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def posix_rename(self, old, new):
-        try: os.replace(self.local(old), self.local(new)); return paramiko.SFTP_OK
+        try: os.replace(self.local(old, False), self.local(new, False)); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def chattr(self, path, attr):
         return set_attributes(attr, str(self.local(path)))
     def mkdir(self, path, attr):
         try: self.local(path).mkdir(); return paramiko.SFTP_OK
+        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
+
+    def rmdir(self, path):
+        try: self.local(path, False).rmdir(); return paramiko.SFTP_OK
+        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
+
+    def readlink(self, path):
+        try: return os.readlink(self.local(path, False))
+        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
+
+    def symlink(self, target_path, path):
+        try: os.symlink(target_path, self.local(path, False)); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
 
 class Sftp(paramiko.SFTPServer):

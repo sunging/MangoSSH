@@ -298,6 +298,11 @@ fun MangoSshApp(
             } }, dismissButton = { TextButton(onClick = viewModel::cancelReauthentication) { Text(stringResource(R.string.common_cancel)) } })
     }
     val transferConflicts by viewModel.transferConflicts.collectAsStateWithLifecycle()
+    val remoteOperations by viewModel.remoteOperations.collectAsStateWithLifecycle()
+    val remoteOperationPrompts by viewModel.remoteOperationPrompts.collectAsStateWithLifecycle()
+    remoteOperationPrompts.firstOrNull()?.let { prompt ->
+        RemoteOperationConfirmation(prompt) { viewModel.decideRemoteOperation(prompt.id, it) }
+    }
     transferConflicts.firstOrNull()?.let { conflict ->
         androidx.compose.runtime.key(conflict.id) { TransferConflictDialog(conflict) { viewModel.resolveTransferConflict(conflict.id, it) } }
     }
@@ -404,7 +409,20 @@ fun MangoSshApp(
             onStream = viewModel::streamRemoteFile,
             onCancelOpen = viewModel::cancelRemoteOpen,
             onLaunchConsumed = viewModel::consumeRemoteLaunch,
+            onOperation = viewModel::startRemoteOperation,
+            onToggleSelection = viewModel::selectRemotePath,
+            onSelectAll = viewModel::selectAllRemotePaths,
+            onClearSelection = viewModel::clearRemoteSelection,
+            onCopy = viewModel::copyRemoteSelection,
+            onClearClipboard = viewModel::clearRemoteClipboard,
+            onPlatform = viewModel::changeRemotePlatform,
+            onTasks = { showTransfers = true },
+            operationBusy = remoteOperations.any { it.request.sessionId == browserState.sessionId && it.active },
         )
+        if (showTransfers) FileTransfersSheet(scpTransfers, viewModel::pauseTransfer, viewModel::resumeTransfer,
+            viewModel::cancelTransfer, viewModel::retryTransfer, viewModel::openRemoteDirectoryFromTransfer,
+            viewModel::clearFinishedTransfers, { showTransfers = false }, operations = remoteOperations,
+            onCancelOperation = viewModel::cancelRemoteOperation)
         visiblePrompt?.let { prompt ->
             SessionPromptDialog(
                 prompt = prompt,
@@ -617,9 +635,10 @@ fun MangoSshApp(
                         actions = {
                             // Transfers are started from the host list, so their
                             // status lives here rather than on a tab of its own.
-                            if (selectedSection == AppSection.HOSTS && scpTransfers.isNotEmpty()) {
+                            if (selectedSection == AppSection.HOSTS && (scpTransfers.isNotEmpty() || remoteOperations.isNotEmpty())) {
                                 FileTransferStatusAction(
                                     transfers = scpTransfers,
+                                    remoteActiveCount = remoteOperations.count { it.active },
                                     onClick = { showTransfers = true },
                                 )
                             }
@@ -775,9 +794,11 @@ fun MangoSshApp(
     }
 
     // Clearing the last record closes the sheet with the top bar action.
-    if (showTransfers && scpTransfers.isNotEmpty()) {
+    if (showTransfers && (scpTransfers.isNotEmpty() || remoteOperations.isNotEmpty())) {
         FileTransfersSheet(
             transfers = scpTransfers,
+            operations = remoteOperations,
+            onCancelOperation = viewModel::cancelRemoteOperation,
             onPause = viewModel::pauseTransfer,
             onResume = viewModel::resumeTransfer,
             onCancel = viewModel::cancelTransfer,

@@ -48,6 +48,12 @@ internal class SshFiles internal constructor(
     suspend fun fsetstat(handle: SshFileHandle, attributes: SshFileAttributes) = request { delegate.fsetstat(handle.delegate, attributes.libraryAttributes()) }
     suspend fun mkdir(path: String, permissions: Int) = request { delegate.mkdir(path, SftpAttributes(permissions = permissions)) }
     suspend fun remove(path: String) = request { delegate.remove(path) }
+    /** Removes only an empty directory; callers must never follow a link during traversal. */
+    suspend fun rmdir(path: String) = request { delegate.rmdir(path) }
+    /** Returns the opaque link target without normalization or resolution. */
+    suspend fun readlink(path: String): String = request { delegate.readlink(path) }
+    /** Creates a link using the server's SFTP convention, never a shell command. */
+    suspend fun symlink(target: String, path: String) = request { delegate.symlink(target, path) }
     suspend fun rename(source: String, target: String) = request { delegate.rename(source, target) }
     suspend fun replaceAtomically(source: String, target: String) {
         if (!atomicReplaceSupported) throw SshFileFailure(8)

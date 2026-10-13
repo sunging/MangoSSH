@@ -68,6 +68,13 @@ internal data class RemoteUploadResult(
  * All functions block and must be called off the main dispatcher.
  */
 internal class RemoteFileClient {
+    private val platforms = java.util.Collections.synchronizedMap(java.util.WeakHashMap<SshConnection, RemotePlatform>())
+
+    /** A browser override affects all file operations sharing this live connection. */
+    fun setPlatform(connection: SshConnection, platform: RemotePlatform) { platforms[connection] = platform }
+
+    internal fun platform(connection: SshConnection, path: String): RemotePlatform =
+        (platforms[connection] ?: RemotePlatform.AUTO).resolve(path)
 
     /** Returns the absolute path the session's account starts in. */
     suspend fun resolveHome(connection: SshConnection): String = withClient(connection) { client ->
@@ -284,7 +291,8 @@ internal class RemoteFileClient {
         val resumable = startOffset > 0L && size != null && (size == startOffset || staging && size > startOffset)
         if (startOffset > 0L && !resumable) throw SourceChangedException()
         val handle = when {
-            staging -> openStaging(client, remotePath, existing, truncate = !resumable)
+            staging -> openStaging(client, remotePath, existing, truncate = !resumable,
+                windows = platform(connection, remotePath) == RemotePlatform.WINDOWS)
             resumable -> client.open(remotePath, write = true)
             else -> client.open(remotePath, write = true, create = true, truncate = true)
         }
@@ -383,7 +391,7 @@ internal class RemoteFileClient {
         // SFTP mode bits cannot preserve a Windows target's full NTFS ACL across replacement.
         // In-place writing keeps the original security descriptor and needs explicit approval.
         RemoteTarget(attributes?.let { SourceIdentity(path, it.size, it.mtime?.times(1_000L)) }, attributes?.permissions,
-            client.atomicReplaceSupported && !RemoteStagingIdentity.isWindowsPath(path), attributes?.uid, attributes?.gid)
+            client.atomicReplaceSupported && platform(connection, path) != RemotePlatform.WINDOWS, attributes?.uid, attributes?.gid)
     }
 
     /** Calculates SHA-256 through SFTP reads; no remote shell command or external utility is invoked. */
@@ -401,7 +409,8 @@ internal class RemoteFileClient {
 
     /** Commits one verified sibling temp; normal rename is used only when the target does not exist. */
     suspend fun commitTemporary(connection: SshConnection, temporary: String, destination: String, target: RemoteTarget,
-        allowDirectOverwrite: Boolean, control: TransferControl, expectedTargetDigest: ByteArray? = null) = withClient(connection, control) { client ->
+        allowDirectOverwrite: Boolean, control: TransferControl, expectedTargetDigest: ByteArray? = null,
+        newFileMode: Int? = null) = withClient(connection, control) { client ->
         require(RemoteFilePaths.parentOf(temporary) == RemoteFilePaths.parentOf(destination))
         if (expectedTargetDigest != null && !java.security.MessageDigest.isEqual(expectedTargetDigest,
                 sha256(connection, destination, control))) throw SourceChangedException()
@@ -436,14 +445,21 @@ internal class RemoteFileClient {
             // The staging file was created private; a brand-new destination gets the mode an
             // OpenSSH server would give it under the common umask. A server that refuses the
             // change keeps the file private rather than failing the upload.
-            runCatching { client.setstat(temporary, SshFileAttributes(permissions = NEW_FILE_PERMISSIONS)) }
+            if (newFileMode != null) {
+                client.setstat(temporary, SshFileAttributes(permissions = newFileMode))
+                if (client.lstat(temporary).permissions?.and(0xfff) != newFileMode) throw MetadataPreservationException()
+            } else runCatching { client.setstat(temporary, SshFileAttributes(permissions = NEW_FILE_PERMISSIONS)) }
             client.rename(temporary, destination)
         } else if (target.atomicReplace) client.replaceAtomically(temporary, destination)
         else {
             if (!allowDirectOverwrite) throw AtomicReplaceUnavailableException()
+            val staged = client.lstat(temporary)
             val source = client.open(temporary)
             try {
-                val output = client.open(destination, write = true, create = true, truncate = true)
+                RemoteStagingIdentity.requireMatches(temporary, staged, client.fstat(source), client.lstat(temporary),
+                    platform(connection, destination) == RemotePlatform.WINDOWS)
+                val output = openStaging(client, destination, current, truncate = true,
+                    windows = platform(connection, destination) == RemotePlatform.WINDOWS)
                 try {
                     var offset = 0L
                     val buffer = ByteArray(SFTP_CHUNK_BYTES)
@@ -459,7 +475,7 @@ internal class RemoteFileClient {
                     val written = client.fstat(output)
                     if (client.fstat(source).size != written.size) throw java.io.IOException()
                     if (written.uid != target.uid || written.gid != target.gid ||
-                        !RemoteStagingIdentity.isWindowsPath(destination) &&
+                        platform(connection, destination) != RemotePlatform.WINDOWS &&
                         written.permissions?.and(0xfff) != target.permissions?.and(0xfff)) throw java.io.IOException()
                     val committed = client.lstat(destination)
                     if (!committed.isRegularFile || committed.uid != target.uid || committed.gid != target.gid ||
@@ -497,17 +513,18 @@ internal class RemoteFileClient {
      * that was reserved. SFTP v3 cannot refuse to follow links on open, so the name is
      * checked with LSTAT first and the opened handle is compared with that result.
      */
-    private suspend fun openStaging(client: SshFiles, path: String, before: SshFileAttributes?, truncate: Boolean): SshFileHandle {
+    private suspend fun openStaging(client: SshFiles, path: String, before: SshFileAttributes?, truncate: Boolean,
+        windows: Boolean = RemoteStagingIdentity.isWindowsPath(path)): SshFileHandle {
         if (before == null || before.permissions != null && !before.isRegularFile) throw SourceChangedException()
         // Opening without TRUNCATE lets us validate the handle before it can change a file.
         val handle = client.open(path, write = true)
         try {
             val opened = client.fstat(handle)
-            RemoteStagingIdentity.requireMatches(path, before, opened, client.lstat(path))
+            RemoteStagingIdentity.requireMatches(path, before, opened, client.lstat(path), windows)
             if (truncate && opened.size != 0L) {
                 try { client.fsetstat(handle, SshFileAttributes(size = 0)) }
                 catch (_: SshFileFailure) {
-                    RemoteStagingIdentity.requireMatches(path, before, client.fstat(handle), client.lstat(path))
+                    RemoteStagingIdentity.requireMatches(path, before, client.fstat(handle), client.lstat(path), windows)
                     client.setstat(path, SshFileAttributes(size = 0))
                 }
                 if (client.fstat(handle).size != 0L) throw SourceChangedException()
@@ -648,7 +665,7 @@ internal class RemoteFileClient {
      * Failures are normalized into [RemoteFileException] so no server-provided
      * text escapes this class.
      */
-    private suspend fun <T> withClient(
+    internal suspend fun <T> withClient(
         connection: SshConnection,
         control: TransferControl? = null,
         timeoutMillis: Long = 15_000L,

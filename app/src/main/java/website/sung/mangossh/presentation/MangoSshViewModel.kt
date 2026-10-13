@@ -242,6 +242,45 @@ class MangoSshViewModel @JvmOverloads constructor(
     val activePortForwards = sessionController.portForwards
     val scpTransfers = sessionController.scpTransfers
     val transferConflicts = sessionController.transferConflicts
+    val remoteOperations = sessionController.remoteOperationStates
+    val remoteOperationPrompts = sessionController.remoteOperationPrompts
+    /** Cancels a task only when its session owner permits cancellation. */
+    fun cancelRemoteOperation(id: String) = sessionController.cancelRemoteOperation(id)
+    /** Responds to a one-use preview; the manager rejects stale task identities. */
+    fun decideRemoteOperation(id: String, decision: website.sung.mangossh.session.RemoteOperationDecision) = sessionController.decideRemoteOperation(id, decision)
+
+    /** Selection is local to the displayed directory; the clipboard survives directory navigation. */
+    fun selectRemotePath(path: String) { _remoteBrowser.update { state -> state?.copy(selectedPaths =
+        if (path in state.selectedPaths) state.selectedPaths - path else state.selectedPaths + path) } }
+    /** Selects only entries actually present in the current listing. */
+    fun selectAllRemotePaths() { _remoteBrowser.update { it?.copy(selectedPaths = it.entries.map { entry -> entry.path }.toSet()) } }
+    /** Leaves selection mode without touching the connection-local clipboard. */
+    fun clearRemoteSelection() { _remoteBrowser.update { it?.copy(selectedPaths = emptySet()) } }
+    /** Copies intent and paths, never file contents, into the current browser clipboard. */
+    fun copyRemoteSelection(paths: List<String>, move: Boolean) { _remoteBrowser.update { state -> state?.copy(
+        selectedPaths = emptySet(), clipboard = website.sung.mangossh.session.RemoteClipboard(state.sessionId, paths.toList(), move)) } }
+    /** Discards an unexecuted copy/cut intent without remote side effects. */
+    fun clearRemoteClipboard() { _remoteBrowser.update { it?.copy(clipboard = null) } }
+    /** Keeps platform policy stable while a management task owns its captured request. */
+    fun changeRemotePlatform(platform: website.sung.mangossh.session.RemotePlatform) {
+        val current = _remoteBrowser.value ?: return
+        if (remoteOperations.value.any { it.request.sessionId == current.sessionId && it.active }) return
+        viewModelScope.launch {
+            runCatching { sessionController.setRemotePlatform(current.sessionId, platform.resolve(current.path)) }
+                .onSuccess {
+                    remotePlatformChoices[current.sessionId] = platform
+                    _remoteBrowser.update { if (it?.sessionId == current.sessionId) it.copy(platform = platform) else it }
+                }
+                .onFailure { if (it is CancellationException) throw it else _userMessage.value = sessionController.remoteFileMessage(it).toUiText() }
+        }
+    }
+    /** UI intents carry paths only; scanning, validation and writes belong to the session layer. */
+    fun startRemoteOperation(request: website.sung.mangossh.session.RemoteOperationRequest) {
+        val current = _remoteBrowser.value ?: return
+        if (request.sessionId != current.sessionId || current.isConnecting) return
+        sessionController.startRemoteOperation(request.copy(platform = current.platform.resolve(current.path)))
+        clearRemoteSelection()
+    }
     fun resolveTransferConflict(id: String, decision: website.sung.mangossh.session.TransferConflictDecision) = sessionController.resolveTransferConflict(id, decision)
     val resourceSnapshots = sessionController.resourceSnapshots
     val sessionPrompts = sessionController.prompts
@@ -530,6 +569,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     private val _remoteBrowser = MutableStateFlow<RemoteBrowserUiState?>(null)
+    private val remotePlatformChoices = mutableMapOf<String, website.sung.mangossh.session.RemotePlatform>()
     /** Null whenever the remote file browser is closed. */
     val remoteBrowser = _remoteBrowser.asStateFlow()
 
@@ -557,9 +597,35 @@ class MangoSshViewModel @JvmOverloads constructor(
             }
         }
         // A browsed connection can fail while authenticating or drop mid-listing;
+        viewModelScope.launch {
+            val refreshed = mutableSetOf<String>()
+            val appliedMoves = mutableSetOf<String>()
+            remoteOperations.collect { operations ->
+                val movedItems = operations.filter { it.request.kind == website.sung.mangossh.session.RemoteOperationKind.MOVE }
+                    .flatMap { task -> task.items.filter { it.outcome == website.sung.mangossh.session.RemoteItemOutcome.COMPLETED && appliedMoves.add(task.id + ":" + it.path) }
+                        .map { task.request.sessionId to it.path } }
+                val newlyFinished = operations.filter { !it.active && refreshed.add(it.id) }
+                val current = _remoteBrowser.value ?: return@collect
+                val moved = movedItems.filter { it.first == current.sessionId }.map { it.second }.toSet()
+                _remoteBrowser.update { state ->
+                    if (state?.sessionId == current.sessionId && state.clipboard?.move == true) {
+                        val clipboard = state.clipboard.copy(paths = state.clipboard.paths.filterNot { it in moved })
+                        state.copy(clipboard = clipboard.takeIf { it.paths.isNotEmpty() })
+                    } else state
+                }
+                val finished = newlyFinished.filter { it.request.sessionId == current.sessionId }
+                if (finished.isNotEmpty()) {
+                    finished.firstOrNull { it.phase == website.sung.mangossh.session.RemoteOperationPhase.FAILED }?.let { failed ->
+                        _userMessage.value = failed.detail?.toUiText() ?: uiText(R.string.fm_failed)
+                    }
+                    refreshRemoteBrowser()
+                }
+            }
+        }
         // surface that in the browser instead of leaving a spinner running.
         viewModelScope.launch {
             sessionEndedEvents.collect { event ->
+                remotePlatformChoices.remove(event.sessionId)
                 _remoteBrowser.update { state ->
                     if (state?.sessionId != event.sessionId) {
                         state
@@ -567,6 +633,8 @@ class MangoSshViewModel @JvmOverloads constructor(
                         state.copy(
                             isConnecting = false,
                             isLoading = false,
+                            clipboard = null,
+                            selectedPaths = emptySet(),
                             errorMessage = sessionEndMessage(event)
                                 ?: uiText(R.string.session_ended_connection_failed),
                         )
@@ -937,6 +1005,7 @@ class MangoSshViewModel @JvmOverloads constructor(
             sessionId = sessionId,
             title = session.title,
             path = RemoteFilePaths.ROOT,
+            platform = remotePlatformChoices[sessionId] ?: website.sung.mangossh.session.RemotePlatform.AUTO,
         )
         browserJob = viewModelScope.launch { openHomeDirectory(sessionId) }
     }
@@ -1282,7 +1351,7 @@ class MangoSshViewModel @JvmOverloads constructor(
 
     private suspend fun loadRemoteDirectory(sessionId: String, path: String) {
         _remoteBrowser.update { state ->
-            state?.copy(path = path, isLoading = true, errorMessage = null)
+            state?.copy(path = path, isLoading = true, errorMessage = null, selectedPaths = emptySet())
         }
         runCatching { sessionController.listRemoteDirectory(sessionId, path) }
             .onSuccess { listing ->

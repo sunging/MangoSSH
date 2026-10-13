@@ -12,6 +12,13 @@ class RemoteStagingIdentityTest {
         RemoteStagingIdentity.requireMatches("/C:/fixture/temp.part", path, windowsHandle, path)
     }
 
+    @Test fun explicitWindowsPolicyHandlesChrootPathsWithoutWeakeningPathChecks() {
+        RemoteStagingIdentity.requireMatches("/home/temp.part", path, windowsHandle, path, windows = true)
+        assertThrows(SourceChangedException::class.java) {
+            RemoteStagingIdentity.requireMatches("/home/temp.part", path, windowsHandle, path.copy(size = 10), windows = true)
+        }
+    }
+
     @Test fun unixHandleModeChangesAreStillRejected() {
         assertThrows(SourceChangedException::class.java) {
             RemoteStagingIdentity.requireMatches("/tmp/temp.part", path, windowsHandle, path)
