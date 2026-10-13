@@ -45,6 +45,22 @@ import kotlin.test.assertTrue
 class SftpClientImplTest {
 
     @Test
+    fun `symlink sends opaque target before link path for deployed OpenSSH v3 servers`() = runBlocking {
+        val target = "../relative target"
+        val link = "/folder/new link"
+        val session = FakeSshSession(responseFor = { type, payload ->
+            assertEquals(SSH_FXP_SYMLINK, type)
+            val buffer = ByteBuffer.wrap(payload)
+            fun readString(): String = ByteArray(buffer.int).also(buffer::get).toString(Charsets.UTF_8)
+            assertEquals(target, readString())
+            assertEquals(link, readString())
+            assertEquals(0, buffer.remaining())
+            response(SSH_FXP_STATUS, statusPayload(SftpStatusCode.OK))
+        })
+        assertEquals(SftpResult.Success(Unit), createClient(session).symlink(target, link))
+    }
+
+    @Test
     fun `create negotiates version and close is idempotent`() = runBlocking {
         val session = FakeSshSession()
         session.enqueueRead(packet(SSH_FXP_VERSION, ByteBuffer.allocate(4).putInt(5).array()))

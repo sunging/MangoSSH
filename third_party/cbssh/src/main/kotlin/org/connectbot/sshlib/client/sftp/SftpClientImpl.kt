@@ -302,8 +302,10 @@ internal class SftpClientImpl private constructor(
         val linkBytes = linkPath.toByteArray(StandardCharsets.UTF_8)
         val targetBytes = targetPath.toByteArray(StandardCharsets.UTF_8)
         val payload = ByteBuffer.allocate(4 + linkBytes.size + 4 + targetBytes.size)
-        putString(payload, linkBytes)
+        // OpenSSH's deployed v3 convention reverses the draft's two fields.
+        // Paramiko and other interoperable v3 servers implement this same order.
         putString(payload, targetBytes)
+        putString(payload, linkBytes)
 
         return dispatchStatusRequest(SSH_FXP_SYMLINK, payload.array())
     }
