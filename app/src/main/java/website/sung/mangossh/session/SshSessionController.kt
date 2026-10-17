@@ -1367,6 +1367,8 @@ class SshSessionController internal constructor(
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
         } catch (cancelled: CancellationException) {
+            // A dismissed prompt cancels setup without an external close action to retire its UI state.
+            finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
             throw cancelled
         } catch (error: Throwable) {
             finishSession(
@@ -1422,6 +1424,7 @@ class SshSessionController internal constructor(
             startSshKeepalive(sessionId, managed)
             offerInterruptedTransfers(sessionId, managed)
         } catch (cancelled: CancellationException) {
+            finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
             throw cancelled
         } catch (error: Throwable) {
             finishSession(
@@ -1537,6 +1540,7 @@ class SshSessionController internal constructor(
                 .filter { it.profileId == profile.id && it.startOnConnect }
                 .forEach { rule -> startPortForward(sessionId, rule) }
         } catch (cancelled: CancellationException) {
+            finishSession(sessionId, managed, SessionEndReason.USER_REQUEST)
             throw cancelled
         } catch (error: Throwable) {
             finishSession(
