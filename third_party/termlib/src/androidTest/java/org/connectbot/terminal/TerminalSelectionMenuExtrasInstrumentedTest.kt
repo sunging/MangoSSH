@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -53,7 +54,7 @@ class TerminalSelectionMenuExtrasInstrumentedTest {
         // The overflow menu (and the selection it belonged to) is gone: neither the extra
         // item nor the built-in Copy button remain composed.
         composeRule.onNodeWithTag(EXTRA_ITEM_TAG).assertDoesNotExist()
-        composeRule.onNodeWithText(COPY_LABEL).assertDoesNotExist()
+        composeRule.onNodeWithText(copyLabel()).assertDoesNotExist()
     }
 
     @Test
@@ -64,7 +65,7 @@ class TerminalSelectionMenuExtrasInstrumentedTest {
 
         composeRule.onNodeWithTag(EXTRA_ITEM_TAG).assertDoesNotExist()
         // The built-in items are still there; only the host-app extension point is absent.
-        composeRule.onNodeWithText(COPY_LABEL).assertExists()
+        composeRule.onNodeWithText(copyLabel()).assertExists()
     }
 
     private fun openSelectionMenu() {
@@ -76,9 +77,14 @@ class TerminalSelectionMenuExtrasInstrumentedTest {
             selectionController.finishSelection()
         }
         composeRule.waitForIdle()
-        composeRule.onNodeWithContentDescription(MORE_OPTIONS_DESCRIPTION).performClick()
+        val moreOptionsDescription = InstrumentationRegistry.getInstrumentation().targetContext
+            .getString(R.string.terminal_selection_more_options_description)
+        composeRule.onNodeWithContentDescription(moreOptionsDescription).performClick()
         composeRule.waitForIdle()
     }
+
+    private fun copyLabel(): String = InstrumentationRegistry.getInstrumentation().targetContext
+        .getString(R.string.terminal_selection_copy)
 
     private fun mountTerminal() {
         emulator = TerminalEmulatorFactory.create(
@@ -117,7 +123,5 @@ class TerminalSelectionMenuExtrasInstrumentedTest {
     private companion object {
         const val TERMINAL_TAG = "terminal_selection_menu_extras"
         const val EXTRA_ITEM_TAG = "terminal_selection_menu_extra_item"
-        const val MORE_OPTIONS_DESCRIPTION = "More options"
-        const val COPY_LABEL = "Copy"
     }
 }
