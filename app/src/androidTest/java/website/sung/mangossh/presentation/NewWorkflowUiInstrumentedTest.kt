@@ -53,38 +53,23 @@ class NewWorkflowUiInstrumentedTest {
         compose.onAllNodesWithText(text(R.string.editor_direct)).onLast().performClick()
         compose.runOnIdle { assertEquals(TransferConflictAction.DIRECT_OVERWRITE, decision?.action) }
     }
-    @Test fun busyKeyManagementBlocksRepeatedGenerationAndImport() {
-        compose.setContent {
-            MaterialTheme {
-                KeysScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, emptyList(),
-                    { _, _, _, _ -> fail("Repeated generation") }, { _, _, _, _ -> fail("Repeated import") },
-                    { fail("Unexpected removal") }, { _, _, _ -> fail("Unexpected export") }, busy = true)
-            }
-        }
-        compose.onNodeWithText(text(R.string.ui_generate_key)).assertIsNotEnabled()
-        compose.onNodeWithText(text(R.string.ui_import_private_key)).assertIsNotEnabled()
+    @Test fun busyAuthenticationManagementBlocksRepeatedAdds() {
+        compose.setContent { MaterialTheme {
+            AuthenticationScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, emptyList(), emptyList(), emptyList(),
+                AuthenticationEditorActions(), { fail("Unexpected removal") }, { _, _, _ -> fail("Unexpected export") }, true)
+        } }
+        compose.onNodeWithText(text(R.string.authentication_add)).assertIsNotEnabled()
     }
-    @Test fun editingAKeySubmitsTheNewNameWithoutTouchingItsEncryption() {
-        // Placeholder key material: the dialog only inspects headers and never decodes it.
-        val key = website.sung.mangossh.data.vault.StoredSshKey("key", "Old name", "ssh-ed25519",
-            "ssh-ed25519 AAAA Old name", "SHA256:placeholder", "placeholder")
-        var edit: Pair<String, website.sung.mangossh.data.keys.KeyEditRequest>? = null
-        compose.setContent {
-            MaterialTheme {
-                KeysScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, listOf(key),
-                    { _, _, _, _ -> fail("Unexpected generation") }, { _, _, _, _ -> fail("Unexpected import") },
-                    { fail("Unexpected removal") }, { _, _, _ -> fail("Unexpected export") }, busy = false,
-                    onEdit = { id, request -> edit = id to request })
-            }
-        }
-        compose.onNodeWithText(text(R.string.common_edit)).performClick()
+    @Test fun editingAKeyStagesTheNewNameWithoutTouchingItsEncryption() {
+        val key = website.sung.mangossh.data.vault.SshKeySummary("key", "Old name", "ssh-ed25519", "")
+        var edit: website.sung.mangossh.data.keys.KeyEditRequest? = null
+        compose.setContent { MaterialTheme { EditKeyDialog(key, {}, { edit = it }) } }
         compose.onNode(hasSetTextAction() and hasText("Old name")).performTextReplacement("New name")
         compose.onNodeWithText(text(R.string.common_save)).performClick()
         compose.runOnIdle {
-            assertEquals("key", edit?.first)
-            assertEquals("New name", edit?.second?.label)
-            assertEquals(website.sung.mangossh.data.keys.KeyPassphraseChange.Keep, edit?.second?.passphrase)
-            assertEquals(false, edit?.second?.rememberPassphrase)
+            assertEquals("New name", edit?.label)
+            assertEquals(website.sung.mangossh.data.keys.KeyPassphraseChange.Keep, edit?.passphrase)
+            assertEquals(false, edit?.rememberPassphrase)
         }
     }
     @Test fun exportMenuOffersClipboardFileAndShareForBothKeyHalves() {
@@ -93,9 +78,9 @@ class NewWorkflowUiInstrumentedTest {
         val exports = mutableListOf<Triple<String, KeyExportPart, KeyExportTarget>>()
         compose.setContent {
             MaterialTheme {
-                KeysScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, listOf(key),
-                    { _, _, _, _ -> fail("Unexpected generation") }, { _, _, _, _ -> fail("Unexpected import") },
-                    { fail("Unexpected removal") }, { id, part, target -> exports += Triple(id, part, target) }, busy = false)
+                AuthenticationScreen(website.sung.mangossh.data.vault.VaultStatus.Ready,
+                    listOf(website.sung.mangossh.data.vault.AuthenticationSummary("auth", "Example", keyId = key.id)), listOf(key.summary()), emptyList(),
+                    AuthenticationEditorActions(), { fail("Unexpected removal") }, { id, part, target -> exports += Triple(id, part, target) }, false)
             }
         }
         // The public half is preselected and carries no private-key warning.

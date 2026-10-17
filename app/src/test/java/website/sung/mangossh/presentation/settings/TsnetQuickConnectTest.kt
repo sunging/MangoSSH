@@ -36,7 +36,7 @@ class TsnetQuickConnectTest {
     fun defaultsToTailscaleSshOnlyWhereTheDeviceOffersIt() {
         assertEquals(AuthenticationMethod.TAILSCALE_SSH, defaultTsnetAuthentication(lab))
         assertEquals(
-            AuthenticationMethod.PASSWORD,
+            AuthenticationMethod.AUTOMATIC,
             defaultTsnetAuthentication(lab.copy(tailscaleSshEnabled = false)),
         )
     }
@@ -48,7 +48,7 @@ class TsnetQuickConnectTest {
             username = " root ",
             protocol = ConnectionProtocol.MOSH,
             authentication = AuthenticationMethod.TAILSCALE_SSH,
-            keyId = "ignored",
+            authenticationId = "ignored",
         )
 
         assertEquals("lab", profile.label)
@@ -58,7 +58,7 @@ class TsnetQuickConnectTest {
         assertEquals(ConnectionProtocol.MOSH, profile.protocol)
         assertEquals(ConnectionRoute.TSNET, profile.route)
         assertEquals(AuthenticationMethod.TAILSCALE_SSH, profile.authentication)
-        assertNull(profile.keyId)
+        assertNull(profile.authenticationId)
     }
 
     @Test
@@ -67,12 +67,19 @@ class TsnetQuickConnectTest {
             device = lab.copy(dnsName = ""),
             username = "root",
             protocol = ConnectionProtocol.SSH,
-            authentication = AuthenticationMethod.PRIVATE_KEY,
-            keyId = "key-1",
+            authentication = AuthenticationMethod.AUTOMATIC,
+            authenticationId = "key-1",
         )
 
         assertEquals("100.64.0.2", profile.hostname)
-        assertEquals("key-1", profile.keyId)
+        assertEquals("key-1", profile.authenticationId)
+    }
+
+    @Test fun passwordReferenceIsKeptOnlyForPasswordAuthentication() {
+        for (method in AuthenticationMethod.entries) {
+            val profile = tsnetQuickConnectProfile(lab, "test", ConnectionProtocol.SSH, method, "authentication")
+            assertEquals(if (method == AuthenticationMethod.AUTOMATIC) "authentication" else null, profile.authenticationId)
+        }
     }
 
     private fun profile(id: String, hostname: String, route: ConnectionRoute, username: String) =

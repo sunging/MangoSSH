@@ -58,7 +58,7 @@ class BackupMergerTest {
         val profile = profile()
         listOf(
             VaultSnapshot(profiles = listOf(profile, profile)),
-            VaultSnapshot(profiles = listOf(profile.copy(keyId = UUID.randomUUID().toString()))),
+            VaultSnapshot(profiles = listOf(profile.copy(authenticationId = UUID.randomUUID().toString()))),
             VaultSnapshot(profiles = listOf(profile.copy(startupSnippetId = UUID.randomUUID().toString()))),
             VaultSnapshot(profiles = listOf(profile.copy(port = 0))),
             VaultSnapshot(portForwards = listOf(PortForwardRule(UUID.randomUUID().toString(), profile.id, PortForwardType.DYNAMIC, bindPort = 1000))),

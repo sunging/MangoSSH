@@ -59,8 +59,8 @@ internal data class HostEditorDraft(
     val portText: String = "22",
     val protocol: ConnectionProtocol = ConnectionProtocol.SSH,
     val route: ConnectionRoute = ConnectionRoute.DIRECT,
-    val authentication: AuthenticationMethod = AuthenticationMethod.PRIVATE_KEY,
-    val keyId: String? = null,
+    val authentication: AuthenticationMethod = AuthenticationMethod.AUTOMATIC,
+    val authenticationId: String? = null,
     val startupSnippetId: String? = null,
     val agentForwarding: Boolean = false,
     val overrides: HostConnectionOverrides = HostConnectionOverrides(),
@@ -75,9 +75,9 @@ internal data class HostEditorDraft(
     val legacySshAlgorithms: Boolean = false,
 ) : Serializable {
     /** Summaries identify invalid hidden fields as well as errors on the basic form. */
-    fun invalidPages(keyIds: Set<String>, snippetIds: Set<String>, hosts: List<ConnectionProfile>): Set<HostEditorPage> = buildSet {
+    fun invalidPages(keyIds: Set<String>, snippetIds: Set<String>, hosts: List<ConnectionProfile>, authenticationIds: Set<String> = emptySet()): Set<HostEditorPage> = buildSet {
         if (hostname.isBlank() || username.isBlank() || portText.toIntOrNull() !in 1..65535) add(HostEditorPage.MAIN)
-        if (route != ConnectionRoute.TAILNET && authentication == AuthenticationMethod.PRIVATE_KEY && keyId !in keyIds) add(HostEditorPage.CONNECTION)
+        if (route != ConnectionRoute.TAILNET && authentication == AuthenticationMethod.AUTOMATIC && authenticationId != null && authenticationId !in authenticationIds) add(HostEditorPage.CONNECTION)
         if (!workspace.isValid() || startupSnippetId != null && (startupSnippetId !in snippetIds || workspace.mode != WorkspaceMode.DISABLED)) add(HostEditorPage.STARTUP)
         if (jumpIds.size > 4 || jumpIds.distinct().size != jumpIds.size || protocol == ConnectionProtocol.MOSH && jumpIds.isNotEmpty() ||
             jumpIds.any { hop -> hosts.none { it.id == hop && it.id != id && it.protocol == ConnectionProtocol.SSH && it.jumpProfileIds.isEmpty() } }) add(HostEditorPage.JUMPS)
@@ -88,7 +88,7 @@ internal data class HostEditorDraft(
     /** Retains existing host metadata instead of resetting favorites or usage when editing. */
     fun toProfileDraft() = ConnectionProfileDraft(
         id = id, label = label, hostname = hostname, username = username, port = requireNotNull(portText.toIntOrNull()),
-        protocol = protocol, route = route, authentication = authentication, keyId = keyId,
+        protocol = protocol, route = route, authentication = authentication, authenticationId = authenticationId,
         startupSnippetId = startupSnippetId, agentForwarding = protocol == ConnectionProtocol.SSH && agentForwarding,
         overrides = overrides, agentPolicy = agentPolicy, requireReauthentication = reauthenticate,
         workspace = workspace, jumpProfileIds = jumpIds, favorite = favorite, position = position,
@@ -99,7 +99,7 @@ internal data class HostEditorDraft(
     companion object {
         fun from(host: ConnectionProfile?) = host?.let {
             HostEditorDraft(it.id, it.label, it.hostname, it.username, it.port.toString(), it.protocol, it.route,
-                it.authentication, it.keyId, it.startupSnippetId, it.agentForwarding, it.overrides, it.agentPolicy,
+                it.authentication, it.authenticationId, it.startupSnippetId, it.agentForwarding, it.overrides, it.agentPolicy,
                 it.requireReauthentication, it.workspace, it.jumpProfileIds, it.favorite, it.position,
                 it.lastConnectedAtEpochMillis, it.connectionCount, it.legacySshAlgorithms)
         } ?: HostEditorDraft()

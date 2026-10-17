@@ -77,6 +77,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -96,6 +97,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -123,7 +125,7 @@ import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.vault.CommandSnippet
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.PortForwardType
-import website.sung.mangossh.data.vault.StoredSshKey
+import website.sung.mangossh.data.vault.SshKeySummary
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
@@ -163,11 +165,11 @@ import website.sung.mangossh.presentation.settings.TsnetSettingsState
 import website.sung.mangossh.presentation.settings.rememberSettingsCallbacks
 import website.sung.mangossh.presentation.update.distributionUpdateBadgeDescription
 
-private sealed interface PendingRemovalRequest {
+internal sealed interface PendingRemovalRequest {
     val id: String
 
     data class Host(override val id: String) : PendingRemovalRequest
-    data class Key(override val id: String) : PendingRemovalRequest
+    data class Authentication(override val id: String) : PendingRemovalRequest
     data class PortForward(override val id: String) : PendingRemovalRequest
     data class Snippet(override val id: String) : PendingRemovalRequest
 }
@@ -324,6 +326,7 @@ fun MangoSshApp(
     val hostSortMode by viewModel.hostSortMode.collectAsStateWithLifecycle()
     val hostsReorderable by viewModel.hostsReorderable.collectAsStateWithLifecycle()
     val keys by viewModel.keys.collectAsStateWithLifecycle()
+    val authentications by viewModel.authentications.collectAsStateWithLifecycle()
     val snippets by viewModel.snippets.collectAsStateWithLifecycle()
     val selectedSection by viewModel.selectedSection.collectAsStateWithLifecycle()
     val settingsDestination by viewModel.settingsDestination.collectAsStateWithLifecycle()
@@ -705,15 +708,17 @@ fun MangoSshApp(
                             onMoveHostToTop = viewModel::moveHostToTop,
                         )
 
-                        AppSection.KEYS -> KeysScreen(
+                        AppSection.KEYS -> AuthenticationScreen(
                             vaultStatus = vaultStatus,
                             keys = keys,
-                            onGenerate = viewModel::generateKey,
-                            onImport = viewModel::importPrivateKey,
+                            authentications = authentications,
+                            hosts = hosts,
+                            actions = remember(viewModel) { AuthenticationEditorActions(viewModel::beginAuthenticationEdit,
+                                viewModel::discardAuthenticationEdit, viewModel::prepareAuthenticationKey, viewModel::saveAuthentication) },
+                            onRemove = { pendingRemoval = PendingRemovalRequest.Authentication(it) },
                             onExport = viewModel::exportKey,
-                            busy = viewModel.keyOperationBusy.collectAsStateWithLifecycle().value,
-                            onRemove = { pendingRemoval = PendingRemovalRequest.Key(it) },
-                            onEdit = viewModel::editKey,
+                            busy = viewModel.authenticationOperationBusy.collectAsStateWithLifecycle().value ||
+                                viewModel.keyOperationBusy.collectAsStateWithLifecycle().value,
                         )
                         AppSection.FORWARDS -> PortForwardsScreen(
                             hosts = hosts,
@@ -770,6 +775,7 @@ fun MangoSshApp(
                                         network = embeddedTsnetNetwork,
                                         hosts = hosts,
                                         keys = keys,
+                                        authentications = authentications,
                                     ),
                                     update = updateState,
                                     about = AboutSettingsState(
@@ -817,7 +823,7 @@ fun MangoSshApp(
         )
     }
 
-    if (showSshConfigImport) SshConfigImportDialog(keys, hosts,
+    if (showSshConfigImport) SshConfigImportDialog(authentications, hosts,
         onSave = { viewModel.importSshProfiles(it); showSshConfigImport = false },
         onDismiss = { showSshConfigImport = false })
 
@@ -829,6 +835,7 @@ fun MangoSshApp(
             prefill = hostEditorPrefill,
             keys = keys,
             snippets = snippets,
+            authentications = authentications,
             onDismiss = {
                 showHostEditor = false
                 editingHostId = null
@@ -842,11 +849,12 @@ fun MangoSshApp(
         RemovalConfirmationDialog(
             request = request,
             hosts = hosts,
+            authentications = authentications,
             onDismiss = { pendingRemoval = null },
             onConfirm = {
                 when (request) {
                     is PendingRemovalRequest.Host -> viewModel.removeHost(request.id)
-                    is PendingRemovalRequest.Key -> viewModel.removeKey(request.id)
+                    is PendingRemovalRequest.Authentication -> viewModel.removeAuthentication(request.id)
                     is PendingRemovalRequest.PortForward -> viewModel.removePortForward(request.id)
                     is PendingRemovalRequest.Snippet -> viewModel.removeSnippet(request.id)
                 }
@@ -984,18 +992,19 @@ private fun HostSortMenu(sortMode: HostSortMode, onSelect: (HostSortMode) -> Uni
 }
 
 @Composable
-private fun RemovalConfirmationDialog(
+internal fun RemovalConfirmationDialog(
     request: PendingRemovalRequest,
     hosts: List<ConnectionProfile>,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    authentications: List<website.sung.mangossh.data.vault.AuthenticationSummary> = emptyList(),
 ) {
     val (title, message) = when (request) {
         is PendingRemovalRequest.Host -> stringResource(R.string.ui_remove_host) to
             stringResource(R.string.ui_the_host_and_its_port_forwarding_rules_will_be_permanently_removed_this)
 
-        is PendingRemovalRequest.Key -> stringResource(R.string.ui_remove_private_key) to
-            stringResource(R.string.ui_the_private_key_will_be_permanently_removed_and_unlinked_from_its_host_p)
+        is PendingRemovalRequest.Authentication -> stringResource(R.string.authentication_remove) to
+            stringResource(R.string.authentication_remove_message)
 
         is PendingRemovalRequest.PortForward -> stringResource(R.string.ui_remove_port_forward) to
             stringResource(R.string.ui_this_port_forwarding_rule_will_be_permanently_removed_this_cannot_be_und)
@@ -1005,7 +1014,9 @@ private fun RemovalConfirmationDialog(
     }
     val dependencies = hosts.filter { host -> when (request) {
         is PendingRemovalRequest.Host -> request.id in host.jumpProfileIds
-        is PendingRemovalRequest.Key -> host.keyId == request.id || request.id in host.agentPolicy.allowedKeyIds.orEmpty()
+        is PendingRemovalRequest.Authentication -> host.authenticationId == request.id || authentications.firstOrNull { it.id == request.id }?.keyId?.let { key ->
+            authentications.none { it.id != request.id && it.keyId == key } && key in host.agentPolicy.allowedKeyIds.orEmpty()
+        } == true
         else -> false
     } }.joinToString("\n") { it.label }
     if (request is PendingRemovalRequest.Host && dependencies.isNotEmpty()) {
@@ -1039,7 +1050,7 @@ internal fun DestructiveConfirmationDialog(
         modifier = Modifier.testTag("removal-confirmation-dialog"),
         onDismissRequest = onDismiss,
         title = { Text(title) },
-        text = { Text(message) },
+        text = { Text(message, Modifier.verticalScroll(rememberScrollState())) },
         confirmButton = {
             TextButton(
                 modifier = Modifier.testTag("confirm-removal"),
@@ -1124,199 +1135,7 @@ private fun AppLockScreen(
 }
 
 @Composable
-internal fun KeysScreen(
-    vaultStatus: VaultStatus,
-    keys: List<StoredSshKey>,
-    onGenerate: (type: SshKeyGenerationType, label: String, passphrase: String?, rememberPassphrase: Boolean) -> Unit,
-    onImport: (label: String, contents: String, passphrase: String?, rememberPassphrase: Boolean) -> Unit,
-    onRemove: (String) -> Unit,
-    onExport: (String, KeyExportPart, KeyExportTarget) -> Unit,
-    busy: Boolean,
-    onEdit: (String, KeyEditRequest) -> Unit = { _, _ -> },
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var showGenerator by rememberSaveable { mutableStateOf(false) }
-    var editingKeyId by rememberSaveable { mutableStateOf<String?>(null) }
-    var exportingKeyId by rememberSaveable { mutableStateOf<String?>(null) }
-    var importBusy by remember { mutableStateOf(false) }
-    var importFailed by remember { mutableStateOf(false) }
-    var pendingImport by remember { mutableStateOf<String?>(null) }
-    // Only the key id is saved across recreation; key material never enters saved state.
-    var pendingExportId by rememberSaveable { mutableStateOf<String?>(null) }
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        if (busy || importBusy) return@rememberLauncherForActivityResult
-        importBusy = true
-        scope.launch {
-            try {
-                pendingImport = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { stream ->
-                        website.sung.mangossh.session.BoundedProtocolReader.bytes(stream, 1024 * 1024).decodeToString()
-                    }
-                }
-                importFailed = pendingImport == null
-            } catch (_: Exception) { importFailed = true }
-            finally { importBusy = false }
-        }
-    }
-    fun onFilePicked(part: KeyExportPart, uri: android.net.Uri?) {
-        val keyId = pendingExportId
-        pendingExportId = null
-        if (uri != null && keyId != null) onExport(keyId, part, KeyExportTarget.File(uri))
-    }
-    val publicFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) {
-        onFilePicked(KeyExportPart.PUBLIC, it)
-    }
-    val privateFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-pem-file")) {
-        onFilePicked(KeyExportPart.PRIVATE, it)
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        if (vaultStatus !is VaultStatus.Ready) {
-            item { SecurityBanner(vaultStatus) }
-        }
-        item {
-            Text(stringResource(R.string.ui_key_vault), style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                stringResource(R.string.ui_generated_or_imported_private_keys_stay_only_in_the_encrypted_vault_and),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { showGenerator = true }, enabled = !busy && !importBusy && vaultStatus !is VaultStatus.Failed) {
-                    Text(stringResource(R.string.ui_generate_key))
-                }
-                OutlinedButton(
-                    onClick = { importLauncher.launch(arrayOf("application/x-pem-file", "text/plain", "application/octet-stream")) },
-                    enabled = !busy && !importBusy && vaultStatus !is VaultStatus.Failed,
-                ) {
-                    Text(stringResource(R.string.ui_import_private_key))
-                }
-            }
-        }
-        if (busy || importBusy) item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
-        if (importFailed) item { Text(stringResource(R.string.message_key_import_failed)) }
-        if (keys.isEmpty()) {
-            item {
-                Text(
-                    stringResource(R.string.ui_no_keys_yet_generate_one_with_an_algorithm_supported_by_your_server_or_i),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        items(keys, key = { it.id }) { key ->
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp)) {
-                    Text(key.label, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        key.algorithm,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        key.fingerprint,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (key.requiresPassphrase) {
-                        Text(
-                            stringResource(
-                                if (key.savedPassphrase != null) R.string.ui_passphrase_saved_in_vault
-                                else R.string.ui_this_private_key_also_requires_its_passphrase,
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
-                }
-                // Text buttons carry their own padding, so the row sits closer to the card edge.
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    TextButton(
-                        enabled = !busy,
-                        onClick = { onRemove(key.id) },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    ) {
-                        Text(stringResource(R.string.common_remove))
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(enabled = !busy, onClick = { editingKeyId = key.id }) {
-                        Text(stringResource(R.string.common_edit))
-                    }
-                    TextButton(enabled = !busy, onClick = { exportingKeyId = key.id }) {
-                        Text(stringResource(R.string.ui_export))
-                    }
-                }
-            }
-        }
-    }
-
-    if (showGenerator) {
-        GenerateKeyDialog(
-            onDismiss = { showGenerator = false },
-            onConfirm = { type, label, passphrase, rememberPassphrase ->
-                onGenerate(type, label, passphrase.takeIf(String::isNotEmpty), rememberPassphrase)
-                showGenerator = false
-            },
-        )
-    }
-    pendingImport?.let { contents ->
-        ImportKeyDialog(
-            onDismiss = { pendingImport = null },
-            onConfirm = { label, passphrase, rememberPassphrase ->
-                onImport(label, contents, passphrase.takeIf(String::isNotEmpty), rememberPassphrase)
-                pendingImport = null
-            },
-        )
-    }
-    exportingKeyId?.let { id -> keys.firstOrNull { it.id == id } }?.let { key ->
-        ExportKeyDialog(
-            key = key,
-            onDismiss = { exportingKeyId = null },
-            onSelect = { part, destination ->
-                exportingKeyId = null
-                when (destination) {
-                    KeyExportDestination.CLIPBOARD -> onExport(key.id, part, KeyExportTarget.Clipboard)
-                    KeyExportDestination.SHARE -> onExport(key.id, part, KeyExportTarget.Share)
-                    KeyExportDestination.FILE -> {
-                        pendingExportId = key.id
-                        val name = keyFileBaseName(key.label)
-                        if (part == KeyExportPart.PUBLIC) publicFileLauncher.launch("$name.pub")
-                        else privateFileLauncher.launch("$name.pem")
-                    }
-                }
-            },
-        )
-    }
-    // A key removed elsewhere closes its editor instead of editing a stale record.
-    editingKeyId?.let { id -> keys.firstOrNull { it.id == id } }?.let { key ->
-        EditKeyDialog(
-            key = key,
-            onDismiss = { editingKeyId = null },
-            onConfirm = { request ->
-                onEdit(key.id, request)
-                editingKeyId = null
-            },
-        )
-    }
-}
-
-/** A suggested file name: the user's label with characters that file systems reject replaced. */
-private fun keyFileBaseName(label: String): String =
-    label.replace(Regex("""[\\/:*?"<>|\s]"""), "_").ifBlank { "ssh_key" }
-
-@Composable
-private fun GenerateKeyDialog(
+internal fun GenerateKeyDialog(
     onDismiss: () -> Unit,
     onConfirm: (type: SshKeyGenerationType, label: String, passphrase: String, rememberPassphrase: Boolean) -> Unit,
 ) {
@@ -1472,7 +1291,7 @@ private fun defaultGeneratedKeyLabel(algorithm: KeyGenerationAlgorithm, keyLengt
     }
 
 @Composable
-private fun ImportKeyDialog(
+internal fun ImportKeyDialog(
     onDismiss: () -> Unit,
     onConfirm: (label: String, passphrase: String, rememberPassphrase: Boolean) -> Unit,
 ) {
@@ -1907,7 +1726,7 @@ internal fun authenticationAfterRouteSelection(
     route == ConnectionRoute.TAILNET || route == ConnectionRoute.TSNET ->
         AuthenticationMethod.TAILSCALE_SSH
     current == AuthenticationMethod.TAILSCALE_SSH ->
-        AuthenticationMethod.PRIVATE_KEY
+        AuthenticationMethod.AUTOMATIC
     else -> current
 }
 
@@ -1916,6 +1735,7 @@ internal fun SessionPromptDialog(
     prompt: SessionPrompt,
     onRespond: (List<String>?) -> Unit,
 ) {
+    val promptDensity = LocalDensity.current
     when (prompt) {
         is SessionPrompt.HostKeyVerification -> {
             AlertDialog(
@@ -1992,51 +1812,56 @@ internal fun SessionPromptDialog(
                 onDismissRequest = { onRespond(null) },
                 title = { Text(prompt.title.asString()) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        prompt.instruction?.let { instruction ->
-                            SelectionContainer { Text(instruction.asString()) }
-                        }
-                        prompt.fields.forEachIndexed { index, field ->
-                            if (field.toggle) {
-                                val checked = answers[index] == AuthenticationField.TOGGLE_ON
-                                Row(
-                                    Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = checked, role = Role.Checkbox) {
-                                        answers[index] = if (it) AuthenticationField.TOGGLE_ON else ""
-                                    },
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Checkbox(checked = checked, onCheckedChange = null)
-                                    Text(field.label.asString(), Modifier.padding(start = 8.dp))
-                                }
-                                return@forEachIndexed
+                    CompositionLocalProvider(LocalDensity provides promptDensity) {
+                        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            prompt.instruction?.let { instruction ->
+                                SelectionContainer { Text(instruction.asString()) }
                             }
-                            OutlinedTextField(
-                                value = answers[index],
-                                onValueChange = { answers[index] = it },
-                                label = {
-                                    Text(
-                                        field.label.asString().ifBlank {
-                                            stringResource(R.string.ui_enter_value)
+                            prompt.fields.forEachIndexed { index, field ->
+                                if (field.toggle) {
+                                    val checked = answers[index] == AuthenticationField.TOGGLE_ON
+                                    Row(
+                                        Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("authentication_prompt_toggle_$index").toggleable(value = checked, role = Role.Checkbox) {
+                                            answers[index] = if (it) AuthenticationField.TOGGLE_ON else ""
                                         },
-                                    )
-                                },
-                                singleLine = true,
-                                visualTransformation = if (field.echo) {
-                                    VisualTransformation.None
-                                } else {
-                                    PasswordVisualTransformation()
-                                },
-                            )
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Checkbox(checked = checked, onCheckedChange = null)
+                                        Text(field.label.asString(), Modifier.padding(start = 8.dp))
+                                    }
+                                    return@forEachIndexed
+                                }
+                                OutlinedTextField(
+                                    modifier = Modifier.fillMaxWidth().testTag("authentication_prompt_field_$index"),
+                                    keyboardOptions = KeyboardOptions(keyboardType = if (field.echo) KeyboardType.Text else KeyboardType.Password,
+                                        autoCorrectEnabled = false),
+                                    value = answers[index],
+                                    onValueChange = { answers[index] = it },
+                                    label = {
+                                        Text(
+                                            field.label.asString().ifBlank {
+                                                stringResource(R.string.ui_enter_value)
+                                            },
+                                        )
+                                    },
+                                    singleLine = true,
+                                    visualTransformation = if (field.echo) {
+                                        VisualTransformation.None
+                                    } else {
+                                        PasswordVisualTransformation()
+                                    },
+                                )
+                            }
                         }
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { onRespond(answers.toList()) }) {
+                    TextButton(onClick = { onRespond(answers.toList()) }, modifier = Modifier.testTag("authentication_prompt_submit")) {
                         Text(if (prompt.fields.isEmpty()) stringResource(R.string.common_continue) else stringResource(R.string.common_submit))
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { onRespond(null) }) { Text(stringResource(R.string.common_cancel)) }
+                    TextButton(onClick = { onRespond(null) }, modifier = Modifier.testTag("authentication_prompt_cancel")) { Text(stringResource(R.string.common_cancel)) }
                 },
             )
         }
@@ -2102,9 +1927,7 @@ internal fun ConnectionRoute.label(): String = stringResource(
 @Composable
 internal fun AuthenticationMethod.label(): String = stringResource(
     when (this) {
-        AuthenticationMethod.PRIVATE_KEY -> R.string.authentication_private_key
-        AuthenticationMethod.PASSWORD -> R.string.authentication_password
-        AuthenticationMethod.KEYBOARD_INTERACTIVE -> R.string.authentication_interactive
+        AuthenticationMethod.AUTOMATIC -> R.string.authentication_automatic
         AuthenticationMethod.TAILSCALE_SSH -> R.string.authentication_tailscale_ssh
     },
 )
@@ -2121,6 +1944,7 @@ private fun PortForwardType.label(): String = stringResource(
 @Composable
 private fun SessionPromptText.asString(): String = when (this) {
     is SessionPromptText.Verbatim -> value
+    is SessionPromptText.Joined -> parts.map { it.asString() }.joinToString("\n\n")
     is SessionPromptText.App -> when (kind) {
         SessionPromptTextKind.WORKSPACE_UNAVAILABLE -> stringResource(R.string.workspace_unavailable)
         SessionPromptTextKind.WORKSPACE_FALLBACK -> stringResource(R.string.workspace_fallback)
@@ -2132,6 +1956,9 @@ private fun SessionPromptText.asString(): String = when (this) {
             stringResource(R.string.authentication_password_instruction)
         SessionPromptTextKind.PASSWORD_FIELD ->
             stringResource(R.string.authentication_password_field)
+        SessionPromptTextKind.KEY_PASSWORD_FALLBACK_INSTRUCTION -> stringResource(R.string.authentication_key_password_fallback)
+        SessionPromptTextKind.INTERACTIVE_FALLBACK_INSTRUCTION -> stringResource(R.string.authentication_interactive_fallback)
+        SessionPromptTextKind.REMEMBER_PASSWORD -> stringResource(R.string.authentication_remember_password)
         SessionPromptTextKind.UNLOCK_KEY_TITLE ->
             stringResource(R.string.authentication_unlock_key_title, requireNotNull(argument))
         SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION ->

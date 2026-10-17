@@ -6,7 +6,7 @@ import org.junit.Test
 import website.sung.mangossh.domain.*
 
 class HostPolicyCompatibilityTest {
-    private fun host(id: String) = ConnectionProfile(id = id, label = id, hostname = "synthetic.invalid", username = "test", authentication = AuthenticationMethod.PASSWORD)
+    private fun host(id: String) = ConnectionProfile(id = id, label = id, hostname = "synthetic.invalid", username = "test", authentication = AuthenticationMethod.AUTOMATIC)
 
     @Test fun newFieldsRoundTripAndOldFieldsInherit() {
         val jump = host("jump")

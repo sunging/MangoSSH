@@ -44,7 +44,7 @@ class PortForwardLifecycleInstrumentedTest {
         val vault = VaultRepository(context, AndroidKeystoreVault(context, prefix))
         vault.open()
         val profile = ConnectionProfile(id = "synthetic", label = "Loopback fixture", hostname = "127.0.0.1", port = port!!,
-            username = "fixture", authentication = AuthenticationMethod.PASSWORD, protocol = protocol)
+            username = "fixture", authentication = AuthenticationMethod.AUTOMATIC, protocol = protocol)
         assertEquals(VaultMutationResult.Success, vault.upsertProfile(profile))
         val connections = java.util.Collections.synchronizedList(mutableListOf<SshConnection>())
         val controller = SshSessionController(context, vault, embeddedTsnetManager = EmbeddedTsnetManager(context),

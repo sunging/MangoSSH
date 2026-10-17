@@ -340,6 +340,7 @@ private fun ImportDialog(preview: ImportPreview, busy: Boolean, failure: BackupF
                                 val kind = stringResource(when (conflict.kind) {
                                     "profile" -> R.string.backup_kind_profile
                                     "key" -> R.string.backup_kind_key
+                                    "authentication" -> R.string.backup_kind_authentication
                                     "snippet" -> R.string.backup_kind_snippet
                                     "forward" -> R.string.backup_kind_forward
                                     else -> R.string.backup_kind_trust

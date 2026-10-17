@@ -363,6 +363,9 @@ sealed interface SessionPromptText {
     ) : SessionPromptText
 
     data class Verbatim(val value: String) : SessionPromptText
+
+    /** Adds application context while retaining each server-provided part verbatim. */
+    data class Joined(val parts: List<SessionPromptText>) : SessionPromptText
 }
 
 /** Resource-independent identifiers for authentication wording owned by MangoSSH. */
@@ -374,6 +377,9 @@ enum class SessionPromptTextKind {
     PASSWORD_TITLE,
     PASSWORD_INSTRUCTION,
     PASSWORD_FIELD,
+    KEY_PASSWORD_FALLBACK_INSTRUCTION,
+    INTERACTIVE_FALLBACK_INSTRUCTION,
+    REMEMBER_PASSWORD,
     UNLOCK_KEY_TITLE,
     KEY_PASSPHRASE_INSTRUCTION,
     KEY_PASSPHRASE_FIELD,

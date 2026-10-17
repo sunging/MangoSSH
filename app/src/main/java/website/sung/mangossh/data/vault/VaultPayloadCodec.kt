@@ -2,6 +2,7 @@ package website.sung.mangossh.data.vault
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 import website.sung.mangossh.domain.*
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
@@ -14,11 +15,11 @@ internal object VaultPayloadCodec {
     private fun validateTypes(root: JSONObject) {
         val integers = setOf("schemaVersion", "port", "position", "connectionCount", "lastConnectedAtEpochMillis", "createdAtEpochMillis", "trustedAtEpochMillis", "bindPort", "destinationPort", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "authorizationSeconds")
         val booleans = setOf("legacySshAlgorithms", "agentForwarding", "favorite", "requiresPassphrase", "appendNewline", "startOnConnect", "confirmEachSignature", "requireReauthentication")
-        val arrays = setOf("profiles", "keys", "knownHosts", "snippets", "portForwards")
+        val arrays = setOf("profiles", "keys", "authentications", "passwords", "knownHosts", "snippets", "portForwards")
         fun checkObject(value: JSONObject, top: Boolean) {
             value.keys().forEach { name ->
                 val item = value.get(name)
-                val nullable = name in setOf("keyId", "startupSnippetId", "destinationHost", "destinationPort", "webDavConfig", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "terminalType", "allowedKeyIds", "requireReauthentication", "savedPassphrase")
+                val nullable = name in setOf("authenticationId", "keyId", "passwordId", "password", "startupSnippetId", "destinationHost", "destinationPort", "webDavConfig", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "terminalType", "allowedKeyIds", "requireReauthentication", "savedPassphrase")
                 if (item == JSONObject.NULL) {
                     require(nullable)
                 } else when {
@@ -38,7 +39,7 @@ internal object VaultPayloadCodec {
                         if (name in setOf("schemaVersion", "port", "position", "connectionCount", "bindPort", "destinationPort", "connectTimeoutSeconds", "keepaliveSeconds", "backgroundMultiplier", "authorizationSeconds")) require((item as Number).toLong() in Int.MIN_VALUE..Int.MAX_VALUE)
                     }
                     name in booleans -> require(item is Boolean)
-                    name in setOf("id", "label", "hostname", "username", "protocol", "route", "authentication", "keyId", "startupSnippetId", "algorithm", "publicKey", "fingerprint", "privateKeyPem", "keyBlobBase64", "script", "profileId", "type", "bindHost", "destinationHost", "endpoint", "password", "remoteFileName", "savedPassphrase") -> require(item is String)
+                    name in setOf("id", "label", "hostname", "username", "protocol", "route", "authentication", "authenticationId", "keyId", "passwordId", "startupSnippetId", "algorithm", "publicKey", "fingerprint", "privateKeyPem", "keyBlobBase64", "script", "profileId", "type", "bindHost", "destinationHost", "endpoint", "password", "remoteFileName", "savedPassphrase") -> require(item is String)
                 }
             }
         }
@@ -58,7 +59,7 @@ internal object VaultPayloadCodec {
                         put("protocol", profile.protocol.name)
                         put("route", profile.route.name)
                         put("authentication", profile.authentication.name)
-                        put("keyId", profile.keyId ?: JSONObject.NULL)
+                        put("authenticationId", profile.authenticationId ?: JSONObject.NULL)
                         put("startupSnippetId", profile.startupSnippetId ?: JSONObject.NULL)
                         put("agentForwarding", profile.agentForwarding)
                         put("legacySshAlgorithms", profile.legacySshAlgorithms)
@@ -151,6 +152,17 @@ internal object VaultPayloadCodec {
             .put("schemaVersion", snapshot.schemaVersion)
             .put("profiles", profiles)
             .put("keys", keys)
+            .put("authentications", JSONArray().apply {
+                snapshot.authentications.forEach { authentication ->
+                    put(JSONObject().apply {
+                        put("id", authentication.id)
+                        put("label", authentication.label)
+                        put("password", authentication.password ?: JSONObject.NULL)
+                        put("keyId", authentication.keyId ?: JSONObject.NULL)
+                        put("createdAtEpochMillis", authentication.createdAtEpochMillis)
+                    })
+                }
+            })
             .put("knownHosts", knownHosts)
             .put("snippets", snippets)
             .put("portForwards", portForwards)
@@ -178,6 +190,13 @@ internal object VaultPayloadCodec {
             if (schemaVersion < 5) it.assignLegacyDisplayOrder() else it
         }
         val keys = root.optJSONArray("keys")?.toKeys().orEmpty()
+        val authentications = root.optJSONArray("authentications")?.let { values ->
+            List(values.length()) { index ->
+                val value = values.getJSONObject(index)
+                StoredAuthentication(value.getString("id"), value.getString("label"), value.optionalString("password"),
+                    value.optionalString("keyId"), value.optLong("createdAtEpochMillis", 0L))
+            }
+        }.orEmpty()
         val knownHosts = root.optJSONArray("knownHosts")?.toKnownHosts().orEmpty()
         val snippets = root.optJSONArray("snippets")?.toSnippets().orEmpty()
         val portForwards = root.optJSONArray("portForwards")?.toPortForwards().orEmpty()
@@ -186,11 +205,13 @@ internal object VaultPayloadCodec {
             schemaVersion = VaultSnapshot.CURRENT_SCHEMA_VERSION,
             profiles = profiles,
             keys = keys,
+            authentications = authentications,
             knownHosts = knownHosts,
             snippets = snippets,
             portForwards = portForwards,
             webDavConfig = webDavConfig,
-        ).also(BackupValidator::validate)
+        ).let { if (schemaVersion < 8 || !root.has("authentications")) migrateAuthentications(it, root) else it }
+            .also(BackupValidator::validate)
     }
 
     private fun JSONObject.nullableInt(name: String): Int? = if (isNull(name)) null else getInt(name)
@@ -208,11 +229,8 @@ internal object VaultPayloadCodec {
                     username = value.getString("username"),
                     protocol = value.enumOrDefault("protocol", ConnectionProtocol.SSH),
                     route = value.connectionRoute(schemaVersion),
-                    authentication = value.enumOrDefault(
-                        "authentication",
-                        AuthenticationMethod.PRIVATE_KEY,
-                    ),
-                    keyId = value.optionalString("keyId"),
+                    authentication = value.authenticationMethod(schemaVersion),
+                    authenticationId = if (schemaVersion >= 8) value.optionalString("authenticationId") else null,
                     startupSnippetId = value.optionalString("startupSnippetId"),
                     agentForwarding = value.optBoolean("agentForwarding", false),
                     legacySshAlgorithms = value.optBoolean("legacySshAlgorithms", false),
@@ -236,6 +254,46 @@ internal object VaultPayloadCodec {
                 ),
             )
         }
+    }
+
+    /** Schemas 1-7 used exclusive methods; schema 8 offers automatic credentials or Tailscale SSH. */
+    private fun JSONObject.authenticationMethod(schema: Int): AuthenticationMethod {
+        val method = optionalString("authentication") ?: if (schema < 8) "PRIVATE_KEY" else "AUTOMATIC"
+        require(method in setOf("AUTOMATIC", "PRIVATE_KEY", "PASSWORD", "KEYBOARD_INTERACTIVE", "TAILSCALE_SSH"))
+        return if (method == "TAILSCALE_SSH") AuthenticationMethod.TAILSCALE_SSH else AuthenticationMethod.AUTOMATIC
+    }
+
+    /**
+     * Stable IDs depend only on credential references, never on secret bytes. Combining both
+     * legacy references preserves inactive credentials, while unused keys remain manageable.
+     * The structural fallback also preserves locally written, unpublished schema-8 drafts.
+     */
+    private fun migrateAuthentications(snapshot: VaultSnapshot, root: JSONObject): VaultSnapshot {
+        val result = linkedMapOf<Pair<String?, String?>, StoredAuthentication>()
+        val legacyPasswords = root.optJSONArray("passwords")
+        val passwords = legacyPasswords?.let { values -> List(values.length()) { values.getJSONObject(it) } }.orEmpty()
+        require(passwords.map { it.getString("id") }.distinct().size == passwords.size)
+        fun entry(keyId: String?, passwordId: String?): StoredAuthentication? {
+            if (keyId == null && passwordId == null) return null
+            return result.getOrPut(keyId to passwordId) {
+                val key = keyId?.let { id -> requireNotNull(snapshot.keys.firstOrNull { it.id == id }) }
+                val password = passwordId?.let { id -> requireNotNull(passwords.firstOrNull { it.getString("id") == id }) }
+                val stable = "mangossh-auth:${keyId?.length ?: -1}:$keyId:${passwordId?.length ?: -1}:$passwordId"
+                StoredAuthentication(UUID.nameUUIDFromBytes(stable.encodeToByteArray()).toString(),
+                    key?.label ?: requireNotNull(password).getString("label"), password?.getString("password"), keyId,
+                    key?.createdAtEpochMillis ?: password?.optLong("createdAtEpochMillis", 0L) ?: 0L)
+            }
+        }
+        val oldProfiles = root.optJSONArray("profiles")?.let { values ->
+            List(values.length()) { values.getJSONObject(it) }.associateBy { it.getString("id") }
+        }.orEmpty()
+        val profiles = snapshot.profiles.map { profile ->
+            val old = oldProfiles.getValue(profile.id)
+            profile.copy(authenticationId = entry(old.optionalString("keyId"), old.optionalString("passwordId"))?.id)
+        }
+        snapshot.keys.filter { key -> result.keys.none { it.first == key.id } }.forEach { entry(it.id, null) }
+        passwords.filter { password -> result.keys.none { it.second == password.getString("id") } }.forEach { entry(null, it.getString("id")) }
+        return snapshot.copy(profiles = profiles, authentications = result.values.toList())
     }
 
     /**

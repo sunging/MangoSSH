@@ -24,10 +24,10 @@ class SshAuthenticationKeyPassphraseTest {
 
     private fun unlock(key: StoredSshKey, run: Run) = runBlocking {
         val profile = ConnectionProfileDraft(label = "host", hostname = "host", port = 22, username = "user",
-            protocol = ConnectionProtocol.SSH, route = ConnectionRoute.DIRECT, keyId = key.id).toProfile()
+            protocol = ConnectionProtocol.SSH, route = ConnectionRoute.DIRECT, authenticationId = "auth").toProfile()
         SshAuthentication(manager, { _, _, _, fields -> run.prompts += fields; run.answers }) { stored, passphrase ->
             run.saved += stored.id to passphrase
-        }.credentials("session", profile, VaultSnapshot(keys = listOf(key))).key()
+        }.credentials("session", profile, VaultSnapshot(keys = listOf(key), authentications = listOf(website.sung.mangossh.data.vault.StoredAuthentication("auth", "Example", keyId = key.id)))).key()
     }
 
     @Test fun tickingRememberSavesThePassphraseThatUnlockedTheKey() {

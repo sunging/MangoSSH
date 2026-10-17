@@ -26,8 +26,7 @@ import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.data.keys.KeyEditRequest
 import website.sung.mangossh.data.keys.KeyPassphraseChange
-import website.sung.mangossh.data.keys.canChangePassphrase
-import website.sung.mangossh.data.vault.StoredSshKey
+import website.sung.mangossh.data.vault.SshKeySummary
 
 /** Which half of a stored key pair an export carries. */
 enum class KeyExportPart { PUBLIC, PRIVATE }
@@ -53,7 +52,7 @@ internal enum class KeyExportDestination { CLIPBOARD, FILE, SHARE }
  */
 @Composable
 internal fun ExportKeyDialog(
-    key: StoredSshKey,
+    key: SshKeySummary,
     onDismiss: () -> Unit,
     onSelect: (KeyExportPart, KeyExportDestination) -> Unit,
 ) {
@@ -180,16 +179,16 @@ private enum class EncryptedKeyAction { KEEP, CHANGE, REMOVE }
  */
 @Composable
 internal fun EditKeyDialog(
-    key: StoredSshKey,
+    key: SshKeySummary,
     onDismiss: () -> Unit,
     onConfirm: (KeyEditRequest) -> Unit,
 ) {
-    val canChange = remember(key.privateKeyPem, key.algorithm) { key.canChangePassphrase() }
+    val canChange = key.canChangePassphrase
     val encrypted = key.requiresPassphrase
     var label by rememberSaveable(key.id) { mutableStateOf(key.label) }
     var action by rememberSaveable(key.id) { mutableStateOf(EncryptedKeyAction.KEEP) }
     var protect by rememberSaveable(key.id) { mutableStateOf(false) }
-    var rememberPassphrase by rememberSaveable(key.id) { mutableStateOf(key.savedPassphrase != null) }
+    var rememberPassphrase by rememberSaveable(key.id) { mutableStateOf(key.hasSavedPassphrase) }
     var current by remember(key.id) { mutableStateOf("") }
     var newPassphrase by remember(key.id) { mutableStateOf("") }
     var confirmation by remember(key.id) { mutableStateOf("") }
@@ -197,7 +196,7 @@ internal fun EditKeyDialog(
     val encryptedAfter = if (encrypted) action != EncryptedKeyAction.REMOVE else protect
     val needsNew = canChange && if (encrypted) action == EncryptedKeyAction.CHANGE else protect
     // Decryption is needed to re-encode, or to prove a passphrase before remembering it.
-    val needsCurrent = canChange && encrypted && key.savedPassphrase == null &&
+    val needsCurrent = canChange && encrypted && !key.hasSavedPassphrase &&
         (action != EncryptedKeyAction.KEEP || rememberPassphrase)
     val valid = (!needsNew || (newPassphrase.isNotEmpty() && newPassphrase == confirmation)) &&
         (!needsCurrent || current.isNotEmpty())
@@ -280,7 +279,7 @@ internal fun EditKeyDialog(
                             label = label.trim(),
                             currentPassphrase = current.takeIf { needsCurrent && it.isNotEmpty() },
                             passphrase = change,
-                            rememberPassphrase = if (canChange) rememberPassphrase && encryptedAfter else key.savedPassphrase != null,
+                            rememberPassphrase = if (canChange) rememberPassphrase && encryptedAfter else key.hasSavedPassphrase,
                         ),
                     )
                 },

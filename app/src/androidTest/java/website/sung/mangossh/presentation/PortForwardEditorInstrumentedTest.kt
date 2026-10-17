@@ -17,7 +17,7 @@ class PortForwardEditorInstrumentedTest {
     @get:Rule val compose = createComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val example = ConnectionProfile(id = "synthetic", label = "Example",
-        hostname = "synthetic.invalid", username = "test", authentication = AuthenticationMethod.PASSWORD)
+        hostname = "synthetic.invalid", username = "test", authentication = AuthenticationMethod.AUTOMATIC)
     private fun show(initial: PortForwardRule? = null, hosts: List<ConnectionProfile> = listOf(example),
         onSave: (PortForwardRule, EditorSaveOperation) -> Unit = { _, _ -> }) {
         compose.setContent { MaterialTheme {

@@ -146,6 +146,9 @@ class MangoSshViewModel @JvmOverloads constructor(
     private val runtime = (application as MangoSshApplication).sessionRuntime
     private val vault = runtime.vault
     private val keyManager = runtime.keyManager
+    private val authenticationEditors = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val authenticationKeyPreparations = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val stagedAuthenticationKeys = java.util.concurrent.ConcurrentHashMap<String, website.sung.mangossh.data.vault.StagedKeyChange>()
     private val sessionController = runtime.sessionController
     private val embeddedTsnetManager = runtime.embeddedTsnetManager
     private val terminalAppearanceStore = runtime.terminalAppearance
@@ -195,7 +198,12 @@ class MangoSshViewModel @JvmOverloads constructor(
     val vaultStatus = vault.status
 
     val keys = vault.snapshot
-        .map { it.keys.sortedBy { key -> key.label.lowercase() } }
+        .map { it.keys.map { key -> key.summary() }.sortedBy { key -> key.label.lowercase() } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Credential UI receives metadata only; plaintext remains inside the vault/session boundary. */
+    val authentications = vault.snapshot
+        .map { snapshot -> snapshot.authentications.map { it.summary() }.sortedBy { it.label.lowercase() } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val snippets = vault.snapshot
@@ -585,7 +593,15 @@ class MangoSshViewModel @JvmOverloads constructor(
     val sessionNavigationRequest = _sessionNavigationRequest.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            runtime.accessState.locked.collect { locked ->
+                if (locked) { authenticationEditors.clear(); authenticationKeyPreparations.clear(); stagedAuthenticationKeys.clear() }
+            }
+        }
         viewModelScope.launch { vault.open() }
+        viewModelScope.launch {
+            sessionController.passwordSaveFailures.collect { _userMessage.value = uiText(R.string.authentication_password_save_failed) }
+        }
         viewModelScope.launch {
             var handled: String? = null
             sessionController.forwardAuthorization.collect { requests ->
@@ -1453,98 +1469,104 @@ class MangoSshViewModel @JvmOverloads constructor(
         context.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
     }
 
-    /** Generates the selected key type away from the main dispatcher and saves it encrypted. */
-    fun generateKey(type: SshKeyGenerationType, label: String, passphrase: String?, rememberPassphrase: Boolean) {
-        if (_keyOperationBusy.value || !authorizeSensitive { generateKey(type, label, passphrase, rememberPassphrase) }) return
-        _keyOperationBusy.value = true
-        viewModelScope.launch {
-          try {
-            runCatching {
-                withContext(cryptoDispatcher) {
-                    keyManager.generateKey(type, label, passphrase, rememberPassphrase)
-                }
-            }
-                .onSuccess {
-                    _userMessage.value = if (vault.upsertKey(it).isSuccess) {
-                        uiText(R.string.message_key_generated, it.label)
-                    } else {
-                        uiText(R.string.message_vault_save_failed)
-                    }
-                }
-                .onFailure {
-                    MangoLog.warn(MangoLogEvent.KEY_GENERATION_FAILED, it)
-                    _userMessage.value = uiText(R.string.message_key_generation_failed)
-                }
-          } finally { _keyOperationBusy.value = false }
-        }
+    private val _authenticationOperationBusy = MutableStateFlow(false)
+    /** Serializes encrypted credential writes; generated keys remain staged until a successful save. */
+    val authenticationOperationBusy = _authenticationOperationBusy.asStateFlow()
+
+    /** Registers the lifetime of an editor without retaining any secret in saved instance state. */
+    fun beginAuthenticationEdit(token: String) { authenticationEditors.add(token) }
+
+    /** Releases staged key material and makes late crypto/authorization results ineligible to save. */
+    fun discardAuthenticationEdit(token: String) {
+        authenticationEditors.remove(token)
+        authenticationKeyPreparations.remove(token)
+        stagedAuthenticationKeys.remove(token)
     }
 
-    fun importPrivateKey(label: String, contents: String, passphrase: String?, rememberPassphrase: Boolean) {
-        if (_keyOperationBusy.value || !authorizeSensitive { importPrivateKey(label, contents, passphrase, rememberPassphrase) }) return
-        _keyOperationBusy.value = true
-        viewModelScope.launch {
-          try {
-            runCatching { withContext(cryptoDispatcher) { keyManager.importPrivateKey(label, contents, passphrase, rememberPassphrase) } }
-                .onSuccess {
-                    _userMessage.value = if (vault.upsertKey(it).isSuccess) {
-                        uiText(R.string.message_key_imported, it.label)
-                    } else {
-                        uiText(R.string.message_vault_save_failed)
+    /** Generates, imports or re-encodes a key off the main dispatcher, returning metadata only. */
+    internal fun prepareAuthenticationKey(token: String, request: AuthenticationKeyRequest, done: (website.sung.mangossh.data.vault.SshKeySummary?, UiText?) -> Unit) {
+        if (token !in authenticationEditors || !authenticationKeyPreparations.add(token)) return
+        fun prepare() {
+            val generation = runtime.accessState.generation
+            fun allowed() = token in authenticationEditors && !runtime.accessState.locked.value && generation == runtime.accessState.generation
+            viewModelScope.launch {
+                try {
+                    val previous = stagedAuthenticationKeys[token]
+                    val source = (request as? AuthenticationKeyRequest.Edit)?.let { edit ->
+                        previous?.key?.takeIf { it.id == edit.id } ?: vault.snapshot.value.keys.firstOrNull { it.id == edit.id }
                     }
-                }
-                .onFailure { error ->
-                    _userMessage.value = uiText(
-                        if (error is website.sung.mangossh.data.keys.UnsupportedDsaKeyException) {
-                            R.string.ssh_dsa_unsupported
-                        } else if (error is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException) {
-                            R.string.ssh_key_encryption_unsupported
-                        } else if (error is KeyPassphraseRequiredException) {
-                            R.string.message_key_passphrase_required
-                        } else {
-                            R.string.message_key_import_failed
-                        },
-                    )
-                }
-          } finally { _keyOperationBusy.value = false }
-        }
-    }
-
-    /**
-     * Renames a key and changes its passphrase after the configured access check. Decryption and
-     * re-encoding run on the crypto dispatcher; the result replaces the key in place in the vault.
-     */
-    fun editKey(id: String, request: KeyEditRequest) {
-        if (_keyOperationBusy.value || !authorizeSensitive { editKey(id, request) }) return
-        val key = vault.snapshot.value.keys.firstOrNull { it.id == id } ?: return
-        val authorizationGeneration = runtime.accessState.generation
-        _keyOperationBusy.value = true
-        viewModelScope.launch {
-            try {
-                val edited = withContext(cryptoDispatcher) {
-                    check(!runtime.accessState.locked.value && authorizationGeneration == runtime.accessState.generation)
-                    keyManager.editKey(key, request)
-                }
-                val result = vault.replaceKey(edited)
-                _userMessage.value = mutationError(result) ?: uiText(R.string.message_key_updated, edited.label)
-            } catch (cancelled: CancellationException) { throw cancelled
-            } catch (error: Exception) {
-                MangoLog.warn(MangoLogEvent.KEY_EDIT_FAILED, error)
-                _userMessage.value = uiText(
-                    when (error) {
+                    val key = withContext(cryptoDispatcher) {
+                        check(allowed())
+                        when (request) {
+                            is AuthenticationKeyRequest.Generate -> keyManager.generateKey(request.type, request.label, request.passphrase, request.remember)
+                            is AuthenticationKeyRequest.Import -> keyManager.importPrivateKey(request.label, request.contents, request.passphrase, request.remember)
+                            is AuthenticationKeyRequest.Edit -> keyManager.editKey(requireNotNull(source), request.request)
+                        }
+                    }
+                    if (!allowed()) {
+                        if (token in authenticationEditors) done(null, uiText(R.string.vault_invalid))
+                        return@launch
+                    }
+                    val original = if (request is AuthenticationKeyRequest.Edit) {
+                        if (previous?.key?.id == request.id) previous.original else source
+                    } else null
+                    stagedAuthenticationKeys[token] = website.sung.mangossh.data.vault.StagedKeyChange(key, original)
+                    done(key.summary(), null)
+                } catch (cancelled: CancellationException) { throw cancelled
+                } catch (error: Exception) {
+                    if (token in authenticationEditors) done(null, uiText(when (error) {
                         is IncorrectKeyPassphraseException -> R.string.message_key_passphrase_incorrect
                         is KeyPassphraseRequiredException -> R.string.message_key_passphrase_required
                         is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> R.string.ssh_dsa_unsupported
                         is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException -> R.string.ssh_key_encryption_unsupported
                         else -> R.string.message_key_update_failed
-                    },
-                )
-            } finally { _keyOperationBusy.value = false }
+                    }))
+                } finally { authenticationKeyPreparations.remove(token) }
+            }
         }
+        if (authorizeSensitive(onCancelled = {
+            authenticationKeyPreparations.remove(token)
+            if (token in authenticationEditors) done(null, uiText(R.string.vault_invalid))
+        }) { prepare() }) prepare()
     }
 
-    fun removeKey(id: String) {
-        if (!authorizeSensitive { removeKey(id) }) return
-        viewModelScope.launch { _userMessage.value = mutationError(vault.removeKey(id)) }
+    /** Commits a credential and its staged key in one authorized vault mutation. */
+    internal fun saveAuthentication(request: AuthenticationEditRequest, operation: EditorSaveOperation) {
+        if (_authenticationOperationBusy.value || !operation.begin()) return
+        fun persist() {
+            if (!operation.pending) return
+            if (request.label.isBlank() || request.token !in authenticationEditors) {
+                operation.finish(uiText(R.string.vault_invalid)); return
+            }
+            val generation = runtime.accessState.generation
+            fun allowed() = operation.pending && request.token in authenticationEditors && !runtime.accessState.locked.value && generation == runtime.accessState.generation
+            val staged = stagedAuthenticationKeys[request.token]?.takeIf { it.key.id == request.keyId }
+            _authenticationOperationBusy.value = true
+            viewModelScope.launch {
+                try {
+                    val result = if (request.id == null) vault.addAuthentication(website.sung.mangossh.data.vault.StoredAuthentication(
+                        UUID.randomUUID().toString(), request.label.trim(), request.password, request.keyId), staged, ::allowed)
+                    else vault.editAuthentication(request.id, request.label.trim(), request.password, request.clearPassword, request.keyId, staged, ::allowed)
+                    if (result.isSuccess) stagedAuthenticationKeys.remove(request.token)
+                    operation.finish(mutationError(result))
+                } finally { _authenticationOperationBusy.value = false }
+            }
+        }
+        if (authorizeSensitive(onCancelled = operation::cancel) { persist() }) persist()
+    }
+
+    /** Deletes the reviewed credential and all host/agent references under the access guard. */
+    fun removeAuthentication(id: String) {
+        if (_authenticationOperationBusy.value || !authorizeSensitive { removeAuthentication(id) }) return
+        val generation = runtime.accessState.generation
+        _authenticationOperationBusy.value = true
+        viewModelScope.launch {
+            try {
+                _userMessage.value = mutationError(vault.removeAuthentication(id) {
+                    !runtime.accessState.locked.value && generation == runtime.accessState.generation
+                })
+            } finally { _authenticationOperationBusy.value = false }
+        }
     }
 
     fun dismissUserMessage() {

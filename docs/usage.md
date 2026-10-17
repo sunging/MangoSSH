@@ -2,6 +2,43 @@
 
 Details of behavior that the [README](../README.md) only summarizes.
 
+## Authentication
+
+The **Authentication** page manages named, reusable entries. Each entry can contain
+an optional password and an optional private key, including both or neither. Choose
+one entry in the host editor or Embedded Tailscale quick connect; the default is
+**Ask at connection**. Tailscale SSH remains a separate identity-based mode.
+
+Credentials stay in the encrypted vault and are included in encrypted backups,
+WebDAV sync and recovery points. Leaving the password edit field empty retains its
+current value; use **Remove saved password** to clear it. Private-key generation,
+import and passphrase changes are staged until the authentication editor is saved.
+Cancelling the editor discards those changes. Renaming keeps references; editing a
+shared entry affects its users. Removal lists affected hosts before unlinking them.
+A private key used by another authentication is retained; otherwise it and its
+agent allowlist references are removed. Key export remains available for public
+and private halves, subject to the normal access checks.
+
+On one SSH transport, MangoSSH tries the configured private key first, then ordinary
+`password`, then `keyboard-interactive`, using the server's latest method offers.
+Rejected keys fall back to the entry's saved password, or a cancellable password
+prompt if none is saved. A rejected password proceeds directly to interactive
+prompts without another ordinary password attempt. Interactive answers and OTPs
+are always entered manually and are never filled from a saved password or saved.
+Local key loading, decryption or signing errors, protocol errors, and cancelled
+prompts end the entire attempt. Terminal SSH, Mosh bootstrap, jump hosts, files
+and forwarding use this same process.
+
+Ordinary password prompts offer **Save password in the vault**, unchecked by
+default. Only acceptance of that ordinary password creates a new authentication
+named after the host, preserving the original private-key reference and linking
+only to the current saved host. A later interactive success never saves a rejected
+password. Existing shared entries are never overwritten by a connection prompt.
+Quick connect adds an entry without creating a host. Saving checks that the host,
+original authentication and private key have not been changed or deleted during
+the attempt. If saving fails, a notice is shown and the successful connection
+continues.
+
 ## Port forwarding
 
 Local, remote, and SOCKS5 rules live on the **Forwarding** page. Starting a rule

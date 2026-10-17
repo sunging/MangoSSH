@@ -130,11 +130,35 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
     suspend fun removeKey(id: String) = mutate { snapshot ->
         snapshot.copy(
             keys = snapshot.keys.filterNot { it.id == id },
+            authentications = snapshot.authentications.map { if (it.keyId == id) it.copy(keyId = null) else it },
             profiles = snapshot.profiles.map { profile ->
-                profile.copy(keyId = profile.keyId.takeUnless { it == id },
-                    agentPolicy = profile.agentPolicy.copy(allowedKeyIds = profile.agentPolicy.allowedKeyIds?.filterNot { it == id }))
+                profile.copy(agentPolicy = profile.agentPolicy.copy(allowedKeyIds = profile.agentPolicy.allowedKeyIds?.filterNot { it == id }))
             },
         )
+    }
+
+    /** Adds a credential and an optional staged key in one write, rejecting ID collisions. */
+    internal suspend fun addAuthentication(authentication: StoredAuthentication, stagedKey: StagedKeyChange? = null,
+        allowed: () -> Boolean = { true }) = mutate { snapshot ->
+        if (!allowed() || snapshot.authentications.any { it.id == authentication.id }) null
+        else snapshot.withStagedKey(authentication.keyId, stagedKey)?.copy(authentications = snapshot.authentications + authentication)
+    }
+
+    /** Edits the current record under the write lock; a deleted record can never be resurrected. */
+    internal suspend fun editAuthentication(id: String, label: String, replacement: String?, clearPassword: Boolean, keyId: String?,
+        stagedKey: StagedKeyChange? = null, allowed: () -> Boolean = { true }) = mutate { snapshot ->
+        if (!allowed()) null else snapshot.withEditedAuthentication(id, label, replacement, clearPassword, keyId, stagedKey)
+    }
+
+    /** Removes the secret and every host reference in a single persistent mutation. */
+    suspend fun removeAuthentication(id: String, allowed: () -> Boolean = { true }) = mutate { snapshot ->
+        if (!allowed()) null else snapshot.withRemovedAuthentication(id)
+    }
+
+    /** Saves a proven credential copy only while both original host and authentication still match. */
+    suspend fun rememberAuthentication(profile: ConnectionProfile, expectedHost: ConnectionProfile?, expected: StoredAuthentication?,
+        authentication: StoredAuthentication, expectedKey: StoredSshKey? = null, allowed: () -> Boolean = { true }) = mutate { snapshot ->
+        if (!allowed()) null else snapshot.withRememberedAuthentication(profile, expectedHost, expected, authentication, expectedKey)
     }
 
     suspend fun trustHostKey(hostKey: TrustedHostKey) = mutate { snapshot ->

@@ -204,17 +204,14 @@
     <string name="app_language_system">跟随系统</string>
     <string name="github_page_unavailable">无法打开 GitHub 页面。</string>
     <string name="nav_hosts">主机</string>
-    <string name="nav_keys">密钥</string>
+    <string name="nav_keys">认证</string>
     <string name="nav_forwards">转发</string>
     <string name="nav_settings">设置</string>
     <string name="connection_route_direct">直接连接</string>
     <string name="connection_route_system_tailscale">系统 Tailscale</string>
     <string name="connection_route_embedded_tailscale">内嵌 Tailscale</string>
-    <string name="authentication_private_key">私钥</string>
-    <string name="authentication_password">密码</string>
-    <string name="authentication_interactive">交互式 / OTP</string>
     <string name="authentication_password_title">%1$s 的密码</string>
-    <string name="authentication_password_instruction">密码仅用于本次连接，不会保存。</string>
+    <string name="authentication_password_instruction">请输入 SSH 密码。仅在你选择保存且认证成功后保存密码。</string>
     <string name="authentication_password_field">密码</string>
     <string name="authentication_unlock_key_title">解锁 %1$s</string>
     <string name="authentication_key_passphrase_instruction">私钥口令仅用于本次连接。</string>
@@ -345,9 +342,7 @@
     <string name="ui_files">文件</string>
     <string name="ui_generate">生成</string>
     <string name="ui_generate_key">生成密钥</string>
-    <string name="ui_generate_or_import_a_private_key_on_the_keys_page_first">请先在“密钥”页生成或导入一把私钥。</string>
     <string name="ui_generate_ssh_key">生成 SSH 密钥</string>
-    <string name="ui_generated_or_imported_private_keys_stay_only_in_the_encrypted_vault_and">生成或导入的私钥仅保存在加密保险库内，可复用到多个主机。</string>
     <string name="ui_home_directory">主目录</string>
     <string name="ui_host">所属主机</string>
     <string name="port_forward_select_host">选择主机</string>
@@ -360,7 +355,6 @@
     <string name="ui_key_algorithm">密钥算法</string>
     <string name="ui_key_length">密钥长度</string>
     <string name="ui_key_name">密钥名称</string>
-    <string name="ui_key_vault">密钥保险库</string>
     <string name="ui_local_bind_address">本地绑定地址</string>
     <string name="ui_local_configuration_is_encrypted_with_android_keystore_and_aes_gcm_serve">本地配置已使用 Android Keystore 和 AES-GCM 加密保存；首次连接仍会验证主机指纹。</string>
     <string name="ui_local_listen_port">本地监听端口</string>
@@ -379,7 +373,6 @@
     <string name="ui_new_snippet">新建代码片段</string>
     <string name="ui_new_snippet_2">新建片段</string>
     <string name="ui_no_app_pin_is_set_once_enabled_returning_to_the_foreground_requires_pin">尚未设置应用 PIN。启用后，应用回到前台需要 PIN 或生物识别解锁。</string>
-    <string name="ui_no_keys_yet_generate_one_with_an_algorithm_supported_by_your_server_or_i">还没有密钥。请选择适合服务器的算法生成密钥，或导入 OpenSSH/PEM 私钥。</string>
     <string name="ui_no_hosts_match_search">没有匹配的主机</string>
     <string name="ui_no_hosts_match_search_hint">换个名称、主机名或用户名试试。</string>
     <string name="ui_no_port_forwarding_rules_yet_a_rule_can_start_automatically_after_connec">还没有端口转发规则。可以设置连接后自动启动。</string>
@@ -411,7 +404,6 @@
     <string name="ui_remove_host">移除主机？</string>
     <string name="ui_remove_permanently">永久移除</string>
     <string name="ui_remove_port_forward">移除端口转发？</string>
-    <string name="ui_remove_private_key">移除私钥？</string>
     <string name="ui_remove_snippet">移除代码片段？</string>
     <string name="ui_replace_and_trust">替换并信任</string>
     <string name="ui_run_after_connection">连接后自动执行</string>
@@ -430,7 +422,7 @@
     <string name="ui_server_resources">服务器资源</string>
     <string name="ui_set_app_pin">设置应用 PIN</string>
     <string name="ui_set_pin">设置 PIN</string>
-    <string name="ui_shared_keys_and_agent">共享密钥与代理</string>
+    <string name="ui_shared_keys_and_agent">共享密钥与密码</string>
     <string name="ui_shared_private_key">共享私钥</string>
     <string name="ui_shell_command_or_script">Shell 命令或脚本</string>
     <string name="ui_sort_hosts">主机排序</string>
@@ -445,7 +437,6 @@
     <string name="ui_tailnet_routing_reaches_the_target_through_the_device_s_enabled_tailscal">Tailnet 路由通过设备已启用的 Tailscale VPN 访问目标；认证方式会设为 Tailscale SSH。</string>
     <string name="ui_the_host_and_its_port_forwarding_rules_will_be_permanently_removed_this">主机及其关联的端口转发规则将被永久移除。此操作无法撤销。</string>
     <string name="ui_the_pin_is_stored_only_on_this_device_as_a_salted_verifier_and_cannot_be">PIN 只在本机保存为加盐验证值，不能恢复。</string>
-    <string name="ui_the_private_key_will_be_permanently_removed_and_unlinked_from_its_host_p">私钥将被永久移除，使用它的主机配置会解除密钥绑定。此操作无法撤销。</string>
     <string name="ui_the_saved_server_key_differs_from_this_connection_continue_only_after_co">保存的服务器密钥与本次连接不一致。仅在确认服务器确实重装或更换密钥后才继续。</string>
     <string name="ui_this_directory_is_empty">此目录为空。</string>
     <string name="ui_this_file_is_not_text_and_cannot_be_previewed_you_can_download_it_instea">此文件不是文本，无法预览。可以直接下载。</string>
@@ -699,14 +690,14 @@
     <string name="reauthentication_title">验证敏感操作</string>
     <string name="reauthentication_every_action">逐次验证</string>
     <string name="reauthentication_five_minutes">5 分钟有效窗口</string>
-    <string name="reauthentication_scope">保护新连接、密钥管理、备份导出和权限变更。默认关闭，锁定后授权立即失效。</string>
+    <string name="reauthentication_scope">保护新建连接、认证管理、备份导出和权限修改。默认关闭；锁定后清除授权。</string>
     <string name="ssh_config_import">导入 SSH 配置</string>
     <string name="ssh_config_import_short">导入</string>
     <string name="ssh_config_no_commands">预览声明式 SSH 设置；不执行 Include、Match 或 ProxyCommand。</string>
     <string name="ssh_config_pick">选择配置文件</string>
     <string name="ssh_config_contents">SSH 配置内容</string>
     <string name="ssh_config_preview">预览导入</string>
-    <string name="ssh_config_map_key">将此身份映射到已有密钥。若需添加密钥，请取消后先到密钥页面导入。</string>
+    <string name="ssh_config_map_key">请将此身份映射到包含私钥的认证。如需新增，请先取消并前往“认证”页面。</string>
     <string name="ssh_config_jump">映射跳板：%1$s</string>
     <string name="ssh_config_unsupported">不支持或不兼容的配置项</string>
     <string name="ssh_config_accept_unsupported">我接受忽略以上配置项</string>
@@ -782,7 +773,6 @@
     <plurals name="host_editor_override_count">
         <item quantity="other">已自定义 %1$d 项</item>
     </plurals>
-    <string name="host_editor_select_key">请选择登录密钥</string>
     <string name="host_editor_this_connection">当前连接</string>
     <plurals name="host_editor_key_count">
         <item quantity="other">已授权 %1$d 个密钥</item>
@@ -904,4 +894,31 @@
     <string name="fm_move_failed">重命名失败，可能涉及跨文件系统。请检查源和目标位置；若源项目仍存在，请先复制并核对结果，再单独删除。</string>
     <string name="fm_case_only">Windows 上仅修改大小写时，请先重命名为其他名称。</string>
     <string name="fm_invalid_destination">目标必须与源项目不同，且不能位于源文件夹内部。</string>
+    <string name="authentication_vault_title">认证</string>
+    <string name="authentication_password_keep_empty">留空表示保留当前密码。替换密码会影响使用此条目的所有主机。</string>
+    <string name="authentication_ask_at_connection">连接时输入</string>
+    <string name="authentication_remember_password">将密码保存在保险库中</string>
+    <string name="authentication_key_password_fallback">密钥认证未成功。请输入密码继续，或取消本次连接。</string>
+    <string name="authentication_password_save_failed">SSH 认证已成功，但未能保存密码。</string>
+    <plurals name="authentication_password_host_count">
+        <item quantity="other">被 %1$d 台主机使用</item>
+    </plurals>
+    <string name="authentication_summary">每个认证可配置密码、私钥、两者或都不配置。连接时依次尝试私钥、密码和手动交互式认证。</string>
+    <string name="authentication_add">新增认证</string>
+    <string name="authentication_edit">编辑认证</string>
+    <string name="authentication_name">认证名称</string>
+    <string name="authentication_empty">尚未添加认证。</string>
+    <string name="authentication_password_optional">可选。留空则在连接时输入密码。</string>
+    <string name="authentication_clear_password">清除已保存的密码</string>
+    <string name="authentication_no_key">不配置私钥</string>
+    <string name="authentication_key_staged">私钥修改将在保存此认证时一并写入。</string>
+    <string name="authentication_has_both">已配置私钥和密码</string>
+    <string name="authentication_has_key">已配置私钥</string>
+    <string name="authentication_has_password">已配置密码</string>
+    <string name="authentication_has_neither">连接时输入认证信息</string>
+    <string name="authentication_remove">删除认证？</string>
+    <string name="authentication_remove_message">此认证将被删除并解除主机引用。如果其他认证仍使用其私钥，则保留私钥；否则同时删除私钥及其 agent 引用。</string>
+    <string name="authentication_automatic">SSH 认证</string>
+    <string name="authentication_interactive_fallback">之前的认证方式被拒绝或不可用，请手动完成服务器的交互式认证。</string>
+    <string name="backup_kind_authentication">认证</string>
 </resources>

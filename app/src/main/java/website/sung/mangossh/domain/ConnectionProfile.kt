@@ -18,13 +18,11 @@ enum class ConnectionRoute {
 
 /** Credential exchange offered to the SSH server during connection setup. */
 enum class AuthenticationMethod {
-    PRIVATE_KEY,
-    PASSWORD,
-    KEYBOARD_INTERACTIVE,
+    AUTOMATIC,
     TAILSCALE_SSH,
 }
 
-/** Persisted non-secret connection settings; referenced keys live separately in the encrypted vault. */
+/** Persisted connection settings; reusable credentials live separately in the encrypted vault. */
 @Immutable
 data class ConnectionProfile(
     val id: String = UUID.randomUUID().toString(),
@@ -34,8 +32,8 @@ data class ConnectionProfile(
     val username: String,
     val protocol: ConnectionProtocol = ConnectionProtocol.SSH,
     val route: ConnectionRoute = ConnectionRoute.DIRECT,
-    val authentication: AuthenticationMethod = AuthenticationMethod.PRIVATE_KEY,
-    val keyId: String? = null,
+    val authentication: AuthenticationMethod = AuthenticationMethod.AUTOMATIC,
+    val authenticationId: String? = null,
     val startupSnippetId: String? = null,
     val agentForwarding: Boolean = false,
     val overrides: HostConnectionOverrides = HostConnectionOverrides(),
@@ -63,8 +61,8 @@ data class ConnectionProfileDraft(
     val username: String,
     val protocol: ConnectionProtocol,
     val route: ConnectionRoute,
-    val authentication: AuthenticationMethod = AuthenticationMethod.PRIVATE_KEY,
-    val keyId: String? = null,
+    val authentication: AuthenticationMethod = AuthenticationMethod.AUTOMATIC,
+    val authenticationId: String? = null,
     val startupSnippetId: String? = null,
     val agentForwarding: Boolean = false,
     val overrides: HostConnectionOverrides = HostConnectionOverrides(),
@@ -99,7 +97,7 @@ data class ConnectionProfileDraft(
         } else {
             authentication
         },
-        keyId = keyId,
+        authenticationId = authenticationId,
         startupSnippetId = startupSnippetId,
         agentForwarding = agentForwarding,
         overrides = overrides,

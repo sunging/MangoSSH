@@ -272,6 +272,10 @@ class SshSessionController internal constructor(
     /** One-shot notifications used to leave a foreground terminal after it ends. */
     val sessionEndedEvents = _sessionEndedEvents.asSharedFlow()
 
+    private val _passwordSaveFailures = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    /** A save failure is presentation-only; it must not tear down an authenticated transport. */
+    val passwordSaveFailures = _passwordSaveFailures.asSharedFlow()
+
     /** Transient OSC 52 copy requests for the currently visible terminal UI. */
     val clipboardCopies = terminalStore.clipboardCopies
 
@@ -1324,7 +1328,8 @@ class SshSessionController internal constructor(
             if (profile.agentForwarding) {
                 val grant = website.sung.mangossh.security.AgentGrant(profile.agentPolicy, accessState)
                 val agent = VaultSshAgent(
-                    snapshot.keys.filter { it.id in (profile.agentPolicy.allowedKeyIds ?: listOfNotNull(profile.keyId)) },
+                    snapshot.keys.filter { it.id in (profile.agentPolicy.allowedKeyIds ?: listOfNotNull(
+                        snapshot.authentications.firstOrNull { authentication -> authentication.id == profile.authenticationId }?.keyId)) },
                     keyManager,
                     authorized = { !accessState.locked.value && managed.lifecycle.isOpen },
                     authorizeSignature = {
@@ -1614,8 +1619,20 @@ class SshSessionController internal constructor(
         connection.useSocketRoute(lease.proxyData)
     }
 
-    private suspend fun authenticate(connection: SshConnection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean =
-        SshAuthentication(keyManager, ::requestAuthentication) { key, passphrase ->
+    private suspend fun authenticate(connection: SshConnection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean {
+        val authorizationGeneration = accessState.generation
+        return SshAuthentication(keyManager, ::requestAuthentication, savePassword = { authenticatedProfile, password ->
+            val original = snapshot.authentications.firstOrNull { it.id == authenticatedProfile.authenticationId }
+            saveAcceptedPassword(authenticatedProfile, original, password, persist = { expected, stored ->
+                vault.rememberAuthentication(expected, snapshot.profiles.firstOrNull { it.id == profile.id }, original, stored,
+                    expectedKey = snapshot.keys.firstOrNull { it.id == original?.keyId },
+                    allowed = { !accessState.locked.value && authorizationGeneration == accessState.generation &&
+                        sessionsById[sessionId]?.lifecycle?.isOpen == true })
+            }, onFailure = {
+                MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED)
+                _passwordSaveFailures.tryEmit(Unit)
+            })
+        }, savePassphrase = { key, passphrase ->
             // Remembering is a convenience for the next connection; a vault write failure
             // must not fail an authentication that already has its decrypted key.
             runCatching { vault.setSavedKeyPassphrase(key.id, key.privateKeyPem, passphrase) }
@@ -1623,7 +1640,8 @@ class SshSessionController internal constructor(
                     if (error is CancellationException) throw error
                     MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error)
                 }
-        }.authenticate(connection, sessionId, profile, snapshot)
+        }).authenticate(connection, sessionId, profile, snapshot)
+    }
 
     /**
      * Starts stdout and stderr readers for an interactive SSH shell.
