@@ -621,7 +621,6 @@
     <string name="backup_remove_webdav_detail">确定移除此设备上的 WebDAV 配置？服务器上的备份文件不会被删除。</string>
     <string name="session_input_overflow">终端输入积压超过上限，会话已结束。</string>
     <string name="remote_file_source_changed">源文件已变化或无法验证续传身份。请重新开始传输。</string>
-    <string name="resource_report_empty">未返回资源信息</string>
     <plurals name="message_pin_cooldown">
         <item quantity="other">尝试次数过多，请在 %1$d 秒后重试。</item>
     </plurals>
@@ -921,4 +920,33 @@
     <string name="authentication_automatic">SSH 认证</string>
     <string name="authentication_interactive_fallback">之前的认证方式被拒绝或不可用，请手动完成服务器的交互式认证。</string>
     <string name="backup_kind_authentication">认证</string>
+    <string name="resource_system">系统与 CPU</string>
+    <string name="resource_linux">Linux</string>
+    <string name="resource_windows">Windows</string>
+    <string name="resource_cpu">CPU</string>
+    <string name="resource_cpu_count">逻辑处理器：%1$d</string>
+    <string name="resource_load">负载（1 / 5 / 15 分钟）：%1$s / %2$s / %3$s</string>
+    <string name="resource_memory">物理内存</string>
+    <string name="resource_swap">交换空间</string>
+    <string name="resource_page_file">分页文件</string>
+    <string name="resource_disks">本地磁盘</string>
+    <string name="resource_network">活动网卡</string>
+    <string name="resource_sampling">采样中…</string>
+    <string name="resource_unavailable">不可用</string>
+    <string name="resource_not_enabled">未启用</string>
+    <string name="resource_no_disks">未发现本地磁盘。</string>
+    <string name="resource_no_networks">没有活动网卡。</string>
+    <string name="resource_show_virtual_networks">显示虚拟网卡</string>
+    <string name="resource_virtual_networks_hidden">虚拟网卡已隐藏。</string>
+    <string name="resource_used_total">已用 %1$s / %2$s</string>
+    <string name="resource_available">可用：%1$s</string>
+    <string name="resource_received">接收：%1$s/s</string>
+    <string name="resource_sent">发送：%1$s/s</string>
+    <string name="resource_uptime">运行时间：%1$d 天 %2$d 小时 %3$d 分钟</string>
+    <string name="resource_updated">最近更新：%1$s</string>
+    <string name="resource_auto_refresh">面板可见时每 5 秒刷新。</string>
+    <string name="resource_stale">正在显示上次成功采集的数据，数据已过期。</string>
+    <string name="resource_timeout">资源查询超时。</string>
+    <string name="resource_connection_unavailable">资源查询连接不可用，请刷新重试。</string>
+    <string name="resource_unsupported">资源查询需要 Linux，或具备 PowerShell 5.1 的 Windows，并允许通过 SSH 执行命令。</string>
 </resources>

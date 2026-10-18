@@ -290,7 +290,7 @@ class MangoSshViewModel @JvmOverloads constructor(
         clearRemoteSelection()
     }
     fun resolveTransferConflict(id: String, decision: website.sung.mangossh.session.TransferConflictDecision) = sessionController.resolveTransferConflict(id, decision)
-    val resourceSnapshots = sessionController.resourceSnapshots
+    val resourceStates = sessionController.resourceStates
     val sessionPrompts = sessionController.prompts
     val sessionEndedEvents = sessionController.sessionEndedEvents
     val terminalClipboardCopies = sessionController.clipboardCopies
@@ -1001,9 +1001,14 @@ class MangoSshViewModel @JvmOverloads constructor(
     /** Refreshes connection counts shown for running forwards; see the forwards screen. */
     fun refreshPortForwardActivity() = sessionController.refreshPortForwardActivity()
 
+    /** Explicit retries may restore a disconnected SSH companion. */
     fun requestServerResources(sessionId: String) {
         sessionController.requestServerResources(sessionId)
     }
+
+    /** Mirrors resource-panel foreground visibility without changing the terminal lifecycle. */
+    fun setServerResourceMonitoring(sessionId: String, active: Boolean) =
+        sessionController.setServerResourceMonitoring(sessionId, active)
 
     /**
      * Opens the remote file browser on a terminal session that is already

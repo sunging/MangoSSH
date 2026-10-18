@@ -262,8 +262,17 @@ class SshSessionController internal constructor(
     /** Resolves only the currently registered transfer preview. */
     fun resolveTransferConflict(id: String, decision: TransferConflictDecision) = fileTransfers.resolveConflict(id, decision)
 
-    private val _resourceSnapshots = MutableStateFlow<Map<String, ServerResourceSnapshot>>(emptyMap())
-    val resourceSnapshots = _resourceSnapshots.asStateFlow()
+    private val resourceCollector = ServerResourceCollector()
+    private val resourceMonitor = ServerResourceMonitor(scope, collect = { sessionId, manual ->
+        val managed = sessionsById[sessionId] ?: throw ResourceQueryException(ServerResourceFailure.CONNECTION)
+        val connection = if (manual) requireSshFeatureConnection(sessionId)
+        else if (managed.protocol == ConnectionProtocol.MOSH) {
+            currentHealthyMoshSshFeatureConnection(sessionId, managed)
+                ?: throw ResourceQueryException(ServerResourceFailure.CONNECTION)
+        } else managed.connection
+        resourceCollector.collect(connection)
+    })
+    val resourceStates = resourceMonitor.states
 
     private val _prompts = MutableStateFlow<List<SessionPrompt>>(emptyList())
     val prompts = _prompts.asStateFlow()
@@ -982,31 +991,19 @@ class SshSessionController internal constructor(
     /** Fixed application wording for a failure raised by a remote file operation. */
     fun remoteFileMessage(error: Throwable): RemoteFileMessage = error.toRemoteFileMessage()
 
-    fun requestServerResources(sessionId: String) {
-        scope.launch {
-            _resourceSnapshots.update { snapshots -> snapshots - sessionId }
-            try {
-                val connection = requireSshFeatureConnection(sessionId)
-                val report = collectServerResourceReport(connection)
-                if (sessionsById.containsKey(sessionId)) {
-                    _resourceSnapshots.update { snapshots ->
-                        snapshots + (sessionId to ServerResourceSnapshot(sessionId = sessionId, report = report))
-                    }
+    /** Manual retry may re-authenticate a lost Mosh companion; polling never does. */
+    fun requestServerResources(sessionId: String) = resourceMonitor.refresh(sessionId)
+
+    /** The UI's foreground visibility owns sampling, independently of terminal lifetime. */
+    fun setServerResourceMonitoring(sessionId: String, active: Boolean) {
+        if (active) sessionsById[sessionId]?.let { managed ->
+            managed.lifecycle.whileOpen {
+                if (managed.kind == SessionKind.TERMINAL && _sessions.value.any { it.id == sessionId && it.phase == TerminalSessionPhase.OPEN }) {
+                    resourceMonitor.start(sessionId)
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                if (!sessionsById.containsKey(sessionId)) return@launch
-                val message = context.appString(R.string.terminal_resource_query_failed)
-                _resourceSnapshots.update { snapshots ->
-                    snapshots + (sessionId to ServerResourceSnapshot(sessionId = sessionId, report = message))
-                }
-                publishLocalizableNotice(
-                    sessionId,
-                    "\r\n[MangoSSH] $message\r\n",
-                )
             }
         }
+        else resourceMonitor.stop(sessionId)
     }
 
     /** Explicitly closes one live transport at the user's request. */
@@ -1046,6 +1043,7 @@ class SshSessionController internal constructor(
             Triple(managed.session.also { managed.session = null }, managed.moshProcess.also { managed.moshProcess = null },
                 managed.tsnetUdpRelay.also { managed.tsnetUdpRelay = null })
         }
+        resourceMonitor.stop(sessionId, remove = true)
         managed.resizeQueue?.close()
         managed.readerJobs.toList().forEach(Job::cancel)
         cleanupScope.launch {
@@ -1221,7 +1219,7 @@ class SshSessionController internal constructor(
             closeEmbeddedTsnet()
         }
 
-        step { _resourceSnapshots.update { snapshots -> snapshots - sessionId } }
+        step { resourceMonitor.stop(sessionId, remove = true) }
         step { fileTransfers.onSessionEnded(sessionId) }
         step { remoteOperations.sessionEnded(sessionId) }
         step { remoteStreams.onSessionEnded(sessionId) }
@@ -2129,18 +2127,6 @@ class SshSessionController internal constructor(
         return true
     }
 
-    private suspend fun collectServerResourceReport(connection: SshConnection): String = BlockingOperation(15_000L).use { operation ->
-        val session = connection.openChannel()
-        check(operation.own(session))
-        try {
-            session.execute(RESOURCE_COMMAND)
-            BoundedProtocolReader.bytes(session.stdout, 32 * 1024).toString(Charsets.UTF_8).trim()
-                .ifBlank { context.appString(R.string.resource_report_empty) }
-        } finally {
-            operation.release(session)
-        }
-    }
-
     private fun requestAuthentication(
         sessionId: String,
         title: SessionPromptText,
@@ -2517,7 +2503,6 @@ class SshSessionController internal constructor(
         const val TSNET_LOOPBACK_HOST = "127.0.0.1"
         const val TSNET_MOSH_GRACEFUL_RELEASE_MILLIS = 2_000L
         const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256 -l LANG=C.UTF-8"
-        const val RESOURCE_COMMAND = "printf 'Host: '; hostname; printf '\\nUptime: '; uptime; printf '\\nLoad: '; cat /proc/loadavg 2>/dev/null || true; printf '\\nMemory:\\n'; free -h 2>/dev/null || true; printf '\\nDisk:\\n'; df -h / 2>/dev/null || true; printf '\\nCPU: '; nproc 2>/dev/null || true"
 
         fun portForwardRuntimeId(sessionId: String, ruleId: String): String = "$sessionId:$ruleId"
     }

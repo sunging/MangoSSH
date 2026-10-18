@@ -334,7 +334,7 @@ fun MangoSshApp(
     val portForwardRules by viewModel.portForwardRules.collectAsStateWithLifecycle()
     val activePortForwards by viewModel.activePortForwards.collectAsStateWithLifecycle()
     val scpTransfers by viewModel.scpTransfers.collectAsStateWithLifecycle()
-    val resourceSnapshots by viewModel.resourceSnapshots.collectAsStateWithLifecycle()
+    val resourceStates by viewModel.resourceStates.collectAsStateWithLifecycle()
     val webDavConfig by viewModel.webDavConfig.collectAsStateWithLifecycle()
     val backupOperation by viewModel.backupOperation.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
@@ -510,8 +510,9 @@ fun MangoSshApp(
                 shortcutConfig = terminalShortcutConfig,
                 clipboardCopies = viewModel.terminalClipboardCopies,
                 onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
-                resourceSnapshot = resourceSnapshots[activeSession.id],
+                resourceState = resourceStates[activeSession.id] ?: website.sung.mangossh.session.ServerResourceState(),
                 onRequestResources = { viewModel.requestServerResources(activeSession.id) },
+                onResourceMonitoringChange = { viewModel.setServerResourceMonitoring(activeSession.id, it) },
                 onOpenFileBrowser = { viewModel.openRemoteBrowser(activeSession.id) },
                 onRequestLeave = { if (activeSession.phase == TerminalSessionPhase.CLOSED) activeSessionId = null else leaveSessionId = activeSession.id },
                 onReconnect = { showReconnect = true },

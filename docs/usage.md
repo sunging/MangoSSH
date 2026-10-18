@@ -84,8 +84,44 @@ Browse a host over SFTP from the **Files** button inside an open SSH or Mosh
 terminal, which reuses that session's authenticated SSH connection, or from a
 host's overflow-menu **Files** action, which opens a connection dedicated to
 transfers. Single files and whole folders can be downloaded and uploaded. Mosh
-terminals use the same SSH companion for the server-resource report in their
+terminals use the same SSH companion for the server-resource panel in their
 terminal toolbar.
+
+### Server resources
+
+The terminal toolbar's **Server resources** button opens a responsive overview of
+the operating system, uptime, logical processors, CPU utilization, physical
+memory, swap (Linux) or paging files (Windows), local disks, and active network
+interfaces. Capacities and network rates use binary units. Linux memory usage is
+total minus `MemAvailable`; filesystem available space may exclude reservations.
+System and CPU share a compact card, and wide screens use two independent card
+columns. Refresh feedback overlays the panel without moving its content.
+Long-press the resource information to select and copy text using the system menu.
+Virtual interfaces are hidden by default; **Show virtual interfaces** reveals
+them with their original names. Linux uses kernel device metadata and Windows
+uses adapter CIM metadata to classify interfaces. If classification is unavailable,
+the interface remains visible. This display choice lasts while the panel is open.
+
+The panel queries only while visible in the foreground, every five seconds,
+without overlapping queries. CPU and network rates need two valid samples;
+the first reading shows **Sampling**. Manual refresh is also available. Failed
+refreshes retain the last successful reading with its timestamp and a stale-data
+notice. Unavailable individual metrics do not remove the rest of the overview.
+
+Linux queries use `/proc`, `/sys`, and the portable `df -P -k` options supported by
+both GNU coreutils and BusyBox (including Alpine Linux). Mounts are selected from
+kernel filesystem metadata before capacity queries, excluding temporary and
+network filesystems. Windows 10/11 and
+Windows Server 2019 or later use Windows PowerShell 5.1, CIM, and system network
+counters through OpenSSH. Both cmd and PowerShell default shells are supported.
+Queries require SSH command access, but do not install software or alter remote
+configuration. Restricted accounts can have unavailable metrics. Windows disks
+are fixed local logical drives; Linux excludes remote and temporary filesystems.
+
+Closing the panel or leaving the foreground cancels its exec channel without
+closing the shared SSH connection. A lost Mosh SSH companion pauses automatic
+queries; **Refresh** can invoke the normal reconnect/authentication flow. The
+Mosh terminal remains independent. Resource snapshots are not persisted.
 
 Running transfers appear behind the transfer icon in the host list top bar, with
 combined progress. That sheet can pause, resume, cancel, and retry a transfer,

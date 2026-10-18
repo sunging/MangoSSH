@@ -286,13 +286,6 @@ val ScpTransferState.canOpenRemote: Boolean
         direction == ScpTransferDirection.UPLOAD &&
         controllable
 
-@Immutable
-data class ServerResourceSnapshot(
-    val sessionId: String,
-    val collectedAtEpochMillis: Long = System.currentTimeMillis(),
-    val report: String,
-)
-
 /** Why a presented host key needs the user's decision. */
 enum class HostKeyPromptKind {
     /** Nothing is trusted for this endpoint yet. */

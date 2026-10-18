@@ -32,17 +32,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -50,7 +46,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -98,7 +93,7 @@ import website.sung.mangossh.R
 import website.sung.mangossh.session.TerminalClipboardCopy
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
-import website.sung.mangossh.session.ServerResourceSnapshot
+import website.sung.mangossh.session.ServerResourceState
 import website.sung.mangossh.domain.TerminalAppearance
 import website.sung.mangossh.domain.TerminalBehavior
 import website.sung.mangossh.domain.TerminalFont
@@ -124,8 +119,9 @@ fun TerminalSessionScreen(
     shortcutConfig: TerminalShortcutConfig,
     clipboardCopies: SharedFlow<TerminalClipboardCopy>,
     onSend: (ByteArray) -> Unit,
-    resourceSnapshot: ServerResourceSnapshot?,
+    resourceState: ServerResourceState,
     onRequestResources: () -> Unit,
+    onResourceMonitoringChange: (Boolean) -> Unit,
     onOpenFileBrowser: () -> Unit,
     onRequestLeave: () -> Unit,
     sessionFontSizeSp: Int?,
@@ -404,7 +400,6 @@ fun TerminalSessionScreen(
                             modifier = Modifier.size(40.dp),
                             onClick = {
                                 showResourceReport = true
-                                onRequestResources()
                             },
                             enabled = isOpen,
                         ) {
@@ -602,24 +597,13 @@ fun TerminalSessionScreen(
         }
 
         if (showResourceReport) {
-            AlertDialog(
-                onDismissRequest = { showResourceReport = false },
-                title = { Text(stringResource(R.string.ui_server_resources)) },
-                text = {
-                    SelectionContainer {
-                        Text(
-                            resourceSnapshot?.report ?: stringResource(R.string.ui_reading_resource_information_from_the_server),
-                            modifier = Modifier.verticalScroll(rememberScrollState()),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { onRequestResources() }) { Text(stringResource(R.string.common_refresh)) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showResourceReport = false }) { Text(stringResource(R.string.common_close)) }
-                },
+            ServerResourceDialog(
+                state = resourceState,
+                sessionId = session.id,
+                connected = isOpen,
+                onMonitoringChange = onResourceMonitoringChange,
+                onRefresh = onRequestResources,
+                onDismiss = { showResourceReport = false },
             )
         }
     }
