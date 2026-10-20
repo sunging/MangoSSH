@@ -377,7 +377,7 @@
     <string name="ui_local_bind_address">Local bind address</string>
     <string name="ui_local_configuration_is_encrypted_with_android_keystore_and_aes_gcm_serve">Local configuration is encrypted with Android Keystore and AES-GCM; server fingerprints are still verified on first connection.</string>
     <string name="ui_local_listen_port">Local listen port</string>
-    <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">Local, remote, and SOCKS5 forwards attach to an open SSH or Mosh session and stop when it closes.</string>
+    <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">Local, remote, and SOCKS5 forwards can start independently or reuse an existing SSH or Mosh session. Active forwards keep running after you close the terminal. Stop them on this page.</string>
     <string name="ui_lock_now">Lock now</string>
     <string name="ui_mangossh_is_locked">MangoSSH is locked</string>
     <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh uses a GPL-3.0-or-later native client; its source and license are included with the project. It requires mosh-server and reachable UDP (default ports 60000–61000). MangoSSH keeps an authenticated SSH companion for files, resource queries, and port forwarding; agent forwarding remains unavailable.</string>
@@ -394,7 +394,7 @@
     <string name="ui_no_app_pin_is_set_once_enabled_returning_to_the_foreground_requires_pin">No app PIN is set. Once enabled, returning to the foreground requires PIN or biometric unlock.</string>
     <string name="ui_no_hosts_match_search">No hosts match your search</string>
     <string name="ui_no_hosts_match_search_hint">Try a different name, hostname, or username.</string>
-    <string name="ui_no_port_forwarding_rules_yet_a_rule_can_start_automatically_after_connec">No port-forwarding rules yet. A rule can start automatically after connection.</string>
+    <string name="ui_no_port_forwarding_rules_yet_a_rule_can_start_automatically_after_connec">No port-forwarding rules yet. You can set a rule to start forwarding automatically after connecting to its host.</string>
     <string name="ui_no_servers_yet">No servers yet</string>
     <string name="ui_no_snippets_yet">No snippets yet.</string>
     <string name="ui_not_configured">Not configured</string>
@@ -450,7 +450,7 @@
     <string name="ui_sort_mode_most_used">Most used</string>
     <string name="ui_sort_mode_recent">Recently used</string>
     <string name="ui_ssh_port_forwarding">SSH port forwarding</string>
-    <string name="ui_start_on_connection">Start on connection</string>
+    <string name="ui_start_on_connection">Auto-start forwarding after connecting to host</string>
     <string name="ui_starting">Starting</string>
     <string name="ui_starting_opens_a_connection_dedicated_to_this_forward_so_no_terminal_is">Starting opens a connection dedicated to this forward, so no terminal is needed first.</string>
     <string name="ui_tailnet_routing_reaches_the_target_through_the_device_s_enabled_tailscal">Tailnet routing reaches the target through the device\'s enabled Tailscale VPN; authentication uses Tailscale SSH.</string>

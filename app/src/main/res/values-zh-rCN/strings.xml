@@ -358,7 +358,7 @@
     <string name="ui_local_bind_address">本地绑定地址</string>
     <string name="ui_local_configuration_is_encrypted_with_android_keystore_and_aes_gcm_serve">本地配置已使用 Android Keystore 和 AES-GCM 加密保存；首次连接仍会验证主机指纹。</string>
     <string name="ui_local_listen_port">本地监听端口</string>
-    <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">本地、远程和 SOCKS5 转发均可绑定到已打开的 SSH 或 Mosh 会话；会话关闭后转发会自动停止。</string>
+    <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">本地、远程和 SOCKS5 转发可独立启动，也可复用已有的 SSH 或 Mosh 会话。关闭终端后，已启动的转发仍会继续运行；请在此页面手动停止。</string>
     <string name="ui_lock_now">立即锁定</string>
     <string name="ui_mangossh_is_locked">MangoSSH 已锁定</string>
     <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh 使用 GPL-3.0-or-later 原生客户端；源代码和许可证见项目随附材料。它需要远端 mosh-server 和可达的 UDP 端口（默认 60000–61000）。MangoSSH 会保留经过认证的 SSH 伴随连接，用于文件、资源查询和端口转发；代理转发仍不可用。</string>
@@ -375,7 +375,7 @@
     <string name="ui_no_app_pin_is_set_once_enabled_returning_to_the_foreground_requires_pin">尚未设置应用 PIN。启用后，应用回到前台需要 PIN 或生物识别解锁。</string>
     <string name="ui_no_hosts_match_search">没有匹配的主机</string>
     <string name="ui_no_hosts_match_search_hint">换个名称、主机名或用户名试试。</string>
-    <string name="ui_no_port_forwarding_rules_yet_a_rule_can_start_automatically_after_connec">还没有端口转发规则。可以设置连接后自动启动。</string>
+    <string name="ui_no_port_forwarding_rules_yet_a_rule_can_start_automatically_after_connec">还没有端口转发规则。可以设置在连接关联主机后自动启动转发。</string>
     <string name="ui_no_servers_yet">还没有服务器</string>
     <string name="ui_no_snippets_yet">还没有代码片段。</string>
     <string name="ui_not_configured">尚未配置</string>
@@ -431,7 +431,7 @@
     <string name="ui_sort_mode_most_used">最常使用</string>
     <string name="ui_sort_mode_recent">最近使用</string>
     <string name="ui_ssh_port_forwarding">SSH 端口转发</string>
-    <string name="ui_start_on_connection">连接后自动启动</string>
+    <string name="ui_start_on_connection">连接主机后自动启动转发</string>
     <string name="ui_starting">正在启动</string>
     <string name="ui_starting_opens_a_connection_dedicated_to_this_forward_so_no_terminal_is">启动后会为此转发单独建立连接，无需先打开终端。</string>
     <string name="ui_tailnet_routing_reaches_the_target_through_the_device_s_enabled_tailscal">Tailnet 路由通过设备已启用的 Tailscale VPN 访问目标；认证方式会设为 Tailscale SSH。</string>
