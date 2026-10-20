@@ -36,6 +36,7 @@ import kotlinx.coroutines.withContext
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.MangoSshApplication
 import website.sung.mangossh.R
+import website.sung.mangossh.core.AppBuildInfo
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.data.keys.IncorrectKeyPassphraseException
@@ -313,6 +314,12 @@ class MangoSshViewModel @JvmOverloads constructor(
 
     /** Installed package version code, read from the platform rather than BuildConfig, for the About page. */
     val installedVersionCode: Long get() = runtime.installedAppInfo?.versionCode ?: 0L
+
+    /** Source commit embedded at build time; empty for archives without revision metadata. */
+    internal val buildRevision: String get() = AppBuildInfo.GIT_REVISION
+
+    /** Gradle distribution flavor embedded in this APK, independent of its install source. */
+    internal val buildDistribution: String get() = AppBuildInfo.DISTRIBUTION
 
     /** Immutable self-update state for the settings card and the settings navigation badge. */
     val updateState: StateFlow<UpdateUiState> = updateManager.state

@@ -782,6 +782,8 @@ fun MangoSshApp(
                                     about = AboutSettingsState(
                                         versionName = viewModel.installedVersionName,
                                         versionCode = viewModel.installedVersionCode,
+                                        buildRevision = viewModel.buildRevision,
+                                        distribution = viewModel.buildDistribution,
                                     ),
                                 ),
                                 callbacks = settingsCallbacks,

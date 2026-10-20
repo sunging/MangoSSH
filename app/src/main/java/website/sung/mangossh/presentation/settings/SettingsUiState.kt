@@ -103,6 +103,8 @@ internal data class SnippetSettingsState(
 internal data class AboutSettingsState(
     val versionName: String,
     val versionCode: Long,
+    val buildRevision: String,
+    val distribution: String,
 )
 
 /**

@@ -38,6 +38,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -102,6 +103,19 @@ internal fun AboutSettingsPage(
                     modifier = Modifier.testTag("settings_about_licenses"),
                 )
             }
+        }
+        item {
+            Text(
+                stringResource(
+                    R.string.settings_about_build,
+                    state.buildRevision.ifEmpty { stringResource(R.string.settings_about_build_unknown) },
+                    state.distribution,
+                ),
+                modifier = Modifier.fillMaxWidth().testTag("about_build_identity"),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp, lineHeight = 14.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                textAlign = TextAlign.Center,
+            )
         }
         report?.let { storedReport ->
             item { CrashReportRow(storedReport, onCleared = { report = null }) }

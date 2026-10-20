@@ -3,6 +3,8 @@ package website.sung.mangossh.presentation.settings
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
+import android.content.res.Configuration
+import android.content.res.Resources
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -10,9 +12,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
@@ -23,6 +30,7 @@ import org.junit.Test
 import website.sung.mangossh.R
 import java.io.File
 import java.util.UUID
+import java.util.Locale
 
 /** Uses only a unique test directory; never reads or clears the developer's crash report. */
 class AboutSettingsInstrumentedTest {
@@ -47,11 +55,21 @@ class AboutSettingsInstrumentedTest {
         directory.deleteRecursively()
     }
 
-    private fun about(callbacks: AboutSettingsCallbacks = AboutSettingsCallbacks({}, {})) {
+    private fun about(
+        callbacks: AboutSettingsCallbacks = AboutSettingsCallbacks({}, {}),
+        state: AboutSettingsState = AboutSettingsState("1.2.3", 123, "339054b293f5", "github"),
+        context: Context = isolatedContext,
+        width: Int = 360,
+        fontScale: Float = 1f,
+    ) {
         compose.setContent {
-            CompositionLocalProvider(LocalContext provides isolatedContext) {
+            CompositionLocalProvider(
+                LocalContext provides context,
+                LocalConfiguration provides context.resources.configuration,
+                LocalDensity provides Density(LocalDensity.current.density, fontScale),
+            ) {
                 MaterialTheme {
-                    AboutSettingsPage(AboutSettingsState("1.2.3", 123), callbacks)
+                    AboutSettingsPage(state, callbacks, Modifier.width(width.dp))
                 }
             }
         }
@@ -63,6 +81,7 @@ class AboutSettingsInstrumentedTest {
         var licensesOpened = false
         about(AboutSettingsCallbacks({ repositoryOpened = true }, { licensesOpened = true }))
         compose.onNodeWithText(base.getString(R.string.settings_about_version, "1.2.3", 123L)).assertIsDisplayed()
+        compose.onNodeWithText(base.getString(R.string.settings_about_build, "339054b293f5", "github")).assertIsDisplayed()
         compose.onNodeWithTag("settings_about_release_page").performClick()
         compose.onNodeWithTag("settings_about_licenses").performClick()
         compose.runOnIdle {
@@ -72,6 +91,50 @@ class AboutSettingsInstrumentedTest {
         compose.onNodeWithTag("about_crash_report_card").assertDoesNotExist()
         compose.onNodeWithTag("about_mosh_gpl_card").assertDoesNotExist()
         compose.onNodeWithTag("about_license_OkHttp").assertDoesNotExist()
+    }
+
+    @Test fun englishGithubBuildUsesHyphenatedIdentity() = verifyBuildIdentity("en", "github")
+
+    @Test fun englishFdroidBuildUsesHyphenatedIdentity() = verifyBuildIdentity("en", "fdroid")
+
+    @Test fun chineseGithubBuildUsesHyphenatedIdentity() = verifyBuildIdentity("zh-Hans-CN", "github")
+
+    @Test fun chineseFdroidBuildUsesHyphenatedIdentity() = verifyBuildIdentity("zh-Hans-CN", "fdroid")
+
+    @Test fun missingRevisionUsesLocalizedEnglishFallback() = verifyBuildIdentity("en", "github", "")
+
+    @Test fun missingRevisionUsesLocalizedChineseFallback() = verifyBuildIdentity("zh-Hans-CN", "fdroid", "")
+
+    @Test fun longBuildIdentityWrapsOnNarrowScreenWithLargeEnglishText() =
+        verifyBuildIdentity("en", "github", width = 240, fontScale = 2f)
+
+    @Test fun longBuildIdentityWrapsOnNarrowScreenWithLargeChineseText() =
+        verifyBuildIdentity("zh-Hans-CN", "fdroid", width = 240, fontScale = 2f)
+
+    /** Locale overrides and synthetic state stay inside this composition and the isolated crash directory. */
+    private fun verifyBuildIdentity(languageTag: String, distribution: String, revision: String = "339054b293f5",
+        width: Int = 360, fontScale: Float = 1f) {
+        val configuration = Configuration(base.resources.configuration).apply {
+            setLocale(Locale.forLanguageTag(languageTag))
+        }
+        val localized = base.createConfigurationContext(configuration)
+        val context = object : ContextWrapper(isolatedContext) {
+            override fun getResources(): Resources = localized.resources
+        }
+        about(state = AboutSettingsState("1.2.3", 123, revision, distribution), context = context,
+            width = width, fontScale = fontScale)
+        val displayedRevision = revision.ifEmpty { localized.getString(R.string.settings_about_build_unknown) }
+        val text = localized.getString(R.string.settings_about_build, displayedRevision, distribution)
+        val identity = compose.onNodeWithTag("about_build_identity").performScrollTo().assertIsDisplayed()
+        identity.assertTextEquals(text)
+        identity.assertTextContains("$displayedRevision-$distribution", substring = true)
+        val layouts = mutableListOf<TextLayoutResult>()
+        identity.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        assertFalse("Build identity must remain readable without clipping: size=${layout.size}, " +
+            "paragraph=${layout.multiParagraph.width}x${layout.multiParagraph.height}, " +
+            "widthOverflow=${layout.didOverflowWidth}, heightOverflow=${layout.didOverflowHeight}", layout.hasVisualOverflow)
+        if (fontScale > 1f) assertTrue("Long build identity must wrap", layouts.single().lineCount > 1)
     }
 
     @Test

@@ -17,6 +17,33 @@ the resulting code must fit Android's `2,100,000,000` limit. This deterministic
 mapping ensures that GitHub and network-isolated F-Droid builds of the same tag
 carry identical version metadata.
 
+## Build identity
+
+About displays a separate build identity, for example
+`339054b293f5-github` or `339054b293f5-fdroid`. Its first component is the
+first twelve lowercase characters of the source repository's HEAD; its second
+component is the Gradle `distribution` flavor. Debug and release builds use the
+same format. Local uncommitted changes do not change this identity.
+
+Gradle reads HEAD through a configuration-cache-aware provider, including in
+shallow clones and Git worktrees. Each Android variant has its own generated
+source directory, so building both distributions together cannot mix channels.
+This display identity does not change `versionName`, `versionCode`, or update
+eligibility.
+
+For a source archive without Git metadata, pass the original full commit SHA:
+
+```text
+gradlew.bat :app:assembleFdroidRelease -PmangosshBuildRevision=FULL_COMMIT_SHA
+```
+
+Replace `FULL_COMMIT_SHA` with the actual source commit. The property takes
+precedence over Git and must contain a full 40-character SHA-1 or 64-character
+SHA-256 commit ID. Use the same SHA when reproducing a build from an archive.
+Without the property and usable Git metadata, About displays `Unknown-github`
+or `Unknown-fdroid`, localized in Simplified Chinese as appropriate. Build
+identities contain no timestamps, CI run counters, or machine-specific paths.
+
 ## Release flow
 
 Release Please owns version changes, `CHANGELOG.md`, `v*` tags, and GitHub
