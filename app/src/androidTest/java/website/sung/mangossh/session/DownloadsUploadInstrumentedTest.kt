@@ -20,6 +20,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,6 +35,8 @@ import org.junit.Rule
 import org.junit.Test
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshCredentials
+import website.sung.mangossh.diagnostics.CiRegressionDiagnostics
+import org.json.JSONObject
 
 /** A fresh picker-created Downloads document is the only real provider document this test touches. */
 @SdkSuppress(minSdkVersion = 26)
@@ -97,16 +100,28 @@ class DownloadsUploadInstrumentedTest {
                 val files = RemoteFileClient()
                 val destination = RemoteFilePaths.join(files.resolveHome(connection), UUID.randomUUID().toString())
                 files.mkdirIfMissing(connection, destination)
-                val manager = FileTransferManager(context, scope, files, { connection }, {})
+                val uploadIndex = AtomicInteger(-1)
+                val uploadLength = AtomicInteger(-1)
+                val manager = FileTransferManager(context, scope, files, { connection }, {}, onTaskFailure = { error ->
+                    CiRegressionDiagnostics.phase("downloads-upload-error", index = uploadIndex.get(), count = uploadLength.get())
+                    CiRegressionDiagnostics.failure(error, "downloads-upload")
+                })
                 withTimeout(30_000) {
-                    for (length in listOf(17, 80_000, 0)) {
+                    for ((index, length) in listOf(17, 80_000, 0).withIndex()) {
+                        uploadIndex.set(index); uploadLength.set(length)
+                        CiRegressionDiagnostics.phase("downloads-write", index = index, count = length)
                         val bytes = ByteArray(length) { (it % 251).toByte() }
                         base.contentResolver.openOutputStream(source, "wt")!!.use { it.write(bytes) }
+                        CiRegressionDiagnostics.phase("downloads-write-closed", index = index, count = length)
                         val target = "file-$length"
                         manager.uploadFile("fixture", source, target, destination)
                         val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+                        CiRegressionDiagnostics.phase("downloads-preview", index = index, count = length)
                         manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE, verifySha256 = true))
                         val state = manager.transfers.first { it.last().isFinished }.last()
+                        CiRegressionDiagnostics.record("downloads-upload-result", JSONObject().put("index", index)
+                            .put("length", length).put("phase", state.phase.name).put("bytes", state.transferredBytes)
+                            .put("detailType", state.detail?.javaClass?.simpleName ?: "none"))
                         assertEquals(ScpTransferPhase.COMPLETED, state.phase)
                         assertEquals(length.toLong(), state.transferredBytes)
                         BlockingOperation().use { control ->

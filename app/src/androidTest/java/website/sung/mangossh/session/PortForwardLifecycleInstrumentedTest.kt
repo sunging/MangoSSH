@@ -22,10 +22,14 @@ import website.sung.mangossh.data.vault.*
 import website.sung.mangossh.domain.*
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetManager
+import org.connectbot.sshlib.transport.KtorTcpTransportFactory
+import org.connectbot.sshlib.transport.Transport
+import org.connectbot.sshlib.transport.TransportFactory
 
 /** All files, preferences and Keystore aliases are isolated; only a disposable loopback peer is used. */
 class PortForwardLifecycleInstrumentedTest {
     private fun fixture(protocol: ConnectionProtocol = ConnectionProtocol.SSH, automaticTrust: Boolean = true,
+        transports: MutableList<Transport>? = null,
         block: suspend CoroutineScope.(SshSessionController, ConnectionProfile, Int, MutableList<SshConnection>, VaultRepository) -> Unit) = runBlocking<Unit> {
         val args = InstrumentationRegistry.getArguments()
         val port = args.getString("fixturePort")?.toIntOrNull()
@@ -53,13 +57,32 @@ class PortForwardLifecycleInstrumentedTest {
         val controller = SshSessionController(context, vault, embeddedTsnetManager = EmbeddedTsnetManager(context),
             terminalAppearanceStore = TerminalAppearanceStore(context), terminalBehaviorStore = TerminalBehaviorStore(context),
             connectionPreferencesStore = ConnectionPreferencesStore(context), appForegroundState = AppForegroundState.fixed(false),
-            foregroundStarter = {}, connectionFactory = { SshConnection(it.hostname, it.port, it.legacySshAlgorithms).also(connections::add) })
+            foregroundStarter = {}, connectionFactory = { target ->
+                val transportFactory = transports?.let { captured -> TransportFactory {
+                    KtorTcpTransportFactory(target.hostname, target.port).create().also(captured::add)
+                } }
+                SshConnection(target.hostname, target.port, target.legacySshAlgorithms,
+                    customTransport = transportFactory).also(connections::add)
+            })
         val prompts = launch(Dispatchers.IO) {
             controller.prompts.collect { prompts -> prompts.filterIsInstance<SessionPrompt.HostKeyVerification>().filter { automaticTrust }.forEach {
                 controller.respondToPrompt(it.requestId, listOf("trust"))
             } }
         }
         try { withTimeout(75_000) { block(controller, profile, echoPort!!, connections, vault) } }
+        catch (timeout: TimeoutCancellationException) {
+            runCatching {
+                CiRegressionDiagnostics.record("forward_fixture_timeout", JSONObject()
+                    .put("sessions", JSONArray(controller.sessions.value.map { it.phase.name }))
+                    .put("rules", JSONArray(controller.portForwards.value.map {
+                        JSONObject().put("rule", it.rule.id).put("port", it.rule.bindPort).put("phase", it.phase.name)
+                    }))
+                    .put("authorizationRequests", controller.forwardAuthorization.value.size)
+                    .put("connections", connections.size).put("network", controller.network.value.health.name)
+                    .put("pending", controller.forwardingWork.value.pending).put("awake", controller.forwardingWork.value.awake))
+            }
+            throw timeout
+        }
         finally {
             controller.clear()
             prompts.cancelAndJoin()
@@ -136,31 +159,54 @@ class PortForwardLifecycleInstrumentedTest {
         assertEquals(PortForwardRuntimePhase.STOPPED, controller.portForwards.value.single().phase)
     }
 
-    @Test fun sharedDedicatedCarrierRecoversWithStableRuleIdsAndWaitsForAuthorization() = fixture { controller, profile, echoPort, connections, vault ->
-        val rules = PortForwardType.entries.map { type -> PortForwardRule("shared-${type.name}", profile.id, type,
-            bindPort = if (type == PortForwardType.REMOTE) 22354 else java.net.ServerSocket(0).use { it.localPort },
-            destinationHost = "127.0.0.1", destinationPort = echoPort) }
-        rules.forEach { vault.upsertPortForward(it); controller.startPortForwardOnNewConnection(profile, it) }
-        CiRegressionDiagnostics.phase("forward-initial")
-        rules.forEach { active(controller, it.id, "initial") }
-        assertEquals(1, connections.size)
-        rules.forEach { rule -> client(rule, echoPort).use { echo(it, 54) } }
-        val ids = controller.portForwards.value.map { it.runtimeId }.toSet()
-        connections.single().close()
-        val request = controller.forwardAuthorization.first { it.isNotEmpty() }.single()
-        assertFalse(controller.forwardingWork.first { !it.awake }.awake)
-        assertEquals(1, connections.size)
-        controller.respondToForwardAuthorization(request.id, true)
-        CiRegressionDiagnostics.phase("forward-recovery")
-        rules.forEach { active(controller, it.id, "recovery") }
-        assertEquals(ids, controller.portForwards.value.map { it.runtimeId }.toSet())
-        assertEquals(2, connections.size)
-        rules.forEach { rule -> client(rule, echoPort).use { echo(it, 55) } }
-        controller.stopPortForward("", rules.first().id)
-        controller.portForwards.first { states -> states.first { it.rule.id == rules.first().id }.phase == PortForwardRuntimePhase.STOPPED }
-        assertEquals(1, controller.sessions.value.size)
-        controller.stopPortForwardsForProfile(profile.id)
-        controller.sessions.first { it.isEmpty() }
+    @Test fun sharedDedicatedCarrierRecoversWithStableRuleIdsAndWaitsForAuthorization() {
+        val transports = java.util.Collections.synchronizedList(mutableListOf<Transport>())
+        fixture(transports = transports) { controller, profile, echoPort, connections, vault ->
+            val rules = PortForwardType.entries.map { type -> PortForwardRule("shared-${type.name}", profile.id, type,
+                bindPort = if (type == PortForwardType.REMOTE) 22354 else java.net.ServerSocket(0).use { it.localPort },
+                destinationHost = "127.0.0.1", destinationPort = echoPort) }
+            rules.forEach { vault.upsertPortForward(it); controller.startPortForwardOnNewConnection(profile, it) }
+            CiRegressionDiagnostics.phase("forward-initial")
+            rules.forEachIndexed { index, rule ->
+                CiRegressionDiagnostics.phase("forward-initial-active", index = index)
+                active(controller, rule.id, "initial")
+            }
+            assertEquals(1, connections.size)
+            rules.forEachIndexed { index, rule ->
+                CiRegressionDiagnostics.phase("forward-initial-echo", index = index)
+                client(rule, echoPort).use { echo(it, 54) }
+            }
+            val ids = controller.portForwards.value.map { it.runtimeId }.toSet()
+            CiRegressionDiagnostics.phase("forward-disconnect-begin")
+            // Lose the wire while its monitor is alive; wrapper close cancels that monitor itself.
+            synchronized(transports) { transports.single() }.close()
+            CiRegressionDiagnostics.phase("forward-authorization-await")
+            val request = controller.forwardAuthorization.first { it.isNotEmpty() }.single()
+            CiRegressionDiagnostics.phase("forward-idle-await")
+            assertFalse(controller.forwardingWork.first { !it.awake }.awake)
+            assertEquals(1, connections.size)
+            CiRegressionDiagnostics.phase("forward-authorization-approve")
+            controller.respondToForwardAuthorization(request.id, true)
+            CiRegressionDiagnostics.phase("forward-recovery")
+            rules.forEachIndexed { index, rule ->
+                CiRegressionDiagnostics.phase("forward-recovery-active", index = index)
+                active(controller, rule.id, "recovery")
+            }
+            assertEquals(ids, controller.portForwards.value.map { it.runtimeId }.toSet())
+            assertEquals(2, connections.size)
+            rules.forEachIndexed { index, rule ->
+                CiRegressionDiagnostics.phase("forward-recovery-echo", index = index)
+                client(rule, echoPort).use { echo(it, 55) }
+            }
+            CiRegressionDiagnostics.phase("forward-stop-first")
+            controller.stopPortForward("", rules.first().id)
+            controller.portForwards.first { states -> states.first { it.rule.id == rules.first().id }.phase == PortForwardRuntimePhase.STOPPED }
+            assertEquals(1, controller.sessions.value.size)
+            CiRegressionDiagnostics.phase("forward-stop-all")
+            controller.stopPortForwardsForProfile(profile.id)
+            controller.sessions.first { it.isEmpty() }
+            CiRegressionDiagnostics.phase("forward-stopped")
+        }
     }
 
     @Test fun occupiedLocalAndProxyPortsFailWithoutRetrying() = fixture { controller, profile, echoPort, connections, vault ->

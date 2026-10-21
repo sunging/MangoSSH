@@ -30,7 +30,7 @@ internal class SshFileEntry(val filename: String, val attributes: SshFileAttribu
 internal class SshFileHandle internal constructor(internal val delegate: SftpFileHandle)
 
 /** Server status category only; paths, descriptions and protocol causes are deliberately dropped. */
-internal class SshFileFailure(val status: Int, stage: SshFileFailureStage = SshFileFailureStage.OPERATION) :
+internal class SshFileFailure(val status: Int, val stage: SshFileFailureStage = SshFileFailureStage.OPERATION) :
     IOException("SFTP operation failed ($stage)")
 
 /** Fixed local categories; never include peer text or exception causes in diagnostics. */

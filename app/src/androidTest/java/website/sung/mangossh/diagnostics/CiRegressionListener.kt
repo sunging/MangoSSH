@@ -10,6 +10,9 @@ import org.junit.runner.Description
 import org.junit.runner.Result
 import org.junit.runner.notification.Failure
 import org.junit.runner.notification.RunListener
+import website.sung.mangossh.session.SourceChangedException
+import website.sung.mangossh.session.ssh.SshFailure
+import website.sung.mangossh.session.ssh.SshFileFailure
 
 /** CI-only journal survives runner termination and contains no peer text or file contents. */
 object CiRegressionDiagnostics {
@@ -45,6 +48,9 @@ object CiRegressionDiagnostics {
         generateSequence(error) { it.cause }.take(8).forEach { cause ->
             val item = JSONObject().put("type", safe(cause.javaClass.name))
             if (cause is ErrnoException) item.put("errno", cause.errno)
+            if (cause is SshFailure) item.put("category", cause.category.name)
+            if (cause is SshFileFailure) item.put("status", cause.status).put("stage", cause.stage.name)
+            if (cause is SourceChangedException) item.put("reason", cause.reason.name)
             item.put("frames", JSONArray(cause.stackTrace.take(30).map {
                 safe("${it.className}.${it.methodName}:${it.lineNumber}")
             }))
