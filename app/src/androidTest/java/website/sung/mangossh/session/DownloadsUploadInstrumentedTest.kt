@@ -74,7 +74,10 @@ class DownloadsUploadInstrumentedTest {
                 }
                 if (!saved) Thread.sleep(100)
             }
-        } finally { automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags } }
+        } finally {
+            if (!saved) recordPickerFailure(automation)
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+        }
         assertTrue("The system picker must expose its save action", saved)
         compose.waitUntil(timeoutMillis = 15_000) { selected.get() != null }
         val source = requireNotNull(selected.get())
@@ -126,6 +129,35 @@ class DownloadsUploadInstrumentedTest {
             assertTrue("Delete only the picker-created test document", DocumentsContract.deleteDocument(base.contentResolver, source))
             staging.deleteRecursively()
         }
+    }
+
+    /** Records structure, never text or document names; screenshots are CI-only DocumentsUI. */
+    private fun recordPickerFailure(automation: android.app.UiAutomation) {
+        val root = automation.rootInActiveWindow ?: return
+        try {
+            fun describe(node: AccessibilityNodeInfo, depth: Int) {
+                if (depth > 20) return
+                println("Picker node: class=${node.className} id=${node.viewIdResourceName} " +
+                    "enabled=${node.isEnabled} clickable=${node.isClickable} package=${node.packageName}")
+                for (index in 0 until node.childCount) {
+                    val child = node.getChild(index) ?: continue
+                    try { describe(child, depth + 1) } finally { child.recycle() }
+                }
+            }
+            describe(root, 0)
+            // This test has only created an empty, randomly named document in a disposable emulator.
+            if (InstrumentationRegistry.getArguments().getString("ciDiagnostics") == "true" &&
+                root.packageName?.toString()?.endsWith(".documentsui") == true) {
+                runCatching {
+                    automation.executeShellCommand("mkdir -p /sdcard/mangossh-ci-diagnostics").use {
+                        android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
+                    }
+                    automation.executeShellCommand("screencap -p /sdcard/mangossh-ci-diagnostics/documents-picker.png").use {
+                        android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
+                    }
+                }
+            }
+        } finally { root.recycle() }
     }
 
     private fun clickSave(node: AccessibilityNodeInfo): Boolean {

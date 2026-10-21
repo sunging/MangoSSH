@@ -202,6 +202,7 @@ class AuthenticationInstrumentedTest {
                 AuthenticationScreen(VaultStatus.Ready, metadata, emptyList(), listOf(host()), AuthenticationEditorActions(), {}, { _, _, _ -> }, false)
             }
         } } }
+        compose.onNodeWithTag("authentication_list").performScrollToKey("one")
         compose.onNodeWithTag("authentication_edit_one").performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithTag("authentication_password_value").assertIsDisplayed()
         compose.onNodeWithTag("authentication_save").assertIsDisplayed().assertIsEnabled()

@@ -29,7 +29,7 @@ class PortForwardLifecycleInstrumentedTest {
         val echoPort = args.getString("fixtureEchoPort")?.toIntOrNull()
         if (args.getString("requireFixtures") == "true") { assertNotNull(port); assertNotNull(echoPort) }
         assumeTrue(port != null && echoPort != null)
-        if (protocol == ConnectionProtocol.MOSH) assumeTrue(args.getString("moshFixture") == "true")
+        if (protocol == ConnectionProtocol.MOSH) assumeTrue(args.getString("fixtureMosh") == "true")
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val prefix = "forward-lifecycle-${UUID.randomUUID()}"
         val root = File(base.cacheDir, prefix).apply { mkdirs() }
