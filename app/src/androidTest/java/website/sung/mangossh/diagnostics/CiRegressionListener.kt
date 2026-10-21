@@ -1,6 +1,7 @@
 package website.sung.mangossh.diagnostics
 
 import android.os.ParcelFileDescriptor
+import android.os.Build
 import android.system.ErrnoException
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
@@ -18,12 +19,22 @@ object CiRegressionDiagnostics {
     @Synchronized fun record(event: String, fields: JSONObject = JSONObject()) {
         if (InstrumentationRegistry.getArguments().getString("ciDiagnostics") != "true") return
         fields.put("event", event).put("elapsedMs", android.os.SystemClock.elapsedRealtime())
-        // Values supplied here are fixed phases, numeric offsets, test IDs and code locations.
-        // Shell quoting is still required; never interpolate throwable messages or document names.
+        if (Build.VERSION.SDK_INT < 31) throw IllegalStateException("CI journal requires API 31 or newer")
+        // UiAutomation executes argv, not shell syntax. Feed the script to an explicit sh
+        // through stdin: semicolons/redirections must not become mkdir path arguments.
         val json = fields.toString().replace("'", "'\\''")
-        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
-            "mkdir -p /sdcard/mangossh-ci-diagnostics; printf '%s\\n' '$json' >> /sdcard/mangossh-ci-diagnostics/run-events.jsonl"
-        ).use { ParcelFileDescriptor.AutoCloseInputStream(it).readBytes() }
+        val script = "mkdir -p /sdcard/mangossh-ci-diagnostics && " +
+            "printf '%s\\n' '$json' >> /sdcard/mangossh-ci-diagnostics/run-events.jsonl && " +
+            "printf journal-written\n"
+        val pipes = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommandRw("sh")
+        ParcelFileDescriptor.AutoCloseInputStream(pipes[0]).use { output ->
+            ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).use { input ->
+                input.write(script.toByteArray(Charsets.UTF_8))
+            }
+            check(output.readBytes().toString(Charsets.UTF_8) == "journal-written") {
+                "CI journal append failed"
+            }
+        }
     }
 
     fun phase(name: String, index: Int = -1, offset: Long = -1, count: Int = -1) =

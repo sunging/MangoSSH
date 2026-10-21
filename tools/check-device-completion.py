@@ -11,6 +11,8 @@ def check(journal_directory, report_directory):
     journals = list(Path(journal_directory).rglob('run-events.jsonl'))
     if len(journals) != 1:
         raise ValueError(f'Expected one execution journal, found {len(journals)}')
+    if not journals[0].is_file():
+        raise ValueError('Execution journal is not a regular file')
     events = [json.loads(line) for line in journals[0].read_text().splitlines()]
     plans = [event for event in events if event['event'] == 'plan']
     ends = [event for event in events if event['event'] == 'run_finished']

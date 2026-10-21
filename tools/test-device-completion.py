@@ -29,6 +29,11 @@ class CompletionTest(unittest.TestCase):
     def test_complete(self):
         self.assertEqual(2, self.check())
 
+    def test_directory_instead_of_journal(self):
+        (self.root / 'run-events.jsonl').mkdir()
+        with self.assertRaisesRegex(ValueError, 'not a regular file'):
+            module.check(self.root, self.root)
+
     def test_runner_terminated(self):
         self.events.pop()
         with self.assertRaisesRegex(ValueError, 'completion'):
