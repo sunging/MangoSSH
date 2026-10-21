@@ -26,6 +26,7 @@ cleanup() {
 }
 trap cleanup EXIT
 "$python" tools/test-device-regression-support.py
+"$python" tools/test-device-completion.py
 # Finish compilation before installing reverse listeners and probing the device.
 ./gradlew --no-daemon :app:assembleGithubDebug :app:assembleGithubDebugAndroidTest \
   :app:assembleFdroidDebug :app:assembleFdroidDebugAndroidTest \
@@ -94,11 +95,22 @@ for phase in github fdroid termlib; do
   "$python" tools/device-regression-support.py probe | tee "$diagnostics/$phase-preflight.jsonl"
   adb shell rm -rf /sdcard/mangossh-ci-diagnostics
   adb logcat -c
-  if ./gradlew --no-daemon "$task" "${arguments[@]}"; then
+  suite_arguments=("${arguments[@]}")
+  if [[ "$phase" != termlib ]]; then
+    suite_arguments+=(
+      -Pandroid.testInstrumentationRunnerArguments.listener=website.sung.mangossh.diagnostics.CiRegressionListener
+      -Pandroid.testInstrumentationRunnerArguments.newRunListenerMode=true
+    )
+  fi
+  if ./gradlew --no-daemon "$task" "${suite_arguments[@]}"; then
     collect
   else
     gradle_status=1
     collect
+  fi
+  if [[ "$phase" != termlib ]]; then
+    "$python" tools/check-device-completion.py "$diagnostics/$phase" \
+      "app/build/outputs/androidTest-results/connected/debug/flavors/$phase" || gradle_status=1
   fi
 done
 report_status=0

@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.collect
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.json.JSONArray
+import org.json.JSONObject
+import website.sung.mangossh.diagnostics.CiRegressionDiagnostics
 import website.sung.mangossh.data.settings.*
 import website.sung.mangossh.data.vault.*
 import website.sung.mangossh.domain.*
@@ -68,11 +71,17 @@ class PortForwardLifecycleInstrumentedTest {
         }
     }
 
-    private suspend fun active(controller: SshSessionController, id: String): PortForwardRuntimeState = try {
+    private suspend fun active(controller: SshSessionController, id: String, stage: String = "activation"): PortForwardRuntimeState = try {
         withTimeout(15_000) { controller.portForwards.first { states -> states.any { it.rule.id == id && it.phase == PortForwardRuntimePhase.ACTIVE } }
             .first { it.rule.id == id } }
     } catch (timeout: TimeoutCancellationException) {
-        throw AssertionError("Synthetic rule $id: phases=${controller.portForwards.value.map { it.phase }}, " +
+        CiRegressionDiagnostics.record("forward_timeout", JSONObject().put("stage", stage).put("rule", id)
+            .put("states", JSONArray(controller.portForwards.value.map {
+                // detail is a local resource selected by toSafeMessage(), never peer exception text.
+                JSONObject().put("rule", it.rule.id).put("port", it.rule.bindPort)
+                    .put("phase", it.phase.name).put("detail", it.detail)
+            })))
+        throw AssertionError("Synthetic rule $id at $stage: states=${controller.portForwards.value.map { "${it.rule.id}:${it.rule.bindPort}:${it.phase}:${it.detail}" }}, " +
             "session phases=${controller.sessions.value.map { it.phase }}", timeout)
     }
 
@@ -132,7 +141,8 @@ class PortForwardLifecycleInstrumentedTest {
             bindPort = if (type == PortForwardType.REMOTE) 22354 else java.net.ServerSocket(0).use { it.localPort },
             destinationHost = "127.0.0.1", destinationPort = echoPort) }
         rules.forEach { vault.upsertPortForward(it); controller.startPortForwardOnNewConnection(profile, it) }
-        rules.forEach { active(controller, it.id) }
+        CiRegressionDiagnostics.phase("forward-initial")
+        rules.forEach { active(controller, it.id, "initial") }
         assertEquals(1, connections.size)
         rules.forEach { rule -> client(rule, echoPort).use { echo(it, 54) } }
         val ids = controller.portForwards.value.map { it.runtimeId }.toSet()
@@ -141,7 +151,8 @@ class PortForwardLifecycleInstrumentedTest {
         assertFalse(controller.forwardingWork.first { !it.awake }.awake)
         assertEquals(1, connections.size)
         controller.respondToForwardAuthorization(request.id, true)
-        rules.forEach { active(controller, it.id) }
+        CiRegressionDiagnostics.phase("forward-recovery")
+        rules.forEach { active(controller, it.id, "recovery") }
         assertEquals(ids, controller.portForwards.value.map { it.runtimeId }.toSet())
         assertEquals(2, connections.size)
         rules.forEach { rule -> client(rule, echoPort).use { echo(it, 55) } }
