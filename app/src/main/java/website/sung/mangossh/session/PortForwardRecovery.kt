@@ -100,7 +100,10 @@ internal class PortForwardRecovery(
         intents.values.filter { it.sessionId == sessionId && it.listening }.forEach { it.lost.complete(Unit) }
     }
 
-    fun listenerLost(intent: Intent) = whileCurrent(intent) { intent.lost.complete(Unit) }
+    /** A delayed close belongs to its listening attempt, never to a replacement attempt. */
+    fun listenerLost(intent: Intent, generation: CompletableDeferred<Unit>) {
+        whileCurrent(intent) { if (intent.lost === generation) generation.complete(Unit) }
+    }
 
     fun waitingForOperation(sessionId: String, waiting: Boolean) = synchronized(lock) {
         intents.values.filter { it.sessionId == sessionId && it.opening }.forEach {

@@ -732,6 +732,7 @@ class SshSessionController internal constructor(
 
     /** Publishes the listener under both the carrier lifetime and the intent generation guard. */
     private suspend fun openForwardIntent(intent: PortForwardRecovery.Intent) {
+        val listenerGeneration = intent.lost
         forwardStopping[intent.rule.id]?.await()
         val (sessionId, managed, connection) = acquireForwardCarrier(intent)
         val runtimeId = intent.runtimeId
@@ -769,7 +770,10 @@ class SshSessionController internal constructor(
                                 if (managed.forwards[runtimeId] === forward) managed.forwards.remove(runtimeId) else null
                             }
                             if (removed != null) {
-                                cleanupScope.launch { runCatching { removed.close() }; forwardRecovery.listenerLost(intent) }
+                                cleanupScope.launch {
+                                    runCatching { removed.close() }
+                                    forwardRecovery.listenerLost(intent, listenerGeneration)
+                                }
                             }
                         } else synchronized(managed.sshFeatureLock) {
                             if (managed.forwards[runtimeId] === forward) forwardRecovery.whileCurrent(intent) {

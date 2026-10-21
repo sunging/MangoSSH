@@ -5,6 +5,50 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class OwnedSshOperationTest {
+    @Test fun connectionShutdownReportsClosedToAnActiveCaller() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val started = CompletableDeferred<Unit>()
+        val caller = async(start = CoroutineStart.UNDISPATCHED) {
+            runCatching { awaitOwnedSshOperation(scope) { started.complete(Unit); awaitCancellation() } }
+        }
+        try {
+            started.await()
+            scope.cancel()
+            val failure = withTimeout(1000) { caller.await() }.exceptionOrNull()
+            assertFalse("A closed connection must not cancel its caller", caller.isCancelled)
+            assertTrue("Connection shutdown must remain retryable", failure is SshFailure)
+            assertEquals(SshFailure.Category.CLOSED, (failure as SshFailure).category)
+        } finally { scope.cancel(); caller.cancelAndJoin() }
+    }
+
+    @Test fun operationCancellationWithALiveOwnerIsNotAConnectionFailure() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        try {
+            val failure = runCatching {
+                awaitOwnedSshOperation<Unit>(scope) { throw CancellationException("synthetic prompt cancellation") }
+            }.exceptionOrNull()
+            assertTrue(failure is CancellationException)
+            assertTrue(scope.isActive)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun callerCancellationWinsConcurrentConnectionShutdown() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val started = CompletableDeferred<Unit>()
+        val observed = CompletableDeferred<Throwable>()
+        val caller = launch(start = CoroutineStart.UNDISPATCHED) {
+            try { awaitOwnedSshOperation(scope) { started.complete(Unit); awaitCancellation() } }
+            catch (error: Throwable) { observed.complete(error); throw error }
+        }
+        try {
+            started.await()
+            caller.cancel()
+            scope.cancel()
+            caller.join()
+            assertTrue(withTimeout(1000) { observed.await() } is CancellationException)
+        } finally { scope.cancel(); caller.cancelAndJoin() }
+    }
+
     @Test fun callerCancellationLeavesHandshakeOwnedAndClosesItsLateResultOnce() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val started = CompletableDeferred<Unit>()

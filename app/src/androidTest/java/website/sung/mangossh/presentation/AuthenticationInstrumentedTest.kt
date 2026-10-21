@@ -14,6 +14,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -85,14 +87,43 @@ class AuthenticationInstrumentedTest {
     @Test fun cancellingDisposesTheStagedEditorWithoutSubmittingSecrets() {
         var visible by mutableStateOf(true)
         var opened: String? = null
-        var discarded: String? = null
+        val discarded = AtomicReference<String?>()
         compose.setContent { MaterialTheme {
-            if (visible) AuthenticationEditorDialog(null, emptyList(), AuthenticationEditorActions(begin = { opened = it }, discard = { discarded = it },
+            if (visible) AuthenticationEditorDialog(null, emptyList(), AuthenticationEditorActions(begin = { opened = it }, discard = { discarded.set(it) },
                 save = { _, _ -> fail("Cancelled editors cannot save") })) { visible = false }
         } }
         compose.onNodeWithTag("authentication_password_value").performTextInput(UUID.randomUUID().toString())
         compose.onNodeWithTag("authentication_cancel").performClick()
-        compose.runOnIdle { assertNotNull(opened); assertEquals(opened, discarded) }
+        // Cancel requests removal; DisposableEffect cleanup happens when that removal is applied.
+        compose.waitUntil(timeoutMillis = 5_000) { discarded.get() != null }
+        compose.onNodeWithTag("authentication_editor").assertDoesNotExist()
+        compose.runOnIdle { assertNotNull(opened); assertEquals(opened, discarded.get()) }
+    }
+
+    @Test fun cancellingWaitsForCompositionRemovalBeforeDiscardingTheStagedEditor() {
+        var visible by mutableStateOf(true)
+        val opened = AtomicReference<String?>()
+        val discarded = AtomicReference<String?>()
+        val discardCount = AtomicInteger()
+        compose.setContent { MaterialTheme {
+            if (visible) AuthenticationEditorDialog(null, emptyList(), AuthenticationEditorActions(
+                begin = { opened.set(it) }, discard = { discarded.set(it); discardCount.incrementAndGet() },
+                save = { _, _ -> fail("Cancelled editors cannot save") })) { visible = false }
+        } }
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        try {
+            compose.onNodeWithTag("authentication_cancel").performClick()
+            // Hold the removal frame: an idle UI thread alone does not prove onDispose ran.
+            compose.runOnIdle { assertFalse(visible); assertNotNull(opened.get()); assertNull(discarded.get()) }
+            compose.onNodeWithTag("authentication_editor").assertExists()
+            compose.mainClock.advanceTimeByFrame()
+            compose.mainClock.autoAdvance = true
+            compose.waitUntil(timeoutMillis = 5_000) { discarded.get() != null }
+            compose.onNodeWithTag("authentication_editor").assertDoesNotExist()
+            assertEquals(opened.get(), discarded.get())
+            assertEquals(1, discardCount.get())
+        } finally { compose.mainClock.autoAdvance = true }
     }
 
     @Test fun restoringRetainsTheNameButDiscardsPasswordsAndStagingTokens() {
