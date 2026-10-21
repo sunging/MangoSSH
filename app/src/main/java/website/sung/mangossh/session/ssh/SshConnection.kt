@@ -287,7 +287,7 @@ internal class SshConnection(
     }
 
     /** A file operation opens a private channel and can cancel without closing sibling channels. */
-    suspend fun openFiles(): SshFiles = owned(onDiscard = { it.close() }) {
+    suspend fun openFiles(): SshFiles = owned(finishOnCancellation = true, onDiscard = { it.close() }) {
         val result = clientOrThrow().openSftp()
         val delegate = openedSftpValue(result)
         val owned = SshFiles(delegate) { files.remove(it) }
@@ -302,28 +302,13 @@ internal class SshConnection(
     private fun clientOrThrow(): SshClient = client.get()?.takeUnless { closed.get() }
         ?: throw SshFailure(SshFailure.Category.CLOSED)
 
-    private suspend fun <T> owned(onDiscard: (T) -> Unit = {}, block: suspend () -> T): T {
+    private suspend fun <T> owned(
+        finishOnCancellation: Boolean = false,
+        onDiscard: (T) -> Unit = {},
+        block: suspend () -> T,
+    ): T {
         if (closed.get()) throw SshFailure(SshFailure.Category.CLOSED)
-        val abandoned = AtomicBoolean()
-        val result = AtomicReference<ResultBox<T>?>()
-        fun discard() { result.getAndSet(null)?.let { onDiscard(it.value) } }
-        val pending = scope.async {
-            block().also { value ->
-                result.set(ResultBox(value))
-                if (abandoned.get()) discard()
-            }
-        }
-        var delivered = false
-        return try {
-            pending.await().also { delivered = true; result.set(null) }
-        } finally {
-            if (!delivered) {
-                abandoned.set(true)
-                pending.cancel()
-                discard()
-                pending.invokeOnCompletion { discard() }
-            }
-        }
+        return awaitOwnedSshOperation(scope, finishOnCancellation, onDiscard, block)
     }
 
     override fun close() {
@@ -345,5 +330,4 @@ internal class SshConnection(
         val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
-    private class ResultBox<T>(val value: T)
 }

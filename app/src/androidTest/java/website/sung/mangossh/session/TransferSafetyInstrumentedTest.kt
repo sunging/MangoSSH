@@ -191,6 +191,17 @@ class TransferSafetyInstrumentedTest {
     }
 
     @Test fun blockedSourceReadTimesOutAndPreservesTheOriginalTarget() = blockedSourceRead(false)
+    @Test fun cancelledSftpOpenDoesNotPoisonTheSharedConnection() = fixture { connection, _, _ ->
+        coroutineScope {
+            repeat(20) { index ->
+                val opening = launch(Dispatchers.IO) { connection.openFiles().close() }
+                delay((index % 5).toLong())
+                opening.cancelAndJoin()
+                withTimeout(5_000) { connection.openFiles().close() }
+            }
+        }
+    }
+
     @Test fun blockedSourceReadCanBeCancelledAndCleansItsTemporary() = blockedSourceRead(true)
 
     private fun blockedSourceRead(cancel: Boolean) = fixture(idleMillis = 1_500) { connection, provider, manager ->
