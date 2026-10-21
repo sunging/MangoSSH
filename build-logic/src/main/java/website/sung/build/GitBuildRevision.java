@@ -8,6 +8,7 @@ import java.util.Locale;
 import javax.inject.Inject;
 import org.gradle.api.GradleException;
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.provider.Property;
 import org.gradle.api.provider.ValueSource;
 import org.gradle.api.provider.ValueSourceParameters;
 import org.gradle.process.ExecOperations;
@@ -22,6 +23,9 @@ public abstract class GitBuildRevision implements ValueSource<String, GitBuildRe
     public interface Parameters extends ValueSourceParameters {
         /** Repository root; an absent .git marker means a source archive. */
         DirectoryProperty getRootDirectory();
+
+        /** Optional Git executable; defaults to Git on the process search path. */
+        Property<String> getGitExecutable();
     }
 
     @Inject protected abstract ExecOperations getExecOperations();
@@ -34,7 +38,8 @@ public abstract class GitBuildRevision implements ValueSource<String, GitBuildRe
         try {
             var result = getExecOperations().exec(spec -> {
                 spec.workingDir(root);
-                spec.commandLine("git", "rev-parse", "--verify", "HEAD");
+                spec.commandLine(getParameters().getGitExecutable().getOrElse("git"),
+                    "rev-parse", "--verify", "HEAD");
                 spec.setStandardOutput(output);
                 spec.setErrorOutput(OutputStream.nullOutputStream());
                 spec.setIgnoreExitValue(true);
