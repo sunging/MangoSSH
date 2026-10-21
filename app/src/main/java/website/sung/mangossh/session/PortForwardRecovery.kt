@@ -156,10 +156,12 @@ internal class PortForwardRecovery(
 
     private fun fail(intent: Intent, error: Throwable) = synchronized(lock) {
         if (intents[intent.rule.id] === intent) {
-            publish(intent, PortForwardRuntimePhase.FAILED, error)
             intents.remove(intent.rule.id)
             _opening.value -= intent.rule.id
             _pending.value = intents.isNotEmpty()
+            // Terminal observers may immediately close the carrier or start another rule.
+            // Release ownership before publishing, so FAILED never exposes a live intent.
+            publish(intent, PortForwardRuntimePhase.FAILED, error)
         }
     }
 

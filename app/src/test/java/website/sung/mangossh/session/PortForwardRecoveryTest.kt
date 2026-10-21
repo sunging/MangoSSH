@@ -117,6 +117,26 @@ class PortForwardRecoveryTest {
         } finally { fixture.close() }
     }
 
+    @Test fun terminalFailureIsPublishedAfterOwnershipIsReleased() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        lateinit var recovery: PortForwardRecovery
+        var pendingAtFailure: Boolean? = null
+        var ownedAtFailure: Boolean? = null
+        recovery = PortForwardRecovery(scope, MutableStateFlow(NetworkStatus()),
+            { throw SecurityException("synthetic rejection") },
+            { intent, phase, _ ->
+                if (phase == PortForwardRuntimePhase.FAILED) {
+                    pendingAtFailure = recovery.pending.value
+                    ownedAtFailure = recovery.current(intent.rule.id) != null
+                }
+            }, { false })
+        try {
+            recovery.start(PortForwardRule("rule", "profile", PortForwardType.LOCAL, bindPort = 1080))
+            assertEquals(false, pendingAtFailure)
+            assertEquals(false, ownedAtFailure)
+        } finally { scope.cancel() }
+    }
+
     @Test fun retryDelayIsExponentialAndBounded() {
         assertEquals(listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 32_000L, 60_000L, 60_000L),
             (0..7).map { PortForwardRecovery.retryDelayMillis(it) })

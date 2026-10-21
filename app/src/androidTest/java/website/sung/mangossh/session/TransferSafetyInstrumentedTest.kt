@@ -194,22 +194,31 @@ class TransferSafetyInstrumentedTest {
     @Test fun blockedSourceReadCanBeCancelledAndCleansItsTemporary() = blockedSourceRead(true)
 
     private fun blockedSourceRead(cancel: Boolean) = fixture(idleMillis = 1_500) { connection, provider, manager ->
-        val directory = "/" + UUID.randomUUID().toString()
-        val files = RemoteFileClient()
-        files.mkdirIfMissing(connection, directory)
-        BlockingOperation().use { files.upload(connection, "original".byteInputStream(), directory, "target", 0, 8, 1024, it) { _, _ -> } }
-        File(provider.root, "source").writeText("new contents")
-        provider.stallReadContent = true
-        manager.uploadFile("fixture", provider.uri("source"), "target", directory)
-        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
-        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
-        withContext(Dispatchers.IO) { check(provider.openedRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
-        if (cancel) manager.cancel(manager.transfers.value.single().id)
-        val state = withTimeout(5_000) { manager.transfers.first { it.single().isFinished }.single() }
-        assertEquals(if (cancel) ScpTransferPhase.CANCELLED else ScpTransferPhase.FAILED, state.phase)
-        BlockingOperation().use { assertEquals("original", files.readEditable(connection, "$directory/target", it).text) }
-        if (cancel) withTimeout(5_000) {
-            while (files.list(connection, "fixture", directory, 20).entries.any { it.name.endsWith(".part") }) delay(50)
+        var stage = "create-directory"
+        try {
+            val directory = "/" + UUID.randomUUID().toString()
+            val files = RemoteFileClient()
+            files.mkdirIfMissing(connection, directory)
+            stage = "seed-original"
+            BlockingOperation().use { files.upload(connection, "original".byteInputStream(), directory, "target", 0, 8, 1024, it) { _, _ -> } }
+            File(provider.root, "source").writeText("new contents")
+            provider.stallReadContent = true
+            stage = "start-upload"
+            manager.uploadFile("fixture", provider.uri("source"), "target", directory)
+            val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+            manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+            withContext(Dispatchers.IO) { check(provider.openedRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
+            if (cancel) manager.cancel(manager.transfers.value.single().id)
+            val state = withTimeout(5_000) { manager.transfers.first { it.single().isFinished }.single() }
+            assertEquals(if (cancel) ScpTransferPhase.CANCELLED else ScpTransferPhase.FAILED, state.phase)
+            stage = "verify-original-after-stop"
+            BlockingOperation().use { assertEquals("original", files.readEditable(connection, "$directory/target", it).text) }
+            stage = "verify-temporary-cleanup"
+            if (cancel) withTimeout(5_000) {
+                while (files.list(connection, "fixture", directory, 20).entries.any { it.name.endsWith(".part") }) delay(50)
+            }
+        } catch (error: RemoteFileException) {
+            throw AssertionError("Blocked source regression failed at $stage", error)
         }
     }
 

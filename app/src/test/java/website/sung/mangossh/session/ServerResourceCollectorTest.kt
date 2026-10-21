@@ -63,6 +63,37 @@ class ServerResourceCollectorTest {
         assertTrue(channel.closed.get())
     }
 
+    @Test fun cancellationOfBothBlockedStreamsNeverBecomesAnIoFailure() = runBlocking {
+        repeat(40) {
+            val started = CountDownLatch(2)
+            val released = CountDownLatch(1)
+            fun stream() = object : InputStream() {
+                override fun read(): Int {
+                    started.countDown()
+                    check(released.await(3, TimeUnit.SECONDS))
+                    throw IOException("closed synthetic channel")
+                }
+            }
+            val channel = FakeChannel(stream(), stream(), onClose = { released.countDown() })
+            val job = launch(Dispatchers.IO) { executeResourceCommand(channel, "fixed") }
+            try {
+                assertTrue(withContext(Dispatchers.IO) { started.await(3, TimeUnit.SECONDS) })
+                withTimeout(3000) { job.cancelAndJoin() }
+                assertTrue(channel.closed.get())
+            } finally { channel.close(); job.cancelAndJoin() }
+        }
+    }
+
+    @Test fun activeQueryStillPropagatesReadFailure() = runBlocking {
+        val failure = IOException("synthetic read failure")
+        val channel = FakeChannel(object : InputStream() {
+            override fun read(): Int = throw failure
+        }, ByteArrayInputStream(byteArrayOf()))
+        try { executeResourceCommand(channel, "fixed"); fail("Read failure was hidden") }
+        catch (actual: IOException) { assertSame(failure, actual) }
+        assertTrue(channel.closed.get())
+    }
+
     @Test fun oversizedOutputOrStderrClosesOnlyQueryChannel() = runBlocking {
         for ((output, error) in listOf(ByteArray(128 * 1024 + 1) to byteArrayOf(), byteArrayOf() to ByteArray(16 * 1024 + 1))) {
             val channel = FakeChannel(ByteArrayInputStream(output), ByteArrayInputStream(error))

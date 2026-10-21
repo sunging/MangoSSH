@@ -27,7 +27,6 @@ import org.connectbot.sshlib.PublicKey
 import org.connectbot.sshlib.SshClient
 import org.connectbot.sshlib.SshClientConfig
 import org.connectbot.sshlib.SshSigning
-import org.connectbot.sshlib.SftpResult
 import org.connectbot.sshlib.transport.KtorTcpTransportFactory
 import org.connectbot.sshlib.transport.Transport
 import org.connectbot.sshlib.transport.TransportFactory
@@ -290,7 +289,7 @@ internal class SshConnection(
     /** A file operation opens a private channel and can cancel without closing sibling channels. */
     suspend fun openFiles(): SshFiles = owned(onDiscard = { it.close() }) {
         val result = clientOrThrow().openSftp()
-        val delegate = (result as? SftpResult.Success)?.value ?: throw SshFileFailure(8)
+        val delegate = openedSftpValue(result)
         val owned = SshFiles(delegate) { files.remove(it) }
         files.add(owned)
         if (closed.get() || !currentCoroutineContext().isActive) {

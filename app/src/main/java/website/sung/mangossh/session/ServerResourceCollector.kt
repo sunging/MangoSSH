@@ -1,5 +1,6 @@
 package website.sung.mangossh.session
 
+import kotlin.coroutines.CoroutineContext
 import java.io.Closeable
 import java.io.InputStream
 import java.util.Base64
@@ -28,13 +29,14 @@ internal interface ResourceExecChannel : Closeable {
 
 /** Drains both streams concurrently and closes even when a stream ignores coroutine cancellation. */
 internal suspend fun executeResourceCommand(channel: ResourceExecChannel, command: String): ResourceCommandResult = coroutineScope {
+    val queryContext = currentCoroutineContext()
     val cancellation = launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
         try { awaitCancellation() } finally { channel.close() }
     }
     try {
         channel.execute(command)
-        val output = async(Dispatchers.IO) { readResourceStream(channel.stdout, 128 * 1024).toString(Charsets.UTF_8) }
-        val errors = async(Dispatchers.IO) { readResourceStream(channel.stderr, 16 * 1024) }
+        val output = async(Dispatchers.IO) { readResourceStream(channel.stdout, 128 * 1024, queryContext).toString(Charsets.UTF_8) }
+        val errors = async(Dispatchers.IO) { readResourceStream(channel.stderr, 16 * 1024, queryContext) }
         val result = output.await()
         errors.await() // Intentionally discard all server error text, including PowerShell CLIXML.
         ResourceCommandResult(result, channel.exitCode())
@@ -44,10 +46,12 @@ internal suspend fun executeResourceCommand(channel: ResourceExecChannel, comman
     }
 }
 
-private suspend fun readResourceStream(stream: InputStream, limit: Int): ByteArray = try {
+private suspend fun readResourceStream(stream: InputStream, limit: Int, queryContext: CoroutineContext): ByteArray = try {
     BoundedProtocolReader.bytes(stream, limit)
 } catch (error: Exception) {
-    // Closing a cancelled channel can unblock read() with IOException; keep cancellation's identity.
+    // The close watcher can run before cancellation reaches this reader child.
+    // Check the owning query first, preserving cancellation instead of promoting close's IOException.
+    queryContext.ensureActive()
     currentCoroutineContext().ensureActive()
     throw error
 }
