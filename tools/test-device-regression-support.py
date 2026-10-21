@@ -33,6 +33,16 @@ class DiagnosticsTest(unittest.TestCase):
             with self.assertRaises(RuntimeError): support.prepare()
             adb.assert_called_once_with('get-state')
 
+    def test_idle_restoration_waits_for_the_asynchronous_transition(self):
+        with patch.object(support, 'adb', side_effect=['IDLE', 'INACTIVE', 'ACTIVE']) as adb, \
+             patch.object(support.time, 'sleep'):
+            support.wait_idle('ACTIVE', 'doze-not-restored')
+            self.assertEqual(3, adb.call_count)
+
+    def test_idle_restoration_timeout_remains_fatal(self):
+        with patch.object(support, 'adb', return_value='IDLE'), redirect_stdout(io.StringIO()):
+            with self.assertRaises(RuntimeError): support.wait_idle('ACTIVE', 'doze-not-restored', timeout=0)
+
     def test_device_forward_is_removed_when_probe_fails(self):
         maps = '\n'.join(f'emulator tcp:{p} tcp:{p}' for p in support.REVERSE_PORTS)
         def adb(*args):

@@ -46,6 +46,16 @@ def check_emulator():
     event('device', 'online')
 
 
+def wait_idle(expected, stage, timeout=15):
+    deadline = time.monotonic() + timeout
+    while True:
+        if adb('shell', 'dumpsys', 'deviceidle', 'get', 'deep') == expected:
+            return
+        if time.monotonic() >= deadline:
+            require(False, stage)
+        time.sleep(.2)
+
+
 def prepare():
     check_emulator()
     adb('shell', 'svc', 'wifi', 'enable')
@@ -61,10 +71,10 @@ def prepare():
     adb('shell', 'dumpsys', 'deviceidle', 'unforce')
     adb('shell', 'input', 'keyevent', '223')
     adb('shell', 'dumpsys', 'deviceidle', 'force-idle')
-    require(adb('shell', 'dumpsys', 'deviceidle', 'get', 'deep') == 'IDLE', 'doze-unavailable')
+    wait_idle('IDLE', 'doze-unavailable')
     adb('shell', 'dumpsys', 'deviceidle', 'unforce')
     adb('shell', 'input', 'keyevent', '224')
-    require(adb('shell', 'dumpsys', 'deviceidle', 'get', 'deep') == 'ACTIVE', 'doze-not-restored')
+    wait_idle('ACTIVE', 'doze-not-restored')
     event('network-and-doze-preconditions', 'ready')
 
 
