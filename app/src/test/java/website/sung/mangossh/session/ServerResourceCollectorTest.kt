@@ -90,7 +90,10 @@ class ServerResourceCollectorTest {
             override fun read(): Int = throw failure
         }, ByteArrayInputStream(byteArrayOf()))
         try { executeResourceCommand(channel, "fixed"); fail("Read failure was hidden") }
-        catch (actual: IOException) { assertSame(failure, actual) }
+        catch (actual: IOException) {
+            // Coroutine stack recovery may copy exceptions when JVM assertions are enabled.
+            assertTrue(generateSequence<Throwable>(actual) { it.cause }.any { it === failure })
+        }
         assertTrue(channel.closed.get())
     }
 
