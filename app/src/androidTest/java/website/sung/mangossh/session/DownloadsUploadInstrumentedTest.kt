@@ -113,6 +113,19 @@ class DownloadsUploadInstrumentedTest {
                         val bytes = ByteArray(length) { (it % 251).toByte() }
                         base.contentResolver.openOutputStream(source, "wt")!!.use { it.write(bytes) }
                         CiRegressionDiagnostics.phase("downloads-write-closed", index = index, count = length)
+                        val published = awaitDocumentWritePublication(length.toLong(), readMetadata = {
+                            LocalDocumentTree.queryDocument(base.contentResolver, source, arrayOf(
+                                DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                            )) { cursor ->
+                                if (!cursor.moveToFirst()) DocumentWriteMetadata(null, null)
+                                else DocumentWriteMetadata(
+                                    if (cursor.isNull(0)) null else cursor.getLong(0).takeIf { it >= 0 },
+                                    if (cursor.isNull(1)) null else cursor.getLong(1).takeIf { it > 0 },
+                                )
+                            }
+                        }, waitUntil = { ready -> compose.waitUntil(timeoutMillis = 5_000, condition = ready) })
+                        CiRegressionDiagnostics.record("downloads-write-published", JSONObject().put("index", index)
+                            .put("expectedBytes", length).put("size", published.size).put("modifiedMillis", published.modifiedMillis))
                         val target = "file-$length"
                         manager.uploadFile("fixture", source, target, destination)
                         val preview = manager.conflicts.first { it.isNotEmpty() }.single()

@@ -272,6 +272,27 @@ class TransferSafetyInstrumentedTest {
         assertFalse(files.list(connection, "fixture", directory, 20).entries.any { it.name.endsWith(".part") })
     }
 
+    @Test fun changingAPreparedSourceAfterPreviewIsStillRejected() = fixture { connection, provider, manager ->
+        val source = File(provider.root, "changing-source").apply { writeBytes(ByteArray(0)) }
+        awaitDocumentWritePublication(0, { DocumentWriteMetadata(source.length(), source.lastModified()) }) {
+            assertTrue(it())
+        }
+        val files = RemoteFileClient()
+        val destination = "/" + UUID.randomUUID().toString()
+        files.mkdirIfMissing(connection, destination)
+        manager.uploadFile("fixture", provider.uri(source.name), "target", destination)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        // Readiness is preparation, not permission to accept later changes during approval.
+        source.writeBytes(ByteArray(17))
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE, verifySha256 = true))
+        val state = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.FAILED, state.phase)
+        assertEquals(RemoteFileMessage.SourceChanged, state.detail)
+        assertEquals(0L, state.transferredBytes)
+        assertTrue("Changed input must not create a target or a staging file",
+            files.list(connection, "fixture", destination, 20).entries.isEmpty())
+    }
+
     @Test fun directoryPreviewPrecedesAllRemoteChangesAndNonconflictingFilesNeedNoMorePrompts() = fixture { connection, provider, manager ->
         File(provider.root, "small").writeText("small contents")
         File(provider.root, "nested").mkdir()
