@@ -712,7 +712,7 @@
     <string name="editor_conflict">远端文件已变化，草稿已保留。请重新加载或另存。</string>
     <string name="editor_reload">重新加载远端文件</string>
     <string name="editor_no_atomic">无法安全地原子替换此文件，另存可保留原文件。</string>
-    <string name="transfer_local_no_atomic">所选本地文件已存在，其文档提供程序无法安全地原子替换它。另存会创建新文件并保留原文件。</string>
+    <string name="transfer_local_no_atomic">所选本地文件已存在。直接覆盖若中断，可能导致文件内容不完整。选择“另存为”可创建新文件并保留原文件。</string>
     <string name="editor_direct">直接覆盖</string>
     <string name="editor_direct_risk">直接覆盖若中断可能留下不完整文件。仍要替换原文件吗？</string>
     <string name="editor_failure">无法编辑或保存此文件。仅支持完整读取且不超过 128 KiB 的 UTF-8 文本，草稿已加密保存在本机。</string>
