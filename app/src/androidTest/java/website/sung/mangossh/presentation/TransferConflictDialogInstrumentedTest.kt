@@ -40,6 +40,32 @@ class TransferConflictDialogInstrumentedTest {
     private fun text(id: Int) = context.getString(id)
     private fun option(id: Int) = compose.onNode(hasText(text(id)) and isToggleable())
 
+    @Test fun newDownloadPreviewOffersSaveWithoutOverwriteWarning() {
+        var decision: TransferConflictDecision? = null
+        compose.setContent { MaterialTheme {
+            TransferConflictDialog(conflict.copy(direction = ScpTransferDirection.DOWNLOAD,
+                targetExists = false, atomicReplace = false)) { decision = it }
+        } }
+        compose.onNodeWithText(text(R.string.editor_no_atomic)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.transfer_local_no_atomic)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.editor_direct)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.editor_save)).performClick()
+        compose.runOnIdle { assertEquals(TransferConflictAction.REPLACE, decision?.action) }
+    }
+
+    @Test fun existingDownloadUsesLocalProviderWarningAndKeepsSeparateOverwriteConfirmation() {
+        var decision: TransferConflictDecision? = null
+        compose.setContent { MaterialTheme {
+            TransferConflictDialog(conflict.copy(direction = ScpTransferDirection.DOWNLOAD,
+                targetExists = true, atomicReplace = false)) { decision = it }
+        } }
+        compose.onNodeWithText(text(R.string.transfer_local_no_atomic)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.editor_no_atomic)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.editor_direct)).performClick()
+        compose.runOnIdle { assertNull(decision) }
+        compose.onNodeWithText(text(R.string.editor_direct_risk)).assertIsDisplayed()
+    }
+
     @Test fun singleUploadCancelsInsteadOfSkippingAndHasNoTaskWideOption() {
         var decision: TransferConflictDecision? = null
         compose.setContent { MaterialTheme {

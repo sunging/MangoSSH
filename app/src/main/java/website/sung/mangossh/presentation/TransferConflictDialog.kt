@@ -35,11 +35,11 @@ internal fun TransferConflictDialog(
     var direct by remember { mutableStateOf(false) }
     var saveAs by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
-    fun choose(action: TransferConflictAction, alternate: String? = null, uri: String? = null) {
-        resolve(TransferConflictDecision(action, alternate, uri, applyAll, verify))
+    fun choose(action: TransferConflictAction, alternate: String? = null, uri: String? = null, createdDocument: Boolean = false) {
+        resolve(TransferConflictDecision(action, alternate, uri, applyAll, verify, localDocumentCreated = createdDocument))
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        if (uri != null) choose(TransferConflictAction.SAVE_AS, uri = uri.toString())
+        if (uri != null) choose(TransferConflictAction.SAVE_AS, uri = uri.toString(), createdDocument = true)
     }
     BasicAlertDialog(onDismissRequest = {}) {
         // Dialog creates a separate Android view; retain the caller's scoped font scaling.
@@ -64,7 +64,11 @@ internal fun TransferConflictDialog(
                     }
                     if (conflict.targetExists) {
                         Spacer(Modifier.height(8.dp))
-                        Text(stringResource(if (conflict.atomicReplace) R.string.transfer_target_exists else R.string.editor_no_atomic),
+                        Text(stringResource(when {
+                            conflict.atomicReplace -> R.string.transfer_target_exists
+                            conflict.direction == ScpTransferDirection.DOWNLOAD -> R.string.transfer_local_no_atomic
+                            else -> R.string.editor_no_atomic
+                        }),
                             style = MaterialTheme.typography.bodyMedium, color = AlertDialogDefaults.textContentColor)
                     }
                     Spacer(Modifier.height(16.dp))

@@ -737,6 +737,7 @@
     <string name="editor_conflict">The remote file changed. Your draft is preserved. Reload or save with a different name.</string>
     <string name="editor_reload">Reload remote file</string>
     <string name="editor_no_atomic">Safe atomic replacement is unavailable for this file. Save as preserves the original.</string>
+    <string name="transfer_local_no_atomic">The selected local file already exists. Its document provider cannot safely replace it atomically. Save as creates a new file and preserves the original.</string>
     <string name="editor_direct">Direct overwrite</string>
     <string name="editor_direct_risk">Direct overwrite can leave a partial file if interrupted. Replace the original anyway?</string>
     <string name="editor_failure">Unable to edit or save this file. Only complete UTF-8 text up to 128 KiB is supported. Your draft is kept, encrypted on this device.</string>

@@ -1273,10 +1273,10 @@ class MangoSshViewModel @JvmOverloads constructor(
         _remoteBrowser.update { state -> state?.copy(preview = null) }
     }
 
-    /** Downloads a browsed remote file into a document the user selected. */
-    fun downloadRemoteFile(sessionId: String, remotePath: String, destination: Uri) {
+    /** Downloads into the new URI returned by the browser’s CreateDocument contract. */
+    fun downloadRemoteFileToCreatedDocument(sessionId: String, remotePath: String, destination: Uri) {
         if (!pickerSessionStillOpen(sessionId)) return
-        runCatching { sessionController.downloadRemoteFile(sessionId, remotePath, destination) }
+        runCatching { sessionController.downloadRemoteFileToCreatedDocument(sessionId, remotePath, destination) }
             .onFailure { error -> _userMessage.value = sessionController.remoteFileMessage(error).toUiText() }
     }
 

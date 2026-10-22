@@ -136,6 +136,140 @@ class TransferSafetyInstrumentedTest {
         }
     }
 
+    @Test fun createdDocumentHasNoOverwriteConflict() = createdDocumentDownload(false)
+    @Test fun createdDocumentWithUnknownSizeIsCheckedByContent() = createdDocumentDownload(true)
+
+    @Test fun missingCreatedDocumentFailsWithoutOpeningForWrite() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        manager.downloadCreatedDocument("fixture", "/$name", provider.uri("missing"))
+        assertEquals(ScpTransferPhase.FAILED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertTrue(manager.conflicts.value.isEmpty())
+        assertFalse(provider.committed)
+    }
+
+    private fun createdDocumentDownload(unknownSize: Boolean) = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        val target = File(provider.root, "target").apply { createNewFile() }
+        provider.unknownSizes = unknownSize
+        manager.downloadCreatedDocument("fixture", "/$name", provider.uri("target"))
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertFalse(preview.targetExists)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertEquals("new", target.readText())
+    }
+
+    @Test fun existingEmptyDocumentStillRequiresOverwriteApproval() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        val target = File(provider.root, "target").apply { createNewFile() }
+        manager.downloadFile("fixture", "/$name", provider.uri("target"))
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertTrue(preview.targetExists)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.SKIP))
+        manager.transfers.first { it.single().isFinished }
+        assertEquals(0L, target.length())
+        assertFalse(provider.committed)
+    }
+
+    @Test fun createdDocumentWrittenBeforePreviewRequiresOverwriteApproval() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        val target = File(provider.root, "target").apply { writeText("external") }
+        provider.unknownSizes = true
+        manager.downloadCreatedDocument("fixture", "/$name", provider.uri("target"))
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertTrue(preview.targetExists)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.SKIP))
+        manager.transfers.first { it.single().isFinished }
+        assertEquals("external", target.readText())
+    }
+
+    @Test fun createdDocumentChangedDuringPreviewCannotBeOverwrittenEvenWithUnknownSize() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        val target = File(provider.root, "target").apply { createNewFile() }
+        val modified = target.lastModified()
+        provider.unknownSizes = true
+        manager.downloadCreatedDocument("fixture", "/$name", provider.uri("target"))
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertFalse(preview.targetExists)
+        target.writeText("external")
+        assertTrue(target.setLastModified(modified))
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+        assertEquals(ScpTransferPhase.FAILED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertEquals("external", target.readText())
+        assertFalse(provider.committed)
+    }
+
+    @Test fun pausedInitialProbeDoesNotReuseIncompleteCreationIdentity() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        File(provider.root, "target").createNewFile()
+        provider.unknownSizes = true
+        provider.blockReads = true
+        manager.downloadCreatedDocument("fixture", "/$name", provider.uri("target"))
+        withContext(Dispatchers.IO) { check(provider.openedRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
+        val id = manager.transfers.value.single().id
+        manager.pause(id)
+        provider.blockReads = false
+        provider.allowRead.countDown()
+        manager.transfers.first { it.single().phase == ScpTransferPhase.PAUSED }
+        manager.resume(id)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertTrue(preview.targetExists)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.SKIP))
+        manager.transfers.first { it.single().isFinished }
+        assertFalse(provider.committed)
+    }
+
+    @Test fun cancellingCreatedDocumentPreviewDoesNotWriteThePlaceholder() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        val target = File(provider.root, "target").apply { createNewFile() }
+        manager.downloadCreatedDocument("fixture", "/$name", provider.uri("target"))
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.CANCEL))
+        assertEquals(ScpTransferPhase.CANCELLED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertTrue(target.exists())
+        assertEquals(0L, target.length())
+        assertFalse(provider.committed)
+    }
+
+    @Test fun retryAfterCancelRetainsOriginalCreatedDocumentIdentity() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        val target = File(provider.root, "target").apply { createNewFile() }
+        manager.downloadCreatedDocument("fixture", "/$name", provider.uri("target"))
+        val first = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertFalse(first.targetExists)
+        manager.resolveConflict(first.id, TransferConflictDecision(TransferConflictAction.CANCEL))
+        val cancelled = manager.transfers.first { it.single().isFinished }.single()
+        assertTrue(target.setLastModified(target.lastModified() + 60_000))
+        manager.retry(cancelled.id)
+        val repeated = manager.conflicts.first { it.any { question -> question.id != first.id } }.single()
+        assertTrue(repeated.targetExists)
+        manager.resolveConflict(repeated.id, TransferConflictDecision(TransferConflictAction.SKIP))
+        manager.transfers.first { it.single().isFinished }
+        assertFalse(provider.committed)
+    }
+
+    @Test fun saveAsCreatedDocumentPreservesExistingTarget() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        val original = File(provider.root, "original").apply { writeText("original") }
+        val alternate = File(provider.root, "alternate").apply { createNewFile() }
+        manager.downloadFile("fixture", "/$name", provider.uri("original"))
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.SAVE_AS,
+            localUri = provider.uri("alternate").toString(), localDocumentCreated = true))
+        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertEquals("original", original.readText())
+        assertEquals("new", alternate.readText())
+    }
+
     @Test fun shortDownloadExplicitlyTruncatesProviderTarget() = fixture { connection, provider, manager ->
         val name = UUID.randomUUID().toString()
         BlockingOperation().use { control ->

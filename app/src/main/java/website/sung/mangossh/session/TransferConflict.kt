@@ -29,4 +29,6 @@ data class TransferConflictDecision(
     val localUri: String? = null,
     val applyToTask: Boolean = false,
     val verifySha256: Boolean = false,
+    /** True only for the URI returned by the download CreateDocument contract. */
+    val localDocumentCreated: Boolean = false,
 )

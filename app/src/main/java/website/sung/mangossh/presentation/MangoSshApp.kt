@@ -402,7 +402,7 @@ fun MangoSshApp(
             onUp = viewModel::remoteBrowserUp,
             onRefresh = viewModel::refreshRemoteBrowser,
             onOpenEntry = viewModel::openRemoteEntry,
-            onDownload = viewModel::downloadRemoteFile,
+            onDownload = viewModel::downloadRemoteFileToCreatedDocument,
             onDownloadDirectory = viewModel::downloadRemoteDirectory,
             onUpload = viewModel::uploadToRemoteBrowser,
             onUploadDirectory = viewModel::uploadDirectoryToRemoteBrowser,

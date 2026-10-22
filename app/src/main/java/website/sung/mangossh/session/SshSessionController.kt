@@ -939,13 +939,13 @@ class SshSessionController internal constructor(
     }
 
     /**
-     * Downloads a browsed remote file over SFTP into a caller-selected document.
+     * Downloads a browsed remote file over SFTP into a newly created CreateDocument result.
      *
      * The path never reaches a remote shell, so spaces and other punctuation
      * are supported, and the read loop reports byte progress.
      */
-    fun downloadRemoteFile(sessionId: String, remotePath: String, destinationUri: Uri) {
-        fileTransfers.downloadFile(sessionId, remotePath, destinationUri)
+    fun downloadRemoteFileToCreatedDocument(sessionId: String, remotePath: String, destinationUri: Uri) {
+        fileTransfers.downloadCreatedDocument(sessionId, remotePath, destinationUri)
     }
 
     /** Downloads a browsed remote directory into a caller-selected folder. */
