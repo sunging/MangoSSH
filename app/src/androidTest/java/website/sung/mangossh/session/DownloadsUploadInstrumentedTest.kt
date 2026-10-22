@@ -37,6 +37,8 @@ import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshCredentials
 import website.sung.mangossh.diagnostics.CiRegressionDiagnostics
 import org.json.JSONObject
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.presentation.DownloadDocumentContract
 
 /** A fresh picker-created Downloads document is the only real provider document this test touches. */
 @SdkSuppress(minSdkVersion = 26)
@@ -44,15 +46,99 @@ import org.json.JSONObject
 class DownloadsUploadInstrumentedTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun systemDownloadsSmallMultiChunkAndEmptyFilesUploadThroughSaf() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
+    /** Exercises the real API 26+ provider; the synthetic SAF suite requires API 29. */
+    @Test fun systemDownloadsSmallMultiChunkAndEmptyFilesDownloadThroughSaf() = downloadThroughSaf(false)
+
+    @Test fun externalStorageDownloadsSmallMultiChunkAndEmptyFilesDownloadThroughSaf() = downloadThroughSaf(true)
+
+    private fun downloadThroughSaf(externalStorage: Boolean) {
         val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
         if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull(port)
         assumeTrue(port != null)
-        val base = instrumentation.targetContext
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val destination = createDocument("application/octet-stream", externalStorage)
+        val staging = File(base.cacheDir, "downloads-download-${UUID.randomUUID()}").apply { mkdirs() }
+        val context = object : ContextWrapper(base) { override fun getCacheDir() = staging }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val host = InstrumentationRegistry.getArguments().getString("fixtureHost") ?: "127.0.0.1"
+        val connection = SshConnection(host, port!!)
+        val failure = AtomicReference<Throwable?>()
+        try {
+            assertEquals(if (externalStorage) "com.android.externalstorage.documents" else
+                "com.android.providers.downloads.documents", destination.authority)
+            runBlocking {
+                connection.connect(10_000) { _, _ -> true }
+                assertTrue(connection.authenticate("fixture", object : SshCredentials {}))
+                val files = RemoteFileClient()
+                val remote = RemoteFilePaths.join(files.resolveHome(connection), UUID.randomUUID().toString())
+                files.mkdirIfMissing(connection, remote)
+                val manager = FileTransferManager(context, scope, files, { connection }, {},
+                    onTaskFailure = { failure.set(it) })
+                withTimeout(60_000) {
+                    for ((index, length) in listOf(2424, 80_000, 17, 0).withIndex()) {
+                        val bytes = ByteArray(length) { (it % 251).toByte() }
+                        val name = "file-$length"
+                        BlockingOperation().use { control ->
+                            files.upload(connection, bytes.inputStream(), remote, name, 0, length.toLong(), 1_048_576, control) { _, _ -> }
+                        }
+                        if (index == 0) manager.downloadCreatedDocument("fixture", "$remote/$name", destination)
+                        else manager.downloadFile("fixture", "$remote/$name", destination)
+                        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+                        assertEquals(index != 0, preview.targetExists)
+                        manager.resolveConflict(preview.id, TransferConflictDecision(
+                            if (index == 0) TransferConflictAction.REPLACE else TransferConflictAction.DIRECT_OVERWRITE,
+                            verifySha256 = true))
+                        val state = manager.transfers.first { it.last().isFinished }.last()
+                        val error = failure.get()
+                        // An explicitly identified OEM regression is a failure-path test,
+                        // not a skip or permission to accept failures on other providers.
+                        if (!externalStorage && InstrumentationRegistry.getArguments()
+                                .getString("expectDownloadsWriteRejected") == "true") {
+                            assertEquals(ScpTransferPhase.FAILED, state.phase)
+                            assertEquals(RemoteFileMessage.LocalDocumentWriteFailure, state.detail)
+                            assertTrue(error is LocalDocumentWriteException)
+                            assertTrue(state.canRetry)
+                            assertFalse(state.canResume)
+                            assertEquals(0, base.contentResolver.openInputStream(destination)!!.use { it.readBytes().size })
+                            break
+                        }
+                        val diagnostic = error?.let {
+                            MangoLog.describe(it) + " at " + it.stackTrace.filter { frame ->
+                                frame.className.startsWith("website.sung.mangossh.")
+                            }.take(6).joinToString { frame -> "${frame.fileName}:${frame.lineNumber}" }
+                        }.orEmpty()
+                        assertEquals("Download $length bytes: $diagnostic", ScpTransferPhase.COMPLETED, state.phase)
+                        assertEquals(length.toLong(), state.transferredBytes)
+                        assertArrayEquals(bytes, base.contentResolver.openInputStream(destination)!!.use { it.readBytes() })
+                        // The next overwrite captures a new baseline only after this
+                        // test-owned write has been published by an asynchronous provider.
+                        awaitDocumentWritePublication(length.toLong(), readMetadata = {
+                            LocalDocumentTree.queryDocument(base.contentResolver, destination, arrayOf(
+                                DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                            )) { cursor ->
+                                if (!cursor.moveToFirst()) DocumentWriteMetadata(null, null)
+                                else DocumentWriteMetadata(
+                                    if (cursor.isNull(0)) null else cursor.getLong(0),
+                                    if (cursor.isNull(1)) null else cursor.getLong(1),
+                                )
+                            }
+                        }, waitUntil = { ready -> compose.waitUntil(timeoutMillis = 5_000, condition = ready) })
+                    }
+                }
+            }
+        } finally {
+            runBlocking { scope.coroutineContext[Job]!!.cancelAndJoin() }
+            connection.close()
+            assertTrue("Delete only the picker-created test document", DocumentsContract.deleteDocument(base.contentResolver, destination))
+            staging.deleteRecursively()
+        }
+    }
+
+    private fun createDocument(mimeType: String, externalStorage: Boolean = false): Uri {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
         val selected = AtomicReference<Uri?>()
-        val name = "mangossh-upload-test-${UUID.randomUUID()}.txt"
-        val contract = object : ActivityResultContracts.CreateDocument("text/plain") {
+        val name = "mangossh-transfer-test-${UUID.randomUUID()}.txt"
+        val contract = if (externalStorage) DownloadDocumentContract(mimeType) else object : ActivityResultContracts.CreateDocument(mimeType) {
             override fun createIntent(context: Context, input: String): Intent = super.createIntent(context, input).apply {
                 putExtra(DocumentsContract.EXTRA_INITIAL_URI,
                     DocumentsContract.buildRootUri("com.android.providers.downloads.documents", "downloads"))
@@ -83,7 +169,15 @@ class DownloadsUploadInstrumentedTest {
         }
         assertTrue("The system picker must expose its save action", saved)
         compose.waitUntil(timeoutMillis = 15_000) { selected.get() != null }
-        val source = requireNotNull(selected.get())
+        return requireNotNull(selected.get())
+    }
+
+    @Test fun systemDownloadsSmallMultiChunkAndEmptyFilesUploadThroughSaf() {
+        val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
+        if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull(port)
+        assumeTrue(port != null)
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = createDocument("text/plain")
         val staging = File(base.cacheDir, "downloads-upload-${UUID.randomUUID()}").apply { mkdirs() }
         val context = object : ContextWrapper(base) {
             override fun getCacheDir() = staging

@@ -5,6 +5,13 @@ folders share an action menu; long-press starts a selection. Copy and cut remain
 within the current connection. The task panel shows item outcomes after a partial
 failure, and started tasks continue when the browser closes.
 
+Download and Save as dialogs initially suggest Internal storage > Download through
+the system storage document provider. Some OEM Downloads providers create a document
+and advertise write support but reject every write mode. If opening the target fails,
+the task explains how to retry with Save as and choose a writable location. Access
+always uses the picker-granted URI; the app does not infer filesystem paths or request
+broad storage permission. Failed writes and readback verification remain commit failures.
+
 ## Platform and access policy
 
 The browser's platform choice lasts for the live connection. Auto recognizes

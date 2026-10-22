@@ -84,6 +84,7 @@
     <string name="remote_file_io_failure">The remote file operation failed.</string>
     <string name="remote_file_directory_truncated" tools:ignore="PluralsCandidate">Only the first %1$d entries of this directory are shown.</string>
     <string name="remote_file_local_document_failure">The selected local file or folder could not be opened.</string>
+    <string name="remote_file_local_document_write_failure">Cannot open the selected location for writing. Retry and choose Save as, then select Internal storage → Download or another writable folder.</string>
     <string name="remote_file_resume_restarted">This destination cannot be appended to, so the transfer restarted from the beginning.</string>
     <string name="remote_file_tree_too_large" tools:ignore="PluralsCandidate">This folder holds more than %1$d files or is nested deeper than %2$d levels, so it cannot be transferred.</string>
     <plurals name="remote_file_tree_links_skipped">

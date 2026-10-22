@@ -7,6 +7,9 @@ import android.provider.DocumentsContract
 /** Signals that a Storage Access Framework document could not be read or created. */
 class LocalDocumentException(cause: Throwable? = null) : Exception(cause)
 
+/** Opening the approved SAF target for writing failed; never exposes provider text to the UI. */
+internal class LocalDocumentWriteException(cause: Throwable? = null) : Exception(cause)
+
 /** One child of a Storage Access Framework directory. */
 internal data class LocalDocument(
     val documentUri: Uri,

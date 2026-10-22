@@ -414,7 +414,8 @@ internal class FileTransferManager(
                     null -> ScpTransferPhase.FAILED
                 }
                 val message = if (handle.stop == null) {
-                    if (handle.committing && error !is MetadataPreservationException && error !is SourceChangedException) RemoteFileMessage.CommitFailure else error.toRemoteFileMessage()
+                    if (handle.committing && error !is MetadataPreservationException && error !is SourceChangedException &&
+                        error !is LocalDocumentWriteException) RemoteFileMessage.CommitFailure else error.toRemoteFileMessage()
                 } else null
                 // If the session ends next, this was the network going away; see onSessionEnded.
                 handle.failedOnConnection = message != null && TransferRebinding.mayBeConnectionLoss(message, handle.committing)
@@ -946,10 +947,11 @@ internal class FileTransferManager(
             return DownloadTarget(appended, startOffset)
         }
         val stream = try {
-            resolver.openOutputStream(destination, "wt")
+            resolver.openOutputStream(destination, "wt") ?: throw LocalDocumentWriteException()
         } catch (error: Exception) {
-            throw LocalDocumentException(error)
-        } ?: throw LocalDocumentException()
+            MangoLog.warn(MangoLogEvent.TRANSFER_LOCAL_TARGET_OPEN_FAILED, error)
+            throw LocalDocumentWriteException(error)
+        }
         return DownloadTarget(stream, 0L)
     }
 

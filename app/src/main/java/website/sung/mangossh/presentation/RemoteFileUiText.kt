@@ -31,6 +31,7 @@ internal fun RemoteFileMessage.toUiText(): UiText = when (this) {
     )
 
     RemoteFileMessage.LocalDocumentFailure -> uiText(R.string.remote_file_local_document_failure)
+    RemoteFileMessage.LocalDocumentWriteFailure -> uiText(R.string.remote_file_local_document_write_failure)
     RemoteFileMessage.TreeTooLarge -> uiText(
         R.string.remote_file_tree_too_large,
         MAX_TRANSFER_TREE_ENTRIES,

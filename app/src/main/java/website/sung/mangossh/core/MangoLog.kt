@@ -125,6 +125,8 @@ enum class MangoLogEvent(val code: String) {
     MOSH_COMPANION_SSH_RECONNECT_FAILED("mosh.companion_ssh.reconnect.failed"),
     TRANSFER_REMOTE_TEMP_CLEANUP_FAILED("transfer.remote_temp.cleanup.failed"),
     TRANSFER_REBOUND("transfer.rebound"),
+    /** A SAF provider refused to open the approved download target for writing. */
+    TRANSFER_LOCAL_TARGET_OPEN_FAILED("transfer.local_target.open.failed"),
 
     /** Another app opened, closed, or failed to read a streamed remote file. */
     REMOTE_STREAM_OPENED("remote_stream.opened"),

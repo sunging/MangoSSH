@@ -27,6 +27,7 @@ class TransferSafetyInstrumentedTest {
         var reverse = false
         var corruptReadback = false
         var committed = false
+        var rejectWrites = false
         var blockReads = false
         var unknownSizes = false
         var stallReadContent = false
@@ -61,6 +62,7 @@ class TransferSafetyInstrumentedTest {
         }
         override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
             modes += mode
+            if (rejectWrites && mode != "r") throw java.io.FileNotFoundException("Synthetic write-mode rejection")
             if (mode == "wt") committed = true
             if (mode == "r" && blockReads) { openedRead.countDown(); check(allowRead.await(10, java.util.concurrent.TimeUnit.SECONDS)) }
             if (mode == "r" && stallReadContent) {
@@ -138,6 +140,23 @@ class TransferSafetyInstrumentedTest {
 
     @Test fun createdDocumentHasNoOverwriteConflict() = createdDocumentDownload(false)
     @Test fun createdDocumentWithUnknownSizeIsCheckedByContent() = createdDocumentDownload(true)
+
+    @Test fun rejectedTargetOpenKeepsTheOriginalAndOffersALocationError() = fixture { connection, provider, manager ->
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { RemoteFileClient().upload(connection, "new".byteInputStream(), "/", name, 0, 3, 1024, it) { _, _ -> } }
+        val target = File(provider.root, "target").apply { writeText("original") }
+        provider.rejectWrites = true
+        manager.downloadFile("fixture", "/$name", provider.uri("target"))
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.DIRECT_OVERWRITE))
+        val state = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.FAILED, state.phase)
+        assertEquals(RemoteFileMessage.LocalDocumentWriteFailure, state.detail)
+        assertTrue(state.canRetry)
+        assertFalse(state.canResume)
+        assertEquals("original", target.readText())
+        assertEquals(listOf("wt"), provider.modes.filter { it != "r" })
+    }
 
     @Test fun missingCreatedDocumentFailsWithoutOpeningForWrite() = fixture { connection, provider, manager ->
         val name = UUID.randomUUID().toString()

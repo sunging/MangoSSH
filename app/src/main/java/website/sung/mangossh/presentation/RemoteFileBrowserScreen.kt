@@ -138,7 +138,7 @@ fun RemoteFileBrowserScreen(
     var pendingDirectorySession by rememberSaveable { mutableStateOf<String?>(null) }
     var showUploadMenu by remember { mutableStateOf(false) }
     val downloadLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/octet-stream"),
+        DownloadDocumentContract(),
     ) { uri ->
         val remotePath = pendingDownloadPath
         val sessionId = pendingDownloadSession

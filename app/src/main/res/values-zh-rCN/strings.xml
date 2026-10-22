@@ -81,6 +81,7 @@
     <string name="remote_file_io_failure">远端文件操作失败。</string>
     <string name="remote_file_directory_truncated">此目录仅显示前 %1$d 项。</string>
     <string name="remote_file_local_document_failure">无法访问所选的本地文件或文件夹。</string>
+    <string name="remote_file_local_document_write_failure">无法打开所选位置进行写入。请重试并选择“另存为”，然后选择“内部存储 → Download”或其他可写文件夹。</string>
     <string name="remote_file_resume_restarted">该目标不支持追加写入，传输已从头开始。</string>
     <string name="remote_file_tree_too_large">该文件夹超过 %1$d 个文件或嵌套超过 %2$d 层，无法传输。</string>
     <plurals name="remote_file_tree_links_skipped">
