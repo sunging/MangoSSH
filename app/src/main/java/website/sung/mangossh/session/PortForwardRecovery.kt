@@ -100,7 +100,10 @@ internal class PortForwardRecovery(
         intents.values.filter { it.sessionId == sessionId && it.listening }.forEach { it.lost.complete(Unit) }
     }
 
-    fun listenerLost(intent: Intent) = whileCurrent(intent) { intent.lost.complete(Unit) }
+    /** A delayed close belongs to its listening attempt, never to a replacement attempt. */
+    fun listenerLost(intent: Intent, generation: CompletableDeferred<Unit>) {
+        whileCurrent(intent) { if (intent.lost === generation) generation.complete(Unit) }
+    }
 
     fun waitingForOperation(sessionId: String, waiting: Boolean) = synchronized(lock) {
         intents.values.filter { it.sessionId == sessionId && it.opening }.forEach {
@@ -156,10 +159,12 @@ internal class PortForwardRecovery(
 
     private fun fail(intent: Intent, error: Throwable) = synchronized(lock) {
         if (intents[intent.rule.id] === intent) {
-            publish(intent, PortForwardRuntimePhase.FAILED, error)
             intents.remove(intent.rule.id)
             _opening.value -= intent.rule.id
             _pending.value = intents.isNotEmpty()
+            // Terminal observers may immediately close the carrier or start another rule.
+            // Release ownership before publishing, so FAILED never exposes a live intent.
+            publish(intent, PortForwardRuntimePhase.FAILED, error)
         }
     }
 

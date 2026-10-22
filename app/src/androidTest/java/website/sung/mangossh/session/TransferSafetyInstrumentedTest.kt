@@ -191,25 +191,45 @@ class TransferSafetyInstrumentedTest {
     }
 
     @Test fun blockedSourceReadTimesOutAndPreservesTheOriginalTarget() = blockedSourceRead(false)
+    @Test fun cancelledSftpOpenDoesNotPoisonTheSharedConnection() = fixture { connection, _, _ ->
+        coroutineScope {
+            repeat(20) { index ->
+                val opening = launch(Dispatchers.IO) { connection.openFiles().close() }
+                delay((index % 5).toLong())
+                opening.cancelAndJoin()
+                withTimeout(5_000) { connection.openFiles().close() }
+            }
+        }
+    }
+
     @Test fun blockedSourceReadCanBeCancelledAndCleansItsTemporary() = blockedSourceRead(true)
 
     private fun blockedSourceRead(cancel: Boolean) = fixture(idleMillis = 1_500) { connection, provider, manager ->
-        val directory = "/" + UUID.randomUUID().toString()
-        val files = RemoteFileClient()
-        files.mkdirIfMissing(connection, directory)
-        BlockingOperation().use { files.upload(connection, "original".byteInputStream(), directory, "target", 0, 8, 1024, it) { _, _ -> } }
-        File(provider.root, "source").writeText("new contents")
-        provider.stallReadContent = true
-        manager.uploadFile("fixture", provider.uri("source"), "target", directory)
-        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
-        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
-        withContext(Dispatchers.IO) { check(provider.openedRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
-        if (cancel) manager.cancel(manager.transfers.value.single().id)
-        val state = withTimeout(5_000) { manager.transfers.first { it.single().isFinished }.single() }
-        assertEquals(if (cancel) ScpTransferPhase.CANCELLED else ScpTransferPhase.FAILED, state.phase)
-        BlockingOperation().use { assertEquals("original", files.readEditable(connection, "$directory/target", it).text) }
-        if (cancel) withTimeout(5_000) {
-            while (files.list(connection, "fixture", directory, 20).entries.any { it.name.endsWith(".part") }) delay(50)
+        var stage = "create-directory"
+        try {
+            val directory = "/" + UUID.randomUUID().toString()
+            val files = RemoteFileClient()
+            files.mkdirIfMissing(connection, directory)
+            stage = "seed-original"
+            BlockingOperation().use { files.upload(connection, "original".byteInputStream(), directory, "target", 0, 8, 1024, it) { _, _ -> } }
+            File(provider.root, "source").writeText("new contents")
+            provider.stallReadContent = true
+            stage = "start-upload"
+            manager.uploadFile("fixture", provider.uri("source"), "target", directory)
+            val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+            manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+            withContext(Dispatchers.IO) { check(provider.openedRead.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
+            if (cancel) manager.cancel(manager.transfers.value.single().id)
+            val state = withTimeout(5_000) { manager.transfers.first { it.single().isFinished }.single() }
+            assertEquals(if (cancel) ScpTransferPhase.CANCELLED else ScpTransferPhase.FAILED, state.phase)
+            stage = "verify-original-after-stop"
+            BlockingOperation().use { assertEquals("original", files.readEditable(connection, "$directory/target", it).text) }
+            stage = "verify-temporary-cleanup"
+            if (cancel) withTimeout(5_000) {
+                while (files.list(connection, "fixture", directory, 20).entries.any { it.name.endsWith(".part") }) delay(50)
+            }
+        } catch (error: RemoteFileException) {
+            throw AssertionError("Blocked source regression failed at $stage", error)
         }
     }
 
@@ -250,6 +270,27 @@ class TransferSafetyInstrumentedTest {
             }
         }
         assertFalse(files.list(connection, "fixture", directory, 20).entries.any { it.name.endsWith(".part") })
+    }
+
+    @Test fun changingAPreparedSourceAfterPreviewIsStillRejected() = fixture { connection, provider, manager ->
+        val source = File(provider.root, "changing-source").apply { writeBytes(ByteArray(0)) }
+        awaitDocumentWritePublication(0, { DocumentWriteMetadata(source.length(), source.lastModified()) }) {
+            assertTrue(it())
+        }
+        val files = RemoteFileClient()
+        val destination = "/" + UUID.randomUUID().toString()
+        files.mkdirIfMissing(connection, destination)
+        manager.uploadFile("fixture", provider.uri(source.name), "target", destination)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        // Readiness is preparation, not permission to accept later changes during approval.
+        source.writeBytes(ByteArray(17))
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE, verifySha256 = true))
+        val state = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.FAILED, state.phase)
+        assertEquals(RemoteFileMessage.SourceChanged, state.detail)
+        assertEquals(0L, state.transferredBytes)
+        assertTrue("Changed input must not create a target or a staging file",
+            files.list(connection, "fixture", destination, 20).entries.isEmpty())
     }
 
     @Test fun directoryPreviewPrecedesAllRemoteChangesAndNonconflictingFilesNeedNoMorePrompts() = fixture { connection, provider, manager ->

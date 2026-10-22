@@ -5,8 +5,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
 import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
 import org.junit.Rule;
@@ -32,6 +30,7 @@ public class AppBuildInfoTest {
                 .map { website.sung.build.GitBuildRevision.validateOverride(it) }
                 .orElse(providers.of(website.sung.build.GitBuildRevision) {
                     parameters.rootDirectory.set(layout.projectDirectory)
+                    parameters.gitExecutable.set(providers.gradleProperty('testGitExecutable').orElse('git'))
                 }).get().take(12)
             ['github', 'fdroid'].each { channel ->
                 ['debug', 'release'].each { kind ->
@@ -70,17 +69,12 @@ public class AppBuildInfoTest {
     }
 
     private BuildResult run(File root, boolean failure, String... properties) {
-        return run(root, null, failure, properties);
-    }
-
-    private BuildResult run(File root, Map<String, String> environment, boolean failure, String... properties) {
         var arguments = new ArrayList<>(Arrays.asList(
             "generateGithubDebugAppBuildInfo", "generateGithubReleaseAppBuildInfo",
             "generateFdroidDebugAppBuildInfo", "generateFdroidReleaseAppBuildInfo",
             "--configuration-cache", "--parallel", "--max-workers=2", "--stacktrace"));
         arguments.addAll(Arrays.asList(properties));
         GradleRunner runner = GradleRunner.create().withProjectDir(root).withPluginClasspath().withArguments(arguments);
-        if (environment != null) runner.withEnvironment(environment);
         return failure ? runner.buildAndFail() : runner.build();
     }
 
@@ -166,10 +160,9 @@ public class AppBuildInfoTest {
     @Test public void missingGitExecutableLeavesAUsableUnknownIdentity() throws Exception {
         File root = fixture();
         initializeGit(root);
-        Map<String, String> environment = new HashMap<>(System.getenv());
-        environment.keySet().removeIf(key -> key.equalsIgnoreCase("PATH"));
-        environment.put("PATH", temporary.newFolder().getAbsolutePath());
-        run(root, environment, false);
+        File missingGit = new File(temporary.newFolder(), "git");
+        assertFalse(missingGit.exists());
+        run(root, false, "-PtestGitExecutable=" + missingGit.getAbsolutePath());
         assertIdentity(root, "");
     }
 }

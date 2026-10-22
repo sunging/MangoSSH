@@ -89,7 +89,8 @@ class NewWorkflowUiInstrumentedTest {
         compose.onNodeWithText(text(R.string.ui_private_key_export_warning)).assertDoesNotExist()
         compose.onNodeWithText(text(R.string.ui_copy_to_clipboard)).performClick()
         compose.onNodeWithText(text(R.string.ui_export)).performClick()
-        compose.onNodeWithText(text(R.string.ui_private_key)).performClick()
+        compose.onNode(hasText(text(R.string.ui_private_key)) and hasClickAction() and
+            SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.Role, androidx.compose.ui.semantics.Role.RadioButton)).performClick()
         compose.onNodeWithText(text(R.string.ui_private_key_export_warning)).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.ui_share_to_app)).performClick()
         compose.runOnIdle {

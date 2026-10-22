@@ -12,6 +12,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import website.sung.mangossh.data.vault.PortForwardRule
 import website.sung.mangossh.data.vault.PortForwardType
+import website.sung.mangossh.session.ssh.awaitOwnedSshOperation
 
 /** No sockets or persisted profiles: exercises ownership and recovery scheduling. */
 class PortForwardRecoveryTest {
@@ -49,6 +50,60 @@ class PortForwardRecoveryTest {
             assertEquals(2, fixture.opens)
             assertEquals("rule", intent.runtimeId)
             assertEquals("carrier-2", intent.sessionId)
+        } finally { fixture.close() }
+    }
+
+    @Test fun losingAConnectionWhileOpeningRetriesWithoutDroppingTheIntent() = runBlocking {
+        val fixture = Fixture()
+        val connection = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val opening = kotlinx.coroutines.CompletableDeferred<Unit>()
+        fixture.action = { intent ->
+            fixture.opens++
+            intent.sessionId = "carrier-${fixture.opens}"
+            if (fixture.opens == 2) awaitOwnedSshOperation(connection) {
+                opening.complete(Unit)
+                kotlinx.coroutines.awaitCancellation()
+            }
+            fixture.phases[intent.runtimeId] = PortForwardRuntimePhase.ACTIVE
+        }
+        try {
+            val intent = fixture.recovery.start(fixture.rule)
+            fixture.recovery.disconnected(intent.sessionId)
+            fixture.retry.send(Unit)
+            opening.await()
+            connection.cancel()
+            yield()
+            assertSame(intent, fixture.recovery.current(fixture.rule.id))
+            assertEquals(PortForwardRuntimePhase.RECONNECTING, fixture.phases[intent.runtimeId])
+            assertEquals(listOf(1_000L, 2_000L), fixture.delays)
+            fixture.retry.send(Unit)
+            yield()
+            assertEquals(3, fixture.opens)
+            assertEquals(PortForwardRuntimePhase.ACTIVE, fixture.phases[intent.runtimeId])
+        } finally { connection.cancel(); fixture.close() }
+    }
+
+    @Test fun lateListenerShutdownCannotDisconnectTheReplacementAttempt() = runBlocking {
+        val fixture = Fixture()
+        try {
+            val intent = fixture.recovery.start(fixture.rule)
+            val oldListener = intent.lost
+            fixture.recovery.disconnected(intent.sessionId)
+            fixture.retry.send(Unit)
+            yield()
+            assertEquals(2, fixture.opens)
+            val replacementListener = intent.lost
+            assertNotSame(oldListener, replacementListener)
+            // The old listener's close can finish after another detector already recovered.
+            fixture.recovery.listenerLost(intent, oldListener)
+            yield()
+            assertEquals(listOf(1_000L), fixture.delays)
+            assertEquals(PortForwardRuntimePhase.ACTIVE, fixture.phases[intent.runtimeId])
+            assertFalse(replacementListener.isCompleted)
+            fixture.recovery.listenerLost(intent, replacementListener)
+            fixture.retry.send(Unit)
+            yield()
+            assertEquals(3, fixture.opens)
         } finally { fixture.close() }
     }
 
@@ -115,6 +170,26 @@ class PortForwardRecoveryTest {
             assertFalse(fixture.recovery.pending.value)
             assertTrue(fixture.delays.isEmpty())
         } finally { fixture.close() }
+    }
+
+    @Test fun terminalFailureIsPublishedAfterOwnershipIsReleased() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        lateinit var recovery: PortForwardRecovery
+        var pendingAtFailure: Boolean? = null
+        var ownedAtFailure: Boolean? = null
+        recovery = PortForwardRecovery(scope, MutableStateFlow(NetworkStatus()),
+            { throw SecurityException("synthetic rejection") },
+            { intent, phase, _ ->
+                if (phase == PortForwardRuntimePhase.FAILED) {
+                    pendingAtFailure = recovery.pending.value
+                    ownedAtFailure = recovery.current(intent.rule.id) != null
+                }
+            }, { false })
+        try {
+            recovery.start(PortForwardRule("rule", "profile", PortForwardType.LOCAL, bindPort = 1080))
+            assertEquals(false, pendingAtFailure)
+            assertEquals(false, ownedAtFailure)
+        } finally { scope.cancel() }
     }
 
     @Test fun retryDelayIsExponentialAndBounded() {

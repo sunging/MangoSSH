@@ -20,6 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import website.sung.mangossh.diagnostics.CiRegressionDiagnostics
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshCredentials
 
@@ -56,22 +57,33 @@ class RemoteStreamInstrumentedTest {
     }
 
     @Test fun randomReadsThroughAProxyDescriptorMatchTheRemoteFile() = fixture { connection, registry ->
-        val files = RemoteFileClient()
-        val content = Random(11).nextBytes(3 * 1024 * 1024 + 777)
-        val path = upload(files, connection, content)
-        val identity = files.streamIdentity(connection, path)
-        assertEquals(content.size.toLong(), identity.size)
-        val target = registry.register("fixture", identity, "clip.mp4", "video/mp4")
-        RemoteStreamProvider.openDescriptor(context, registry, target.token).use { descriptor ->
-            assertEquals(content.size.toLong(), descriptor.statSize)
-            val random = Random(12)
-            repeat(40) {
-                val offset = random.nextLong(0, content.size.toLong())
-                val count = random.nextInt(1, 300_000)
-                val expected = content.copyOfRange(offset.toInt(), minOf(content.size, offset.toInt() + count))
-                assertArrayEquals(expected, readFully(descriptor, offset, count))
+        try {
+            CiRegressionDiagnostics.phase("proxy-upload")
+            val files = RemoteFileClient()
+            val content = Random(11).nextBytes(3 * 1024 * 1024 + 777)
+            val path = upload(files, connection, content)
+            CiRegressionDiagnostics.phase("proxy-identity")
+            val identity = files.streamIdentity(connection, path)
+            assertEquals(content.size.toLong(), identity.size)
+            val target = registry.register("fixture", identity, "clip.mp4", "video/mp4")
+            CiRegressionDiagnostics.phase("proxy-open")
+            RemoteStreamProvider.openDescriptor(context, registry, target.token).use { descriptor ->
+                CiRegressionDiagnostics.phase("proxy-stat")
+                assertEquals(content.size.toLong(), descriptor.statSize)
+                val random = Random(12)
+                repeat(40) { index ->
+                    val offset = random.nextLong(0, content.size.toLong())
+                    val count = random.nextInt(1, 300_000)
+                    val expected = content.copyOfRange(offset.toInt(), minOf(content.size, offset.toInt() + count))
+                    CiRegressionDiagnostics.phase("proxy-read", index, offset, count)
+                    assertArrayEquals("Read $index at offset $offset count $count", expected, readFully(descriptor, offset, count))
+                }
+                CiRegressionDiagnostics.phase("proxy-eof")
+                assertEquals(0, Os.pread(descriptor.fileDescriptor, ByteArray(16), 0, 16, content.size.toLong()))
             }
-            assertEquals(0, Os.pread(descriptor.fileDescriptor, ByteArray(16), 0, 16, content.size.toLong()))
+        } catch (error: Throwable) {
+            CiRegressionDiagnostics.failure(error)
+            throw error
         }
     }
 

@@ -68,6 +68,8 @@ internal class FileTransferManager(
     /** Injectable only to exercise the same idle-deadline behavior without thirty-second tests. */
     private val idleMillis: Long = 30_000L,
     private val supervisor: TransferSupervisor = TransferSupervisor(),
+    /** Diagnostic observers must redact user data; observer failures cannot replace task failure. */
+    private val onTaskFailure: (Throwable) -> Unit = {},
 ) {
     private val stagingBudget = StagingBudget(availableBytes = { android.os.StatFs(context.cacheDir.absolutePath).availableBytes })
     private val stagingReady = scope.launch(Dispatchers.IO) {
@@ -409,6 +411,7 @@ internal class FileTransferManager(
                 } else null
                 // If the session ends next, this was the network going away; see onSessionEnded.
                 handle.failedOnConnection = message != null && TransferRebinding.mayBeConnectionLoss(message, handle.committing)
+                if (phase == ScpTransferPhase.FAILED) runCatching { onTaskFailure(error) }
                 settle(runId, phase, handle.exactBytes, current?.completedItems ?: completedItems, message)
                 // A failure keeps its .part files, because a retry restarts from
                 // scratch and cleans them up then. Their unwritten reservations

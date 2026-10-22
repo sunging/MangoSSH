@@ -20,6 +20,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,6 +35,8 @@ import org.junit.Rule
 import org.junit.Test
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshCredentials
+import website.sung.mangossh.diagnostics.CiRegressionDiagnostics
+import org.json.JSONObject
 
 /** A fresh picker-created Downloads document is the only real provider document this test touches. */
 @SdkSuppress(minSdkVersion = 26)
@@ -74,7 +77,10 @@ class DownloadsUploadInstrumentedTest {
                 }
                 if (!saved) Thread.sleep(100)
             }
-        } finally { automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags } }
+        } finally {
+            if (!saved) recordPickerFailure(automation)
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+        }
         assertTrue("The system picker must expose its save action", saved)
         compose.waitUntil(timeoutMillis = 15_000) { selected.get() != null }
         val source = requireNotNull(selected.get())
@@ -94,16 +100,41 @@ class DownloadsUploadInstrumentedTest {
                 val files = RemoteFileClient()
                 val destination = RemoteFilePaths.join(files.resolveHome(connection), UUID.randomUUID().toString())
                 files.mkdirIfMissing(connection, destination)
-                val manager = FileTransferManager(context, scope, files, { connection }, {})
+                val uploadIndex = AtomicInteger(-1)
+                val uploadLength = AtomicInteger(-1)
+                val manager = FileTransferManager(context, scope, files, { connection }, {}, onTaskFailure = { error ->
+                    CiRegressionDiagnostics.phase("downloads-upload-error", index = uploadIndex.get(), count = uploadLength.get())
+                    CiRegressionDiagnostics.failure(error, "downloads-upload")
+                })
                 withTimeout(30_000) {
-                    for (length in listOf(17, 80_000, 0)) {
+                    for ((index, length) in listOf(17, 80_000, 0).withIndex()) {
+                        uploadIndex.set(index); uploadLength.set(length)
+                        CiRegressionDiagnostics.phase("downloads-write", index = index, count = length)
                         val bytes = ByteArray(length) { (it % 251).toByte() }
                         base.contentResolver.openOutputStream(source, "wt")!!.use { it.write(bytes) }
+                        CiRegressionDiagnostics.phase("downloads-write-closed", index = index, count = length)
+                        val published = awaitDocumentWritePublication(length.toLong(), readMetadata = {
+                            LocalDocumentTree.queryDocument(base.contentResolver, source, arrayOf(
+                                DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                            )) { cursor ->
+                                if (!cursor.moveToFirst()) DocumentWriteMetadata(null, null)
+                                else DocumentWriteMetadata(
+                                    if (cursor.isNull(0)) null else cursor.getLong(0).takeIf { it >= 0 },
+                                    if (cursor.isNull(1)) null else cursor.getLong(1).takeIf { it > 0 },
+                                )
+                            }
+                        }, waitUntil = { ready -> compose.waitUntil(timeoutMillis = 5_000, condition = ready) })
+                        CiRegressionDiagnostics.record("downloads-write-published", JSONObject().put("index", index)
+                            .put("expectedBytes", length).put("size", published.size).put("modifiedMillis", published.modifiedMillis))
                         val target = "file-$length"
                         manager.uploadFile("fixture", source, target, destination)
                         val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+                        CiRegressionDiagnostics.phase("downloads-preview", index = index, count = length)
                         manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE, verifySha256 = true))
                         val state = manager.transfers.first { it.last().isFinished }.last()
+                        CiRegressionDiagnostics.record("downloads-upload-result", JSONObject().put("index", index)
+                            .put("length", length).put("phase", state.phase.name).put("bytes", state.transferredBytes)
+                            .put("detailType", state.detail?.javaClass?.simpleName ?: "none"))
                         assertEquals(ScpTransferPhase.COMPLETED, state.phase)
                         assertEquals(length.toLong(), state.transferredBytes)
                         BlockingOperation().use { control ->
@@ -126,6 +157,35 @@ class DownloadsUploadInstrumentedTest {
             assertTrue("Delete only the picker-created test document", DocumentsContract.deleteDocument(base.contentResolver, source))
             staging.deleteRecursively()
         }
+    }
+
+    /** Records structure, never text or document names; screenshots are CI-only DocumentsUI. */
+    private fun recordPickerFailure(automation: android.app.UiAutomation) {
+        val root = automation.rootInActiveWindow ?: return
+        try {
+            fun describe(node: AccessibilityNodeInfo, depth: Int) {
+                if (depth > 20) return
+                println("Picker node: class=${node.className} id=${node.viewIdResourceName} " +
+                    "enabled=${node.isEnabled} clickable=${node.isClickable} package=${node.packageName}")
+                for (index in 0 until node.childCount) {
+                    val child = node.getChild(index) ?: continue
+                    try { describe(child, depth + 1) } finally { child.recycle() }
+                }
+            }
+            describe(root, 0)
+            // This test has only created an empty, randomly named document in a disposable emulator.
+            if (InstrumentationRegistry.getArguments().getString("ciDiagnostics") == "true" &&
+                root.packageName?.toString()?.endsWith(".documentsui") == true) {
+                runCatching {
+                    automation.executeShellCommand("mkdir -p /sdcard/mangossh-ci-diagnostics").use {
+                        android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
+                    }
+                    automation.executeShellCommand("screencap -p /sdcard/mangossh-ci-diagnostics/documents-picker.png").use {
+                        android.os.ParcelFileDescriptor.AutoCloseInputStream(it).readBytes()
+                    }
+                }
+            }
+        } finally { root.recycle() }
     }
 
     private fun clickSave(node: AccessibilityNodeInfo): Boolean {

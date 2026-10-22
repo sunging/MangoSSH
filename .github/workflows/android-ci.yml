@@ -279,6 +279,7 @@ jobs:
         with:
           name: MangoSSH-instrumented-test-report-${{ github.sha }}
           path: |
+            build/device-diagnostics
             app/build/reports/androidTests/connected
             app/build/outputs/androidTest-results/connected/**/TEST-*.xml
             third_party/termlib/build/reports/androidTests/connected

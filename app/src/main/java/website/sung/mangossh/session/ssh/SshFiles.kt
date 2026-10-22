@@ -30,7 +30,19 @@ internal class SshFileEntry(val filename: String, val attributes: SshFileAttribu
 internal class SshFileHandle internal constructor(internal val delegate: SftpFileHandle)
 
 /** Server status category only; paths, descriptions and protocol causes are deliberately dropped. */
-internal class SshFileFailure(val status: Int) : IOException("SFTP operation failed")
+internal class SshFileFailure(val status: Int, val stage: SshFileFailureStage = SshFileFailureStage.OPERATION) :
+    IOException("SFTP operation failed ($stage)")
+
+/** Fixed local categories; never include peer text or exception causes in diagnostics. */
+internal enum class SshFileFailureStage { OPERATION, OPEN_IO, OPEN_PROTOCOL, OPEN_SERVER }
+
+/** Preserve the open failure category without exposing server messages or transport causes. */
+internal fun <T> openedSftpValue(result: org.connectbot.sshlib.SftpResult<T>): T = when (result) {
+    is org.connectbot.sshlib.SftpResult.Success -> result.value
+    is org.connectbot.sshlib.SftpResult.IoError -> throw SshFileFailure(8, SshFileFailureStage.OPEN_IO)
+    is org.connectbot.sshlib.SftpResult.ProtocolError -> throw SshFileFailure(8, SshFileFailureStage.OPEN_PROTOCOL)
+    is org.connectbot.sshlib.SftpResult.ServerError -> throw SshFileFailure(8, SshFileFailureStage.OPEN_SERVER)
+}
 
 /** Each instance owns one SFTP channel; closing it never disconnects the SSH connection. */
 internal class SshFiles internal constructor(

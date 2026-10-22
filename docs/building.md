@@ -209,3 +209,28 @@ The standalone PTY script is a diagnostic build and writes under `build/native`.
 The authoritative fdroiddata recipe remains external. Update its SDK CMake/Python
 prerequisites for this revision; previously published versions keep their original
 build recipes. Source and compiler setup must finish before network isolation.
+
+### Disposable emulator regression diagnostics
+
+`tools/run-device-regressions.sh` is CI-only. It compiles the APKs first, starts
+loopback SSH/echo and normal/stalled resource fixtures, and runs the GitHub,
+F-Droid and termlib device suites sequentially. Before each suite it checks the
+emulator, exercises Doze and restores ACTIVE, enables both networks, verifies
+reverse mappings, and authenticates through both host and device-side listeners.
+The authentication probe uses only the fixture's synthetic `fixture` account.
+It does not validate application-level SSH behavior; the instrumented tests do.
+
+Run the support checks with the fixture virtual environment:
+
+```sh
+python tools/test-device-regression-support.py  # requires Paramiko 4.0.0
+bash -n tools/run-device-regressions.sh
+```
+
+`build/device-diagnostics` is uploaded even after a failure. It contains preflight
+stages, device/mapping state, and allowlisted event summaries from logcat and
+fixture logs, never raw server messages or credentials. The Downloads test logs
+only accessibility structure (no text), and captures a screenshot only when the
+active window is DocumentsUI and CI diagnostics are explicitly enabled. Existing
+JUnit failures and skips remain fatal. A missing/failed preflight also fails the
+job; no fixture opt-in is silently skipped.
