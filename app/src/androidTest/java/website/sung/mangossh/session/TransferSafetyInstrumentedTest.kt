@@ -459,6 +459,7 @@ class TransferSafetyInstrumentedTest {
         assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, preview.promptKind)
         assertEquals(provider.root.name, preview.name)
         assertEquals(2, preview.totalFiles)
+        assertEquals(2, preview.totalDirectories)
         assertEquals(80_014L, preview.totalBytes)
         assertTrue(files.list(connection, "fixture", destination, 20).entries.isEmpty())
         manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.PROCEED, verifySha256 = true))
@@ -608,19 +609,113 @@ class TransferSafetyInstrumentedTest {
     }
 
 
-    @Test fun directorySkipDoesNotCreateAFileAndCountsSeparately() = fixture { connection, provider, manager ->
+    @Test fun directoryDownloadPreviewPrecedesLocalChangesAndCoversNestedFiles() = fixture { connection, provider, manager ->
+        val files = RemoteFileClient()
+        val directory = "/" + UUID.randomUUID().toString()
+        files.mkdirIfMissing(connection, directory)
+        files.mkdirIfMissing(connection, "$directory/nested")
+        files.mkdirIfMissing(connection, "$directory/empty-folder")
+        val large = ByteArray(80_000) { (it % 251).toByte() }
+        BlockingOperation().use { control ->
+            files.upload(connection, "small contents".byteInputStream(), directory, "small", 0, 14, 1024, control) { _, _ -> }
+            files.upload(connection, large.inputStream(), "$directory/nested", "large", 0, large.size.toLong(),
+                maxBytes = large.size.toLong(), control = control) { _, _ -> }
+        }
+        manager.downloadDirectory("fixture", directory, provider.tree)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, preview.promptKind)
+        assertEquals(ScpTransferDirection.DOWNLOAD, preview.direction)
+        assertEquals(ScpTransferKind.DIRECTORY, preview.taskKind)
+        assertEquals(directory.substringAfterLast('/'), preview.name)
+        assertEquals("${provider.root.name}/${preview.name}", preview.destinationDirectory)
+        assertEquals(2, preview.totalFiles)
+        assertEquals(2, preview.totalDirectories)
+        assertEquals(80_014L, preview.totalBytes)
+        assertTrue(provider.root.listFiles()!!.isEmpty())
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.PROCEED, verifySha256 = true))
+        val state = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.COMPLETED, state.phase)
+        assertEquals(2, state.completedItems)
+        assertTrue(manager.conflicts.value.isEmpty())
+        val downloaded = File(provider.root, preview.name)
+        assertEquals("small contents", File(downloaded, "small").readText())
+        assertArrayEquals(large, File(downloaded, "nested/large").readBytes())
+        assertTrue(File(downloaded, "empty-folder").isDirectory)
+    }
+
+    @Test fun emptyDirectoryDownloadCancelAndRetryRequireApprovalBeforeCreation() = fixture { connection, provider, manager ->
+        val directory = "/" + UUID.randomUUID().toString()
+        RemoteFileClient().mkdirIfMissing(connection, directory)
+        manager.downloadDirectory("fixture", directory, provider.tree)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, preview.promptKind)
+        assertEquals(0, preview.totalFiles)
+        assertEquals(0, preview.totalDirectories)
+        assertEquals(0L, preview.totalBytes)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.CANCEL))
+        val cancelled = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.CANCELLED, cancelled.phase)
+        assertTrue(provider.root.listFiles()!!.isEmpty())
+        manager.retry(cancelled.id)
+        val retry = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, retry.promptKind)
+        assertTrue(provider.root.listFiles()!!.isEmpty())
+        manager.resolveConflict(retry.id, TransferConflictDecision(TransferConflictAction.PROCEED))
+        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertTrue(File(provider.root, directory.substringAfterLast('/')).isDirectory)
+    }
+
+    @Test fun resumedDirectoryDownloadKeepsApprovalAndOriginalManifest() = fixture { connection, provider, manager ->
+        val files = RemoteFileClient()
+        val directory = "/" + UUID.randomUUID().toString()
+        files.mkdirIfMissing(connection, directory)
+        BlockingOperation().use { control ->
+            files.upload(connection, "first".byteInputStream(), directory, "a", 0, 5, 1024, control) { _, _ -> }
+            files.upload(connection, "second".byteInputStream(), directory, "b", 0, 6, 1024, control) { _, _ -> }
+        }
+        val downloaded = File(provider.root, directory.substringAfterLast('/')).apply { mkdir() }
+        // The fixture lists in reverse order: new b completes before existing a asks for approval.
+        File(downloaded, "a").writeText("original")
+        manager.downloadDirectory("fixture", directory, provider.tree)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, preview.promptKind)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.PROCEED))
+        val conflict = manager.conflicts.first { it.any { prompt -> prompt.id != preview.id } }.single()
+        assertEquals(TransferPromptKind.FILE_CONFLICT, conflict.promptKind)
+        val id = manager.transfers.value.single().id
+        assertEquals(1, manager.transfers.value.single().completedItems)
+        manager.pause(id)
+        manager.transfers.first { it.single().phase == ScpTransferPhase.PAUSED }
+        BlockingOperation().use { files.upload(connection, "new".byteInputStream(), directory, "c", 0, 3, 1024, it) { _, _ -> } }
+        manager.resume(id)
+        val resumed = manager.conflicts.first { it.any { prompt -> prompt.id != conflict.id } }.single()
+        assertEquals(TransferPromptKind.FILE_CONFLICT, resumed.promptKind)
+        manager.resolveConflict(resumed.id, TransferConflictDecision(TransferConflictAction.DIRECT_OVERWRITE))
+        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertEquals("first", File(downloaded, "a").readText())
+        assertEquals("second", File(downloaded, "b").readText())
+        assertFalse(File(downloaded, "c").exists())
+    }
+
+    @Test fun directorySkipKeepsExistingFileAndCountsSeparately() = fixture { connection, provider, manager ->
         val files = RemoteFileClient()
         val directory = "/" + UUID.randomUUID().toString()
         files.mkdirIfMissing(connection, directory)
         BlockingOperation().use { files.upload(connection, "new".byteInputStream(), directory, "child", 0, 3, 1024, it) { _, _ -> } }
+        val downloaded = File(provider.root, directory.substringAfterLast('/')).apply { mkdir() }
+        val original = File(downloaded, "child").apply { writeText("original") }
         manager.downloadDirectory("fixture", directory, provider.tree)
-        val conflict = manager.conflicts.first { it.isNotEmpty() }.single()
-        assertFalse(conflict.targetExists)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, preview.promptKind)
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.PROCEED))
+        val conflict = manager.conflicts.first { it.any { prompt -> prompt.id != preview.id } }.single()
+        assertEquals(TransferPromptKind.FILE_CONFLICT, conflict.promptKind)
+        assertTrue(conflict.targetExists)
         manager.resolveConflict(conflict.id, TransferConflictDecision(TransferConflictAction.SKIP))
         val state = manager.transfers.first { it.single().isFinished }.single()
         assertEquals(ScpTransferPhase.COMPLETED, state.phase)
         assertEquals(1, state.skippedItems); assertEquals(0, state.completedItems)
-        assertFalse(File(provider.root, "${directory.substringAfterLast('/')}/child").exists())
+        assertEquals("original", original.readText())
     }
 
     @Test fun readbackFailureIsNotCompletionAndCannotResumePartialDestination() = fixture { connection, provider, manager ->

@@ -762,11 +762,14 @@
     <string name="settings_editor_drafts_confirm">Delete all unsaved editor drafts on this device?</string>
     <string name="transfer_preview_title">Transfer preview</string>
     <string name="transfer_directory_preview_title">Folder upload preview</string>
+    <string name="transfer_directory_download_preview_title">Folder download preview</string>
     <string name="transfer_directory_destination">Destination: %1$s</string>
     <string name="transfer_directory_files">Files: %1$d</string>
+    <string name="transfer_directory_folders">Subfolders: %1$d</string>
     <string name="transfer_directory_size">Total size: %1$s</string>
     <string name="transfer_directory_size_unknown">Total size: unknown (some file sizes are unavailable)</string>
     <string name="transfer_start_upload">Start upload</string>
+    <string name="transfer_start_download">Start download</string>
     <string name="transfer_target_exists">The target exists. A verified temporary file will replace it.</string>
     <string name="transfer_verify_sha256">Verify SHA-256</string>
     <string name="transfer_apply_task">Apply this choice to this task</string>

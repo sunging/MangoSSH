@@ -28,6 +28,7 @@ internal fun TransferConflictDialog(
     val contentDensity = LocalDensity.current
     val context = LocalContext.current
     val directoryPreview = conflict.promptKind == TransferPromptKind.DIRECTORY_PREVIEW
+    val download = conflict.direction == ScpTransferDirection.DOWNLOAD
     val singleUpload = conflict.direction == ScpTransferDirection.UPLOAD && conflict.taskKind == ScpTransferKind.FILE
     var applyAll by remember { mutableStateOf(false) }
     var verify by remember { mutableStateOf(conflict.verifySha256) }
@@ -50,7 +51,11 @@ internal fun TransferConflictDialog(
                 tonalElevation = AlertDialogDefaults.TonalElevation,
             ) {
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp)) {
-                    Text(stringResource(if (directoryPreview) R.string.transfer_directory_preview_title else R.string.transfer_preview_title),
+                    Text(stringResource(when {
+                        !directoryPreview -> R.string.transfer_preview_title
+                        download -> R.string.transfer_directory_download_preview_title
+                        else -> R.string.transfer_directory_preview_title
+                    }),
                         style = MaterialTheme.typography.headlineSmall, color = AlertDialogDefaults.titleContentColor)
                     Spacer(Modifier.height(16.dp))
                     Text(conflict.name, style = MaterialTheme.typography.bodyMedium, color = AlertDialogDefaults.textContentColor)
@@ -58,6 +63,7 @@ internal fun TransferConflictDialog(
                         Spacer(Modifier.height(8.dp))
                         Text(stringResource(R.string.transfer_directory_destination, conflict.destinationDirectory.orEmpty()))
                         Text(stringResource(R.string.transfer_directory_files, conflict.totalFiles ?: 0))
+                        conflict.totalDirectories?.let { Text(stringResource(R.string.transfer_directory_folders, it)) }
                         Text(if (conflict.totalBytes == null) stringResource(R.string.transfer_directory_size_unknown)
                             else stringResource(R.string.transfer_directory_size, formatByteSize(context, conflict.totalBytes)))
                     }
@@ -84,7 +90,7 @@ internal fun TransferConflictDialog(
                         }) { Text(stringResource(if (directoryPreview || singleUpload) R.string.common_cancel else R.string.transfer_skip)) }
                         if (directoryPreview) {
                             TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = { choose(TransferConflictAction.PROCEED) }) {
-                                Text(stringResource(R.string.transfer_start_upload))
+                                Text(stringResource(if (download) R.string.transfer_start_download else R.string.transfer_start_upload))
                             }
                         } else {
                             TextButton(modifier = Modifier.heightIn(min = 48.dp), onClick = {

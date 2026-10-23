@@ -82,17 +82,60 @@ class TransferConflictDialogInstrumentedTest {
         var decision: TransferConflictDecision? = null
         compose.setContent { MaterialTheme {
             TransferConflictDialog(conflict.copy(name = "synthetic-folder", promptKind = TransferPromptKind.DIRECTORY_PREVIEW,
-                destinationDirectory = "/synthetic-destination/synthetic-folder", totalFiles = 3, totalBytes = 1024)) { decision = it }
+                destinationDirectory = "/synthetic-destination/synthetic-folder", totalFiles = 3, totalBytes = 1024,
+                totalDirectories = 2)) { decision = it }
         } }
         compose.onNodeWithText(text(R.string.transfer_directory_preview_title)).assertIsDisplayed()
         compose.onNodeWithText("synthetic-folder").assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.transfer_directory_files, 3)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_folders, 2)).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.transfer_directory_destination, "/synthetic-destination/synthetic-folder")).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.transfer_apply_task)).assertDoesNotExist()
         compose.onNodeWithText(text(R.string.editor_save_as)).assertDoesNotExist()
         option(R.string.transfer_verify_sha256).performClick()
         compose.onNodeWithText(text(R.string.transfer_start_upload)).performClick()
         compose.runOnIdle { assertEquals(TransferConflictDecision(TransferConflictAction.PROCEED, verifySha256 = true), decision) }
+    }
+
+    @Test fun folderDownloadPreviewShowsWholeTaskAndStartsDownload() {
+        var decision: TransferConflictDecision? = null
+        compose.setContent { MaterialTheme {
+            TransferConflictDialog(conflict.copy(name = "synthetic-folder", direction = ScpTransferDirection.DOWNLOAD,
+                promptKind = TransferPromptKind.DIRECTORY_PREVIEW, destinationDirectory = "Download/synthetic-folder",
+                totalFiles = 3, totalDirectories = 2, totalBytes = 1024)) { decision = it }
+        } }
+        compose.onNodeWithText(text(R.string.transfer_directory_download_preview_title)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.transfer_preview_title)).assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_files, 3)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_folders, 2)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_size, formatByteSize(context, 1024))).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_destination, "Download/synthetic-folder")).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.transfer_start_upload)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.transfer_apply_task)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.transfer_skip)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.editor_save_as)).assertDoesNotExist()
+        option(R.string.transfer_verify_sha256).performClick()
+        capture("folder-download")
+        compose.onNodeWithText(text(R.string.transfer_start_download)).performClick()
+        compose.runOnIdle { assertEquals(TransferConflictDecision(TransferConflictAction.PROCEED, verifySha256 = true), decision) }
+    }
+
+    @Test fun emptyFolderDownloadCancelRemainsReachableWithLargeText() {
+        var decision: TransferConflictDecision? = null
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, 2f)) {
+                MaterialTheme { TransferConflictDialog(conflict.copy(name = "synthetic-long-folder-name-0123456789",
+                    direction = ScpTransferDirection.DOWNLOAD, promptKind = TransferPromptKind.DIRECTORY_PREVIEW,
+                    destinationDirectory = "Download/synthetic-folder", totalFiles = 0, totalDirectories = 0, totalBytes = 0),
+                    Modifier.width(280.dp).heightIn(max = 360.dp)) { decision = it } }
+            }
+        }
+        compose.onNodeWithText(text(R.string.transfer_directory_download_preview_title)).assertExists()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_files, 0)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.transfer_directory_folders, 0)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.transfer_start_download)).performScrollTo().assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText(text(R.string.common_cancel)).performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(TransferConflictDecision(TransferConflictAction.CANCEL), decision) }
     }
 
     @Test fun unknownFolderSizeAndCancelRemainReachableWithLargeText() {

@@ -12,6 +12,12 @@ current path appears in the breadcrumb navigation. To refresh, scroll to the top
 and pull down; this also works for short listings, empty folders and failed
 listings. A failed listing additionally offers Retry.
 
+Folder uploads and downloads first preview the whole folder, including the
+destination, file count, subfolder count and total size. The preview also lets
+you enable SHA-256 verification for the task. Existing-file replacements still
+require their own conflict decision. Cancelling the preview creates no destination
+folders or files.
+
 Download and Save as dialogs initially suggest Internal storage > Download through
 the system storage document provider. Some OEM Downloads providers create a document
 and advertise write support but reject every write mode. If opening the target fails,

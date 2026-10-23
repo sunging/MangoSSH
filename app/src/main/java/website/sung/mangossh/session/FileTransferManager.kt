@@ -88,7 +88,7 @@ internal class FileTransferManager(
 
     private suspend fun decision(transferId: String, handle: TransferHandle, name: String, direction: ScpTransferDirection,
         exists: Boolean, atomic: Boolean, forcePrompt: Boolean = false,
-        directoryPreview: LocalTreeWalk? = null, destinationDirectory: String? = null): TransferConflictDecision {
+        directoryPreview: DirectoryPreview? = null, destinationDirectory: String? = null): TransferConflictDecision {
         if (exists && !forcePrompt) handle.taskDecision?.let { saved ->
             if (saved.action != TransferConflictAction.REPLACE || atomic) return saved
         }
@@ -105,8 +105,9 @@ internal class FileTransferManager(
                 directoryPreview != null -> TransferPromptKind.DIRECTORY_PREVIEW
                 directoryTask -> TransferPromptKind.FILE_CONFLICT
                 else -> TransferPromptKind.FILE_PREVIEW
-            }, destinationDirectory = destinationDirectory, totalFiles = directoryPreview?.files?.size,
-            totalBytes = directoryPreview?.knownTotalBytes, verifySha256 = handle.verifySha256) }
+            }, destinationDirectory = destinationDirectory, totalFiles = directoryPreview?.totalFiles,
+            totalBytes = directoryPreview?.totalBytes, verifySha256 = handle.verifySha256,
+            totalDirectories = directoryPreview?.totalDirectories) }
         return try {
             val result = pending.await()
             check(resolveRun(transferId) != null)
@@ -727,8 +728,24 @@ internal class FileTransferManager(
         val treeUri = request.destinationTree
         val rootName = RemoteFilePaths.nameOf(request.remotePath).takeIf { it != RemoteFilePaths.ROOT }
             ?: FALLBACK_DIRECTORY_NAME
+        val destinationRoot = LocalDocumentTree.rootOf(treeUri)
+        if (!handle.directoryApproved) {
+            val destinationName = LocalDocumentTree.queryDocument(resolver, destinationRoot,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), handle.control()) { cursor ->
+                if (!cursor.moveToFirst()) throw LocalDocumentException()
+                cursor.getString(0).orEmpty().ifBlank { DocumentsContract.getTreeDocumentId(treeUri) }
+            }
+            // Approve the complete manifest before creating even an empty destination folder.
+            // This selects verification for new files; existing targets still need file-level approval.
+            decision(transferId, handle, rootName, ScpTransferDirection.DOWNLOAD, false, false,
+                forcePrompt = true,
+                directoryPreview = DirectoryPreview(walk.files.size, walk.directories.size,
+                    walk.totalBytes.takeIf { walk.files.all { file -> file.sizeBytes != null && file.sizeBytes >= 0 } }),
+                destinationDirectory = "$destinationName/$rootName")
+            handle.directoryApproved = true
+        }
         val targets = LocalDocumentTree.Targets(resolver, treeUri)
-        val localRoot = targets.directory(LocalDocumentTree.rootOf(treeUri), rootName)
+        val localRoot = targets.directory(destinationRoot, rootName)
         val directories = mutableMapOf("" to localRoot)
         walk.directories.forEach { relative ->
             val parent = directories.getValue(parentRelativePath(relative))
@@ -802,7 +819,9 @@ internal class FileTransferManager(
         val remoteRoot = RemoteFilePaths.join(request.remoteDirectory, rootName)
         if (!handle.directoryApproved) {
             decision(transferId, handle, rootName, ScpTransferDirection.UPLOAD, false, false,
-                forcePrompt = true, directoryPreview = walk, destinationDirectory = remoteRoot)
+                forcePrompt = true,
+                directoryPreview = DirectoryPreview(walk.files.size, walk.directories.size, walk.knownTotalBytes),
+                destinationDirectory = remoteRoot)
             handle.directoryApproved = true
         }
         remoteFiles.mkdirIfMissing(connection, remoteRoot, handle.control())
@@ -1004,6 +1023,9 @@ internal class FileTransferManager(
         RemoteFilePaths.requireSafeRemoteName(normalized)
         return normalized
     }
+
+    /** A complete manifest summary shared by local uploads and remote downloads. */
+    private data class DirectoryPreview(val totalFiles: Int, val totalDirectories: Int, val totalBytes: Long?)
 
     private data class RemoteApproval(val destination: String, val target: RemoteTarget,
         val choice: TransferConflictDecision, val digest: ByteArray?, val confirmed: Boolean = true)

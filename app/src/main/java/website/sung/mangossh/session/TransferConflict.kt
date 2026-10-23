@@ -14,6 +14,8 @@ data class TransferConflict(
     val totalFiles: Int? = null,
     val totalBytes: Long? = null,
     val verifySha256: Boolean = false,
+    /** Number of descendant folders, excluding the selected transfer root. */
+    val totalDirectories: Int? = null,
 )
 
 /** Whole-directory approval is distinct from an individual destination conflict. */
