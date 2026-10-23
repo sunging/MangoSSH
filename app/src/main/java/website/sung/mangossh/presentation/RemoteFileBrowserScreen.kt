@@ -147,7 +147,7 @@ fun RemoteFileBrowserScreen(
     // A directory download needs a folder to build its tree in, which only the
     // tree contract can grant.
     val directoryDownloadLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree(),
+        DownloadDirectoryContract(),
     ) { uri ->
         val remotePath = pendingDirectoryPath
         val sessionId = pendingDirectorySession

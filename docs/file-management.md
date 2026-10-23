@@ -18,7 +18,13 @@ you enable SHA-256 verification for the task. Existing-file replacements still
 require their own conflict decision. Cancelling the preview creates no destination
 folders or files.
 
-Download and Save as dialogs initially suggest Internal storage > Download through
+Folder downloads initially suggest Internal storage and request that the system
+picker show device storage, including on older DocumentsUI versions that hide it
+by default. Choose any writable folder the system allows, including folders outside
+Download. The initial location and storage visibility are picker hints; Android's
+directory access restrictions still apply.
+
+Single-file Download and Save as dialogs initially suggest Internal storage > Download through
 the system storage document provider. Some OEM Downloads providers create a document
 and advertise write support but reject every write mode. If opening the target fails,
 the task explains how to retry with Save as and choose a writable location. Access
