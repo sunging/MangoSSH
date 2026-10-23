@@ -866,7 +866,7 @@
     <string name="fm_permissions">Permissions</string>
     <string name="fm_selected">Selected: %1$d</string>
     <string name="fm_select_all">Select all</string>
-    <string name="fm_manage">Manage</string>
+    <string name="fm_more">More</string>
     <string name="fm_platform">Server file system</string>
     <string name="fm_paste">Paste (%1$d)</string>
     <string name="fm_tasks">Tasks</string>

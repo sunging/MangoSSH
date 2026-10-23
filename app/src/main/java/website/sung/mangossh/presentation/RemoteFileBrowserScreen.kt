@@ -28,19 +28,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
-import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayCircle
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -53,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -79,6 +75,9 @@ import website.sung.mangossh.session.RemoteOperationKind
 import website.sung.mangossh.session.RemotePlatform
 import android.text.format.Formatter
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 
 /**
  * Full-screen SFTP file browser for one open SSH session.
@@ -136,7 +135,6 @@ fun RemoteFileBrowserScreen(
     var pendingDownloadSession by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingDirectoryPath by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingDirectorySession by rememberSaveable { mutableStateOf<String?>(null) }
-    var showUploadMenu by remember { mutableStateOf(false) }
     val downloadLauncher = rememberLauncherForActivityResult(
         DownloadDocumentContract(),
     ) { uri ->
@@ -199,143 +197,86 @@ fun RemoteFileBrowserScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding(),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onClose) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = stringResource(R.string.ui_close_the_file_browser),
-                    )
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = state.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = if (state.isConnecting) stringResource(R.string.ui_connecting) else state.path,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.MiddleEllipsis,
-                    )
-                }
-                IconButton(
-                    onClick = onHome,
-                    enabled = !state.isConnecting &&
-                        state.homePath != null &&
-                        state.homePath != state.path,
-                ) {
-                    Icon(Icons.Outlined.Home, contentDescription = stringResource(R.string.ui_home_directory))
-                }
-                IconButton(
-                    onClick = onUp,
-                    enabled = !state.isConnecting && state.path != RemoteFilePaths.ROOT,
-                ) {
-                    Icon(Icons.Outlined.ArrowUpward, contentDescription = stringResource(R.string.ui_parent_directory))
-                }
-                Box {
-                    IconButton(
-                        onClick = { showUploadMenu = true },
-                        enabled = !state.isConnecting,
-                    ) {
-                        Icon(Icons.Outlined.Upload, contentDescription = stringResource(R.string.ui_upload_to_this_directory))
-                    }
-                    DropdownMenu(
-                        expanded = showUploadMenu,
-                        onDismissRequest = { showUploadMenu = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.ui_upload_file)) },
-                            onClick = {
-                                showUploadMenu = false
-                                uploadLauncher.launch(arrayOf("*/*"))
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.ui_upload_folder)) },
-                            onClick = {
-                                showUploadMenu = false
-                                directoryUploadLauncher.launch(null)
-                            },
-                        )
-                    }
-                }
-                IconButton(onClick = onRefresh, enabled = !state.isConnecting) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.common_refresh))
-                }
-            }
+            RemoteBrowserToolbar(
+                state = state,
+                busy = operationBusy,
+                onClose = onClose,
+                onHome = onHome,
+                onUploadFile = { uploadLauncher.launch(arrayOf("*/*")) },
+                onUploadFolder = { directoryUploadLauncher.launch(null) },
+                onTasks = onTasks,
+                onAction = manage,
+                onSelectAll = onSelectAll,
+            )
 
             if (!state.isConnecting) {
-                RemoteManagementToolbar(state, operationBusy, manage, onCopy, onOperation, onSelectAll, onClearSelection, onClearClipboard, onTasks)
+                RemoteManagementToolbar(state, operationBusy, manage, onCopy, onOperation, onSelectAll, onClearSelection, onClearClipboard)
                 RemoteBreadcrumbs(path = state.path, onNavigate = onNavigate)
             }
 
-            if (state.isLoading || state.isConnecting) {
+            if (state.isConnecting) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            }
-
-            when {
-                state.isConnecting -> RemoteBrowserMessage(
+                RemoteBrowserMessage(
                     message = stringResource(R.string.ui_opening_a_connection_for_file_transfer),
                     isError = false,
                     onRetry = null,
                 )
-
-                state.errorMessage != null -> RemoteBrowserMessage(
-                    message = state.errorMessage.asString(),
-                    isError = true,
-                    onRetry = onRefresh,
-                )
-
-                !state.isLoading && state.entries.isEmpty() -> RemoteBrowserMessage(
-                    message = stringResource(R.string.ui_this_directory_is_empty),
-                    isError = false,
-                    onRetry = null,
-                )
-
-                else -> LazyColumn(modifier = Modifier.weight(1f)) {
-                    if (state.truncated) {
-                        item {
-                            Text(
-                                text = stringResource(
-                                    R.string.remote_file_directory_truncated,
-                                    MAX_REMOTE_DIRECTORY_ENTRIES,
-                                ),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            } else {
+                val refreshLabel = stringResource(R.string.common_refresh)
+                val refresh = { if (!state.isLoading) onRefresh() }
+                // Empty and error states still need a full-height scrollable child:
+                // nested scrolling is what makes a pull gesture reach Material's container.
+                PullToRefreshBox(
+                    isRefreshing = state.isLoading,
+                    onRefresh = refresh,
+                    modifier = Modifier.weight(1f).fillMaxWidth().testTag("remote-file-refresh"),
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().testTag("remote-file-list").semantics {
+                            customActions = if (state.isLoading) emptyList() else listOf(
+                                CustomAccessibilityAction(refreshLabel) { onRefresh(); true },
                             )
-                        }
-                    }
-                    items(state.entries, key = { it.path }) { entry ->
-                        RemoteFileRow(
-                            entry = entry,
-                            onOpen = { if (state.selectedPaths.isNotEmpty()) onToggleSelection(entry.path) else onOpenEntry(entry) },
-                            onSelect = { onToggleSelection(entry.path) },
-                            selected = entry.path in state.selectedPaths,
-                            selectionMode = state.selectedPaths.isNotEmpty(),
-                            onManage = manage,
-                            onCopy = onCopy,
-                            onEdit = { onEditText(entry.path) },
-                            onDownload = {
-                                if (entry.kind == RemoteFileKind.DIRECTORY) {
-                                    startDirectoryDownload(entry.path)
-                                } else {
-                                    startDownload(entry.path)
+                        },
+                    ) {
+                        when {
+                            state.errorMessage != null -> item {
+                                RemoteBrowserMessage(state.errorMessage.asString(), isError = true, onRetry = refresh)
+                            }
+                            !state.isLoading && state.entries.isEmpty() -> item {
+                                RemoteBrowserMessage(stringResource(R.string.ui_this_directory_is_empty), isError = false, onRetry = null)
+                            }
+                            else -> {
+                                if (state.truncated) {
+                                    item {
+                                        Text(
+                                            text = stringResource(R.string.remote_file_directory_truncated, MAX_REMOTE_DIRECTORY_ENTRIES),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                        )
+                                    }
                                 }
-                            },
-                            onOpenWithApp = { onOpenWithApp(entry.path) },
-                            onStream = { onStream(entry.path) },
-                        )
-                        HorizontalDivider()
+                                items(state.entries, key = { it.path }) { entry ->
+                                    RemoteFileRow(
+                                        entry = entry,
+                                        onOpen = { if (state.selectedPaths.isNotEmpty()) onToggleSelection(entry.path) else onOpenEntry(entry) },
+                                        onSelect = { onToggleSelection(entry.path) },
+                                        selected = entry.path in state.selectedPaths,
+                                        selectionMode = state.selectedPaths.isNotEmpty(),
+                                        onManage = manage,
+                                        onCopy = onCopy,
+                                        onEdit = { onEditText(entry.path) },
+                                        onDownload = {
+                                            if (entry.kind == RemoteFileKind.DIRECTORY) startDirectoryDownload(entry.path)
+                                            else startDownload(entry.path)
+                                        },
+                                        onOpenWithApp = { onOpenWithApp(entry.path) },
+                                        onStream = { onStream(entry.path) },
+                                    )
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
                     }
                 }
             }

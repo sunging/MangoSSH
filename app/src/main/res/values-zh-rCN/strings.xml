@@ -838,7 +838,7 @@
     <string name="fm_permissions">权限</string>
     <string name="fm_selected">已选择 %1$d 项</string>
     <string name="fm_select_all">全选</string>
-    <string name="fm_manage">管理</string>
+    <string name="fm_more">更多</string>
     <string name="fm_platform">服务器文件系统</string>
     <string name="fm_paste">粘贴（%1$d 项）</string>
     <string name="fm_tasks">任务</string>

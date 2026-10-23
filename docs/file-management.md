@@ -5,6 +5,13 @@ folders share an action menu; long-press starts a selection. Copy and cut remain
 within the current connection. The task panel shows item outcomes after a partial
 failure, and started tasks continue when the browser closes.
 
+The single-row toolbar keeps Back and More visible. When space runs out, Tasks,
+Upload, then Home directory move into More; they return as the
+window widens. More also contains creation, selection and platform actions. The
+current path appears in the breadcrumb navigation. To refresh, scroll to the top
+and pull down; this also works for short listings, empty folders and failed
+listings. A failed listing additionally offers Retry.
+
 Download and Save as dialogs initially suggest Internal storage > Download through
 the system storage document provider. Some OEM Downloads providers create a document
 and advertise write support but reject every write mode. If opening the target fails,

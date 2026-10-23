@@ -35,14 +35,14 @@ internal fun remoteOperationLabel(kind: RemoteOperationKind): String = stringRes
     RemoteOperationKind.PERMISSIONS -> R.string.fm_permissions
 })
 
-/** Compact horizontally scrollable actions keep touch targets reachable on narrow phones. */
+/** Selection, clipboard and progress appear only when needed, leaving ordinary browsing one toolbar. */
 @Composable
 internal fun RemoteManagementToolbar(state: RemoteBrowserUiState, busy: Boolean,
     onAction: (RemoteManagementAction) -> Unit, onCopy: (List<String>, Boolean) -> Unit,
     onOperation: (RemoteOperationRequest) -> Unit, onSelectAll: () -> Unit, onClear: () -> Unit,
-    onClearClipboard: () -> Unit, onTasks: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
+    onClearClipboard: () -> Unit) {
     val selected = state.selectedPaths.toList()
+    if (!busy && selected.isEmpty() && state.clipboard == null) return
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
         if (busy) CircularProgressIndicator(Modifier.padding(horizontal = 8.dp).size(20.dp), strokeWidth = 2.dp)
         if (selected.isNotEmpty()) {
@@ -54,17 +54,6 @@ internal fun RemoteManagementToolbar(state: RemoteBrowserUiState, busy: Boolean,
             TextButton(onClick = { onOperation(RemoteOperationRequest(state.sessionId, RemoteOperationKind.DELETE, selected)) }) { Text(stringResource(R.string.fm_delete)) }
             TextButton(onClick = { onAction(RemoteManagementAction(RemoteOperationKind.PERMISSIONS, selected)) }) { Text(stringResource(R.string.fm_permissions)) }
         } else {
-            Box {
-                TextButton(enabled = !state.isConnecting, onClick = { menu = true }) { Text(stringResource(R.string.fm_manage)) }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    listOf(RemoteOperationKind.CREATE_FILE, RemoteOperationKind.CREATE_DIRECTORY).forEach { kind ->
-                        DropdownMenuItem(text = { Text(remoteOperationLabel(kind)) }, onClick = { menu = false; onAction(RemoteManagementAction(kind)) })
-                    }
-                    DropdownMenuItem(text = { Text(stringResource(R.string.fm_select_all)) }, onClick = { menu = false; onSelectAll() })
-                    DropdownMenuItem(text = { Text(stringResource(R.string.fm_platform)) }, enabled = !busy,
-                        onClick = { menu = false; onAction(RemoteManagementAction(null)) })
-                }
-            }
             state.clipboard?.let { clipboard ->
                 TextButton(onClick = { onOperation(RemoteOperationRequest(state.sessionId,
                     if (clipboard.move) RemoteOperationKind.MOVE else RemoteOperationKind.COPY, clipboard.paths, state.path)) },
@@ -73,7 +62,6 @@ internal fun RemoteManagementToolbar(state: RemoteBrowserUiState, busy: Boolean,
                 }
                 TextButton(onClick = onClearClipboard) { Text(stringResource(R.string.common_cancel)) }
             }
-            TextButton(onClick = onTasks) { Text(stringResource(R.string.fm_tasks)) }
         }
     }
 }
