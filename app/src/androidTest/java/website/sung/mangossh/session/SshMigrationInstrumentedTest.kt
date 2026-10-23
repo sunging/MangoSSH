@@ -74,6 +74,67 @@ class SshMigrationInstrumentedTest {
         } finally { source.close() }
     }
 
+    /** Stored Ed25519 keys must authenticate with plain, prompted and remembered passphrases. */
+    @Test fun ed25519PassphraseModesAuthenticateAndLocalFailuresNeverFallBack() = runBlocking<Unit> {
+        val source = connect(port())
+        try {
+            assertTrue(source.authenticate("fixture", object : SshCredentials {}))
+            val entries = metadata(source).getJSONArray("entries")
+            val entry = (0 until entries.length()).map(entries::getJSONObject)
+                .single { it.getString("public").startsWith("ssh-ed25519 ") }
+            val plain = text(source, entry.getString("plain"))
+            val encrypted = text(source, entry.getString("encrypted"))
+            val passphrase = entry.getString("passphrase")
+            val manager = SshKeyManager()
+            for ((protected, remember) in listOf(false to false, true to false, true to true)) {
+                val key = manager.importPrivateKey("fixture", if (protected) encrypted else plain,
+                    passphrase.takeIf { protected }, rememberPassphrase = remember)
+                val record = StoredAuthentication(java.util.UUID.randomUUID().toString(), "fixture", keyId = key.id)
+                var prompts = 0
+                val authentication = SshAuthentication(manager, { _, _, _, fields ->
+                    prompts++
+                    assertEquals(2, fields.size)
+                    assertFalse(fields.first().echo)
+                    assertTrue(fields.last().toggle)
+                    listOf(passphrase, "")
+                }, savePassword = { _, _ -> error("Key authentication must not save a password") },
+                    savePassphrase = { _, _ -> error("An unchecked passphrase must not be saved") })
+                val connection = connect(port())
+                try {
+                    assertTrue(authentication.authenticate(connection, "fixture", ConnectionProfile(
+                        label = "fixture", hostname = host(), username = "fixture-key", authenticationId = record.id),
+                        VaultSnapshot(keys = listOf(key), authentications = listOf(record))))
+                    assertEquals(if (protected && !remember) 1 else 0, prompts)
+                    connection.keepalive()
+                } finally { connection.close() }
+            }
+            val locked = manager.importPrivateKey("fixture", encrypted, passphrase)
+            val record = StoredAuthentication(java.util.UUID.randomUUID().toString(), "fixture", keyId = locked.id)
+            for (cancel in listOf(false, true)) {
+                var prompts = 0
+                val authentication = SshAuthentication(manager, { _, _, _, _ ->
+                    prompts++
+                    if (cancel) null else listOf(java.util.UUID.randomUUID().toString(), AuthenticationField.TOGGLE_ON)
+                }, savePassword = { _, _ -> error("Local failures must not save a password") },
+                    savePassphrase = { _, _ -> error("An unverified passphrase must not be saved") })
+                val connection = connect(port())
+                try {
+                    suspend fun authenticate() = authentication.authenticate(connection, "fixture", ConnectionProfile(
+                        label = "fixture", hostname = host(), username = "fixture-mixed", authenticationId = record.id),
+                        VaultSnapshot(keys = listOf(locked), authentications = listOf(record)))
+                    if (cancel) {
+                        assertSuspendingThrows(CancellationException::class.java) { authenticate() }
+                    } else {
+                        val failure = assertSuspendingThrows(SshAuthenticationFailure::class.java) { authenticate() }
+                        assertEquals(SshAuthenticationFailure.Category.LOCAL_KEY, failure.category)
+                        assertEquals(SshAuthenticationStage.KEY_LOADING, failure.stage)
+                    }
+                    assertEquals(1, prompts)
+                } finally { connection.close() }
+            }
+        } finally { source.close() }
+    }
+
     @Test fun passwordOtpAndAuthenticationCancellationRemainIsolated() = runBlocking<Unit> {
         val port = port()
         val source = connect(port)

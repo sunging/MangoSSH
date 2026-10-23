@@ -189,6 +189,18 @@ to producer manifests and local CMake source identities. ZIP alignment remains a
 separate SDK check. Neither static validation nor compilation replaces device
 acceptance for PTY lifecycle, terminal resize, Mosh reconnect and tsnet routing.
 
+Release optimization must preserve the Ed25519 JCA provider's reflective service
+classes and their public no-argument constructors. The cbssh JAR supplies these
+consumer rules in `META-INF/proguard/cbssh.pro`. CI and release publication verify
+the actual DEX definitions in both release APKs, since debug tests and string
+searches cannot detect removed constructors or renamed services:
+
+```sh
+python3 tools/check-ed25519-apk.py --dexdump "$ANDROID_HOME/build-tools/36.0.0/dexdump" \
+  app/build/outputs/apk/github/release/app-github-release-unsigned.apk \
+  app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk
+```
+
 For reproducibility, build with two independent `--state` directories and compare
 packaged ELF, terminfo and AAR contents (including classes.jar); metadata containing
 local build paths need not match. Use `tools/native/compare-artifacts.py` for a
