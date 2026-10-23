@@ -1,5 +1,6 @@
 package website.sung.mangossh.presentation
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -66,16 +67,45 @@ internal fun RemoteManagementToolbar(state: RemoteBrowserUiState, busy: Boolean,
     }
 }
 
+/**
+ * Sizes text-only file actions to their labels instead of Material's 112 dp minimum width.
+ * Keeps 48 dp touch targets and standard menu padding; preview actions with icons retain Material sizing.
+ */
+@Composable
+internal fun RemoteFileActionMenuItem(
+    text: @Composable () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    leadingIcon: @Composable (() -> Unit)? = null,
+) {
+    if (leadingIcon != null) {
+        DropdownMenuItem(text = text, onClick = onClick, modifier = modifier, leadingIcon = leadingIcon)
+    } else {
+        Row(
+            modifier = modifier
+                .clickable(onClick = onClick, interactionSource = null, indication = ripple())
+                .fillMaxWidth()
+                .sizeIn(minWidth = 48.dp, maxWidth = 280.dp, minHeight = 48.dp)
+                .padding(MenuDefaults.DropdownMenuItemContentPadding),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CompositionLocalProvider(LocalContentColor provides MenuDefaults.itemColors().textColor) {
+                ProvideTextStyle(MaterialTheme.typography.labelLarge, content = text)
+            }
+        }
+    }
+}
+
 /** Shared menu for files, folders and links; unsupported editing is excluded at the entry point. */
 @Composable
 internal fun RemoteEntryManagementMenuItems(entry: RemoteFileEntry, onAction: (RemoteManagementAction) -> Unit,
     onCopy: (List<String>, Boolean) -> Unit, onEdit: () -> Unit, dismiss: () -> Unit) {
-    if (entry.kind == RemoteFileKind.FILE) DropdownMenuItem(text = { Text(stringResource(R.string.editor_edit)) }, onClick = { dismiss(); onEdit() })
+    if (entry.kind == RemoteFileKind.FILE) RemoteFileActionMenuItem(text = { Text(stringResource(R.string.editor_edit)) }, onClick = { dismiss(); onEdit() })
     listOf(RemoteOperationKind.RENAME, RemoteOperationKind.DELETE, RemoteOperationKind.PERMISSIONS).forEach { kind ->
-        DropdownMenuItem(text = { Text(remoteOperationLabel(kind)) }, onClick = { dismiss(); onAction(RemoteManagementAction(kind, listOf(entry.path))) })
+        RemoteFileActionMenuItem(text = { Text(remoteOperationLabel(kind)) }, onClick = { dismiss(); onAction(RemoteManagementAction(kind, listOf(entry.path))) })
     }
-    DropdownMenuItem(text = { Text(stringResource(R.string.fm_copy)) }, onClick = { dismiss(); onCopy(listOf(entry.path), false) })
-    DropdownMenuItem(text = { Text(stringResource(R.string.fm_cut)) }, onClick = { dismiss(); onCopy(listOf(entry.path), true) })
+    RemoteFileActionMenuItem(text = { Text(stringResource(R.string.fm_copy)) }, onClick = { dismiss(); onCopy(listOf(entry.path), false) })
+    RemoteFileActionMenuItem(text = { Text(stringResource(R.string.fm_cut)) }, onClick = { dismiss(); onCopy(listOf(entry.path), true) })
 }
 
 /** Carries the caller's density into the dialog window, including accessibility font scale. */

@@ -39,7 +39,6 @@ import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -344,21 +343,32 @@ private fun RemoteOpenProgressDialog(opening: RemoteOpenUiState, onCancel: () ->
 /**
  * The two ways to hand a remote file to another app, offered wherever a file
  * can be acted on.
+ *
+ * [showIcons] keeps preview actions illustrated while entry menus align all labels without icons.
  */
 @Composable
-private fun OpenElsewhereMenuItems(onOpenWithApp: () -> Unit, onStream: () -> Unit, dismiss: () -> Unit) {
-    DropdownMenuItem(
+private fun OpenElsewhereMenuItems(
+    onOpenWithApp: () -> Unit,
+    onStream: () -> Unit,
+    showIcons: Boolean = true,
+    dismiss: () -> Unit,
+) {
+    RemoteFileActionMenuItem(
         text = { Text(stringResource(R.string.remote_open_with_app)) },
-        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null) },
+        leadingIcon = if (showIcons) {
+            { Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null) }
+        } else null,
         onClick = {
             dismiss()
             onOpenWithApp()
         },
         modifier = Modifier.testTag("remote-open-with-app"),
     )
-    DropdownMenuItem(
+    RemoteFileActionMenuItem(
         text = { Text(stringResource(R.string.remote_open_stream)) },
-        leadingIcon = { Icon(Icons.Outlined.PlayCircle, contentDescription = null) },
+        leadingIcon = if (showIcons) {
+            { Icon(Icons.Outlined.PlayCircle, contentDescription = null) }
+        } else null,
         onClick = {
             dismiss()
             onStream()
@@ -481,10 +491,11 @@ private fun RemoteFileRow(
                 }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                     RemoteEntryManagementMenuItems(entry, onManage, onCopy, onEdit) { showMenu = false }
-                    if (entry.kind != RemoteFileKind.DIRECTORY) OpenElsewhereMenuItems(onOpenWithApp, onStream, dismiss = { showMenu = false })
-                    DropdownMenuItem(
+                    if (entry.kind != RemoteFileKind.DIRECTORY) {
+                        OpenElsewhereMenuItems(onOpenWithApp, onStream, showIcons = false, dismiss = { showMenu = false })
+                    }
+                    RemoteFileActionMenuItem(
                         text = { Text(stringResource(R.string.common_download)) },
-                        leadingIcon = { Icon(Icons.Outlined.Download, contentDescription = null) },
                         onClick = {
                             showMenu = false
                             onDownload()
