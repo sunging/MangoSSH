@@ -4,12 +4,14 @@ import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -50,7 +52,12 @@ import website.sung.mangossh.ui.components.SettingsCategoryRow
 /** Public source repository, available in every distribution without coupling About to the self-updater. */
 internal fun projectRepositoryUrl(): String = "https://github.com/sunging/MangoSSH"
 
-/** About detail page: installed version, source repository, and bundled open-source licenses. */
+/**
+ * About detail page with a footer at the bottom of the available pane.
+ *
+ * The viewport is a minimum height, so short content leaves room above the footer while
+ * large text or a short window can scroll the entire page without clipping either section.
+ */
 @Composable
 internal fun AboutSettingsPage(
     state: AboutSettingsState,
@@ -62,72 +69,76 @@ internal fun AboutSettingsPage(
     LaunchedEffect(context) {
         report = withContext(Dispatchers.IO) { CrashReporter.lastReport(context) }
     }
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).testTag("about_identity_card"),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Box(Modifier.size(80.dp).clip(RoundedCornerShape(20.dp))) {
-                    Image(painterResource(R.drawable.ic_launcher_background), null, Modifier.matchParentSize())
-                    Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.matchParentSize())
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .heightIn(min = maxHeight)
+                .padding(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp).testTag("about_identity_card"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(Modifier.size(80.dp).clip(RoundedCornerShape(20.dp))) {
+                        Image(painterResource(R.drawable.ic_launcher_background), null, Modifier.matchParentSize())
+                        Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.matchParentSize())
+                    }
+                    Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        stringResource(R.string.settings_about_version, state.versionName, state.versionCode),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
                 }
-                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineSmall)
+                MangoPreferenceGroup {
+                    SettingsCategoryRow(
+                        icon = Icons.Outlined.Code,
+                        title = stringResource(R.string.settings_about_repository),
+                        summary = "GitHub",
+                        onClick = callbacks.onOpenReleasePage,
+                        modifier = Modifier.testTag("settings_about_release_page"),
+                    )
+                    SettingsCategoryRow(
+                        icon = Icons.Outlined.Description,
+                        title = stringResource(R.string.settings_about_licenses_title),
+                        summary = null,
+                        onClick = callbacks.onOpenLicenses,
+                        modifier = Modifier.testTag("settings_about_licenses"),
+                    )
+                }
+                report?.let { storedReport ->
+                    CrashReportRow(storedReport, onCleared = { report = null })
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
-                    stringResource(R.string.settings_about_version, state.versionName, state.versionCode),
-                    style = MaterialTheme.typography.bodyMedium,
+                    stringResource(R.string.settings_about_license_notice),
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
-            }
-        }
-        item {
-            MangoPreferenceGroup {
-                SettingsCategoryRow(
-                    icon = Icons.Outlined.Code,
-                    title = stringResource(R.string.settings_about_repository),
-                    summary = "GitHub",
-                    onClick = callbacks.onOpenReleasePage,
-                    modifier = Modifier.testTag("settings_about_release_page"),
-                )
-                SettingsCategoryRow(
-                    icon = Icons.Outlined.Description,
-                    title = stringResource(R.string.settings_about_licenses_title),
-                    summary = null,
-                    onClick = callbacks.onOpenLicenses,
-                    modifier = Modifier.testTag("settings_about_licenses"),
+                Text(
+                    stringResource(
+                        R.string.settings_about_build,
+                        state.buildRevision.ifEmpty { stringResource(R.string.settings_about_build_unknown) },
+                        state.distribution,
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("about_build_identity"),
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp, lineHeight = 14.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                    textAlign = TextAlign.Center,
                 )
             }
-        }
-        item {
-            Text(
-                stringResource(
-                    R.string.settings_about_build,
-                    state.buildRevision.ifEmpty { stringResource(R.string.settings_about_build_unknown) },
-                    state.distribution,
-                ),
-                modifier = Modifier.fillMaxWidth().testTag("about_build_identity"),
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp, lineHeight = 14.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                textAlign = TextAlign.Center,
-            )
-        }
-        report?.let { storedReport ->
-            item { CrashReportRow(storedReport, onCleared = { report = null }) }
-        }
-        item {
-            Text(
-                "GPL-3.0-or-later",
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
         }
     }
 }
