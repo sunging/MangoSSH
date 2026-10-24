@@ -18,10 +18,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -43,12 +45,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -210,7 +214,7 @@ fun RemoteFileBrowserScreen(
 
             if (!state.isConnecting) {
                 RemoteManagementToolbar(state, operationBusy, manage, onCopy, onOperation, onSelectAll, onClearSelection, onClearClipboard)
-                RemoteBreadcrumbs(path = state.path, onNavigate = onNavigate)
+                RemoteBreadcrumbs(sessionId = state.sessionId, path = state.path, onNavigate = onNavigate)
             }
 
             if (state.isConnecting) {
@@ -389,36 +393,52 @@ private fun Uri.treeDisplayName(context: Context): String = runCatching {
     ?: lastPathSegment?.substringAfterLast('/')?.takeIf(String::isNotBlank)
     ?: "upload"
 
-/** Clickable path trail so the user can jump several levels up at once. */
+/**
+ * Keeps the current directory visible after navigation or a width change without
+ * overriding manual scrolling during refreshes. Each crumb fits its label while
+ * retaining a full-height touch target.
+ */
 @Composable
-private fun RemoteBreadcrumbs(path: String, onNavigate: (String) -> Unit) {
+private fun RemoteBreadcrumbs(sessionId: String, path: String, onNavigate: (String) -> Unit) {
     val crumbs = remember(path) { RemoteFilePaths.breadcrumbs(path) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        crumbs.forEachIndexed { index, (label, target) ->
-            // The root crumb is itself "/", so the separator starts one later.
-            if (index > 1) {
-                Text(
-                    text = "/",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            TextButton(
-                onClick = { onNavigate(target) },
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                )
+    val scrollState = rememberScrollState()
+    val scrollMax = scrollState.maxValue
+    // The range is only final after measurement, including when a new path is
+    // wider than the old one. Scroll position itself is deliberately not a key.
+    LaunchedEffect(sessionId, path, scrollMax) {
+        if (scrollMax != Int.MAX_VALUE) scrollState.scrollTo(scrollMax)
+    }
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .testTag("remote-breadcrumbs")
+                .horizontalScroll(scrollState)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            crumbs.forEachIndexed { index, (label, target) ->
+                // The root crumb is itself "/", so the separator starts one later.
+                if (index > 1) {
+                    Text(
+                        text = "/",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = { onNavigate(target) },
+                    modifier = Modifier.widthIn(min = 1.dp).heightIn(min = 48.dp)
+                        .testTag("remote-breadcrumb-$index"),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }

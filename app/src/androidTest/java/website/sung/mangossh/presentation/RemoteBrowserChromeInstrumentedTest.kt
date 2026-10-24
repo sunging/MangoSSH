@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -61,9 +62,18 @@ class RemoteBrowserChromeInstrumentedTest {
     }
 
     @Composable
-    private fun Browser(value: RemoteBrowserUiState, onRefresh: () -> Unit = {}) {
-        RemoteFileBrowserScreen(value, {}, {}, {}, onRefresh, {}, { _, _, _ -> }, { _, _, _ -> },
+    private fun Browser(value: RemoteBrowserUiState, onNavigate: (String) -> Unit = {}, onRefresh: () -> Unit = {}) {
+        RemoteFileBrowserScreen(value, onNavigate, {}, {}, onRefresh, {}, { _, _, _ -> }, { _, _, _ -> },
             { _, _ -> }, { _, _ -> }, {}, {})
+    }
+
+    private fun breadcrumbScroll() = compose.onNodeWithTag("remote-breadcrumbs")
+        .fetchSemanticsNode().config[SemanticsProperties.HorizontalScrollAxisRange]
+
+    private fun assertBreadcrumbsAtEnd() {
+        compose.waitForIdle()
+        val range = breadcrumbScroll()
+        assertEquals(range.maxValue(), range.value(), 1f)
     }
 
     private fun pull() {
@@ -254,5 +264,140 @@ class RemoteBrowserChromeInstrumentedTest {
         compose.onNodeWithTag("remote-file-refresh").assertDoesNotExist()
         compose.onNodeWithTag("remote-file-browser").performTouchInput { swipeDown() }
         compose.runOnIdle { assertEquals(2, refreshes) }
+    }
+
+    @Test fun breadcrumbsFollowNavigationSessionAndViewportChanges() {
+        val parent = "/synthetic/workspace/projects/mobile/application/source"
+        var current by mutableStateOf(state.copy(path = "$parent/presentation"))
+        var width by mutableStateOf(232.dp)
+        val navigation = mutableListOf<String>()
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                MaterialTheme {
+                    Box(Modifier.width(width)) {
+                        Browser(current, onNavigate = { navigation += it; current = current.copy(path = it) })
+                    }
+                }
+            }
+        }
+        assertBreadcrumbsAtEnd()
+        assertTrue(breadcrumbScroll().maxValue() > 0f)
+        compose.onNodeWithText("presentation").assertIsDisplayed()
+
+        // The deeper path must use its new measured range, rather than the old maximum.
+        compose.runOnIdle { current = current.copy(path = "$parent/presentation/components/breadcrumbs") }
+        assertBreadcrumbsAtEnd()
+        compose.onNodeWithText("breadcrumbs").assertIsDisplayed()
+
+        compose.onNodeWithTag("remote-breadcrumb-6").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(parent), navigation) }
+        assertBreadcrumbsAtEnd()
+        compose.onNodeWithText("source").assertIsDisplayed()
+
+        for (target in listOf("$parent/short", "$parent/another-directory", "$parent/final")) {
+            compose.runOnIdle { current = current.copy(path = target) }
+        }
+        assertBreadcrumbsAtEnd()
+        compose.onNodeWithText("final").assertIsDisplayed()
+        for (available in listOf(320.dp, 208.dp)) {
+            compose.runOnIdle { width = available }
+            assertBreadcrumbsAtEnd()
+            compose.onNodeWithText("final").assertIsDisplayed()
+        }
+
+        compose.onNodeWithTag("remote-breadcrumb-0").performScrollTo()
+        compose.onNodeWithTag("remote-breadcrumb-0").assertIsDisplayed()
+        assertTrue(breadcrumbScroll().value() < breadcrumbScroll().maxValue() - 1f)
+        compose.runOnIdle { current = current.copy(sessionId = "another-synthetic-session") }
+        assertBreadcrumbsAtEnd()
+    }
+
+    @Test fun manualBreadcrumbScrollSurvivesRefreshAndUnrelatedStateChanges() {
+        var current by mutableStateOf(state.copy(path = "/synthetic/workspace/projects/mobile/application/source/presentation"))
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                MaterialTheme {
+                    Box(Modifier.width(232.dp)) {
+                        Browser(current) { current = current.copy(isLoading = true) }
+                    }
+                }
+            }
+        }
+        assertBreadcrumbsAtEnd()
+        compose.onNodeWithTag("remote-breadcrumbs").performTouchInput { swipeRight() }
+        compose.waitForIdle()
+        val manualPosition = breadcrumbScroll().value()
+        assertTrue(manualPosition < breadcrumbScroll().maxValue() - 1f)
+        pull()
+        compose.runOnIdle { assertTrue(current.isLoading) }
+        assertEquals(manualPosition, breadcrumbScroll().value(), 1f)
+        compose.runOnIdle {
+            current = current.copy(isLoading = false, entries = emptyList(), selectedPaths = setOf("/synthetic/selection"))
+        }
+        assertEquals(manualPosition, breadcrumbScroll().value(), 1f)
+    }
+
+    @Test fun compactBreadcrumbsRetainHeightAndDispatchExactTargets() {
+        val navigation = mutableListOf<String>()
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                MaterialTheme {
+                    Box(Modifier.width(232.dp)) { Browser(state.copy(path = "/a/b/c"), onNavigate = { navigation += it }) }
+                }
+            }
+        }
+        compose.onNodeWithTag("remote-breadcrumbs").assertHeightIsEqualTo(48.dp)
+        for (index in 0..3) {
+            val crumb = compose.onNodeWithTag("remote-breadcrumb-$index").assertHeightIsAtLeast(48.dp)
+            assertTrue(crumb.fetchSemanticsNode().boundsInRoot.width <= 32f)
+            crumb.performTouchInput { click(center) }
+        }
+        compose.onAllNodesWithText("/", useUnmergedTree = true).assertCountEquals(3)
+        compose.runOnIdle { assertEquals(listOf("/", "/a", "/a/b", "/a/b/c"), navigation) }
+        assertEquals(0f, breadcrumbScroll().maxValue(), 1f)
+        assertBreadcrumbsAtEnd()
+    }
+
+    @Test fun rootShortAndOversizedBreadcrumbsWorkAtLargeFont() {
+        val longName = "long-directory-name-".repeat(12)
+        var current by mutableStateOf(state.copy(path = "/"))
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(1f, 2f)) {
+                MaterialTheme { Box(Modifier.width(232.dp)) { Browser(current) } }
+            }
+        }
+        compose.onNodeWithTag("remote-breadcrumb-0").assertTextEquals("/").assertIsDisplayed()
+        compose.onAllNodesWithText("/", useUnmergedTree = true).assertCountEquals(1)
+        assertEquals(0f, breadcrumbScroll().maxValue(), 1f)
+        compose.runOnIdle { current = current.copy(path = "/short") }
+        compose.onNodeWithText("short").assertIsDisplayed()
+        assertEquals(0f, breadcrumbScroll().maxValue(), 1f)
+        compose.runOnIdle { current = current.copy(path = "/synthetic/$longName") }
+        assertBreadcrumbsAtEnd()
+        compose.onNodeWithTag("remote-breadcrumb-2").assertTextEquals(longName).assertIsDisplayed()
+        compose.onNodeWithTag("remote-breadcrumbs").assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithTag("remote-breadcrumbs").performTouchInput { swipeRight() }
+        compose.waitForIdle()
+        assertTrue(breadcrumbScroll().value() < breadcrumbScroll().maxValue() - 1f)
+    }
+
+    @Test fun breadcrumbLayoutCaptureUsesOnlySyntheticData() {
+        if (!captureRequested) return
+        val demo = state.copy(
+            title = "Demo server",
+            path = "/home/demo/projects/mangossh/app/src/main/presentation",
+            entries = listOf(
+                RemoteFileEntry("components", "/synthetic/components", RemoteFileKind.DIRECTORY),
+                RemoteFileEntry("README.md", "/synthetic/README.md", RemoteFileKind.FILE, sizeBytes = 2048),
+            ),
+        )
+        compose.setContent {
+            CompositionLocalProvider(LocalResources provides screenshotResources) {
+                MangoSshTheme { Browser(demo) }
+            }
+        }
+        assertBreadcrumbsAtEnd()
+        compose.onNodeWithText("presentation").assertIsDisplayed()
+        capture("remote-browser-breadcrumbs.png")
     }
 }
