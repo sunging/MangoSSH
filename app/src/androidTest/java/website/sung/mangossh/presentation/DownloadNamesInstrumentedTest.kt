@@ -18,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.Closeable
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -44,7 +45,12 @@ class DownloadNamesInstrumentedTest {
         val requested = AtomicReference("")
         val originalFlags = automation.serviceInfo.flags
         var ownsDirectory = false
-        try {
+        Closeable {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+            selected.getAndSet(null)?.let { DocumentsContract.deleteDocument(context.contentResolver, it) }
+            // rmdir only removes the empty test-owned directory; unexpected contents are preserved.
+            if (ownsDirectory) assertEquals("", shell("rmdir $shellPath"))
+        }.use {
             assertNotEquals(shellPath, shell("ls -d $shellPath"))
             shell("mkdir $shellPath")
             assertEquals(shellPath, shell("ls -d $shellPath"))
@@ -80,31 +86,39 @@ class DownloadNamesInstrumentedTest {
                     name in listOf("report.PDF", "unknown.mangossh-unknown", "README", ".z", ".profile")) {
                     capturePicker("picker-$index.png")
                 }
-                awaitPicker { root -> visit(root) { node ->
-                    val id = node.viewIdResourceName.orEmpty()
-                    node.isEnabled && (id.endsWith(":id/action_menu_save") || id == "android:id/button1") &&
-                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                } }
+                savePickerDocument()
                 compose.waitUntil(15_000) { selected.get() != null }
                 val document = checkNotNull(selected.get())
-                try {
+                // Consume cleanup ownership first; use preserves a failed assertion if deletion also fails.
+                Closeable {
+                    selected.compareAndSet(document, null)
+                    assertTrue("Delete only this picker-created document",
+                        DocumentsContract.deleteDocument(context.contentResolver, document))
+                }.use {
                     assertEquals("com.android.externalstorage.documents", document.authority)
                     assertEquals(name, LocalDocumentTree.displayName(context.contentResolver, document))
                     val bytes = ByteArray(257 + index) { (it % 251).toByte() }
                     context.contentResolver.openOutputStream(document, "wt")!!.use { it.write(bytes) }
                     assertArrayEquals(bytes, context.contentResolver.openInputStream(document)!!.use { it.readBytes() })
-                } finally {
-                    assertTrue("Delete only this picker-created document",
-                        DocumentsContract.deleteDocument(context.contentResolver, document))
-                    selected.set(null)
                 }
             }
-        } finally {
-            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
-            selected.get()?.let { DocumentsContract.deleteDocument(context.contentResolver, it) }
-            // rmdir only removes the empty test-owned directory; unexpected contents are preserved.
-            if (ownsDirectory) assertEquals("", shell("rmdir $shellPath"))
         }
+    }
+
+    /** Polls Save readiness without clicking; a delayed result must never cause another Save request. */
+    @Suppress("DEPRECATION")
+    private fun savePickerDocument() {
+        var button: AccessibilityNodeInfo? = null
+        try {
+            awaitPicker { root -> visit(root) { node ->
+                val id = node.viewIdResourceName.orEmpty()
+                if (node.isEnabled && (id.endsWith(":id/action_menu_save") || id == "android:id/button1")) {
+                    button = AccessibilityNodeInfo.obtain(node)
+                    true
+                } else false
+            } }
+            assertTrue("Dispatch Save exactly once", checkNotNull(button).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        } finally { button?.recycle() }
     }
 
     /** Polls only the picker and never records the text of unrelated nodes. */
