@@ -19,7 +19,8 @@ import website.sung.mangossh.presentation.update.distributionUpdateSummaryResour
 import website.sung.mangossh.presentation.update.distributionUpdateTitleResource
 
 /**
- * One category shown on the Settings hub, each opening its own detail page.
+ * A settings category or a nested detail page. Only destinations without a
+ * [parent] appear in the category hub.
  *
  * Held only in memory (see [MangoSshViewModel.settingsDestination]), never
  * serialized by ordinal or name, so entries can be added or reordered
@@ -36,7 +37,19 @@ internal enum class SettingsDestination {
     TSNET,
     UPDATES,
     ABOUT,
+    LICENSES,
 }
+
+/** Nested pages stay out of the hub and return to their owning category. */
+internal val SettingsDestination.parent: SettingsDestination?
+    get() = if (this == SettingsDestination.LICENSES) SettingsDestination.ABOUT else null
+
+/** The category highlighted in the tablet hub, including while a child is open. */
+internal val SettingsDestination.hubDestination: SettingsDestination
+    get() = parent ?: this
+
+/** A child page needs a back action even when the category hub is visible. */
+internal fun SettingsDestination.showsBack(twoPane: Boolean): Boolean = !twoPane || parent != null
 
 /**
  * The hub groups categories under these headings so ten equal-weight rows read
@@ -68,6 +81,7 @@ internal val SettingsDestination.section: SettingsSection
 
         SettingsDestination.UPDATES,
         SettingsDestination.ABOUT,
+        SettingsDestination.LICENSES,
         -> SettingsSection.SYSTEM
     }
 
@@ -94,6 +108,7 @@ internal fun SettingsDestination.title(): String = stringResource(
         SettingsDestination.TSNET -> R.string.settings_category_tsnet_title
         SettingsDestination.UPDATES -> distributionUpdateTitleResource()
         SettingsDestination.ABOUT -> R.string.settings_category_about_title
+        SettingsDestination.LICENSES -> R.string.settings_about_licenses_title
     },
 )
 
@@ -110,6 +125,7 @@ internal fun SettingsDestination.summary(): String = stringResource(
         SettingsDestination.TSNET -> R.string.settings_category_tsnet_summary
         SettingsDestination.UPDATES -> distributionUpdateSummaryResource()
         SettingsDestination.ABOUT -> R.string.settings_category_about_summary
+        SettingsDestination.LICENSES -> R.string.settings_about_licenses_summary
     },
 )
 
@@ -124,4 +140,5 @@ internal fun SettingsDestination.icon(): ImageVector = when (this) {
     SettingsDestination.TSNET -> Icons.Outlined.Hub
     SettingsDestination.UPDATES -> Icons.Outlined.SystemUpdate
     SettingsDestination.ABOUT -> Icons.Outlined.Info
+    SettingsDestination.LICENSES -> Icons.Outlined.Info
 }

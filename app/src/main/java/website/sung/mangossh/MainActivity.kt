@@ -1,12 +1,14 @@
 package website.sung.mangossh
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.os.Build
 import android.security.keystore.KeyPermanentlyInvalidatedException
+import android.view.KeyEvent
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -71,6 +73,31 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+    }
+
+    /**
+     * Delivers a system Back key event straight to the activity.
+     *
+     * Back arrives as a KEYCODE_BACK key event below API 33, and also on API 33+ wherever
+     * the platform falls back to synthesizing one (some OEM builds turn predictive Back off
+     * per app). That event first travels through the Compose hierarchy, and Compose turns
+     * an unconsumed Back into a focus Exit: each press moves focus out one level (the
+     * terminal nests several focus targets) and consumes the down, so `onBackPressed` and
+     * every `BackHandler` stay silent until focus has nowhere left to go. Skipping the view
+     * hierarchy matches the regular API 33+ path, where Back never reaches views at all.
+     * The IME still sees Back first, and dialogs and popups have their own windows; a
+     * hardware Esc rewritten into a fallback Back still reaches `BackHandler`.
+     *
+     * Back is not handled here, only routed to `OnBackPressedDispatcher` through the
+     * activity's standard key callbacks, so GestureBackNavigation does not apply.
+     */
+    @SuppressLint("GestureBackNavigation")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            onUserInteraction()
+            return event.dispatch(this, window.decorView.keyDispatcherState, this)
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -4,18 +4,20 @@ import androidx.test.platform.app.InstrumentationRegistry
 import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshCredentials
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.util.UUID
 
-/** Opt-in fixture tests: only an explicitly supplied loopback port is ever contacted. */
+/** Opt-in disposable fixtures default to loopback; Wi-Fi devices may use an explicitly scoped local relay. */
 class RemoteSafetyInstrumentedTest {
-    private fun fixture(block: suspend (SshConnection, Int) -> Unit) = runBlocking<Unit> {
-        val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
+    private fun fixture(portArgument: String = "fixturePort", block: suspend (SshConnection, Int) -> Unit) = runBlocking<Unit> {
+        val port = InstrumentationRegistry.getArguments().getString(portArgument)?.toIntOrNull()
         if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
         assumeTrue("Run the disposable tools/ssh-test-fixture.py with adb reverse", port != null)
-        val connection = SshConnection("127.0.0.1", port!!)
+        val host = InstrumentationRegistry.getArguments().getString("fixtureHost") ?: "127.0.0.1"
+        val connection = SshConnection(host, port!!)
         try {
             connection.connect(10_000) { _, _ -> true }
             assertTrue(connection.authenticate("fixture", object : SshCredentials {}))
@@ -230,5 +232,38 @@ class RemoteSafetyInstrumentedTest {
         assertFalse(control.shouldContinue())
         connection.keepalive()
         assertTrue(RemoteFileClient().resolveHome(connection).startsWith("/"))
+    }
+
+    @Test fun stalledSftpWriteTimesOutWithoutReplacingTheOriginal() = stalledWrite(false)
+    @Test fun stalledSftpWriteCanBeCancelledWithoutClosingSharedSsh() = stalledWrite(true)
+
+    private fun stalledWrite(cancel: Boolean) = fixture("fixtureStalledWritePort") { connection, _ ->
+        val files = RemoteFileClient()
+        val name = UUID.randomUUID().toString()
+        BlockingOperation().use { files.upload(connection, "original".byteInputStream(), "/", name, 0, 8, 1024, it) { _, _ -> } }
+        val control = BlockingOperation(if (cancel) 10_000 else 1_000)
+        val token = UUID.randomUUID().toString()
+        val temporary = files.reserveTemporary(connection, "/", token, control)
+        try {
+            kotlinx.coroutines.withTimeout(5_000) {
+                kotlinx.coroutines.coroutineScope {
+                    val stopper = if (cancel) launch { kotlinx.coroutines.delay(300); control.close() } else null
+                    try {
+                        files.upload(connection, "new contents".byteInputStream(), "/", RemoteFilePaths.nameOf(temporary),
+                            0, 12, 1024, control) { _, _ -> }
+                        fail("A stalled write must not complete")
+                    } catch (_: java.net.SocketTimeoutException) { assertFalse(cancel) }
+                    catch (_: RemoteFileException) { assertTrue(cancel) }
+                    finally { stopper?.join() }
+                }
+            }
+            BlockingOperation().use { assertEquals("original", files.readEditable(connection, "/$name", it).text) }
+            assertTrue(files.resolveHome(connection).startsWith("/"))
+        } finally {
+            control.close()
+            files.removeTemporary(connection, temporary, token)
+            val cleanup = connection.openFiles()
+            try { cleanup.remove("/$name") } finally { cleanup.close() }
+        }
     }
 }

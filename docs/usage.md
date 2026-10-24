@@ -2,16 +2,81 @@
 
 Details of behavior that the [README](../README.md) only summarizes.
 
+## Authentication
+
+The **Authentication** page manages named, reusable entries. Each entry can contain
+an optional password and an optional private key, including both or neither. Choose
+one entry in the host editor or Embedded Tailscale quick connect; the default is
+**Ask at connection**. Tailscale SSH remains a separate identity-based mode.
+
+Credentials stay in the encrypted vault and are included in encrypted backups,
+WebDAV sync and recovery points. Leaving the password edit field empty retains its
+current value; use **Remove saved password** to clear it. Private-key generation,
+import and passphrase changes are staged until the authentication editor is saved.
+Cancelling the editor discards those changes. Renaming keeps references; editing a
+shared entry affects its users. Removal lists affected hosts before unlinking them.
+A private key used by another authentication is retained; otherwise it and its
+agent allowlist references are removed. Key export remains available for public
+and private halves, subject to the normal access checks.
+
+On one SSH transport, MangoSSH tries the configured private key first, then ordinary
+`password`, then `keyboard-interactive`, using the server's latest method offers.
+Rejected keys fall back to the entry's saved password, or a cancellable password
+prompt if none is saved. A rejected password proceeds directly to interactive
+prompts without another ordinary password attempt. Interactive answers and OTPs
+are always entered manually and are never filled from a saved password or saved.
+Local key loading, decryption or signing errors, protocol errors, and cancelled
+prompts end the entire attempt. Terminal SSH, Mosh bootstrap, jump hosts, files
+and forwarding use this same process.
+
+Ordinary password prompts offer **Save password in the vault**, unchecked by
+default. Only acceptance of that ordinary password creates a new authentication
+named after the host, preserving the original private-key reference and linking
+only to the current saved host. A later interactive success never saves a rejected
+password. Existing shared entries are never overwritten by a connection prompt.
+Quick connect adds an entry without creating a host. Saving checks that the host,
+original authentication and private key have not been changed or deleted during
+the attempt. If saving fails, a notice is shown and the successful connection
+continues.
+
 ## Port forwarding
 
 Local, remote, and SOCKS5 rules live on the **Forwarding** page. Starting a rule
 reuses an open SSH terminal or a Mosh terminal's authenticated companion SSH
-connection for the same host. Otherwise it opens a connection dedicated to the
-forward, so a tunnel does not require keeping a terminal open. A dedicated
-connection closes as soon as its last forward stops, and its host-key or
-password prompt appears over the page that started it. If a Mosh companion SSH
-disconnects, its forwards are marked failed without ending the UDP terminal;
-start a failed rule again to reconnect it.
+connection for the same profile. Multiple rules share that connection; otherwise
+MangoSSH opens a dedicated SSH connection. Closing an SSH or Mosh terminal with
+running forwards retains the carrier as a forwarding-only connection, including
+existing forwarded TCP streams. Its last forward releases the connection when
+no file transfer or stream still uses it.
+
+- **Local:** phone listener → SSH → a destination reached from the server.
+- **Remote:** server listener → SSH → a destination reached from the phone.
+- **SOCKS5:** phone proxy listener → SSH → a client-selected destination reached
+  from the server.
+
+New address fields start at `127.0.0.1`; ports must be entered. Destination names
+resolve on the destination side described above. Editing or switching types
+preserves addresses, and existing rules and backup files are unchanged.
+
+Unexpected disconnects automatically recreate SSH carriers and listeners, with
+bounded exponential backoff and jitter up to 60 seconds. Network loss or system
+blocking pauses attempts; internet validation is not required for LAN hosts.
+Recovery never reopens a terminal or reruns its startup command. Losing a Mosh
+SSH companion leaves its UDP terminal running. Clients must reconnect TCP streams
+lost with a real transport failure. Password, OTP, unlock and host confirmation
+still require the normal security checks; authentication, host-key and bind
+failures stop retries. Waiting, recovery and prompt states can all be stopped.
+Stopping or deleting a rule, deleting its profile, or closing all connections
+cancels recovery first. Process death and reboot do not restore running intent.
+
+Connecting/recovering and connected clients request a renewable, timed CPU wake
+lease. Idle background listeners, network waits and prompt waits release it.
+Idle forwarding normally sends a keepalive about every 60 seconds, with normal
+intervals while clients are connected. A longer configured base interval or
+disabled keepalives remain respected. Background alarms are shared across idle
+connections. Android's [Doze restrictions](https://developer.android.com/training/monitoring-device-state/doze-standby)
+can delay alarms and block networking, so deep sleep does not guarantee continuous
+reachability.
 
 ## File transfers
 
@@ -19,8 +84,44 @@ Browse a host over SFTP from the **Files** button inside an open SSH or Mosh
 terminal, which reuses that session's authenticated SSH connection, or from a
 host's overflow-menu **Files** action, which opens a connection dedicated to
 transfers. Single files and whole folders can be downloaded and uploaded. Mosh
-terminals use the same SSH companion for the server-resource report in their
+terminals use the same SSH companion for the server-resource panel in their
 terminal toolbar.
+
+### Server resources
+
+The terminal toolbar's **Server resources** button opens a responsive overview of
+the operating system, uptime, logical processors, CPU utilization, physical
+memory, swap (Linux) or paging files (Windows), local disks, and active network
+interfaces. Capacities and network rates use binary units. Linux memory usage is
+total minus `MemAvailable`; filesystem available space may exclude reservations.
+System and CPU share a compact card, and wide screens use two independent card
+columns. Refresh feedback overlays the panel without moving its content.
+Long-press the resource information to select and copy text using the system menu.
+Virtual interfaces are hidden by default; **Show virtual interfaces** reveals
+them with their original names. Linux uses kernel device metadata and Windows
+uses adapter CIM metadata to classify interfaces. If classification is unavailable,
+the interface remains visible. This display choice lasts while the panel is open.
+
+The panel queries only while visible in the foreground, every five seconds,
+without overlapping queries. CPU and network rates need two valid samples;
+the first reading shows **Sampling**. Manual refresh is also available. Failed
+refreshes retain the last successful reading with its timestamp and a stale-data
+notice. Unavailable individual metrics do not remove the rest of the overview.
+
+Linux queries use `/proc`, `/sys`, and the portable `df -P -k` options supported by
+both GNU coreutils and BusyBox (including Alpine Linux). Mounts are selected from
+kernel filesystem metadata before capacity queries, excluding temporary and
+network filesystems. Windows 10/11 and
+Windows Server 2019 or later use Windows PowerShell 5.1, CIM, and system network
+counters through OpenSSH. Both cmd and PowerShell default shells are supported.
+Queries require SSH command access, but do not install software or alter remote
+configuration. Restricted accounts can have unavailable metrics. Windows disks
+are fixed local logical drives; Linux excludes remote and temporary filesystems.
+
+Closing the panel or leaving the foreground cancels its exec channel without
+closing the shared SSH connection. A lost Mosh SSH companion pauses automatic
+queries; **Refresh** can invoke the normal reconnect/authentication flow. The
+Mosh terminal remains independent. Resource snapshots are not persisted.
 
 Running transfers appear behind the transfer icon in the host list top bar, with
 combined progress. That sheet can pause, resume, cancel, and retry a transfer,

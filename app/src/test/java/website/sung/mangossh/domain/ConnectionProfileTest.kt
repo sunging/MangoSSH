@@ -44,11 +44,11 @@ class ConnectionProfileTest {
             username = "alice",
             protocol = ConnectionProtocol.MOSH,
             route = ConnectionRoute.TSNET,
-            authentication = AuthenticationMethod.PASSWORD,
+            authentication = AuthenticationMethod.AUTOMATIC,
         ).toProfile()
 
         assertEquals(ConnectionRoute.TSNET, profile.route)
-        assertEquals(AuthenticationMethod.PASSWORD, profile.authentication)
+        assertEquals(AuthenticationMethod.AUTOMATIC, profile.authentication)
     }
 
     @Test

@@ -87,6 +87,7 @@ internal class LocalPortForwarder(
     override val isActive: Boolean get() = _isActive && listening
 
     override val activity get() = connections.activity()
+    override val status get() = connections.status
 
     private fun startAcceptLoop() {
         acceptJob = scope.launch {
@@ -101,11 +102,13 @@ internal class LocalPortForwarder(
                 logger.debug("Accept loop ended: ${e.message}")
             } finally {
                 listening = false
+                connections.stopped()
             }
         }
     }
 
     private suspend fun handleConnection(socket: Socket) {
+        val openingFinished = connections.opening()
         var transferred = false
         try {
         val remoteAddr = socket.remoteAddress.toJavaAddress() as? InetSocketAddress
@@ -139,12 +142,13 @@ internal class LocalPortForwarder(
             throw cancelled
         } catch (_: Exception) {
             // A refused or concurrently closed channel belongs to this socket only.
-        } finally { if (!transferred) socket.close() }
+        } finally { openingFinished(); if (!transferred) socket.close() }
     }
 
     override suspend fun stop() {
         if (!_isActive) return
         _isActive = false
+        connections.stopped()
 
         acceptJob?.cancel()
         serverSocket.close()

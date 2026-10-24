@@ -155,6 +155,158 @@ class AuthenticationPolicyTest {
         }
     }
 
+    @Test fun `key profiles fall back to password after probe or signature rejection or missing publickey`() = runTest {
+        val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val key = SshSigning.encodePublicKey(pair)
+        for (outcome in listOf("probe-rejected", "signature-rejected", "no-publickey")) {
+            connected { connection, server ->
+                var keysRequested = 0
+                var passwordRequests = 0
+                val handler = object : Handler(setOf("publickey", "password", "keyboard-interactive"), true) {
+                    override suspend fun onPublicKeysNeeded(): List<AuthPublicKey> { keysRequested++; return listOf(key) }
+                    override suspend fun onSignatureRequest(key: AuthPublicKey, dataToSign: ByteArray) =
+                        SshSigning.signWithKeyPair(key.algorithmName, pair, dataToSign)
+                    override suspend fun onPasswordNeeded(): String { passwordRequests++; return UUID.randomUUID().toString() }
+                }
+                val auth = backgroundScope.async { connection.authenticate("ephemeral", handler) }
+                assertEquals("none", server.awaitUserauthRequest().methodName().value())
+                server.sendUserauthFailure(if (outcome == "no-publickey") setOf("password", "keyboard-interactive")
+                    else setOf("publickey", "password", "keyboard-interactive"), false)
+                if (outcome != "no-publickey") {
+                    val probe = server.awaitUserauthRequest().methodSpecificFields() as UserauthRequestPublickey
+                    assertEquals(0, probe.hasSignature())
+                    if (outcome == "signature-rejected") {
+                        server.sendUserauthPkOk(probe.publicKeyAlgorithmName().value(), probe.publicKeyBlob().data())
+                        val signed = server.awaitUserauthRequest().methodSpecificFields() as UserauthRequestPublickey
+                        assertEquals(1, signed.hasSignature())
+                    }
+                    server.sendUserauthFailure(setOf("password", "keyboard-interactive"), false)
+                }
+                assertEquals("password", server.awaitUserauthRequest().methodName().value())
+                server.sendUserauthSuccess()
+                assertIs<PublicAuthResult.Success>(auth.await())
+                assertEquals(if (outcome == "no-publickey") 0 else 1, keysRequested)
+                assertEquals(1, passwordRequests)
+                runCurrent()
+                assertNull(server.pollUserauthRequest())
+            }
+        }
+    }
+
+    @Test fun `key fallback uses the latest method offer and supports manual interactive rounds`() = runTest {
+        val key = SshSigning.encodePublicKey(KeyPairGenerator.getInstance("Ed25519").generateKeyPair())
+        for (interactive in listOf(false, true)) {
+            connected { connection, server ->
+                var rounds = 0
+                val handler = object : Handler(setOf("publickey", "password", "keyboard-interactive"), true) {
+                    override suspend fun onPublicKeysNeeded() = listOf(key)
+                    override suspend fun onKeyboardInteractivePrompt(name: String, instruction: String,
+                        prompts: List<KeyboardInteractiveCallback.Prompt>): List<String> {
+                        rounds++
+                        assertEquals("Server instruction", instruction)
+                        return listOf(UUID.randomUUID().toString())
+                    }
+                }
+                val auth = backgroundScope.async { connection.authenticate("ephemeral", handler) }
+                server.awaitUserauthRequest()
+                server.sendUserauthFailure(setOf("publickey", "password"), false)
+                server.awaitUserauthRequest()
+                server.sendUserauthFailure(if (interactive) setOf("keyboard-interactive") else setOf("publickey"), false)
+                if (interactive) {
+                    assertEquals("keyboard-interactive", server.awaitUserauthRequest().methodName().value())
+                    repeat(2) {
+                        server.sendUserauthInfoRequest("Server title", "Server instruction", listOf("Response" to false))
+                        assertEquals(1L, server.awaitUserauthInfoResponse().numResponses())
+                    }
+                    server.sendUserauthSuccess()
+                    assertIs<PublicAuthResult.Success>(auth.await())
+                    assertEquals(2, rounds)
+                } else {
+                    assertIs<PublicAuthResult.Failure>(auth.await())
+                    assertEquals(0, rounds)
+                }
+                runCurrent()
+                assertNull(server.pollUserauthRequest())
+            }
+        }
+    }
+
+    @Test fun `password prompt cancellation stops key fallback without sending a password`() = runTest {
+        connected { connection, server ->
+            val key = SshSigning.encodePublicKey(KeyPairGenerator.getInstance("Ed25519").generateKeyPair())
+            val handler = object : Handler(setOf("publickey", "password", "keyboard-interactive"), true) {
+                override suspend fun onPublicKeysNeeded() = listOf(key)
+                override suspend fun onPasswordNeeded(): String? = throw CancellationException()
+            }
+            val auth = backgroundScope.async { connection.authenticate("ephemeral", handler) }
+            server.awaitUserauthRequest()
+            server.sendUserauthFailure(setOf("publickey", "password"), false)
+            server.awaitUserauthRequest()
+            server.sendUserauthFailure(setOf("password", "keyboard-interactive"), false)
+            assertFailsWith<CancellationException> { auth.await() }
+            runCurrent()
+            assertNull(server.pollUserauthRequest())
+        }
+    }
+
+    @Test fun `single method phases reuse latest offers for key password and interactive without another none probe`() = runTest {
+        val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val key = SshSigning.encodePublicKey(pair)
+        for (outcome in listOf("probe-rejected", "signature-rejected", "no-publickey", "interactive-only")) {
+            connected { connection, server ->
+                var passwordRequests = 0
+                var rounds = 0
+                val offers = mutableListOf<Set<String>>()
+                val auth = backgroundScope.async {
+                    var result: PublicAuthResult = PublicAuthResult.Failure(emptySet())
+                    for (method in listOf("publickey", "password", "keyboard-interactive")) {
+                        val handler = object : Handler(setOf(method), true) {
+                            override suspend fun onAuthMethodsAvailable(methods: Set<String>) { offers += methods }
+                            override suspend fun onPublicKeysNeeded() = listOf(key)
+                            override suspend fun onSignatureRequest(key: AuthPublicKey, dataToSign: ByteArray) =
+                                SshSigning.signWithKeyPair(key.algorithmName, pair, dataToSign)
+                            override suspend fun onPasswordNeeded(): String { passwordRequests++; return UUID.randomUUID().toString() }
+                            override suspend fun onKeyboardInteractivePrompt(name: String, instruction: String, prompts: List<KeyboardInteractiveCallback.Prompt>): List<String> {
+                                rounds++; assertEquals("Server instruction", instruction); return listOf(UUID.randomUUID().toString())
+                            }
+                        }
+                        result = connection.authenticate("ephemeral", handler)
+                        if (result is PublicAuthResult.Success) break
+                        assertIs<PublicAuthResult.Failure>(result)
+                    }
+                    result
+                }
+                assertEquals("none", server.awaitUserauthRequest().methodName().value())
+                server.sendUserauthFailure(if (outcome == "no-publickey") setOf("password", "keyboard-interactive")
+                    else setOf("publickey", "password", "keyboard-interactive"), false)
+                if (outcome != "no-publickey") {
+                    val probe = server.awaitUserauthRequest().methodSpecificFields() as UserauthRequestPublickey
+                    assertEquals(0, probe.hasSignature())
+                    if (outcome == "signature-rejected") {
+                        server.sendUserauthPkOk(probe.publicKeyAlgorithmName().value(), probe.publicKeyBlob().data())
+                        assertEquals(1, (server.awaitUserauthRequest().methodSpecificFields() as UserauthRequestPublickey).hasSignature())
+                    }
+                    server.sendUserauthFailure(if (outcome == "interactive-only") setOf("keyboard-interactive") else setOf("password", "keyboard-interactive"), false)
+                }
+                if (outcome != "interactive-only") {
+                    assertEquals("password", server.awaitUserauthRequest().methodName().value())
+                    server.sendUserauthFailure(setOf("keyboard-interactive"), false)
+                }
+                assertEquals("keyboard-interactive", server.awaitUserauthRequest().methodName().value())
+                repeat(2) {
+                    server.sendUserauthInfoRequest("Server title", "Server instruction", listOf("Response" to false))
+                    assertEquals(1L, server.awaitUserauthInfoResponse().numResponses())
+                }
+                server.sendUserauthSuccess()
+                assertIs<PublicAuthResult.Success>(auth.await())
+                assertEquals(if (outcome == "interactive-only") 0 else 1, passwordRequests)
+                assertEquals(2, rounds)
+                assertEquals(setOf("keyboard-interactive"), offers.last())
+                runCurrent(); assertNull(server.pollUserauthRequest())
+            }
+        }
+    }
+
     @Test fun `RSA Ed25519 and ECDSA probe and sign without falling back after rejection`() = runTest {
         for (algorithm in listOf("RSA", "Ed25519", "EC")) {
             val pair = KeyPairGenerator.getInstance(algorithm).apply { if (algorithm == "RSA") initialize(2048); if (algorithm == "EC") initialize(256) }.generateKeyPair()

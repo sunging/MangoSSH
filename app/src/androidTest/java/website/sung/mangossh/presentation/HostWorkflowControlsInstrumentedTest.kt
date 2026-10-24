@@ -19,7 +19,7 @@ class HostWorkflowControlsInstrumentedTest {
     @get:Rule val compose = createComposeRule()
     private fun text(id: Int) = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
     private fun host(id: String) = ConnectionProfile(id = id, label = id, hostname = "synthetic.invalid",
-        username = "test", authentication = AuthenticationMethod.PASSWORD)
+        username = "test", authentication = AuthenticationMethod.AUTOMATIC)
 
     @Test fun jumpCandidatesAppearOnlyInPickerAndSelectionPreservesOrder() {
         var selected by mutableStateOf(emptyList<String>())

@@ -3,7 +3,8 @@ package website.sung.mangossh.presentation.settings
 import androidx.compose.runtime.Immutable
 import website.sung.mangossh.data.settings.StreamingPreferencesStore
 import website.sung.mangossh.data.vault.CommandSnippet
-import website.sung.mangossh.data.vault.StoredSshKey
+import website.sung.mangossh.data.vault.SshKeySummary
+import website.sung.mangossh.data.vault.AuthenticationSummary
 import website.sung.mangossh.data.vault.VaultStatus
 import website.sung.mangossh.data.vault.WebDavConfig
 import website.sung.mangossh.domain.AppLockDelay
@@ -49,7 +50,8 @@ internal data class TsnetSettingsState(
     val nodeName: String? = null,
     val network: TsnetNetworkSnapshot? = null,
     val hosts: List<ConnectionProfile> = emptyList(),
-    val keys: List<StoredSshKey> = emptyList(),
+    val keys: List<SshKeySummary> = emptyList(),
+    val authentications: List<AuthenticationSummary> = emptyList(),
 )
 
 /** State shown on the Terminal detail page. */
@@ -101,6 +103,8 @@ internal data class SnippetSettingsState(
 internal data class AboutSettingsState(
     val versionName: String,
     val versionCode: Long,
+    val buildRevision: String,
+    val distribution: String,
 )
 
 /**
@@ -153,6 +157,7 @@ internal data class ShortcutSettingsCallbacks(
     val onSaveShortcuts: (TerminalShortcutConfig) -> Unit,
     val onSetRightAltMode: (TerminalRightAltMode) -> Unit,
     val onSetDelKeyMode: (TerminalDelKeyMode) -> Unit,
+    val onSetCtrlEnterSendsLineFeed: (Boolean) -> Unit,
 )
 
 @Immutable
@@ -217,6 +222,7 @@ internal data class TsnetSettingsCallbacks(
 @Immutable
 internal data class AboutSettingsCallbacks(
     val onOpenReleasePage: () -> Unit,
+    val onOpenLicenses: () -> Unit,
 )
 
 /**

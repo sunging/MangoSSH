@@ -103,6 +103,9 @@ enum class SessionEndMessageKind {
 
 enum class PortForwardRuntimePhase {
     STARTING,
+    WAITING_FOR_NETWORK,
+    RECONNECTING,
+    WAITING_FOR_OPERATION,
     STOPPING,
     ACTIVE,
     FAILED,
@@ -141,10 +144,22 @@ data class PortForwardRuntimeState(
     val boundAddress: String? = null,
     val carrier: PortForwardCarrier? = null,
     val activeConnections: Int = 0,
+    /** Clients still negotiating SOCKS or opening an SSH data channel. */
+    val pendingConnections: Int = 0,
     val totalConnections: Long = 0,
     val lastActivityEpochMillis: Long? = null,
     val stopOutcome: PortForwardStopOutcome? = null,
 )
+
+/** States in which stopping must also cancel a possible future listener. */
+internal val PortForwardRuntimePhase.isRunning: Boolean
+    get() = this != PortForwardRuntimePhase.FAILED && this != PortForwardRuntimePhase.STOPPED
+
+/** Disconnected intents retain service ownership without retaining a CPU lease. */
+internal data class ForwardingWork(val pending: Boolean = false, val awake: Boolean = false)
+
+/** UI authorization request containing identifiers only, never credentials. */
+internal data class ForwardAuthorizationRequest(val id: String, val profileId: String)
 
 /** Marks only live forwards on [sessionId] failed when their SSH carrier disappears. */
 internal fun failPortForwardsForSession(
@@ -209,7 +224,9 @@ data class ScpTransferState(
     val totalBytes: Long? = null,
     /**
      * Download destination or upload source document, as a string so this model
-     * stays free of Android types. Null when there is no local document, which
+     * stays free of Android types. A folder download initially holds the picked
+     * tree and switches to its actual download directory once created or found.
+     * Null when there is no local document, which
      * means the transfer cannot be resumed, retried, or opened.
      */
     val localUri: String? = null,
@@ -271,13 +288,6 @@ val ScpTransferState.canOpenRemote: Boolean
         direction == ScpTransferDirection.UPLOAD &&
         controllable
 
-@Immutable
-data class ServerResourceSnapshot(
-    val sessionId: String,
-    val collectedAtEpochMillis: Long = System.currentTimeMillis(),
-    val report: String,
-)
-
 /** Why a presented host key needs the user's decision. */
 enum class HostKeyPromptKind {
     /** Nothing is trusted for this endpoint yet. */
@@ -322,11 +332,22 @@ sealed interface SessionPrompt {
     ) : SessionPrompt
 }
 
+/**
+ * One answer in an authentication prompt. A [toggle] field renders as a checkbox, starts at
+ * [initiallyChecked], and answers [TOGGLE_ON] when checked or an empty string otherwise.
+ */
 @Immutable
 data class AuthenticationField(
     val label: SessionPromptText,
     val echo: Boolean,
-)
+    val toggle: Boolean = false,
+    val initiallyChecked: Boolean = false,
+) {
+    companion object {
+        /** The answer of a checked [toggle] field. */
+        const val TOGGLE_ON = "true"
+    }
+}
 
 /** Distinguishes fixed application prompts from SSH server-provided wording. */
 @Immutable
@@ -337,6 +358,9 @@ sealed interface SessionPromptText {
     ) : SessionPromptText
 
     data class Verbatim(val value: String) : SessionPromptText
+
+    /** Adds application context while retaining each server-provided part verbatim. */
+    data class Joined(val parts: List<SessionPromptText>) : SessionPromptText
 }
 
 /** Resource-independent identifiers for authentication wording owned by MangoSSH. */
@@ -348,9 +372,13 @@ enum class SessionPromptTextKind {
     PASSWORD_TITLE,
     PASSWORD_INSTRUCTION,
     PASSWORD_FIELD,
+    KEY_PASSWORD_FALLBACK_INSTRUCTION,
+    INTERACTIVE_FALLBACK_INSTRUCTION,
+    REMEMBER_PASSWORD,
     UNLOCK_KEY_TITLE,
     KEY_PASSPHRASE_INSTRUCTION,
     KEY_PASSPHRASE_FIELD,
+    REMEMBER_KEY_PASSPHRASE,
     TAILSCALE_LOGIN_TITLE,
     INTERACTIVE_LOGIN_TITLE,
 }

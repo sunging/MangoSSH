@@ -9,11 +9,13 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import website.sung.mangossh.domain.AuthenticationMethod
+import website.sung.mangossh.R
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionRoute
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetBuildInfo
@@ -24,6 +26,7 @@ import website.sung.mangossh.session.tsnet.TsnetNetworkSnapshot
 import website.sung.mangossh.session.tsnet.TsnetSelf
 
 class TsnetSettingsPageInstrumentedTest {
+    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     @get:Rule
     val composeRule = createComposeRule()
 
@@ -59,7 +62,7 @@ class TsnetSettingsPageInstrumentedTest {
         composeRule.onNodeWithTag("embedded_tsnet_status").assertIsDisplayed()
         composeRule.onNodeWithTag("embedded_tsnet_version")
             .assertIsDisplayed()
-            .assertTextEquals("Embedded node version ${EmbeddedTsnetBuildInfo.TAILSCALE_VERSION}")
+            .assertTextEquals(context.getString(R.string.embedded_tsnet_version, EmbeddedTsnetBuildInfo.TAILSCALE_VERSION))
     }
 
     @Test
@@ -68,7 +71,7 @@ class TsnetSettingsPageInstrumentedTest {
             TsnetSettingsState(EmbeddedTsnetStatus(EmbeddedTsnetPhase.UNENROLLED, identityResolved = false)),
         )
 
-        composeRule.onNodeWithTag("embedded_tsnet_status").assertTextEquals("Checking sign-in…")
+        composeRule.onNodeWithTag("embedded_tsnet_status").assertTextEquals(context.getString(R.string.embedded_tsnet_status_checking))
         composeRule.onNodeWithTag("embedded_tsnet_browser_login").assertDoesNotExist()
         composeRule.onNodeWithTag("embedded_tsnet_auth_key_login").assertDoesNotExist()
     }
@@ -91,14 +94,14 @@ class TsnetSettingsPageInstrumentedTest {
     fun runningNodeListsDevicesWithTailscaleSshState() {
         setPage(TsnetSettingsState(EmbeddedTsnetStatus(EmbeddedTsnetPhase.ACTIVE), network = network))
 
-        composeRule.onNodeWithTag("embedded_tsnet_status").assertTextEquals("Signed in · connected")
+        composeRule.onNodeWithTag("embedded_tsnet_status").assertTextEquals(context.getString(R.string.embedded_tsnet_status_connected))
         composeRule.onNodeWithTag("embedded_tsnet_self_name").assertTextEquals("phone")
-        composeRule.onNodeWithText("Tailnet devices · 1 online").assertIsDisplayed()
+        composeRule.onNodeWithText(context.resources.getQuantityString(R.plurals.embedded_tsnet_devices_title_online, 1, 1)).assertIsDisplayed()
         // The clickable row merges its children for accessibility.
         composeRule.onNodeWithTag("embedded_tsnet_device_ssh_n1", useUnmergedTree = true)
-            .assertTextEquals("Tailscale SSH on")
+            .assertTextEquals(context.getString(R.string.embedded_tsnet_device_ssh_on))
         composeRule.onNodeWithTag("embedded_tsnet_device_ssh_n2", useUnmergedTree = true)
-            .assertTextEquals("Tailscale SSH off")
+            .assertTextEquals(context.getString(R.string.embedded_tsnet_device_ssh_off))
         composeRule.onNodeWithTag("embedded_tsnet_device_connect_n2").assertIsNotEnabled()
     }
 

@@ -7,24 +7,34 @@ import website.sung.mangossh.domain.*
 /** Pure draft checks prevent hidden invalid fields and metadata loss during the UI restructure. */
 class HostEditorStateTest {
     private fun host() = ConnectionProfile(id = "test", label = "test", hostname = "synthetic.invalid", username = "test",
-        authentication = AuthenticationMethod.PASSWORD, favorite = true, position = 8, connectionCount = 12, lastConnectedAtEpochMillis = 123)
+        authentication = AuthenticationMethod.AUTOMATIC, favorite = true, position = 8, connectionCount = 12, lastConnectedAtEpochMillis = 123)
 
     @Test fun editingRetainsEveryExistingProfileField() {
         val source = host().copy(legacySshAlgorithms = true, agentForwarding = true, agentPolicy = HostAgentPolicy(listOf("key"), true, 60),
+            authenticationId = "password",
             requireReauthentication = true, overrides = HostConnectionOverrides(20, 60, 8, SshTerminalType.VT100),
             workspace = TmuxWorkspace(WorkspaceMode.CREATE_OR_ATTACH, "work"), jumpProfileIds = listOf("jump"))
         assertEquals(source.copy(label = "changed"), HostEditorDraft.from(source).copy(label = "changed").toProfileDraft().toProfile())
     }
 
     @Test fun hiddenMissingReferencesIdentifyTheirOwnPages() {
-        val draft = HostEditorDraft.from(host()).copy(authentication = AuthenticationMethod.PRIVATE_KEY, keyId = "missing",
+        val draft = HostEditorDraft.from(host()).copy(authentication = AuthenticationMethod.AUTOMATIC, authenticationId = "missing",
             jumpIds = listOf("missing"), startupSnippetId = "missing", agentPolicy = HostAgentPolicy(listOf("missing")), overrides = HostConnectionOverrides(1))
         assertEquals(setOf(HostEditorPage.CONNECTION, HostEditorPage.JUMPS, HostEditorPage.STARTUP, HostEditorPage.SECURITY, HostEditorPage.ADVANCED),
             draft.invalidPages(emptySet(), emptySet(), emptyList()))
     }
 
+    @Test fun passwordReferencesAreOptionalButMissingSelectionsBlockTheConnectionPage() {
+        val draft = HostEditorDraft.from(host())
+        assertTrue(draft.invalidPages(emptySet(), emptySet(), emptyList()).isEmpty())
+        val selected = draft.copy(authenticationId = "password")
+        assertEquals(setOf(HostEditorPage.CONNECTION), selected.invalidPages(emptySet(), emptySet(), emptyList()))
+        assertTrue(selected.invalidPages(emptySet(), emptySet(), emptyList(), setOf("password")).isEmpty())
+        assertEquals("password", selected.toProfileDraft().toProfile().authenticationId)
+    }
+
     @Test fun tailnetDoesNotRequireAnUnusedLoginKeyAndDefaultsRemainInherited() {
-        val draft = HostEditorDraft.from(host()).copy(route = ConnectionRoute.TAILNET, authentication = AuthenticationMethod.PRIVATE_KEY)
+        val draft = HostEditorDraft.from(host()).copy(route = ConnectionRoute.TAILNET, authentication = AuthenticationMethod.AUTOMATIC)
         assertTrue(draft.invalidPages(emptySet(), emptySet(), emptyList()).isEmpty())
         assertEquals(HostConnectionOverrides(), draft.toProfileDraft().overrides)
         assertEquals(AuthenticationMethod.TAILSCALE_SSH, draft.toProfileDraft().toProfile().authentication)

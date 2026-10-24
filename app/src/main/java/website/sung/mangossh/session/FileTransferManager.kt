@@ -65,6 +65,11 @@ internal class FileTransferManager(
     private val onSessionIdle: (String) -> Unit,
     /** The verified server behind a session, or null when it cannot be proven. */
     private val identityOf: (String) -> TransferHostIdentity? = { null },
+    /** Injectable only to exercise the same idle-deadline behavior without thirty-second tests. */
+    private val idleMillis: Long = 30_000L,
+    private val supervisor: TransferSupervisor = TransferSupervisor(),
+    /** Diagnostic observers must redact user data; observer failures cannot replace task failure. */
+    private val onTaskFailure: (Throwable) -> Unit = {},
 ) {
     private val stagingBudget = StagingBudget(availableBytes = { android.os.StatFs(context.cacheDir.absolutePath).availableBytes })
     private val stagingReady = scope.launch(Dispatchers.IO) {
@@ -82,7 +87,8 @@ internal class FileTransferManager(
     fun resolveConflict(id: String, decision: TransferConflictDecision) { decisions[id]?.complete(decision) }
 
     private suspend fun decision(transferId: String, handle: TransferHandle, name: String, direction: ScpTransferDirection,
-        exists: Boolean, atomic: Boolean, forcePrompt: Boolean = false): TransferConflictDecision {
+        exists: Boolean, atomic: Boolean, forcePrompt: Boolean = false,
+        directoryPreview: DirectoryPreview? = null, destinationDirectory: String? = null): TransferConflictDecision {
         if (exists && !forcePrompt) handle.taskDecision?.let { saved ->
             if (saved.action != TransferConflictAction.REPLACE || atomic) return saved
         }
@@ -91,14 +97,29 @@ internal class FileTransferManager(
         val pending = CompletableDeferred<TransferConflictDecision>()
         decisions[id] = pending
         handle.operation?.awaitDecision(true)
-        _conflicts.update { it + TransferConflict(id, name, direction, exists, atomic) }
+        val directoryTask = handle.request is TransferRequest.DirectoryUpload || handle.request is TransferRequest.DirectoryDownload
+        _conflicts.update { it + TransferConflict(id, name, direction, exists, atomic,
+            taskId = checkNotNull(resolveRun(transferId)),
+            taskKind = if (directoryTask) ScpTransferKind.DIRECTORY else ScpTransferKind.FILE,
+            promptKind = when {
+                directoryPreview != null -> TransferPromptKind.DIRECTORY_PREVIEW
+                directoryTask -> TransferPromptKind.FILE_CONFLICT
+                else -> TransferPromptKind.FILE_PREVIEW
+            }, destinationDirectory = destinationDirectory, totalFiles = directoryPreview?.totalFiles,
+            totalBytes = directoryPreview?.totalBytes, verifySha256 = handle.verifySha256,
+            totalDirectories = directoryPreview?.totalDirectories) }
         return try {
             val result = pending.await()
             check(resolveRun(transferId) != null)
+            if (result.action == TransferConflictAction.CANCEL) {
+                handle.stop = StopReason.CANCEL
+                throw CancellationException("Transfer cancelled")
+            }
+            require((result.action == TransferConflictAction.PROCEED) == (directoryPreview != null))
             require(result.action != TransferConflictAction.REPLACE || !exists || atomic)
             handle.optionsChosen = true
             handle.verifySha256 = result.verifySha256
-            if (result.applyToTask && result.action != TransferConflictAction.SAVE_AS) handle.taskDecision = result
+            if (directoryTask && directoryPreview == null && result.applyToTask && result.action != TransferConflictAction.SAVE_AS) handle.taskDecision = result
             result
         } finally {
             decisions.remove(id)
@@ -109,12 +130,18 @@ internal class FileTransferManager(
 
     private val handles = ConcurrentHashMap<String, TransferHandle>()
     private val runs = ConcurrentHashMap<String, Pair<String, TransferHandle>>()
-    private val supervisor = TransferSupervisor()
 
     /** Downloads one remote file into a document the user selected. */
-    fun downloadFile(sessionId: String, remotePath: String, destination: Uri) {
+    fun downloadFile(sessionId: String, remotePath: String, destination: Uri) =
+        enqueueDownload(sessionId, remotePath, destination, createdDocument = false)
+
+    /** Only CreateDocument results carry creation provenance; an arbitrary empty URI does not. */
+    fun downloadCreatedDocument(sessionId: String, remotePath: String, destination: Uri) =
+        enqueueDownload(sessionId, remotePath, destination, createdDocument = true)
+
+    private fun enqueueDownload(sessionId: String, remotePath: String, destination: Uri, createdDocument: Boolean) {
         enqueue(
-            request = TransferRequest.FileDownload(sessionId, remotePath, destination),
+            request = TransferRequest.FileDownload(sessionId, remotePath, destination, createdDocument),
             direction = ScpTransferDirection.DOWNLOAD,
             kind = ScpTransferKind.FILE,
             displayName = RemoteFilePaths.nameOf(remotePath),
@@ -311,7 +338,7 @@ internal class FileTransferManager(
 
     private fun start(transferId: String, startOffset: Long, completedItems: Int, resume: Boolean = false) {
         val previous = handles[transferId] ?: return
-        val handle = TransferHandle(previous.request, previous.identity)
+        val handle = TransferHandle(previous.request, previous.identity, previous.createdTargets)
         handle.exactBytes = startOffset
         handle.connection = previous.connection
         val previousCleanup = if (!resume) cleanupTemporary(previous) else null
@@ -321,6 +348,7 @@ internal class FileTransferManager(
         if (resume) {
             handle.remoteWalk = previous.remoteWalk
             handle.localWalk = previous.localWalk
+            handle.directoryApproved = previous.directoryApproved
             handle.sourceIdentity = previous.sourceIdentity
             handle.completed.addAll(previous.completed)
             handle.localTemps.putAll(previous.localTemps)
@@ -352,7 +380,7 @@ internal class FileTransferManager(
             }
             supervisor.run(handle.request.sessionId) {
                     withContext(Dispatchers.IO) {
-                        handle.operation = BlockingOperation()
+                        handle.operation = BlockingOperation(idleMillis)
                         if (handle.stop != null) {
                             handle.operation?.close()
                             throw CancellationException()
@@ -387,10 +415,12 @@ internal class FileTransferManager(
                     null -> ScpTransferPhase.FAILED
                 }
                 val message = if (handle.stop == null) {
-                    if (handle.committing && error !is MetadataPreservationException && error !is SourceChangedException) RemoteFileMessage.CommitFailure else error.toRemoteFileMessage()
+                    if (handle.committing && error !is MetadataPreservationException && error !is SourceChangedException &&
+                        error !is LocalDocumentWriteException) RemoteFileMessage.CommitFailure else error.toRemoteFileMessage()
                 } else null
                 // If the session ends next, this was the network going away; see onSessionEnded.
                 handle.failedOnConnection = message != null && TransferRebinding.mayBeConnectionLoss(message, handle.committing)
+                if (phase == ScpTransferPhase.FAILED) runCatching { onTaskFailure(error) }
                 settle(runId, phase, handle.exactBytes, current?.completedItems ?: completedItems, message)
                 // A failure keeps its .part files, because a retry restarts from
                 // scratch and cleans them up then. Their unwritten reservations
@@ -415,7 +445,7 @@ internal class FileTransferManager(
             return action()
         } finally {
             scan.close()
-            handle.operation = BlockingOperation().also { if (handle.stop != null) it.close() }
+            handle.operation = BlockingOperation(idleMillis).also { if (handle.stop != null) it.close() }
         }
     }
 
@@ -432,7 +462,7 @@ internal class FileTransferManager(
         identity.requireMatches(observed, requireComplete = startOffset > 0)
         val throttle = ProgressThrottle()
         val reached = stagedDownload(transferId, handle, connection, request.remotePath, identity,
-            request.destination, startOffset) { transferred, total ->
+            request.destination, startOffset, createdDocument = request.createdDocument) { transferred, total ->
             handle.exactBytes = transferred
             if (throttle.shouldEmit(transferred, total)) updateProgress(transferId, transferred, total)
         }
@@ -443,23 +473,35 @@ internal class FileTransferManager(
     private suspend fun stagedDownload(runId: String, handle: TransferHandle, connection: SshConnection,
         path: String, identity: SourceIdentity, destination: Uri?, offset: Long,
         createDestination: (() -> Uri)? = null, lookupDestination: (() -> Uri?)? = null,
+        createdDocument: Boolean = false,
         progress: (Long, Long?) -> Unit): Long {
         markRunning(runId)
         val saved = handle.localApprovals[path]
         val initialUri = saved?.uri ?: destination
         fun observed(uri: Uri?): SourceIdentity? = uri?.let { documentIdentityOrAbsent(it, handle.control()) }
         val current = observed(initialUri)
+        if (createdDocument && saved == null && current == null) throw SourceChangedException()
+        val firstCreationObservation = !handle.createdTargets.containsKey(path)
+        val createdTarget = if (createdDocument && current != null) handle.createdTargets.getOrPut(path) { current } else null
+        val newTarget = saved == null && createdDocument && current != null && createdTarget == current &&
+            (firstCreationObservation || current.resumable) && initialUri != null &&
+            createdDocumentIsEmpty(initialUri, current, handle)
         val unchanged = saved != null && saved.confirmed && saved.target == current &&
             (current == null || current.resumable) && (saved.digest == null ||
-                initialUri != null && java.security.MessageDigest.isEqual(saved.digest, openSource(initialUri).use { streamDigest(it, handle) }))
+                initialUri != null && java.security.MessageDigest.isEqual(saved.digest, streamDigest(openSource(initialUri, handle.control()), handle)))
         val choice = if (unchanged) saved.choice else decision(runId, handle, RemoteFilePaths.nameOf(path),
-            ScpTransferDirection.DOWNLOAD, current != null, false, forcePrompt = saved != null)
+            ScpTransferDirection.DOWNLOAD, current != null && !newTarget, false, forcePrompt = saved != null)
         if (choice.action == TransferConflictAction.SKIP) { markSkipped(runId, handle, path); return 0 }
         var finalUri = if (choice.action == TransferConflictAction.SAVE_AS) requireNotNull(choice.localUri).toUri() else initialUri
         // A pause during provider lookup or hashing must not erase the fact that this file was confirmed.
+        val newDocument = if (choice.action == TransferConflictAction.SAVE_AS) choice.localDocumentCreated else newTarget
         if (!unchanged) handle.localApprovals[path] = LocalApproval(finalUri, current, choice, null, confirmed = false)
-        val approval = if (unchanged) saved else LocalApproval(finalUri, observed(finalUri), choice,
-            if (choice.verifySha256 && finalUri != null && observed(finalUri) != null) openSource(finalUri).use { streamDigest(it, handle) } else null)
+        val target = if (unchanged || newTarget && choice.action != TransferConflictAction.SAVE_AS) current else observed(finalUri)
+        if (!unchanged && newDocument && (finalUri == null || target == null || !createdDocumentIsEmpty(finalUri, target, handle)))
+            throw SourceChangedException()
+        val approval = if (unchanged) saved else LocalApproval(finalUri, target, choice,
+            if (choice.verifySha256 && finalUri != null && target != null) streamDigest(openSource(finalUri, handle.control()), handle) else null,
+            newDocument = newDocument)
         handle.localApprovals[path] = approval
         val temporary = handle.localTemps[path] ?: File.createTempFile("mangossh-transfer-", ".part", context.cacheDir)
             .also { handle.localTemps[path] = it }
@@ -479,8 +521,12 @@ internal class FileTransferManager(
         if (choice.verifySha256 && !java.security.MessageDigest.isEqual(expected, remoteFiles.sha256(connection, path, handle.control())))
             throw SourceChangedException()
         if (approval.target != observed(finalUri)) throw SourceChangedException()
+        // Even a provider with unknown/coarse metadata must not let an external
+        // writer turn our new placeholder into an implicitly approved overwrite.
+        if (approval.newDocument && (finalUri == null || approval.target == null ||
+                !createdDocumentIsEmpty(finalUri, approval.target, handle))) throw SourceChangedException()
         if (approval.digest != null && finalUri != null && !java.security.MessageDigest.isEqual(approval.digest,
-                openSource(finalUri).use { streamDigest(it, handle) })) throw SourceChangedException()
+                streamDigest(openSource(finalUri, handle.control()), handle))) throw SourceChangedException()
         if (finalUri == null && lookupDestination?.invoke() != null) throw SourceChangedException()
         beginCommit(runId, handle)
         var created: Uri? = null
@@ -502,7 +548,7 @@ internal class FileTransferManager(
                     }
                 }
             } finally { handle.operation?.releaseLocal(target) }
-            val actual = openSource(committedUri).use { streamDigest(it, handle) }
+            val actual = streamDigest(openSource(committedUri, handle.control()), handle)
             if (!java.security.MessageDigest.isEqual(expected, actual)) throw java.io.IOException()
             temporary.delete(); stagingBudget.release(temporary); handle.localTemps.remove(path)
             synchronized(handle) { handle.committing = false }
@@ -516,6 +562,16 @@ internal class FileTransferManager(
     private fun documentIdentityOrAbsent(uri: Uri, control: TransferControl): SourceIdentity? = try {
         documentIdentity(uri, control)
     } catch (_: SourceChangedException) { null }
+
+    /** Creation provenance plus a bounded content read; size == 0 alone never grants permission. */
+    private fun createdDocumentIsEmpty(uri: Uri, expected: SourceIdentity, handle: TransferHandle): Boolean {
+        if (expected.size != null && expected.size != 0L) return false
+        val control = handle.control()
+        val input = openSource(uri, control)
+        val empty = try { control.localIo { input.read() } == -1 } finally { control.releaseLocal(input) }
+        expected.requireMatches(documentIdentity(uri, control))
+        return empty
+    }
 
     private fun beginCommit(runId: String, handle: TransferHandle) = synchronized(handle) {
         if (handle.stop != null || !handle.control().shouldContinue()) throw CancellationException()
@@ -544,8 +600,9 @@ internal class FileTransferManager(
         try {
             while (true) {
                 if (!handle.control().shouldContinue()) throw java.io.InterruptedIOException()
-                val count = input.read(buffer)
+                val count = handle.control().localIo { input.read(buffer) }
                 if (count < 0) break
+                if (count == 0) continue
                 digest.update(buffer, 0, count)
                 handle.control().progressed()
             }
@@ -575,7 +632,7 @@ internal class FileTransferManager(
 
     /** Each resumed file keeps the exact target the user approved, separately from task-wide policy. */
     private suspend fun stagedUpload(runId: String, handle: TransferHandle, connection: SshConnection,
-        source: Uri, identity: SourceIdentity, directory: String, name: String, offset: Long,
+        source: Uri, identity: SourceIdentity, directory: String, name: String, offset: Long, promptName: String = name,
         progress: (Long, Long?) -> Unit): Long {
         markRunning(runId)
         val original = RemoteFilePaths.join(directory, name)
@@ -586,7 +643,7 @@ internal class FileTransferManager(
             (saved.choice.action != TransferConflictAction.REPLACE || target.identity == null || target.atomicReplace) &&
             (target.identity == null || target.identity.resumable) && (saved.digest == null ||
                 java.security.MessageDigest.isEqual(saved.digest, remoteFiles.sha256(connection, destination, handle.control())))
-        val choice = if (unchanged) saved.choice else decision(runId, handle, name, ScpTransferDirection.UPLOAD,
+        val choice = if (unchanged) saved.choice else decision(runId, handle, promptName, ScpTransferDirection.UPLOAD,
             target.identity != null, target.atomicReplace, forcePrompt = saved != null)
         if (choice.action == TransferConflictAction.SKIP) { markSkipped(runId, handle, original); return 0 }
         if (!unchanged) {
@@ -602,21 +659,22 @@ internal class FileTransferManager(
             if (choice.verifySha256 && target.identity != null) remoteFiles.sha256(connection, destination, handle.control()) else null)
         handle.remoteApprovals[original] = approval
         identity.requireMatches(documentIdentity(source, handle.control()), offset > 0)
-        val owned = handle.remoteTemps[original] ?: UUID.randomUUID().toString().let { token ->
-            (remoteFiles.reserveTemporary(connection, directory, token, handle.control()) to token)
-                .also { handle.remoteTemps[original] = it }
-        }
-        val input = openSource(source)
-        handle.operation?.ownLocal(input)
+        val control = handle.control()
+        val input = openSource(source, control)
         val result = try {
+            val owned = handle.remoteTemps[original] ?: UUID.randomUUID().toString().let { token ->
+                (remoteFiles.reserveTemporary(connection, directory, token, control) to token)
+                    .also { handle.remoteTemps[original] = it }
+            }
             remoteFiles.upload(connection, input, directory, RemoteFilePaths.nameOf(owned.first), offset,
-                identity.size, MAX_UPLOAD_BYTES, handle.control(), progress)
-        } finally { handle.operation?.releaseLocal(input) }
+                identity.size, MAX_UPLOAD_BYTES, control, progress)
+        } finally { control.releaseLocal(input) }
+        val owned = handle.remoteTemps.getValue(original)
         if (!handle.control().shouldContinue()) return result.transferredBytes
         update(runId) { it.copy(phase = ScpTransferPhase.VERIFYING) }
         identity.requireMatches(documentIdentity(source, handle.control()))
         if (choice.verifySha256) {
-            val digest = openSource(source).use { streamDigest(it, handle) }
+            val digest = streamDigest(openSource(source, handle.control()), handle)
             identity.requireMatches(documentIdentity(source, handle.control()))
             if (!java.security.MessageDigest.isEqual(digest, remoteFiles.sha256(connection, owned.first, handle.control())))
                 throw SourceChangedException()
@@ -670,8 +728,27 @@ internal class FileTransferManager(
         val treeUri = request.destinationTree
         val rootName = RemoteFilePaths.nameOf(request.remotePath).takeIf { it != RemoteFilePaths.ROOT }
             ?: FALLBACK_DIRECTORY_NAME
+        val destinationRoot = LocalDocumentTree.rootOf(treeUri)
+        if (!handle.directoryApproved) {
+            val destinationName = LocalDocumentTree.queryDocument(resolver, destinationRoot,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), handle.control()) { cursor ->
+                if (!cursor.moveToFirst()) throw LocalDocumentException()
+                cursor.getString(0).orEmpty().ifBlank { DocumentsContract.getTreeDocumentId(treeUri) }
+            }
+            // Approve the complete manifest before creating even an empty destination folder.
+            // This selects verification for new files; existing targets still need file-level approval.
+            decision(transferId, handle, rootName, ScpTransferDirection.DOWNLOAD, false, false,
+                forcePrompt = true,
+                directoryPreview = DirectoryPreview(walk.files.size, walk.directories.size,
+                    walk.totalBytes.takeIf { walk.files.all { file -> file.sizeBytes != null && file.sizeBytes >= 0 } }),
+                destinationDirectory = "$destinationName/$rootName")
+            handle.directoryApproved = true
+        }
         val targets = LocalDocumentTree.Targets(resolver, treeUri)
-        val localRoot = targets.directory(LocalDocumentTree.rootOf(treeUri), rootName)
+        val localRoot = targets.directory(destinationRoot, rootName)
+        // Providers may rename a created directory or use opaque document IDs.
+        // Keep the actual result for Open; retries still use request.destinationTree.
+        update(transferId) { it.copy(localUri = localRoot.toString()) }
         val directories = mutableMapOf("" to localRoot)
         walk.directories.forEach { relative ->
             val parent = directories.getValue(parentRelativePath(relative))
@@ -693,7 +770,7 @@ internal class FileTransferManager(
             val base = transferred
             val fileBytes = stagedDownload(transferId, handle, connection, entry.absolutePath,
                 SourceIdentity(entry.absolutePath, entry.sizeBytes, entry.modifiedEpochMillis), document, 0L,
-                createDestination = { targets.createFile(parent, name, DEFAULT_MIME_TYPE) },
+                createDestination = { targets.createFile(parent, name, downloadDocumentMimeType(name)) },
                 lookupDestination = { targets.findFile(parent, name) }) { fileTransferred, _ ->
                 if (throttle.shouldEmit(base + fileTransferred, walk.totalBytes))
                     updateProgress(transferId, base + fileTransferred, walk.totalBytes)
@@ -734,7 +811,7 @@ internal class FileTransferManager(
         ) }.also { handle.localWalk = it }
         if (walk.truncated) throw TransferTreeTooLargeException()
         update(transferId) { state ->
-            state.copy(totalItems = walk.files.size, totalBytes = walk.totalBytes)
+            state.copy(totalItems = walk.files.size, totalBytes = walk.knownTotalBytes)
         }
 
         if (resuming) walk.files.forEach { entry ->
@@ -743,9 +820,16 @@ internal class FileTransferManager(
         }
         val rootName = sanitizeRemoteFileName(walk.name.ifBlank { FALLBACK_DIRECTORY_NAME })
         val remoteRoot = RemoteFilePaths.join(request.remoteDirectory, rootName)
-        remoteFiles.mkdirIfMissing(connection, remoteRoot)
+        if (!handle.directoryApproved) {
+            decision(transferId, handle, rootName, ScpTransferDirection.UPLOAD, false, false,
+                forcePrompt = true,
+                directoryPreview = DirectoryPreview(walk.files.size, walk.directories.size, walk.knownTotalBytes),
+                destinationDirectory = remoteRoot)
+            handle.directoryApproved = true
+        }
+        remoteFiles.mkdirIfMissing(connection, remoteRoot, handle.control())
         walk.directories.forEach { relative ->
-            remoteFiles.mkdirIfMissing(connection, RemoteFilePaths.resolve(remoteRoot, relative))
+            remoteFiles.mkdirIfMissing(connection, RemoteFilePaths.resolve(remoteRoot, relative), handle.control())
         }
 
         var transferred = startOffset
@@ -765,9 +849,9 @@ internal class FileTransferManager(
             val identity = SourceIdentity(entry.documentUri.toString() + "#" + entry.relativePath.substringAfterLast('/'), entry.sizeBytes, entry.modifiedEpochMillis)
             identity.requireMatches(documentIdentity(entry.documentUri, handle.control()))
             val fileBytes = stagedUpload(transferId, handle, connection, entry.documentUri, identity,
-                remoteDirectory, entry.relativePath.substringAfterLast('/'), 0L) { fileTransferred, _ ->
-                if (throttle.shouldEmit(base + fileTransferred, walk.totalBytes))
-                    updateProgress(transferId, base + fileTransferred, walk.totalBytes)
+                remoteDirectory, entry.relativePath.substringAfterLast('/'), 0L, promptName = entry.relativePath) { fileTransferred, _ ->
+                if (throttle.shouldEmit(base + fileTransferred, walk.knownTotalBytes))
+                    updateProgress(transferId, base + fileTransferred, walk.knownTotalBytes)
             }
             if (handle.stop != null) {
                 settleAfterRun(transferId, handle, base, completed)
@@ -778,7 +862,7 @@ internal class FileTransferManager(
             handle.exactBytes = transferred
             handle.completed += entry.relativePath
             completed += if (RemoteFilePaths.join(remoteDirectory, entry.relativePath.substringAfterLast('/')) in handle.skipped) 0 else 1
-            updateProgress(transferId, transferred, walk.totalBytes)
+            updateProgress(transferId, transferred, walk.knownTotalBytes)
             update(transferId) { state -> state.copy(completedItems = completed) }
         }
         settleAfterRun(transferId, handle, transferred, completed)
@@ -885,15 +969,18 @@ internal class FileTransferManager(
             return DownloadTarget(appended, startOffset)
         }
         val stream = try {
-            resolver.openOutputStream(destination, "wt")
+            resolver.openOutputStream(destination, "wt") ?: throw LocalDocumentWriteException()
         } catch (error: Exception) {
-            throw LocalDocumentException(error)
-        } ?: throw LocalDocumentException()
+            MangoLog.warn(MangoLogEvent.TRANSFER_LOCAL_TARGET_OPEN_FAILED, error)
+            throw LocalDocumentWriteException(error)
+        }
         return DownloadTarget(stream, 0L)
     }
 
-    private fun openSource(source: Uri): InputStream = try {
-        context.contentResolver.openInputStream(source) ?: throw LocalDocumentException()
+    private fun openSource(source: Uri, control: TransferControl): InputStream = try {
+        control.localIo {
+            (context.contentResolver.openInputStream(source) ?: throw LocalDocumentException()).also(control::ownLocal)
+        }
     } catch (error: LocalDocumentException) {
         throw error
     } catch (error: Exception) {
@@ -940,16 +1027,21 @@ internal class FileTransferManager(
         return normalized
     }
 
+    /** A complete manifest summary shared by local uploads and remote downloads. */
+    private data class DirectoryPreview(val totalFiles: Int, val totalDirectories: Int, val totalBytes: Long?)
+
     private data class RemoteApproval(val destination: String, val target: RemoteTarget,
         val choice: TransferConflictDecision, val digest: ByteArray?, val confirmed: Boolean = true)
     private data class LocalApproval(val uri: Uri?, val target: SourceIdentity?,
-        val choice: TransferConflictDecision, val digest: ByteArray?, val confirmed: Boolean = true)
+        val choice: TransferConflictDecision, val digest: ByteArray?, val confirmed: Boolean = true,
+        val newDocument: Boolean = false)
 
     private class DownloadTarget(val stream: OutputStream, val offset: Long)
 
     private enum class StopReason { PAUSE, CANCEL }
 
-    private class TransferHandle(@Volatile var request: TransferRequest, val identity: TransferHostIdentity?) {
+    private class TransferHandle(@Volatile var request: TransferRequest, val identity: TransferHostIdentity?,
+        creationObservations: ConcurrentHashMap<String, SourceIdentity> = ConcurrentHashMap()) {
         var job: Job? = null
 
         @Volatile
@@ -961,6 +1053,7 @@ internal class FileTransferManager(
         var sourceIdentity: SourceIdentity? = null
         var remoteWalk: RemoteTreeWalk? = null
         var localWalk: LocalTreeWalk? = null
+        var directoryApproved = false
         val completed = mutableSetOf<String>()
         val localTemps = ConcurrentHashMap<String, File>()
         val remoteTemps = ConcurrentHashMap<String, Pair<String, String>>()
@@ -973,6 +1066,8 @@ internal class FileTransferManager(
         val skipped = mutableSetOf<String>()
         val remoteApprovals = mutableMapOf<String, RemoteApproval>()
         val localApprovals = mutableMapOf<String, LocalApproval>()
+        /** Request-owned: even cancelling a queued resume must not lose the original observation. */
+        val createdTargets = creationObservations
 
         fun control(): TransferControl = checkNotNull(operation)
     }
@@ -993,6 +1088,7 @@ internal class FileTransferManager(
             override val sessionId: String,
             val remotePath: String,
             val destination: Uri,
+            val createdDocument: Boolean = false,
         ) : TransferRequest
 
         data class DirectoryDownload(
@@ -1042,7 +1138,6 @@ internal class FileTransferManager(
         const val MAX_REMOTE_FILENAME_CHARS = 255
         const val PROGRESS_MIN_BYTES = 256L * 1024L
         const val PROGRESS_MIN_INTERVAL_MILLIS = 200L
-        const val DEFAULT_MIME_TYPE = "application/octet-stream"
 
         /** Used when a picked folder reports no name, or the remote root is transferred. */
         const val FALLBACK_DIRECTORY_NAME = "download"

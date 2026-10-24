@@ -42,7 +42,9 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
-import website.sung.mangossh.data.vault.StoredSshKey
+import website.sung.mangossh.data.vault.SshKeySummary
+import website.sung.mangossh.data.vault.AuthenticationSummary
+import website.sung.mangossh.presentation.AuthenticationChoice
 import website.sung.mangossh.domain.AuthenticationMethod
 import website.sung.mangossh.domain.ConnectionProfile
 import website.sung.mangossh.domain.ConnectionProtocol
@@ -213,21 +215,21 @@ private fun TailscaleSshBadge(enabled: Boolean, modifier: Modifier = Modifier) {
 internal fun TsnetQuickConnectDialog(
     device: TsnetDevice,
     hosts: List<ConnectionProfile>,
-    keys: List<StoredSshKey>,
+    keys: List<SshKeySummary>,
     onConnectSavedHost: (ConnectionProfile) -> Unit,
     onQuickConnect: (ConnectionProfile) -> Unit,
     onSaveAsHost: (ConnectionProfile) -> Unit,
     onDismiss: () -> Unit,
+    authentications: List<AuthenticationSummary> = emptyList(),
 ) {
     val saved = savedTsnetHostsFor(device, hosts)
     var username by rememberSaveable(device.id) { mutableStateOf(suggestedTsnetUsername(device, hosts)) }
     var protocol by rememberSaveable(device.id) { mutableStateOf(ConnectionProtocol.SSH) }
     var authentication by rememberSaveable(device.id) { mutableStateOf(defaultTsnetAuthentication(device)) }
-    var keyId by rememberSaveable(device.id) { mutableStateOf(keys.singleOrNull()?.id) }
-    val keyMissing = authentication == AuthenticationMethod.PRIVATE_KEY && keys.none { it.id == keyId }
-    val formValid = username.isNotBlank() && !keyMissing
-
-    fun draft() = tsnetQuickConnectProfile(device, username, protocol, authentication, keyId)
+    var authenticationId by rememberSaveable(device.id) { mutableStateOf<String?>(null) }
+    val missing = authentication == AuthenticationMethod.AUTOMATIC && authenticationId != null && authentications.none { it.id == authenticationId }
+    val formValid = username.isNotBlank() && !missing
+    fun draft() = tsnetQuickConnectProfile(device, username, protocol, authentication, authenticationId)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -297,24 +299,8 @@ internal fun TsnetQuickConnectDialog(
                     onSelect = { authentication = it },
                     modifier = Modifier.testTag("embedded_tsnet_quick_connect_authentication"),
                 )
-                if (authentication == AuthenticationMethod.PRIVATE_KEY) {
-                    if (keys.isEmpty()) {
-                        Text(
-                            stringResource(R.string.ui_generate_or_import_a_private_key_on_the_keys_page_first),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    } else {
-                        val keyLabels = keys.associate { it.id to it.label }
-                        val selectKey = stringResource(R.string.host_editor_select_key)
-                        SettingsChoiceRow(
-                            label = stringResource(R.string.ui_shared_private_key),
-                            options = keys.map { it.id as String? },
-                            selected = keyId,
-                            optionLabel = { id -> keyLabels[id] ?: selectKey },
-                            onSelect = { keyId = it },
-                        )
-                    }
+                if (authentication == AuthenticationMethod.AUTOMATIC) {
+                    AuthenticationChoice(authenticationId, authentications, { authenticationId = it }, "embedded_tsnet_quick_connect_credential")
                 }
                 TextButton(
                     onClick = { onSaveAsHost(draft()) },

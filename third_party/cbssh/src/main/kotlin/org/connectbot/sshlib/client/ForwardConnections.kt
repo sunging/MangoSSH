@@ -18,6 +18,9 @@
 package org.connectbot.sshlib.client
 
 import org.connectbot.sshlib.PortForwardActivity
+import org.connectbot.sshlib.PortForwardStatus
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * The data connections ([DataForwarder]s) of one forward, with the counts reported as [PortForwardActivity].
@@ -30,6 +33,22 @@ internal class ForwardConnections<T : Any> {
     private val lock = Any()
     private val live = mutableListOf<T>()
     private var total = 0L
+    private val _status = MutableStateFlow(PortForwardStatus(true, 0))
+    val status = _status.asStateFlow()
+
+    /** Counts accepted clients while SOCKS negotiation or SSH channel opening suspends. */
+    fun opening(): () -> Unit {
+        synchronized(lock) { _status.value = _status.value.copy(pendingConnections = _status.value.pendingConnections + 1) }
+        val finished = java.util.concurrent.atomic.AtomicBoolean()
+        return {
+            if (finished.compareAndSet(false, true)) synchronized(lock) {
+                _status.value = _status.value.copy(pendingConnections = (_status.value.pendingConnections - 1).coerceAtLeast(0))
+            }
+        }
+    }
+
+    /** Stops publication eligibility before the listener and its data channels close. */
+    fun stopped() = synchronized(lock) { _status.value = _status.value.copy(isActive = false) }
 
     @Volatile
     private var lastActivity = 0L
@@ -40,11 +59,15 @@ internal class ForwardConnections<T : Any> {
         live += forwarder
         total++
         touch()
+        _status.value = _status.value.copy(activeConnections = live.size)
         true
     }
 
     fun remove(forwarder: T) {
-        synchronized(lock) { live.remove(forwarder) }
+        synchronized(lock) {
+            live.remove(forwarder)
+            _status.value = _status.value.copy(activeConnections = live.size)
+        }
     }
 
     /** Called for every chunk; a single volatile write keeps it cheap. */

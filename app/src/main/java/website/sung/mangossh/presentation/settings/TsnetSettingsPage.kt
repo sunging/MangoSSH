@@ -120,6 +120,7 @@ internal fun TsnetSettingsPage(
             device = quickConnectDevice,
             hosts = state.hosts,
             keys = state.keys,
+            authentications = state.authentications,
             onConnectSavedHost = { dismissThen { callbacks.onConnectSavedHost(it) } },
             onQuickConnect = { dismissThen { callbacks.onQuickConnect(it) } },
             onSaveAsHost = { dismissThen { callbacks.onSaveAsHost(it) } },

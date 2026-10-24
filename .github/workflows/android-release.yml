@@ -220,6 +220,9 @@ jobs:
             bash tools/check-16kb-elf.sh "$apk"
             python3 tools/native/verify-apk.py "$apk"
           done
+          python3 tools/check-ed25519-apk.py --dexdump "$alignment_tools_dir/dexdump" \
+            app/build/outputs/apk/github/release/app-github-release.apk \
+            app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
           AAPT2="$alignment_tools_dir/aapt2" \
             bash tools/check-fdroid-apk.sh app/build/outputs/apk/fdroid/release/app-fdroid-release.apk
 

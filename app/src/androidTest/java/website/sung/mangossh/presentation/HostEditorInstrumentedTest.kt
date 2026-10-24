@@ -1,6 +1,8 @@
 package website.sung.mangossh.presentation
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.os.Build
 import android.view.View
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.*
@@ -25,7 +27,8 @@ import org.junit.Rule
 import org.junit.Test
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.CommandSnippet
-import website.sung.mangossh.data.vault.StoredSshKey
+import website.sung.mangossh.data.vault.SshKeySummary
+import website.sung.mangossh.data.vault.AuthenticationSummary
 import website.sung.mangossh.domain.*
 
 /** Synthetic profiles and empty key material only; captures use one test-owned cache directory. */
@@ -34,15 +37,16 @@ class HostEditorInstrumentedTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private fun text(id: Int) = context.getString(id)
     private fun host(id: String = "test") = ConnectionProfile(id = id, label = "Example", hostname = "synthetic.invalid",
-        username = "test", authentication = AuthenticationMethod.PASSWORD)
-    private val keys = listOf(StoredSshKey("key", "Example key", "", "", "", ""), StoredSshKey("second", "Second key", "", "", "", ""))
+        username = "test", authentication = AuthenticationMethod.AUTOMATIC)
+    private val keys = listOf(SshKeySummary("key", "Example key", "", ""), SshKeySummary("second", "Second key", "", ""))
     private val snippets = listOf(CommandSnippet("snippet", "Example snippet", ""))
 
     private fun show(controller: HostEditorController, width: Int = 400, height: Int = 780, font: Float = 1f,
-        onDismiss: () -> Unit = {}, onSave: (ConnectionProfileDraft) -> Unit = {}, saveOperation: EditorSaveOperation? = null) {
+        onDismiss: () -> Unit = {}, onSave: (ConnectionProfileDraft) -> Unit = {}, saveOperation: EditorSaveOperation? = null,
+        authentications: List<AuthenticationSummary> = listOf(AuthenticationSummary("key", "Example authentication", keyId = "key"))) {
         compose.setContent { CompositionLocalProvider(LocalDensity provides Density(1f, font)) { MaterialTheme {
             Surface(Modifier.width(width.dp).height(height.dp)) {
-                HostEditorScreen(controller, listOf(host("jump")), ConnectionPreferences(), keys, snippets, onDismiss, onSave, saveOperation = saveOperation)
+                HostEditorScreen(controller, listOf(host("jump")), ConnectionPreferences(), keys, snippets, onDismiss, onSave, saveOperation = saveOperation, authentications = authentications)
             }
         } } }
     }
@@ -50,9 +54,31 @@ class HostEditorInstrumentedTest {
     private fun back() = compose.onNodeWithTag("host_editor_back").performClick()
     private fun capture(name: String) {
         val directory = File(context.cacheDir, "test-host-editor-captures").apply { mkdirs() }
+        val node = compose.onNodeWithTag("host_editor")
+        val view = (node.fetchSemanticsNode().root as ViewRootForTest).view
+        val dialog = generateSequence<Any>(view) { (it as? View)?.parent }.any { it is DialogWindowProvider }
+        // Compose's PixelCopy helper cannot capture pre-28 dialogs. Draw only this synthetic view instead.
+        val bitmap = if (Build.VERSION.SDK_INT < 28 && dialog) compose.runOnIdle {
+            Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
+        } else node.captureToImage().asAndroidBitmap()
         File(directory, "$name.png").outputStream().use {
-            compose.onNodeWithTag("host_editor").captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
+        bitmap.recycle()
+    }
+
+    @Test fun passwordChoiceIsSearchableAndPersistsOnlyItsReference() {
+        val controller = HostEditorController(HostEditorDraft.from(host()))
+        var saved: ConnectionProfileDraft? = null
+        show(controller, onSave = { saved = it }, authentications = listOf(AuthenticationSummary("password", "Example password")))
+        open(HostEditorPage.CONNECTION)
+        compose.onNodeWithTag("host_editor_credential").performScrollTo().performClick()
+        compose.onNodeWithTag("host_editor_credential_option_0").assertIsSelected()
+        compose.onNodeWithTag("host_editor_credential_search").performTextInput("Example")
+        compose.onNodeWithTag("host_editor_credential_option_1").performClick()
+        back()
+        compose.onNodeWithTag("host_editor_save").performClick()
+        compose.runOnIdle { assertEquals("password", saved!!.authenticationId) }
     }
 
     @Test fun homeIsCompactAndDetailChangesOnlySaveFromHome() {
@@ -75,18 +101,16 @@ class HostEditorInstrumentedTest {
     }
 
     @Test fun simpleChoicesStayInlineWhileLongListsRemainSearchable() {
-        val controller = HostEditorController(HostEditorDraft.from(host()).copy(authentication = AuthenticationMethod.PRIVATE_KEY, keyId = "key"))
+        val controller = HostEditorController(HostEditorDraft.from(host()).copy(authentication = AuthenticationMethod.AUTOMATIC, authenticationId = "key"))
         show(controller)
         open(HostEditorPage.CONNECTION)
-        compose.onNodeWithTag("host_editor_authentication_option_1").performScrollTo().performClick()
-        compose.onNodeWithTag("host_editor_authentication_option_1").assertIsSelected()
+        compose.onNodeWithTag("host_editor_protocol_option_0").performScrollTo().assertIsSelected()
         compose.onAllNodes(isDialog()).assertCountEquals(0)
-        compose.onNodeWithTag("host_editor_authentication_option_0").performScrollTo().performClick()
         compose.onNodeWithTag("host_editor_protocol").performScrollTo()
         capture("connection-inline")
-        compose.onNodeWithTag("host_editor_key").performScrollTo().performClick()
+        compose.onNodeWithTag("host_editor_credential").performScrollTo().performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(1)
-        compose.onNodeWithTag("host_editor_key_search").assertIsDisplayed()
+        compose.onNodeWithTag("host_editor_credential_search").assertIsDisplayed()
         compose.onNodeWithText(text(R.string.common_cancel)).performClick()
         back()
         open(HostEditorPage.STARTUP)
@@ -192,14 +216,14 @@ class HostEditorInstrumentedTest {
     }
 
     @Test fun missingLoginKeyIsVisibleFromHomeAndTailnetResolvesIt() {
-        val controller = HostEditorController(HostEditorDraft.from(host()).copy(authentication = AuthenticationMethod.PRIVATE_KEY, keyId = "missing"))
+        val controller = HostEditorController(HostEditorDraft.from(host()).copy(authentication = AuthenticationMethod.AUTOMATIC, authenticationId = "missing"))
         show(controller)
         compose.onNodeWithTag("host_editor_save").assertIsNotEnabled()
         compose.onNodeWithTag("host_editor_open_CONNECTION").assertTextContains(text(R.string.host_editor_needs_attention))
         open(HostEditorPage.CONNECTION)
 
         compose.onNodeWithTag("host_editor_route_option_1").performScrollTo().performClick()
-        compose.onNodeWithTag("host_editor_key").assertDoesNotExist()
+        compose.onNodeWithTag("host_editor_credential").assertDoesNotExist()
         back()
         compose.onNodeWithTag("host_editor_save").assertIsEnabled()
     }

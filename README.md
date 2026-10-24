@@ -27,10 +27,11 @@ keep on your own WebDAV server.
 
 **Authentication and security**
 - Password, private-key, and keyboard-interactive authentication, with
-  one-time password prompts.
+  one-time password prompts. Reusable authentications can combine a private key and password;
+  SSH tries private key, password, then manual interactive authentication.
 - Explicit host-key confirmation and a clear warning when a saved key changes.
 - Generate, import, and export RSA, ECDSA, and Ed25519 keys.
-- Profiles, keys, and host fingerprints are kept in an encrypted local vault.
+- Profiles, reusable authentication entries, keys, and host fingerprints are kept in an encrypted local vault.
 - App lock with PIN or biometrics and a configurable auto-lock delay.
 
 **Files**

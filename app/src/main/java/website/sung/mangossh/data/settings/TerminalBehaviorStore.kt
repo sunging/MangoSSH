@@ -41,6 +41,8 @@ class TerminalBehaviorStore(context: Context) {
 
     fun setDelKeyMode(mode: TerminalDelKeyMode) = update { it.copy(delKeyMode = mode) }
 
+    fun setCtrlEnterSendsLineFeed(enabled: Boolean) = update { it.copy(ctrlEnterSendsLineFeed = enabled) }
+
     fun setMaxPinchZoomScale(scale: Float) = update { it.copy(maxPinchZoomScale = scale) }
 
     private fun update(transform: (TerminalBehavior) -> TerminalBehavior) {
@@ -58,6 +60,7 @@ class TerminalBehaviorStore(context: Context) {
             ?: TerminalRightAltMode.DEFAULT
         val delKeyMode = TerminalDelKeyMode.fromPreference(readString(KEY_DEL_KEY_MODE))
             ?: TerminalDelKeyMode.DEFAULT
+        val ctrlEnterSendsLineFeed = readBoolean(KEY_CTRL_ENTER_LINE_FEED, true)
         val maxPinchZoomScale = readFloat(KEY_MAX_PINCH_ZOOM_SCALE, TerminalBehavior.DEFAULT_MAX_PINCH_ZOOM_SCALE)
         return TerminalBehavior(
             scrollbackLines = scrollbackLines,
@@ -66,6 +69,7 @@ class TerminalBehaviorStore(context: Context) {
             keepScreenOn = keepScreenOn,
             rightAltMode = rightAltMode,
             delKeyMode = delKeyMode,
+            ctrlEnterSendsLineFeed = ctrlEnterSendsLineFeed,
             maxPinchZoomScale = maxPinchZoomScale,
         ).normalized()
     }
@@ -98,6 +102,7 @@ class TerminalBehaviorStore(context: Context) {
             putBoolean(KEY_KEEP_SCREEN_ON, behavior.keepScreenOn)
             putString(KEY_RIGHT_ALT_MODE, behavior.rightAltMode.preferenceValue)
             putString(KEY_DEL_KEY_MODE, behavior.delKeyMode.preferenceValue)
+            putBoolean(KEY_CTRL_ENTER_LINE_FEED, behavior.ctrlEnterSendsLineFeed)
             putFloat(KEY_MAX_PINCH_ZOOM_SCALE, behavior.maxPinchZoomScale)
         }
     }
@@ -110,6 +115,7 @@ class TerminalBehaviorStore(context: Context) {
         const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
         const val KEY_RIGHT_ALT_MODE = "right_alt_mode"
         const val KEY_DEL_KEY_MODE = "del_key_mode"
+        const val KEY_CTRL_ENTER_LINE_FEED = "ctrl_enter_line_feed"
         const val KEY_MAX_PINCH_ZOOM_SCALE = "max_pinch_zoom_scale"
     }
 }

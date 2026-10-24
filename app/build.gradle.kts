@@ -1,4 +1,6 @@
 import java.io.File
+import website.sung.build.GenerateAppBuildInfo
+import website.sung.build.GitBuildRevision
 import website.sung.build.MoshBuild
 import website.sung.build.TsnetBuild
 import website.sung.build.NativeTask
@@ -59,6 +61,17 @@ require(declaredVersionCode == appVersionCode) {
         "derives versionCode $appVersionCode"
 }
 
+// Consume the ValueSource during configuration so HEAD is rechecked before a
+// configuration-cache entry is reused. An explicit SHA also supports archives
+// without .git, while leaving the package version and upgrade rules untouched.
+val appBuildRevision = providers.gradleProperty("mangosshBuildRevision")
+    .map { GitBuildRevision.validateOverride(it) }
+    .orElse(providers.of(GitBuildRevision::class) {
+        parameters.rootDirectory.set(rootProject.layout.projectDirectory)
+    })
+    .get()
+    .take(12)
+
 // The Tailscale version actually linked into the embedded tsnet bridge, read
 // straight from the vendored module's own VERSION.txt so the value shown in
 // Settings can never drift from the source gomobile compiles into the AAR.
@@ -95,6 +108,8 @@ fun NativeTask.configureNativeInputs() {
     abis.set(nativeAbis)
     sourceMode.set(nativeSourceMode)
     offline.set(providers.gradleProperty("mangosshOfflineBuild").map { it.toBoolean() }.orElse(true))
+    // Opt out of Gradle UP-TO-DATE skipping, e.g. after upgrading a WSL toolchain in place.
+    alwaysRun.set(providers.gradleProperty("mangosshNativeAlwaysRun").map { it.toBoolean() }.orElse(false))
     val names = listOf(
         "MANGOSSH_MOSH_DEPS_DIR", "MANGOSSH_GO_ROOT", "ANDROID_NDK_HOME",
         "MANGOSSH_ABI_BUILD_JOBS", "MANGOSSH_ABI_PARALLELISM",
@@ -238,8 +253,9 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
             optimization {
-                enable = false
+                enable = true
             }
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
         }
     }
     compileOptions {
@@ -307,6 +323,17 @@ val generateEmbeddedTsnetBuildInfo = tasks.register<GenerateEmbeddedTsnetBuildIn
 }
 
 androidComponents.onVariants { variant ->
+    val generateAppBuildInfo = tasks.register<GenerateAppBuildInfo>(
+        "generate${variant.name.replaceFirstChar(Char::uppercaseChar)}AppBuildInfo",
+    ) {
+        group = "build"
+        description = "Generates the source revision and distribution shown in About."
+        gitRevision.set(appBuildRevision)
+        distribution.set(variant.productFlavors.single { it.first == "distribution" }.second)
+        outputDirectory.set(layout.buildDirectory.dir("generated/source/appBuildInfo/${variant.name}"))
+    }
+    requireNotNull(variant.sources.kotlin) { "Kotlin sources are required" }
+        .addGeneratedSourceDirectory(generateAppBuildInfo, GenerateAppBuildInfo::getOutputDirectory)
     variant.sources.jniLibs?.addGeneratedSourceDirectory(buildMosh, MoshBuild::getJniDirectory)
     variant.sources.assets?.addGeneratedSourceDirectory(buildMosh, MoshBuild::getAssetsDirectory)
     tasks.matching { it.name == "pre${variant.name.replaceFirstChar(Char::uppercaseChar)}Build" }

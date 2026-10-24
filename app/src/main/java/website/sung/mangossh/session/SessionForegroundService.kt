@@ -101,10 +101,11 @@ class SessionForegroundService : Service() {
                 embeddedTsnetManager.foregroundRequired,
                 appForegroundState.foreground,
                 sessionController.hasActiveTransfers,
-            ) { sessions, tsnetRequired, uiForeground, activeTransfers ->
-                WorkSnapshot(sessions, tsnetRequired, uiForeground, activeTransfers)
+                sessionController.forwardingWork,
+            ) { sessions, tsnetRequired, uiForeground, activeTransfers, forwards ->
+                WorkSnapshot(sessions, tsnetRequired, uiForeground, activeTransfers, forwards)
             }.collect { work ->
-                renderWork(work.sessions, work.tsnetRequired, work.uiForeground, work.activeTransfers)
+                renderWork(work.sessions, work.tsnetRequired, work.uiForeground, work.activeTransfers, work.forwards)
             }
         }
     }
@@ -120,6 +121,7 @@ class SessionForegroundService : Service() {
             tsnetRequired = embeddedTsnetManager.foregroundRequired.value,
             uiForeground = appForegroundState.foreground.value,
             activeTransfers = sessionController.hasActiveTransfers.value,
+            forwards = sessionController.forwardingWork.value,
         )
         return START_NOT_STICKY
     }
@@ -143,8 +145,10 @@ class SessionForegroundService : Service() {
         tsnetRequired: Boolean,
         uiForeground: Boolean,
         activeTransfers: Boolean,
+        forwards: ForwardingWork,
     ) {
-        if (sessions.isEmpty() && !tsnetRequired) {
+        val pendingForwards = forwards.pending || sessionController.hasForwardIntents
+        if (sessions.isEmpty() && !tsnetRequired && !pendingForwards) {
             sessionWakeLock.close()
             stopping = true
             clearSessionNotifications()
@@ -158,10 +162,11 @@ class SessionForegroundService : Service() {
 
         if (!ensureForeground()) return
         sessionWakeLock.update(
-            hasSessions = sessions.isNotEmpty(),
+            hasSessions = sessions.isNotEmpty() || pendingForwards,
             foregroundOwned = foregroundStarted,
             uiForeground = uiForeground,
             activeTransfers = activeTransfers,
+            activeForwards = forwards.awake,
         )
 
         // Posting notifications is a best-effort presentation concern: the
@@ -346,6 +351,7 @@ class SessionForegroundService : Service() {
         val tsnetRequired: Boolean,
         val uiForeground: Boolean,
         val activeTransfers: Boolean,
+        val forwards: ForwardingWork,
     )
 
     companion object {

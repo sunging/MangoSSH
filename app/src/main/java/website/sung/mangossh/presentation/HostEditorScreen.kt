@@ -2,6 +2,7 @@ package website.sung.mangossh.presentation
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -14,6 +15,8 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -26,7 +29,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.CommandSnippet
-import website.sung.mangossh.data.vault.StoredSshKey
+import website.sung.mangossh.data.vault.SshKeySummary
+import website.sung.mangossh.data.vault.AuthenticationSummary
 import website.sung.mangossh.domain.*
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 
@@ -36,9 +40,9 @@ import website.sung.mangossh.ui.components.MangoPreferenceGroup
  */
 @Composable
 internal fun HostEditorDialog(hosts: List<ConnectionProfile>, defaults: ConnectionPreferences,
-    initialHost: ConnectionProfile?, keys: List<StoredSshKey>, snippets: List<CommandSnippet>,
+    initialHost: ConnectionProfile?, keys: List<SshKeySummary>, snippets: List<CommandSnippet>,
     onDismiss: () -> Unit, onSave: (ConnectionProfileDraft, EditorSaveOperation) -> Unit,
-    prefill: ConnectionProfile? = null) {
+    prefill: ConnectionProfile? = null, authentications: List<AuthenticationSummary> = emptyList()) {
     val save = remember { EditorSaveOperation(onDismiss) }
     DisposableEffect(save) { onDispose { save.dispose() } }
     val controller = rememberHostEditorController(initialHost, prefill)
@@ -50,7 +54,7 @@ internal fun HostEditorDialog(hosts: List<ConnectionProfile>, defaults: Connecti
             Surface(Modifier.widthIn(max = if (tablet) 720.dp else androidx.compose.ui.unit.Dp.Infinity).fillMaxSize()
                 .testTag(if (tablet) "host_editor_tablet" else "host_editor_phone"),
                 shape = if (tablet) MaterialTheme.shapes.extraLarge else RectangleShape) {
-                HostEditorScreen(controller, hosts, defaults, keys, snippets, onDismiss, { onSave(it, save) }, saveOperation = save)
+                HostEditorScreen(controller, hosts, defaults, keys, snippets, onDismiss, { onSave(it, save) }, saveOperation = save, authentications = authentications)
             }
         }
     }
@@ -59,16 +63,20 @@ internal fun HostEditorDialog(hosts: List<ConnectionProfile>, defaults: Connecti
 /** Only the main page can commit. Subpages mutate the same draft and preserve scroll on return. */
 @Composable
 internal fun HostEditorScreen(controller: HostEditorController, hosts: List<ConnectionProfile>,
-    defaults: ConnectionPreferences, keys: List<StoredSshKey>, snippets: List<CommandSnippet>,
-    onDismiss: () -> Unit, onSave: (ConnectionProfileDraft) -> Unit, modifier: Modifier = Modifier, saveOperation: EditorSaveOperation? = null) {
+    defaults: ConnectionPreferences, keys: List<SshKeySummary>, snippets: List<CommandSnippet>,
+    onDismiss: () -> Unit, onSave: (ConnectionProfileDraft) -> Unit, modifier: Modifier = Modifier, saveOperation: EditorSaveOperation? = null,
+    authentications: List<AuthenticationSummary> = emptyList()) {
     val draft = controller.draft
-    val invalid = draft.invalidPages(keys.map { it.id }.toSet(), snippets.map { it.id }.toSet(), hosts)
+    val invalid = draft.invalidPages(keys.map { it.id }.toSet(), snippets.map { it.id }.toSet(), hosts, authentications.map { it.id }.toSet())
     val focus = LocalFocusManager.current
+    val initialFocus = remember { FocusRequester() }
+    // Older dialog windows otherwise focus the first text field before the user chooses one.
+    LaunchedEffect(Unit) { initialFocus.requestFocus() }
     val pages = rememberSaveableStateHolder()
     val main = controller.page == HostEditorPage.MAIN
     fun back() { focus.clearFocus(); controller.back(onDismiss) }
     BackHandler { back() }
-    Column(modifier.fillMaxSize().testTag("host_editor")) {
+    Column(modifier.fillMaxSize().focusRequester(initialFocus).focusable().testTag("host_editor")) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { back() }, modifier = Modifier.testTag("host_editor_back")) {
                 Icon(if (main) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack,
@@ -95,7 +103,7 @@ internal fun HostEditorScreen(controller: HostEditorController, hosts: List<Conn
                             }
                         }
                     } else {
-                        HostEditorDetails(controller, hosts, defaults, keys, snippets)
+                        HostEditorDetails(controller, hosts, defaults, keys, snippets, authentications)
                         if (controller.page in invalid) Text(stringResource(R.string.host_editor_needs_attention),
                             color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("host_editor_detail_error"))
                     }

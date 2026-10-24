@@ -16,12 +16,9 @@ import website.sung.mangossh.session.sshMethods
 class SshAuthenticationHandlerTest {
     private fun handler(credentials: SshCredentials) = SshAuthenticationHandler(credentials, false) {}
 
-    @Test fun profilePoliciesDoNotOfferUnselectedCredentials() {
-        assertEquals(setOf("publickey"), AuthenticationMethod.PRIVATE_KEY.sshMethods())
-        assertEquals(setOf("password", "keyboard-interactive"), AuthenticationMethod.PASSWORD.sshMethods())
-        for (method in listOf(AuthenticationMethod.KEYBOARD_INTERACTIVE, AuthenticationMethod.TAILSCALE_SSH)) {
-            assertEquals(setOf("keyboard-interactive"), method.sshMethods())
-        }
+    @Test fun profilePoliciesAllowExplicitKeyFallbackAndKeepInteractiveModesSeparate() {
+        assertEquals(setOf("publickey", "password", "keyboard-interactive"), AuthenticationMethod.AUTOMATIC.sshMethods())
+        assertEquals(setOf("keyboard-interactive"), AuthenticationMethod.TAILSCALE_SSH.sshMethods())
     }
 
     @Test fun noMatchRejectionAndProtocolErrorsRemainDistinctAndSanitized() = runBlocking {
@@ -80,7 +77,7 @@ class SshAuthenticationHandlerTest {
         val answer = UUID.randomUUID().toString()
         var rounds = 0
         val handler = handler(object : SshCredentials {
-            override val supportedMethods = AuthenticationMethod.PASSWORD.sshMethods()
+            override val supportedMethods = AuthenticationMethod.AUTOMATIC.sshMethods()
             override val preferPasswordAuth = true
             override suspend fun password(): String = error("Must not request a password for interactive prompts")
             override suspend fun interactive(name: String, instruction: String, fields: List<SshPromptField>): List<String> {

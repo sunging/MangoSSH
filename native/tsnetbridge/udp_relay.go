@@ -6,19 +6,32 @@ package tsnetbridge
 import (
 	"net"
 	"sync"
+	"time"
 )
 
 const maxDatagramSize = 64 * 1024
 
+// clientHandoverSilence is how long the owning sender must stay quiet before
+// another loopback sender may take the relay over. Mosh sends an empty ack at
+// least every 3 s while it is alive, and hops to a fresh local port after 10 s
+// without a round trip, so this hands over between two hops but never away
+// from a client that is still talking.
+const clientHandoverSilence = 5 * time.Second
+
 // UDPRelay forwards datagrams between one loopback client and one tsnet
-// connection. The first local sender owns the relay for its lifetime.
+// connection. One local sender owns the relay at a time; once the owner falls
+// silent, the next sender takes over. That handover is what lets mosh-client
+// recover from an outage: it roams to a new source port and then only sends
+// from there.
 type UDPRelay struct {
-	local    *net.UDPConn
-	remote   net.Conn
-	onClose  func(*UDPRelay)
-	closeOne sync.Once
-	clientMu sync.RWMutex
-	client   *net.UDPAddr
+	local          *net.UDPConn
+	remote         net.Conn
+	onClose        func(*UDPRelay)
+	now            func() time.Time
+	closeOne       sync.Once
+	clientMu       sync.RWMutex
+	client         *net.UDPAddr
+	clientLastSeen time.Time
 }
 
 func newUDPRelay(remote net.Conn, onClose func(*UDPRelay)) (*UDPRelay, error) {
@@ -30,6 +43,7 @@ func newUDPRelay(remote net.Conn, onClose func(*UDPRelay)) (*UDPRelay, error) {
 		local:   local,
 		remote:  remote,
 		onClose: onClose,
+		now:     time.Now,
 	}, nil
 }
 
@@ -99,9 +113,12 @@ func (r *UDPRelay) copyToLocal() {
 func (r *UDPRelay) acceptSender(sender *net.UDPAddr) bool {
 	r.clientMu.Lock()
 	defer r.clientMu.Unlock()
-	if r.client == nil {
-		r.client = sender
-		return true
+	now := r.now()
+	owner := r.client != nil && r.client.IP.Equal(sender.IP) && r.client.Port == sender.Port
+	if !owner && r.client != nil && now.Sub(r.clientLastSeen) < clientHandoverSilence {
+		return false
 	}
-	return r.client.IP.Equal(sender.IP) && r.client.Port == sender.Port
+	r.client = sender
+	r.clientLastSeen = now
+	return true
 }

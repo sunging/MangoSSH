@@ -17,7 +17,7 @@ internal fun suggestedTsnetUsername(device: TsnetDevice, hosts: List<ConnectionP
 
 /** Tailscale SSH needs no local credential, so it is the natural default wherever the device offers it. */
 internal fun defaultTsnetAuthentication(device: TsnetDevice): AuthenticationMethod =
-    if (device.tailscaleSshEnabled) AuthenticationMethod.TAILSCALE_SSH else AuthenticationMethod.PASSWORD
+    if (device.tailscaleSshEnabled) AuthenticationMethod.TAILSCALE_SSH else AuthenticationMethod.AUTOMATIC
 
 /**
  * Builds the unsaved Embedded Tailscale profile used by quick connect and as
@@ -29,7 +29,7 @@ internal fun tsnetQuickConnectProfile(
     username: String,
     protocol: ConnectionProtocol,
     authentication: AuthenticationMethod,
-    keyId: String?,
+    authenticationId: String? = null,
 ): ConnectionProfile = ConnectionProfileDraft(
     label = device.displayName,
     hostname = device.connectHost,
@@ -38,5 +38,5 @@ internal fun tsnetQuickConnectProfile(
     protocol = protocol,
     route = ConnectionRoute.TSNET,
     authentication = authentication,
-    keyId = keyId.takeIf { authentication == AuthenticationMethod.PRIVATE_KEY },
+    authenticationId = authenticationId.takeIf { authentication == AuthenticationMethod.AUTOMATIC },
 ).toProfile()

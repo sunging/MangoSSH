@@ -69,6 +69,13 @@ internal class KeyboardHandler(
      */
     var delKeyMode: DelKeyMode = DelKeyMode.Delete,
     /**
+     * When true, Ctrl+Enter (with no other modifier) sends a line feed (0x0A, the same byte as
+     * Ctrl+J) regardless of the keyboard protocol the application negotiated. Claude Code and
+     * Codex insert a newline for Ctrl+J, while shells treat it like Enter. Defaults to false,
+     * which encodes Ctrl+Enter like xterm (CR) or the application-enabled protocol.
+     */
+    var ctrlEnterSendsLineFeed: Boolean = false,
+    /**
      * Resolves a (deviceId, keyCode, metaState) triple to a raw Unicode value as returned by
      * [android.view.KeyEvent.getUnicodeChar]. Injectable for testing dead-key logic without
      * requiring a physical keyboard with dead keys.
@@ -170,7 +177,7 @@ internal class KeyboardHandler(
                         terminalEmulator.dispatchCharacter(0, codepoint)
                     }
                     val modifiers = buildModifierMask(ctrl, alt, shift)
-                    terminalEmulator.dispatchKey(modifiers, VTermKey.ENTER)
+                    dispatchEnter(modifiers)
                     modifierManager?.clearTransients()
                     onInputProcessed?.invoke()
                 }
@@ -301,7 +308,11 @@ internal class KeyboardHandler(
         if (vtermKey != null) {
             val modifiers = buildModifierMask(ctrl, alt, shift)
             pendingDeadChar = 0
-            terminalEmulator.dispatchKey(modifiers, vtermKey)
+            if (vtermKey == VTermKey.ENTER) {
+                dispatchEnter(modifiers)
+            } else {
+                terminalEmulator.dispatchKey(modifiers, vtermKey)
+            }
             modifierManager?.clearTransients()
             onInputProcessed?.invoke()
             return true
@@ -390,12 +401,12 @@ internal class KeyboardHandler(
         while (index < normalized.length) {
             when (val ch = normalized[index]) {
                 '\n' -> {
-                    terminalEmulator.dispatchKey(modifiers, VTermKey.ENTER)
+                    dispatchEnter(modifiers)
                     index += 1
                 }
 
                 '\r' -> {
-                    terminalEmulator.dispatchKey(modifiers, VTermKey.ENTER)
+                    dispatchEnter(modifiers)
                     index += if (index + 1 < normalized.length && normalized[index + 1] == '\n') 2 else 1
                 }
 
@@ -531,9 +542,19 @@ internal class KeyboardHandler(
 
     private fun dispatchCodepointOrEnter(modifiers: Int, codepoint: Int) {
         if (codepoint == '\n'.code) {
-            terminalEmulator.dispatchKey(modifiers, VTermKey.ENTER)
+            dispatchEnter(modifiers)
         } else {
             terminalEmulator.dispatchCharacter(modifiers, codepoint)
+        }
+    }
+
+    /** Sends Enter, or a line feed for a lone Ctrl+Enter when [ctrlEnterSendsLineFeed] is on. */
+    private fun dispatchEnter(modifiers: Int) {
+        if (ctrlEnterSendsLineFeed && modifiers == CTRL_MODIFIER) {
+            // libvterm writes a control character as-is, whatever protocol the app enabled.
+            terminalEmulator.dispatchCharacter(0, LINE_FEED)
+        } else {
+            terminalEmulator.dispatchKey(modifiers, VTermKey.ENTER)
         }
     }
 
@@ -652,6 +673,12 @@ internal class KeyboardHandler(
         Key.NumPadEquals -> VTermKey.KP_EQUAL
 
         else -> null
+    }
+
+    private companion object {
+        /** The Ctrl bit of the VTerm modifier mask, alone. */
+        const val CTRL_MODIFIER = 4
+        const val LINE_FEED = 0x0A
     }
 }
 

@@ -78,6 +78,7 @@ internal class RemotePortForwarder(
     override val isActive: Boolean get() = _isActive
 
     override val activity get() = connections.activity()
+    override val status get() = connections.status
 
     private suspend fun handleIncomingChannel(
         connectedAddr: String,
@@ -90,6 +91,7 @@ internal class RemotePortForwarder(
     ) {
         logger.debug("Incoming forwarded-tcpip from $originAddr:$originPort, connecting to $localHost:$localPort")
 
+        val openingFinished = connections.opening()
         var registeredChannel: ForwardingChannel? = null
         var confirmationSent = false
         var ownedSocket: io.ktor.network.sockets.Socket? = null
@@ -147,6 +149,7 @@ internal class RemotePortForwarder(
                 )
             }
         } finally {
+            openingFinished()
             ownedSocket?.close()
             ownedSelector?.close()
         }
@@ -155,6 +158,7 @@ internal class RemotePortForwarder(
     override suspend fun stop() {
         if (!_isActive) return
         _isActive = false
+        connections.stopped()
 
         val key = "$remoteBindAddress:$remoteBindPort"
         connection.unregisterRemoteForwarder(key)

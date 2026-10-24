@@ -17,6 +17,8 @@
 
 package org.connectbot.sshlib.protocol
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import ru.nsk.kstatemachine.event.Event
 import ru.nsk.kstatemachine.state.HistoryState
 import ru.nsk.kstatemachine.state.HistoryType
@@ -689,7 +691,13 @@ internal class SshClientStateMachine(
 
     internal fun formalModel(): SshStateMachineFormalModel = stateMachine.toSshFormalModel()
 
-    private suspend fun process(event: SshEvent): Boolean = stateMachine.processEvent(event) == ProcessingResult.PROCESSED
+    // A single-thread dispatcher still interleaves coroutines while a transition suspends.
+    // Wait for that transition rather than mistaking KStateMachine's queued result for rejection.
+    private val eventMutex = Mutex()
+
+    private suspend fun process(event: SshEvent): Boolean = eventMutex.withLock {
+        stateMachine.processEvent(event) == ProcessingResult.PROCESSED
+    }
 }
 
 internal interface SshClientCallbacks {

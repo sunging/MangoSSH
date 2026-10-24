@@ -27,8 +27,17 @@ enum class SshKeyGenerationType(
  * is the caller's responsibility; MangoSSH stores it only inside the encrypted vault.
  */
 class SshKeyManager {
-    /** Creates an unencrypted OpenSSH private key for the requested algorithm. */
-    fun generateKey(type: SshKeyGenerationType, label: String): StoredSshKey {
+    /**
+     * Creates an OpenSSH private key for the requested algorithm, encrypted when [passphrase]
+     * is non-empty. The passphrase is kept in the record only when [rememberPassphrase] is set.
+     */
+    fun generateKey(
+        type: SshKeyGenerationType,
+        label: String,
+        passphrase: String? = null,
+        rememberPassphrase: Boolean = false,
+    ): StoredSshKey {
+        val encrypt = !passphrase.isNullOrEmpty()
         val normalizedLabel = label.ifBlank { type.defaultLabel }
         val keyPair = when (type) {
             SshKeyGenerationType.ED25519 -> SshKeyCodec.generateEd25519()
@@ -39,13 +48,14 @@ class SshKeyManager {
             SshKeyGenerationType.RSA_3072 -> generateRsaKeyPair(3072)
             SshKeyGenerationType.RSA_4096 -> generateRsaKeyPair(4096)
         }
-        val privateKeyPem = SshKeyCodec.encodePrivate(keyPair)
+        val privateKeyPem = SshKeyCodec.encodePrivate(keyPair, passphrase.takeIf { encrypt })
         return recordFrom(
             id = UUID.randomUUID().toString(),
             label = normalizedLabel,
             keyPair = keyPair,
             privateKeyPem = privateKeyPem,
-            requiresPassphrase = false,
+            requiresPassphrase = encrypt,
+            savedPassphrase = passphrase.takeIf { encrypt && rememberPassphrase },
         )
     }
 
@@ -53,10 +63,15 @@ class SshKeyManager {
     fun generateEd25519(label: String): StoredSshKey =
         generateKey(SshKeyGenerationType.ED25519, label)
 
+    /**
+     * Imports a private key after proving it decodes. A passphrase verified by that decode is
+     * kept only for an encrypted key and only when [rememberPassphrase] is set.
+     */
     fun importPrivateKey(
         label: String,
         privateKeyPem: String,
         passphrase: String? = null,
+        rememberPassphrase: Boolean = false,
     ): StoredSshKey {
         val normalized = privateKeyPem.replace("\r\n", "\n").trim().plus("\n")
         require(normalized.contains("PRIVATE KEY")) { "The selected data is not a private key." }
@@ -75,16 +90,80 @@ class SshKeyManager {
             keyPair = keyPair,
             privateKeyPem = normalized,
             requiresPassphrase = encrypted,
+            savedPassphrase = passphrase.takeIf { encrypted && rememberPassphrase },
         )
     }
 
+    /** Decodes a stored key; without an explicit [passphrase] the remembered one is used. */
     fun decodeKeyPair(key: StoredSshKey, passphrase: String? = null): KeyPair {
         if (key.algorithm == "ssh-dss") throw UnsupportedDsaKeyException()
         requireSupportedEncryption(key.privateKeyPem)
-        if (key.requiresPassphrase && passphrase.isNullOrEmpty()) {
+        val effective = passphrase?.takeIf(String::isNotEmpty) ?: key.savedPassphrase
+        if (key.requiresPassphrase && effective.isNullOrEmpty()) {
             throw KeyPassphraseRequiredException()
         }
-        return decodeKeyPair(key.privateKeyPem, passphrase)
+        return decodeKeyPair(key.privateKeyPem, effective)
+    }
+
+    /**
+     * Applies a rename and passphrase change to [key]. Renaming rewrites only the public-key
+     * comment. Any change that needs the private material first proves the current passphrase
+     * by decoding, then re-encodes as OpenSSH and checks the public key is unchanged. The id,
+     * creation time and fingerprint are preserved so profile references keep working.
+     */
+    fun editKey(key: StoredSshKey, request: KeyEditRequest): StoredSshKey {
+        val label = request.label.trim().ifBlank { key.label }
+        val renamed = key.copy(label = label, publicKey = withComment(key.publicKey, label))
+        val change = request.passphrase
+        val encryptedAfter = when (change) {
+            KeyPassphraseChange.Keep -> key.requiresPassphrase
+            is KeyPassphraseChange.Set -> true
+            KeyPassphraseChange.Remove -> false
+        }
+        val remember = request.rememberPassphrase && encryptedAfter
+        if (change == KeyPassphraseChange.Keep) {
+            if (!remember) return renamed.copy(savedPassphrase = null)
+            if (key.savedPassphrase != null) return renamed
+            if (key.algorithm == "ssh-dss") throw UnsupportedDsaKeyException()
+            requireSupportedEncryption(key.privateKeyPem)
+            // Remember only a passphrase proven to decrypt this exact key.
+            val current = request.currentPassphrase?.takeIf(String::isNotEmpty) ?: throw KeyPassphraseRequiredException()
+            decodeWithCurrent(key, current)
+            return renamed.copy(savedPassphrase = current)
+        }
+        if (change is KeyPassphraseChange.Set) require(change.passphrase.isNotEmpty())
+        if (key.algorithm == "ssh-dss") throw UnsupportedDsaKeyException()
+        requireSupportedEncryption(key.privateKeyPem)
+        val current = request.currentPassphrase?.takeIf(String::isNotEmpty) ?: key.savedPassphrase
+        if (key.requiresPassphrase && current.isNullOrEmpty()) throw KeyPassphraseRequiredException()
+        val keyPair = decodeWithCurrent(key, current)
+        val newPassphrase = (change as? KeyPassphraseChange.Set)?.passphrase
+        val rewritten = recordFrom(
+            id = key.id,
+            label = label,
+            keyPair = keyPair,
+            privateKeyPem = SshKeyCodec.encodePrivate(keyPair, newPassphrase),
+            requiresPassphrase = encryptedAfter,
+            savedPassphrase = newPassphrase.takeIf { remember },
+        ).copy(createdAtEpochMillis = key.createdAtEpochMillis)
+        check(rewritten.fingerprint == key.fingerprint) { "Re-encoded key does not match the stored public key." }
+        return rewritten
+    }
+
+    /** A decode failure on an encrypted key is reported as a wrong passphrase. */
+    private fun decodeWithCurrent(key: StoredSshKey, current: String?): KeyPair {
+        if (!key.requiresPassphrase) return decodeKeyPair(key.privateKeyPem, null)
+        return try {
+            decodeKeyPair(key.privateKeyPem, current)
+        } catch (_: Exception) {
+            throw IncorrectKeyPassphraseException()
+        }
+    }
+
+    /** Keeps the algorithm and blob fields of an OpenSSH public-key line and replaces its comment. */
+    private fun withComment(publicKey: String, label: String): String {
+        val fields = publicKey.trim().split(' ', limit = 3)
+        return if (fields.size < 2) publicKey else fields[0] + " " + fields[1] + " " + label
     }
 
     fun isPassphraseProtected(privateKeyPem: String): Boolean = SshKeyCodec.isEncrypted(privateKeyPem)
@@ -113,6 +192,7 @@ class SshKeyManager {
         keyPair: KeyPair,
         privateKeyPem: String,
         requiresPassphrase: Boolean,
+        savedPassphrase: String? = null,
     ): StoredSshKey {
         val encoded = SshKeyCodec.publicKey(keyPair)
         val publicKey = encoded.algorithmName + " " + Base64.getEncoder().encodeToString(encoded.publicKeyBlob) + " " + label
@@ -128,9 +208,47 @@ class SshKeyManager {
             fingerprint = fingerprint,
             privateKeyPem = privateKeyPem,
             requiresPassphrase = requiresPassphrase,
+            savedPassphrase = savedPassphrase,
         )
     }
 }
+
+/**
+ * Whether [SshKeyManager.editKey] may decrypt and rewrite this key's private material. It
+ * inspects only format headers, so it is cheap enough to evaluate while composing a dialog.
+ */
+fun StoredSshKey.canChangePassphrase(): Boolean =
+    algorithm != "ssh-dss" && !SshKeyCodec.hasDisabledEncryption(privateKeyPem)
+
+/** How [SshKeyManager.editKey] treats a key's private-key encryption. */
+sealed interface KeyPassphraseChange {
+    /** Leave the private key bytes untouched. */
+    data object Keep : KeyPassphraseChange
+
+    /** Encrypt with a new, non-empty passphrase. */
+    class Set(val passphrase: String) : KeyPassphraseChange {
+        override fun toString(): String = "Set(<redacted>)"
+    }
+
+    /** Store the private key unencrypted inside the vault. */
+    data object Remove : KeyPassphraseChange
+}
+
+/**
+ * One edit of a stored key. [currentPassphrase] proves the existing passphrase when the key has
+ * none remembered; [rememberPassphrase] keeps the resulting passphrase in the encrypted vault.
+ */
+class KeyEditRequest(
+    val label: String,
+    val currentPassphrase: String?,
+    val passphrase: KeyPassphraseChange,
+    val rememberPassphrase: Boolean,
+) {
+    override fun toString(): String = "KeyEditRequest(label=$label, passphrase=$passphrase, remember=$rememberPassphrase)"
+}
+
+/** The supplied passphrase does not decrypt the stored private key. */
+class IncorrectKeyPassphraseException : IllegalArgumentException("The private key passphrase is incorrect.")
 
 class KeyPassphraseRequiredException : IllegalArgumentException("The private key requires a passphrase.")
 

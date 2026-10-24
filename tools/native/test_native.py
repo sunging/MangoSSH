@@ -176,6 +176,28 @@ class NativeStateTests(unittest.TestCase):
         publish_directory(source, output, {"manifest.json": manifest})
         self.assertEqual((output / "manifest.json").read_text(), '{"changed": true}\n')
 
+    def test_excluded_top_level_tree_is_never_walked(self):
+        tree = self.root / "bridge"
+        (tree / "vendor/pkg").mkdir(parents=True)
+        (tree / "vendor/pkg/a.go").write_text("package pkg\n")
+        (tree / "go.mod").write_text("module bridge\n")
+        (tree / "nested/.build").mkdir(parents=True)
+        (tree / "nested/.build/kept").write_text("only top-level names are excluded\n")
+        (tree / ".build/work").mkdir(parents=True)
+        (tree / ".build/work/out.o").write_bytes(b"object")
+        expected = {name: value for name, value in files(tree).items() if not name.startswith(".build/")}
+        walked = []
+        rglob = Path.rglob
+
+        def recording_rglob(path, pattern):
+            walked.append(path)
+            return rglob(path, pattern)
+
+        with mock.patch.object(Path, "rglob", recording_rglob):
+            self.assertEqual(files(tree, exclude={".build"}), expected)
+        self.assertNotIn(tree / ".build", walked)
+        self.assertIn("nested/.build/kept", expected)
+
     def test_replace_directory_retries_transient_windows_access_denied(self):
         staging, destination = self.root / "entry.partial", self.root / "entry"
         staging.mkdir()

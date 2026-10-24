@@ -33,6 +33,30 @@ internal class BlockingOperation(private val idleMillis: Long = 30_000L) : Trans
     }
     override fun progressed() { lastProgress = System.nanoTime() }
     fun awaitDecision(waiting: Boolean) { lastProgress = System.nanoTime(); awaitingDecision = waiting }
+
+    /**
+     * A provider may ignore thread interruption or block before returning a descriptor.
+     * Poll the operation deadline independently; late-opened resources must use [ownLocal]
+     * inside [action], so stopping still closes them even after the caller has left.
+     */
+    override fun <T> localIo(action: () -> T): T {
+        if (!shouldContinue()) throw java.io.InterruptedIOException()
+        val future = localWorkers.submit(java.util.concurrent.Callable { action() })
+        try {
+            while (true) {
+                if (!shouldContinue()) throw java.io.InterruptedIOException()
+                try {
+                    return future.get(100, TimeUnit.MILLISECONDS).also {
+                        if (!shouldContinue()) throw java.io.InterruptedIOException()
+                    }
+                } catch (_: java.util.concurrent.TimeoutException) {
+                    // Provider progress cannot suspend cancellation or the idle deadline.
+                } catch (error: java.util.concurrent.ExecutionException) {
+                    throw (error.cause ?: error)
+                }
+            }
+        } finally { if (!future.isDone) future.cancel(true) }
+    }
     override fun ownLocal(resource: Closeable) {
         val accepted = synchronized(lock) { if (stopped.get()) false else { localResources += resource; true } }
         if (!accepted) { resource.close(); throw java.io.InterruptedIOException() }
@@ -68,6 +92,9 @@ internal class BlockingOperation(private val idleMillis: Long = 30_000L) : Trans
     }
 
     private companion object {
+        val localWorkers = Executors.newCachedThreadPool { runnable ->
+            Thread(runnable, "MangoSSH-LocalIO").apply { isDaemon = true }
+        }
         val closers = Executors.newCachedThreadPool { runnable ->
             Thread(runnable, "MangoSSH-CancelLocalIO").apply { isDaemon = true }
         }

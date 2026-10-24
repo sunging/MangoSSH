@@ -14,6 +14,7 @@ internal class SshForward(private val delegate: PortForwarder,
     /** False once stopped, or once a local listener stopped accepting on its own. */
     val isActive: Boolean get() = !closed.get() && delegate.isActive
     val activity: org.connectbot.sshlib.PortForwardActivity get() = delegate.activity
+    val status: kotlinx.coroutines.flow.StateFlow<org.connectbot.sshlib.PortForwardStatus>? get() = delegate.status
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         try { runBlocking { withTimeout(1_000) { delegate.stop() } } }

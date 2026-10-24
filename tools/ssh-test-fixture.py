@@ -18,18 +18,22 @@ import uuid
 import re
 import json
 import shutil
+import stat
 from pathlib import Path
 import paramiko
 from paramiko.sftp import CMD_INIT, CMD_VERSION
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=22349)
+parser.add_argument("--echo-port", type=int, default=0, help="Optional loopback echo target for persistent forwarding tests")
 tool_mode = parser.add_mutually_exclusive_group()
 tool_mode.add_argument("--wsl-tmux", action="store_true")
 tool_mode.add_argument("--native-tools", action="store_true", help="Run isolated tmux and Mosh fixtures directly on Linux")
 parser.add_argument("--no-posix-rename", action="store_true")
 parser.add_argument("--reject-metadata", action="store_true")
 parser.add_argument("--stall-forward-cancel", action="store_true")
+parser.add_argument("--stall-sftp-writes", action="store_true", help="Keep staged WRITE requests unanswered until the test connection closes")
+parser.add_argument("--windows-stat-projection", action="store_true", help="Reproduce Windows OpenSSH LSTAT ACL and FSTAT CRT mode projections")
 parser.add_argument("--legacy-algorithms", action="store_true")
 args = parser.parse_args()
 tmux_socket = "mangossh-fixture-" + uuid.uuid4().hex
@@ -90,28 +94,50 @@ def set_attributes(attr, target):
     target is a path or, for FSETSTAT, an open descriptor."""
     if args.reject_metadata: return paramiko.SFTP_PERMISSION_DENIED
     try:
-        if attr._flags & attr.FLAG_PERMISSIONS: os.chmod(target, attr.st_mode & 0o7777)
-        if attr._flags & attr.FLAG_UIDGID: os.chown(target, attr.st_uid, attr.st_gid)
+        if attr._flags & attr.FLAG_PERMISSIONS and not args.windows_stat_projection: os.chmod(target, attr.st_mode & 0o7777)
+        if attr._flags & attr.FLAG_UIDGID and not args.windows_stat_projection: os.chown(target, attr.st_uid, attr.st_gid)
         if attr._flags & attr.FLAG_AMTIME: os.utime(target, (attr.st_atime, attr.st_mtime))
         if attr._flags & attr.FLAG_SIZE: os.truncate(target, attr.st_size)
         return paramiko.SFTP_OK
     except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
 
 class Files(paramiko.SFTPServerInterface):
-    def local(self, path):
-        result = (root / path.lstrip("/")).resolve()
+    def __init__(self, server, *args, **kwargs):
+        super().__init__(server, *args, **kwargs)
+        self.transport = server.transport
+
+    def local(self, path, follow_final=True):
+        if args.windows_stat_projection and (path == "/C:/fixture" or path.startswith("/C:/fixture/")):
+            path = path[len("/C:/fixture"):]
+        # Normalize dot components without following the final symlink. In particular,
+        # a lexical root/.. must not pass the parent containment check below.
+        candidate = Path(os.path.abspath(root / path.lstrip("/")))
+        result = candidate.resolve() if follow_final else candidate.parent.resolve() / candidate.name
         if result != root and root not in result.parents:
             raise PermissionError()
         return result
+    def canonicalize(self, path):
+        if not args.windows_stat_projection: return super().canonicalize(path)
+        relative = self.local(path).relative_to(root).as_posix()
+        return "/C:/fixture" + ("/" + relative if relative != "." else "")
+    def project(self, attributes, handle=False):
+        if args.windows_stat_projection:
+            attributes.st_uid = attributes.st_gid = 0
+            if stat.S_ISREG(attributes.st_mode):
+                # Measured with Windows OpenSSH 9.5: LSTAT reflects ACLs; FSTAT uses CRT bits.
+                attributes.st_mode = stat.S_IFREG | (0o666 if handle else 0o607)
+        return attributes
     def stat(self, path):
-        try: return paramiko.SFTPAttributes.from_stat(self.local(path).stat())
+        try: return self.project(paramiko.SFTPAttributes.from_stat(self.local(path).stat()))
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
-    lstat = stat
+    def lstat(self, path):
+        try: return self.project(paramiko.SFTPAttributes.from_stat(self.local(path, False).lstat()))
+        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def list_folder(self, path):
         try:
             entries = []
             for child in sorted(self.local(path).iterdir(), reverse=True):
-                item = paramiko.SFTPAttributes.from_stat(child.stat())
+                item = self.project(paramiko.SFTPAttributes.from_stat(child.lstat()))
                 item.filename = child.name
                 entries.append(item)
             return entries
@@ -125,25 +151,44 @@ class Files(paramiko.SFTPServerInterface):
             handle = paramiko.SFTPHandle(flags)
             handle.readfile = stream
             handle.writefile = stream
-            handle.stat = lambda: paramiko.SFTPAttributes.from_stat(os.fstat(stream.fileno()))
+            handle.stat = lambda: self.project(paramiko.SFTPAttributes.from_stat(os.fstat(stream.fileno())), handle=True)
             handle.chattr = lambda attr: set_attributes(attr, stream.fileno())
+            if args.stall_sftp_writes and self.local(path).name.startswith(".mangossh-"):
+                def stalled_write(offset, data):
+                    # Only app-generated staging files stall; ordinary writes seed original targets.
+                    while self.transport.is_active():
+                        threading.Event().wait(0.1)
+                    return paramiko.SFTP_FAILURE
+                handle.write = stalled_write
             return handle
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def remove(self, path):
-        try: self.local(path).unlink(); return paramiko.SFTP_OK
+        try: self.local(path, False).unlink(); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def rename(self, old, new):
         try:
-            if self.local(new).exists(): return paramiko.SFTP_FAILURE
-            self.local(old).rename(self.local(new)); return paramiko.SFTP_OK
+            if os.path.lexists(self.local(new, False)): return paramiko.SFTP_FAILURE
+            self.local(old, False).rename(self.local(new, False)); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def posix_rename(self, old, new):
-        try: os.replace(self.local(old), self.local(new)); return paramiko.SFTP_OK
+        try: os.replace(self.local(old, False), self.local(new, False)); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
     def chattr(self, path, attr):
         return set_attributes(attr, str(self.local(path)))
     def mkdir(self, path, attr):
         try: self.local(path).mkdir(); return paramiko.SFTP_OK
+        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
+
+    def rmdir(self, path):
+        try: self.local(path, False).rmdir(); return paramiko.SFTP_OK
+        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
+
+    def readlink(self, path):
+        try: return os.readlink(self.local(path, False))
+        except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
+
+    def symlink(self, target_path, path):
+        try: os.symlink(target_path, self.local(path, False)); return paramiko.SFTP_OK
         except OSError as error: return paramiko.SFTPServer.convert_errno(error.errno)
 
 class Sftp(paramiko.SFTPServer):
@@ -160,7 +205,7 @@ class Sftp(paramiko.SFTPServer):
 
 class Server(paramiko.ServerInterface):
     def __init__(self, transport):
-        self.forward = set()
+        self.forward = {}
         self.transport = transport
         self.listeners = {}
     def close(self):
@@ -170,6 +215,18 @@ class Server(paramiko.ServerInterface):
             listener.close()
         self.listeners.clear()
     def check_channel_exec_request(self, channel, command):
+        if tools_enabled and command == b"mosh-server new -s -c 256 -l LANG=C.UTF-8":
+            def bootstrap_controller():
+                try:
+                    server = subprocess.run(linux_command("env", "LANG=C.UTF-8", "MOSH_SERVER_NETWORK_TMOUT=30",
+                        "mosh-server", "new", "-s", "-i", "127.0.0.1", "-c", "256", "--", "/bin/cat"),
+                        capture_output=True, timeout=15)
+                    channel.sendall(server.stdout)
+                    channel.send_exit_status(server.returncode)
+                except (OSError, subprocess.SubprocessError): channel.send_exit_status(1)
+                finally: channel.shutdown_write()
+            threading.Thread(target=bootstrap_controller, daemon=True).start()
+            return True
         if command == b"fixture-auth" and authentication_metadata is not None:
             def credentials():
                 try:
@@ -246,8 +303,12 @@ class Server(paramiko.ServerInterface):
     def check_port_forward_request(self, address, port):
         # 127.0.0.2 lets a test hold two listeners on one port, as a real server may.
         if address not in ("127.0.0.1", "127.0.0.2") or port not in (22500, 22354): return False
+        if (address, port) in self.listeners: return False
         listener = socket.socket()
-        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Windows SO_REUSEADDR permits two live listeners on the same endpoint.
+        # Use its exclusive option so conflict tests match a real SSH server.
+        option = getattr(socket, "SO_EXCLUSIVEADDRUSE", socket.SO_REUSEADDR)
+        listener.setsockopt(socket.SOL_SOCKET, option, 1)
         try: listener.bind((address, port)); listener.listen(4)
         except OSError: listener.close(); return False
         self.listeners[(address, port)] = listener
@@ -285,12 +346,16 @@ class Server(paramiko.ServerInterface):
     def check_auth_publickey(self, username, key):
         return paramiko.AUTH_SUCCESSFUL if username in ("fixture-key", "fixture-mixed") and key.asbytes() in authentication_keys else paramiko.AUTH_FAILED
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes): return True
+    def check_channel_shell_request(self, channel):
+        # A terminal owned by this fixture only echoes bytes; it never executes commands.
+        threading.Thread(target=relay, args=(channel, channel), daemon=True).start()
+        return True
     def check_channel_window_change_request(self, channel, width, height, pixelwidth, pixelheight): return True
     def check_channel_request(self, kind, chanid):
         return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
     def check_channel_direct_tcpip_request(self, chanid, origin, destination):
-        if destination == ("127.0.0.1", args.port):
-            self.forward.add(chanid)
+        if destination == ("127.0.0.1", args.port) or args.echo_port and destination == ("127.0.0.1", args.echo_port):
+            self.forward[chanid] = destination
             return paramiko.OPEN_SUCCEEDED
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
@@ -322,7 +387,7 @@ def serve(client):
             if channel is None: continue
             channels.append(channel)
             if channel.chanid in server.forward:
-                peer = socket.create_connection(("127.0.0.1", args.port), timeout=10)
+                peer = socket.create_connection(server.forward[channel.chanid], timeout=10)
                 peer.settimeout(None)
                 threading.Thread(target=relay, args=(channel, peer), daemon=True).start()
                 threading.Thread(target=relay, args=(peer, channel), daemon=True).start()
@@ -336,11 +401,24 @@ signal.signal(signal.SIGTERM, terminate)
 listener = socket.socket()
 listener.bind(("127.0.0.1", args.port))
 listener.listen(16)
+echo_listener = None
+if args.echo_port:
+    echo_listener = socket.socket()
+    echo_listener.bind(("127.0.0.1", args.echo_port))
+    echo_listener.listen(8)
+    def echo_clients():
+        while True:
+            try: client, _ = echo_listener.accept()
+            except OSError: break
+            threading.Thread(target=relay, args=(client, client), daemon=True).start()
+    threading.Thread(target=echo_clients, daemon=True).start()
 print("Disposable loopback fixture ready", flush=True)
 if tools_enabled: print("Private fixture tmux socket: " + tmux_socket, flush=True)
 def stop_from_stdin():
     for line in sys.stdin:
         if line.strip() == "stop":
+            try: listener.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
             listener.close()
             break
 threading.Thread(target=stop_from_stdin, daemon=True).start()
@@ -351,6 +429,7 @@ try:
         threading.Thread(target=serve, args=(client,), daemon=True).start()
 finally:
     listener.close()
+    if echo_listener: echo_listener.close()
     if tools_enabled:
         subprocess.run(linux_command("tmux", "-L", tmux_socket, "kill-server"), capture_output=True, timeout=10)
     workspace.cleanup()

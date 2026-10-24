@@ -37,9 +37,9 @@ internal val SETTINGS_TWO_PANE_MIN_WIDTH = 600.dp
  * Settings tab: a category hub that opens one detail page at a time.
  *
  * On compact windows the detail page replaces the hub and a back arrow (see
- * `MangoSshApp`'s top bar) returns to it. On windows at least
+ * `MangoSshApp`'s top bar) returns via the parent category for nested pages. On windows at least
  * [SETTINGS_TWO_PANE_MIN_WIDTH] wide, both are shown side by side and the hub row for
- * the open category stays highlighted. Detail navigation is held on
+ * the open category stays highlighted, including while its child is open. Detail navigation is held on
  * [viewModel] (see [MangoSshViewModel.settingsDestination]) rather than local
  * Compose state, because the destination title and back affordance are
  * rendered by the shared top app bar in `MangoSshApp`, outside this
@@ -56,13 +56,13 @@ internal fun SettingsScreen(
     val selectedDestination = destination
     val twoPane = LocalWindowInfo.current.containerDpSize.width >= SETTINGS_TWO_PANE_MIN_WIDTH
 
-    BackHandler(enabled = !twoPane && selectedDestination != null) { viewModel.closeSettingsDestination() }
+    BackHandler(enabled = selectedDestination?.showsBack(twoPane) == true) { viewModel.closeSettingsDestination() }
 
     if (twoPane) {
         Row(modifier = modifier.fillMaxSize()) {
             SettingsHub(
                 state = state,
-                selected = selectedDestination,
+                selected = selectedDestination?.hubDestination,
                 onOpen = viewModel::openSettingsDestination,
                 modifier = Modifier.width(320.dp).fillMaxHeight(),
             )
@@ -94,7 +94,9 @@ internal fun SettingsScreen(
 }
 
 private fun visibleDestinations(state: SettingsScreenState): List<SettingsDestination> =
-    SettingsDestination.entries.filter { it != SettingsDestination.UPDATES || state.update.supported }
+    SettingsDestination.entries.filter {
+        it.parent == null && (it != SettingsDestination.UPDATES || state.update.supported)
+    }
 
 @Composable
 private fun SettingsHub(
@@ -176,5 +178,6 @@ private fun SettingsDetail(
         SettingsDestination.TSNET -> TsnetSettingsPage(state.tsnet, callbacks.tsnet, pageModifier)
         SettingsDestination.UPDATES -> UpdateSettingsPage(state.update, callbacks.update, pageModifier)
         SettingsDestination.ABOUT -> AboutSettingsPage(state.about, callbacks.about, pageModifier)
+        SettingsDestination.LICENSES -> LicensesSettingsPage(pageModifier)
     }
 }

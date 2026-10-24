@@ -1,7 +1,10 @@
 package website.sung.mangossh.presentation
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
 import androidx.annotation.StringRes
@@ -33,8 +36,11 @@ import kotlinx.coroutines.withContext
 import org.connectbot.terminal.TerminalEmulator
 import website.sung.mangossh.MangoSshApplication
 import website.sung.mangossh.R
+import website.sung.mangossh.core.AppBuildInfo
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
+import website.sung.mangossh.data.keys.IncorrectKeyPassphraseException
+import website.sung.mangossh.data.keys.KeyEditRequest
 import website.sung.mangossh.data.keys.KeyPassphraseRequiredException
 import website.sung.mangossh.data.keys.SshKeyGenerationType
 import website.sung.mangossh.data.sync.WebDavClient
@@ -72,6 +78,7 @@ import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.SessionAttention
 import website.sung.mangossh.session.sessionAttention
 import website.sung.mangossh.session.tsnet.TsnetSessionsActiveException
+import website.sung.mangossh.presentation.settings.parent
 import website.sung.mangossh.presentation.settings.SettingsDestination
 import website.sung.mangossh.presentation.update.DistributionUpdateManager
 
@@ -140,6 +147,9 @@ class MangoSshViewModel @JvmOverloads constructor(
     private val runtime = (application as MangoSshApplication).sessionRuntime
     private val vault = runtime.vault
     private val keyManager = runtime.keyManager
+    private val authenticationEditors = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val authenticationKeyPreparations = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val stagedAuthenticationKeys = java.util.concurrent.ConcurrentHashMap<String, website.sung.mangossh.data.vault.StagedKeyChange>()
     private val sessionController = runtime.sessionController
     private val embeddedTsnetManager = runtime.embeddedTsnetManager
     private val terminalAppearanceStore = runtime.terminalAppearance
@@ -189,7 +199,12 @@ class MangoSshViewModel @JvmOverloads constructor(
     val vaultStatus = vault.status
 
     val keys = vault.snapshot
-        .map { it.keys.sortedBy { key -> key.label.lowercase() } }
+        .map { it.keys.map { key -> key.summary() }.sortedBy { key -> key.label.lowercase() } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Credential UI receives metadata only; plaintext remains inside the vault/session boundary. */
+    val authentications = vault.snapshot
+        .map { snapshot -> snapshot.authentications.map { it.summary() }.sortedBy { it.label.lowercase() } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val snippets = vault.snapshot
@@ -236,8 +251,47 @@ class MangoSshViewModel @JvmOverloads constructor(
     val activePortForwards = sessionController.portForwards
     val scpTransfers = sessionController.scpTransfers
     val transferConflicts = sessionController.transferConflicts
+    val remoteOperations = sessionController.remoteOperationStates
+    val remoteOperationPrompts = sessionController.remoteOperationPrompts
+    /** Cancels a task only when its session owner permits cancellation. */
+    fun cancelRemoteOperation(id: String) = sessionController.cancelRemoteOperation(id)
+    /** Responds to a one-use preview; the manager rejects stale task identities. */
+    fun decideRemoteOperation(id: String, decision: website.sung.mangossh.session.RemoteOperationDecision) = sessionController.decideRemoteOperation(id, decision)
+
+    /** Selection is local to the displayed directory; the clipboard survives directory navigation. */
+    fun selectRemotePath(path: String) { _remoteBrowser.update { state -> state?.copy(selectedPaths =
+        if (path in state.selectedPaths) state.selectedPaths - path else state.selectedPaths + path) } }
+    /** Selects only entries actually present in the current listing. */
+    fun selectAllRemotePaths() { _remoteBrowser.update { it?.copy(selectedPaths = it.entries.map { entry -> entry.path }.toSet()) } }
+    /** Leaves selection mode without touching the connection-local clipboard. */
+    fun clearRemoteSelection() { _remoteBrowser.update { it?.copy(selectedPaths = emptySet()) } }
+    /** Copies intent and paths, never file contents, into the current browser clipboard. */
+    fun copyRemoteSelection(paths: List<String>, move: Boolean) { _remoteBrowser.update { state -> state?.copy(
+        selectedPaths = emptySet(), clipboard = website.sung.mangossh.session.RemoteClipboard(state.sessionId, paths.toList(), move)) } }
+    /** Discards an unexecuted copy/cut intent without remote side effects. */
+    fun clearRemoteClipboard() { _remoteBrowser.update { it?.copy(clipboard = null) } }
+    /** Keeps platform policy stable while a management task owns its captured request. */
+    fun changeRemotePlatform(platform: website.sung.mangossh.session.RemotePlatform) {
+        val current = _remoteBrowser.value ?: return
+        if (remoteOperations.value.any { it.request.sessionId == current.sessionId && it.active }) return
+        viewModelScope.launch {
+            runCatching { sessionController.setRemotePlatform(current.sessionId, platform.resolve(current.path)) }
+                .onSuccess {
+                    remotePlatformChoices[current.sessionId] = platform
+                    _remoteBrowser.update { if (it?.sessionId == current.sessionId) it.copy(platform = platform) else it }
+                }
+                .onFailure { if (it is CancellationException) throw it else _userMessage.value = sessionController.remoteFileMessage(it).toUiText() }
+        }
+    }
+    /** UI intents carry paths only; scanning, validation and writes belong to the session layer. */
+    fun startRemoteOperation(request: website.sung.mangossh.session.RemoteOperationRequest) {
+        val current = _remoteBrowser.value ?: return
+        if (request.sessionId != current.sessionId || current.isConnecting) return
+        sessionController.startRemoteOperation(request.copy(platform = current.platform.resolve(current.path)))
+        clearRemoteSelection()
+    }
     fun resolveTransferConflict(id: String, decision: website.sung.mangossh.session.TransferConflictDecision) = sessionController.resolveTransferConflict(id, decision)
-    val resourceSnapshots = sessionController.resourceSnapshots
+    val resourceStates = sessionController.resourceStates
     val sessionPrompts = sessionController.prompts
     val sessionEndedEvents = sessionController.sessionEndedEvents
     val terminalClipboardCopies = sessionController.clipboardCopies
@@ -260,6 +314,12 @@ class MangoSshViewModel @JvmOverloads constructor(
 
     /** Installed package version code, read from the platform rather than BuildConfig, for the About page. */
     val installedVersionCode: Long get() = runtime.installedAppInfo?.versionCode ?: 0L
+
+    /** Source commit embedded at build time; empty for archives without revision metadata. */
+    internal val buildRevision: String get() = AppBuildInfo.GIT_REVISION
+
+    /** Gradle distribution flavor embedded in this APK, independent of its install source. */
+    internal val buildDistribution: String get() = AppBuildInfo.DISTRIBUTION
 
     /** Immutable self-update state for the settings card and the settings navigation badge. */
     val updateState: StateFlow<UpdateUiState> = updateManager.state
@@ -374,8 +434,9 @@ class MangoSshViewModel @JvmOverloads constructor(
         _settingsDestination.value = destination
     }
 
+    /** Returns child pages to their category before returning a category to the hub. */
     internal fun closeSettingsDestination() {
-        _settingsDestination.value = null
+        _settingsDestination.value = _settingsDestination.value?.parent
     }
 
     private val _remoteEditor = MutableStateFlow<RemoteEditorUiState?>(null)
@@ -523,6 +584,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     private val _remoteBrowser = MutableStateFlow<RemoteBrowserUiState?>(null)
+    private val remotePlatformChoices = mutableMapOf<String, website.sung.mangossh.session.RemotePlatform>()
     /** Null whenever the remote file browser is closed. */
     val remoteBrowser = _remoteBrowser.asStateFlow()
 
@@ -538,11 +600,55 @@ class MangoSshViewModel @JvmOverloads constructor(
     val sessionNavigationRequest = _sessionNavigationRequest.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            runtime.accessState.locked.collect { locked ->
+                if (locked) { authenticationEditors.clear(); authenticationKeyPreparations.clear(); stagedAuthenticationKeys.clear() }
+            }
+        }
         viewModelScope.launch { vault.open() }
+        viewModelScope.launch {
+            sessionController.passwordSaveFailures.collect { _userMessage.value = uiText(R.string.authentication_password_save_failed) }
+        }
+        viewModelScope.launch {
+            var handled: String? = null
+            sessionController.forwardAuthorization.collect { requests ->
+                val request = requests.firstOrNull()
+                if (request != null && request.id != handled) {
+                    handled = request.id
+                    authorizeForwardRequest(request)
+                }
+            }
+        }
         // A browsed connection can fail while authenticating or drop mid-listing;
+        viewModelScope.launch {
+            val refreshed = mutableSetOf<String>()
+            val appliedMoves = mutableSetOf<String>()
+            remoteOperations.collect { operations ->
+                val movedItems = operations.filter { it.request.kind == website.sung.mangossh.session.RemoteOperationKind.MOVE }
+                    .flatMap { task -> task.items.filter { it.outcome == website.sung.mangossh.session.RemoteItemOutcome.COMPLETED && appliedMoves.add(task.id + ":" + it.path) }
+                        .map { task.request.sessionId to it.path } }
+                val newlyFinished = operations.filter { !it.active && refreshed.add(it.id) }
+                val current = _remoteBrowser.value ?: return@collect
+                val moved = movedItems.filter { it.first == current.sessionId }.map { it.second }.toSet()
+                _remoteBrowser.update { state ->
+                    if (state?.sessionId == current.sessionId && state.clipboard?.move == true) {
+                        val clipboard = state.clipboard.copy(paths = state.clipboard.paths.filterNot { it in moved })
+                        state.copy(clipboard = clipboard.takeIf { it.paths.isNotEmpty() })
+                    } else state
+                }
+                val finished = newlyFinished.filter { it.request.sessionId == current.sessionId }
+                if (finished.isNotEmpty()) {
+                    finished.firstOrNull { it.phase == website.sung.mangossh.session.RemoteOperationPhase.FAILED }?.let { failed ->
+                        _userMessage.value = failed.detail?.toUiText() ?: uiText(R.string.fm_failed)
+                    }
+                    refreshRemoteBrowser()
+                }
+            }
+        }
         // surface that in the browser instead of leaving a spinner running.
         viewModelScope.launch {
             sessionEndedEvents.collect { event ->
+                remotePlatformChoices.remove(event.sessionId)
                 _remoteBrowser.update { state ->
                     if (state?.sessionId != event.sessionId) {
                         state
@@ -550,6 +656,8 @@ class MangoSshViewModel @JvmOverloads constructor(
                         state.copy(
                             isConnecting = false,
                             isLoading = false,
+                            clipboard = null,
+                            selectedPaths = emptySet(),
                             errorMessage = sessionEndMessage(event)
                                 ?: uiText(R.string.session_ended_connection_failed),
                         )
@@ -602,6 +710,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     fun removeHost(id: String) {
+        sessionController.stopPortForwardsForProfile(id)
         viewModelScope.launch {
             val removed = vault.removeProfile(id)
             if (removed == website.sung.mangossh.data.vault.VaultMutationResult.Success) draftWork { deleteProfile(id) }
@@ -753,6 +862,11 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     /** Applies immediately to the terminal currently on screen. */
+    fun setTerminalCtrlEnterSendsLineFeed(enabled: Boolean) {
+        terminalBehaviorStore.setCtrlEnterSendsLineFeed(enabled)
+    }
+
+    /** Applies immediately to the terminal currently on screen. */
     fun setTerminalMaxPinchZoomScale(scale: Float) {
         terminalBehaviorStore.setMaxPinchZoomScale(scale)
     }
@@ -831,6 +945,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     fun removePortForward(ruleId: String) {
+        sessionController.stopPortForward("", ruleId)
         viewModelScope.launch { _userMessage.value = mutationError(vault.removePortForward(ruleId)) }
     }
 
@@ -858,7 +973,20 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     fun startPortForward(sessionId: String, rule: PortForwardRule) {
+        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == rule.profileId } ?: return
+        if (!authorizeSensitive(profile.requireReauthentication) { startPortForward(sessionId, rule) }) return
         sessionController.startPortForward(sessionId, rule)
+    }
+
+    /** Recovery uses the existing PIN/biometric grant and cancels cleanly when declined. */
+    private fun authorizeForwardRequest(request: website.sung.mangossh.session.ForwardAuthorizationRequest) {
+        if (sessionController.forwardAuthorization.value.none { it.id == request.id }) return
+        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == request.profileId }
+        if (profile == null) { sessionController.respondToForwardAuthorization(request.id, false); return }
+        if (authorizeSensitive(profile.requireReauthentication,
+                onCancelled = { sessionController.respondToForwardAuthorization(request.id, false) }) {
+                authorizeForwardRequest(request)
+            }) sessionController.respondToForwardAuthorization(request.id, true)
     }
 
     /**
@@ -880,9 +1008,14 @@ class MangoSshViewModel @JvmOverloads constructor(
     /** Refreshes connection counts shown for running forwards; see the forwards screen. */
     fun refreshPortForwardActivity() = sessionController.refreshPortForwardActivity()
 
+    /** Explicit retries may restore a disconnected SSH companion. */
     fun requestServerResources(sessionId: String) {
         sessionController.requestServerResources(sessionId)
     }
+
+    /** Mirrors resource-panel foreground visibility without changing the terminal lifecycle. */
+    fun setServerResourceMonitoring(sessionId: String, active: Boolean) =
+        sessionController.setServerResourceMonitoring(sessionId, active)
 
     /**
      * Opens the remote file browser on a terminal session that is already
@@ -900,6 +1033,7 @@ class MangoSshViewModel @JvmOverloads constructor(
             sessionId = sessionId,
             title = session.title,
             path = RemoteFilePaths.ROOT,
+            platform = remotePlatformChoices[sessionId] ?: website.sung.mangossh.session.RemotePlatform.AUTO,
         )
         browserJob = viewModelScope.launch { openHomeDirectory(sessionId) }
     }
@@ -1139,10 +1273,10 @@ class MangoSshViewModel @JvmOverloads constructor(
         _remoteBrowser.update { state -> state?.copy(preview = null) }
     }
 
-    /** Downloads a browsed remote file into a document the user selected. */
-    fun downloadRemoteFile(sessionId: String, remotePath: String, destination: Uri) {
+    /** Downloads into the new URI returned by the browser’s CreateDocument contract. */
+    fun downloadRemoteFileToCreatedDocument(sessionId: String, remotePath: String, destination: Uri) {
         if (!pickerSessionStillOpen(sessionId)) return
-        runCatching { sessionController.downloadRemoteFile(sessionId, remotePath, destination) }
+        runCatching { sessionController.downloadRemoteFileToCreatedDocument(sessionId, remotePath, destination) }
             .onFailure { error -> _userMessage.value = sessionController.remoteFileMessage(error).toUiText() }
     }
 
@@ -1245,7 +1379,7 @@ class MangoSshViewModel @JvmOverloads constructor(
 
     private suspend fun loadRemoteDirectory(sessionId: String, path: String) {
         _remoteBrowser.update { state ->
-            state?.copy(path = path, isLoading = true, errorMessage = null)
+            state?.copy(path = path, isLoading = true, errorMessage = null, selectedPaths = emptySet())
         }
         runCatching { sessionController.listRemoteDirectory(sessionId, path) }
             .onSuccess { listing ->
@@ -1285,21 +1419,51 @@ class MangoSshViewModel @JvmOverloads constructor(
     private val _keyOperationBusy = MutableStateFlow(false)
     val keyOperationBusy = _keyOperationBusy.asStateFlow()
 
-    /** Performs a selected private-key export only after the configured access check. */
-    fun exportPrivateKey(id: String, destination: Uri) {
-        if (_keyOperationBusy.value || !authorizeSensitive { exportPrivateKey(id, destination) }) return
+    /**
+     * Copies, saves or shares one half of a stored key pair. Private-key exports run only after
+     * the configured access check and only while that authorization is still current; the
+     * public key is not secret and is exported without one.
+     */
+    fun exportKey(id: String, part: KeyExportPart, target: KeyExportTarget) {
+        val private = part == KeyExportPart.PRIVATE
+        if (_keyOperationBusy.value || (private && !authorizeSensitive { exportKey(id, part, target) })) return
         val key = vault.snapshot.value.keys.firstOrNull { it.id == id } ?: return
         val authorizationGeneration = runtime.accessState.generation
+        fun stillAuthorized() = !private ||
+            (!runtime.accessState.locked.value && authorizationGeneration == runtime.accessState.generation)
+        val application = getApplication<Application>()
         _keyOperationBusy.value = true
         viewModelScope.launch {
             try {
-                withContext(cryptoDispatcher) {
-                    check(!runtime.accessState.locked.value && authorizationGeneration == runtime.accessState.generation)
-                    val bytes = key.privateKeyPem.encodeToByteArray()
-                    try {
-                        getApplication<Application>().contentResolver.openOutputStream(destination, "wt")?.use { it.write(bytes) }
-                            ?: throw java.io.IOException()
-                    } finally { bytes.fill(0) }
+                val text = if (private) key.privateKeyPem else key.publicKey.trim() + "\n"
+                when (target) {
+                    is KeyExportTarget.File -> withContext(cryptoDispatcher) {
+                        check(stillAuthorized())
+                        val bytes = text.encodeToByteArray()
+                        try {
+                            application.contentResolver.openOutputStream(target.uri, "wt")?.use { it.write(bytes) }
+                                ?: throw java.io.IOException()
+                        } finally { bytes.fill(0) }
+                    }
+                    KeyExportTarget.Clipboard -> {
+                        check(stillAuthorized())
+                        copyKeyToClipboard(application, text, private)
+                        // Android 13 and later confirm a copy with their own clipboard preview.
+                        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+                            _userMessage.value = uiText(if (private) R.string.message_private_key_copied else R.string.message_public_key_copied)
+                        }
+                    }
+                    KeyExportTarget.Share -> {
+                        check(stillAuthorized())
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(Intent.EXTRA_TEXT, text)
+                            .putExtra(Intent.EXTRA_TITLE, key.label)
+                        try {
+                            application.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        } catch (_: android.content.ActivityNotFoundException) {
+                            _userMessage.value = uiText(R.string.message_key_share_unavailable)
+                        }
+                    }
                 }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (_: Exception) { _userMessage.value = uiText(R.string.message_key_export_failed)
@@ -1307,65 +1471,114 @@ class MangoSshViewModel @JvmOverloads constructor(
         }
     }
 
-    /** Generates the selected key type away from the main dispatcher and saves it encrypted. */
-    fun generateKey(type: SshKeyGenerationType, label: String) {
-        if (_keyOperationBusy.value || !authorizeSensitive { generateKey(type, label) }) return
-        _keyOperationBusy.value = true
-        viewModelScope.launch {
-          try {
-            runCatching {
-                withContext(cryptoDispatcher) {
-                    keyManager.generateKey(type, label)
-                }
+    /** A private key is flagged sensitive so the system clipboard preview and keyboards hide it. */
+    private fun copyKeyToClipboard(context: Context, text: String, private: Boolean) {
+        val clip = ClipData.newPlainText(if (private) "SSH private key" else "SSH public key", text)
+        if (private) {
+            // ClipDescription.EXTRA_IS_SENSITIVE (API 33); older releases honor the same key.
+            clip.description.extras = android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+        }
+        context.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
+    }
+
+    private val _authenticationOperationBusy = MutableStateFlow(false)
+    /** Serializes encrypted credential writes; generated keys remain staged until a successful save. */
+    val authenticationOperationBusy = _authenticationOperationBusy.asStateFlow()
+
+    /** Registers the lifetime of an editor without retaining any secret in saved instance state. */
+    fun beginAuthenticationEdit(token: String) { authenticationEditors.add(token) }
+
+    /** Releases staged key material and makes late crypto/authorization results ineligible to save. */
+    fun discardAuthenticationEdit(token: String) {
+        authenticationEditors.remove(token)
+        authenticationKeyPreparations.remove(token)
+        stagedAuthenticationKeys.remove(token)
+    }
+
+    /** Generates, imports or re-encodes a key off the main dispatcher, returning metadata only. */
+    internal fun prepareAuthenticationKey(token: String, request: AuthenticationKeyRequest, done: (website.sung.mangossh.data.vault.SshKeySummary?, UiText?) -> Unit) {
+        if (token !in authenticationEditors || !authenticationKeyPreparations.add(token)) return
+        fun prepare() {
+            val generation = runtime.accessState.generation
+            fun allowed() = token in authenticationEditors && !runtime.accessState.locked.value && generation == runtime.accessState.generation
+            viewModelScope.launch {
+                try {
+                    val previous = stagedAuthenticationKeys[token]
+                    val source = (request as? AuthenticationKeyRequest.Edit)?.let { edit ->
+                        previous?.key?.takeIf { it.id == edit.id } ?: vault.snapshot.value.keys.firstOrNull { it.id == edit.id }
+                    }
+                    val key = withContext(cryptoDispatcher) {
+                        check(allowed())
+                        when (request) {
+                            is AuthenticationKeyRequest.Generate -> keyManager.generateKey(request.type, request.label, request.passphrase, request.remember)
+                            is AuthenticationKeyRequest.Import -> keyManager.importPrivateKey(request.label, request.contents, request.passphrase, request.remember)
+                            is AuthenticationKeyRequest.Edit -> keyManager.editKey(requireNotNull(source), request.request)
+                        }
+                    }
+                    if (!allowed()) {
+                        if (token in authenticationEditors) done(null, uiText(R.string.vault_invalid))
+                        return@launch
+                    }
+                    val original = if (request is AuthenticationKeyRequest.Edit) {
+                        if (previous?.key?.id == request.id) previous.original else source
+                    } else null
+                    stagedAuthenticationKeys[token] = website.sung.mangossh.data.vault.StagedKeyChange(key, original)
+                    done(key.summary(), null)
+                } catch (cancelled: CancellationException) { throw cancelled
+                } catch (error: Exception) {
+                    if (token in authenticationEditors) done(null, uiText(when (error) {
+                        is IncorrectKeyPassphraseException -> R.string.message_key_passphrase_incorrect
+                        is KeyPassphraseRequiredException -> R.string.message_key_passphrase_required
+                        is website.sung.mangossh.data.keys.UnsupportedDsaKeyException -> R.string.ssh_dsa_unsupported
+                        is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException -> R.string.ssh_key_encryption_unsupported
+                        else -> R.string.message_key_update_failed
+                    }))
+                } finally { authenticationKeyPreparations.remove(token) }
             }
-                .onSuccess {
-                    _userMessage.value = if (vault.upsertKey(it).isSuccess) {
-                        uiText(R.string.message_key_generated, it.label)
-                    } else {
-                        uiText(R.string.message_vault_save_failed)
-                    }
-                }
-                .onFailure {
-                    MangoLog.warn(MangoLogEvent.KEY_GENERATION_FAILED, it)
-                    _userMessage.value = uiText(R.string.message_key_generation_failed)
-                }
-          } finally { _keyOperationBusy.value = false }
         }
+        if (authorizeSensitive(onCancelled = {
+            authenticationKeyPreparations.remove(token)
+            if (token in authenticationEditors) done(null, uiText(R.string.vault_invalid))
+        }) { prepare() }) prepare()
     }
 
-    fun importPrivateKey(label: String, contents: String, passphrase: String?) {
-        if (_keyOperationBusy.value || !authorizeSensitive { importPrivateKey(label, contents, passphrase) }) return
-        _keyOperationBusy.value = true
+    /** Commits a credential and its staged key in one authorized vault mutation. */
+    internal fun saveAuthentication(request: AuthenticationEditRequest, operation: EditorSaveOperation) {
+        if (_authenticationOperationBusy.value || !operation.begin()) return
+        fun persist() {
+            if (!operation.pending) return
+            if (request.label.isBlank() || request.token !in authenticationEditors) {
+                operation.finish(uiText(R.string.vault_invalid)); return
+            }
+            val generation = runtime.accessState.generation
+            fun allowed() = operation.pending && request.token in authenticationEditors && !runtime.accessState.locked.value && generation == runtime.accessState.generation
+            val staged = stagedAuthenticationKeys[request.token]?.takeIf { it.key.id == request.keyId }
+            _authenticationOperationBusy.value = true
+            viewModelScope.launch {
+                try {
+                    val result = if (request.id == null) vault.addAuthentication(website.sung.mangossh.data.vault.StoredAuthentication(
+                        UUID.randomUUID().toString(), request.label.trim(), request.password, request.keyId), staged, ::allowed)
+                    else vault.editAuthentication(request.id, request.label.trim(), request.password, request.clearPassword, request.keyId, staged, ::allowed)
+                    if (result.isSuccess) stagedAuthenticationKeys.remove(request.token)
+                    operation.finish(mutationError(result))
+                } finally { _authenticationOperationBusy.value = false }
+            }
+        }
+        if (authorizeSensitive(onCancelled = operation::cancel) { persist() }) persist()
+    }
+
+    /** Deletes the reviewed credential and all host/agent references under the access guard. */
+    fun removeAuthentication(id: String) {
+        if (_authenticationOperationBusy.value || !authorizeSensitive { removeAuthentication(id) }) return
+        val generation = runtime.accessState.generation
+        _authenticationOperationBusy.value = true
         viewModelScope.launch {
-          try {
-            runCatching { withContext(cryptoDispatcher) { keyManager.importPrivateKey(label, contents, passphrase) } }
-                .onSuccess {
-                    _userMessage.value = if (vault.upsertKey(it).isSuccess) {
-                        uiText(R.string.message_key_imported, it.label)
-                    } else {
-                        uiText(R.string.message_vault_save_failed)
-                    }
-                }
-                .onFailure { error ->
-                    _userMessage.value = uiText(
-                        if (error is website.sung.mangossh.data.keys.UnsupportedDsaKeyException) {
-                            R.string.ssh_dsa_unsupported
-                        } else if (error is website.sung.mangossh.data.keys.UnsupportedKeyEncryptionException) {
-                            R.string.ssh_key_encryption_unsupported
-                        } else if (error is KeyPassphraseRequiredException) {
-                            R.string.message_key_passphrase_required
-                        } else {
-                            R.string.message_key_import_failed
-                        },
-                    )
-                }
-          } finally { _keyOperationBusy.value = false }
+            try {
+                _userMessage.value = mutationError(vault.removeAuthentication(id) {
+                    !runtime.accessState.locked.value && generation == runtime.accessState.generation
+                })
+            } finally { _authenticationOperationBusy.value = false }
         }
-    }
-
-    fun removeKey(id: String) {
-        if (!authorizeSensitive { removeKey(id) }) return
-        viewModelScope.launch { _userMessage.value = mutationError(vault.removeKey(id)) }
     }
 
     fun dismissUserMessage() {

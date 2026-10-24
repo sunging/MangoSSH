@@ -2,6 +2,7 @@ package website.sung.mangossh.data.vault
 
 import androidx.compose.runtime.Immutable
 import website.sung.mangossh.domain.ConnectionProfile
+import website.sung.mangossh.data.keys.canChangePassphrase
 
 @Immutable
 data class VaultSnapshot(
@@ -12,10 +13,32 @@ data class VaultSnapshot(
     val snippets: List<CommandSnippet> = emptyList(),
     val portForwards: List<PortForwardRule> = emptyList(),
     val webDavConfig: WebDavConfig? = null,
+    val authentications: List<StoredAuthentication> = emptyList(),
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 7
+        const val CURRENT_SCHEMA_VERSION = 8
     }
+}
+
+/** Reusable credentials protected by whole-vault encryption; keys retain their stable agent IDs. */
+@Immutable
+data class StoredAuthentication(
+    val id: String,
+    val label: String,
+    val password: String? = null,
+    val keyId: String? = null,
+    val createdAtEpochMillis: Long = System.currentTimeMillis(),
+) {
+    override fun toString(): String = "StoredAuthentication(id=$id, credentials=<redacted>)"
+
+    /** Only this non-secret projection may be supplied to credential pickers and editors. */
+    fun summary(): AuthenticationSummary = AuthenticationSummary(id, label, keyId, password != null)
+}
+
+/** Credential metadata only: neither passwords, private keys nor their passphrases enter UI state. */
+@Immutable
+data class AuthenticationSummary(val id: String, val label: String, val keyId: String? = null, val hasPassword: Boolean = false) {
+    override fun toString(): String = "AuthenticationSummary(id=$id, metadata=<redacted>)"
 }
 
 /** A private key record. The whole record is protected by the encrypted vault. */
@@ -29,9 +52,30 @@ data class StoredSshKey(
     val privateKeyPem: String,
     val requiresPassphrase: Boolean = false,
     val createdAtEpochMillis: Long = System.currentTimeMillis(),
+    /**
+     * The passphrase for [privateKeyPem], kept only when the user chose to remember it.
+     * It is protected by the same vault encryption as the private key and is never shown or logged.
+     */
+    val savedPassphrase: String? = null,
 ) {
     override fun toString(): String =
         "StoredSshKey(id=$id, label=$label, algorithm=$algorithm, fingerprint=$fingerprint, privateKeyPem=<redacted>)"
+
+    /** Supplies public metadata to key controls without handing private material to Compose. */
+    fun summary(): SshKeySummary = SshKeySummary(id, label, algorithm, fingerprint, requiresPassphrase,
+        savedPassphrase != null, canChangePassphrase())
+}
+
+/** Display-only key metadata, including capability flags calculated behind the vault boundary. */
+@Immutable
+data class SshKeySummary(val id: String, val label: String, val algorithm: String, val fingerprint: String,
+    val requiresPassphrase: Boolean = false, val hasSavedPassphrase: Boolean = false, val canChangePassphrase: Boolean = true) {
+    override fun toString(): String = "SshKeySummary(id=$id, metadata=<redacted>)"
+}
+
+/** Temporary backend-owned key edit; never place this object in UI state or a saved-state bundle. */
+internal class StagedKeyChange(val key: StoredSshKey, val original: StoredSshKey? = null) {
+    override fun toString(): String = "StagedKeyChange(<redacted>)"
 }
 
 @Immutable

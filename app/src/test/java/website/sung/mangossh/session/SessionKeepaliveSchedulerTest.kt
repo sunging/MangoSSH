@@ -10,6 +10,36 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionKeepaliveSchedulerTest {
+    @Test fun idleForwardingUsesOneMinuteButPreservesALongerBaseInterval() {
+        assertEquals(60_000L, SessionKeepaliveScheduler.forwardBackgroundInterval(30_000, 4))
+        assertEquals(120_000L, SessionKeepaliveScheduler.forwardBackgroundInterval(120_000, 4))
+        assertEquals(300_000L, SessionKeepaliveScheduler.forwardBackgroundInterval(300_000, 1))
+    }
+
+    @Test fun anOpenForwardClientUsesNormalCadenceWhileBackgrounded() = runBlocking {
+        val intervals = mutableListOf<Long>()
+        val scheduler = SessionKeepaliveScheduler(MutableStateFlow(false),
+            KeepaliveAlarm { _, _ -> error("active clients must not wait for Doze alarms") },
+            foregroundWait = { intervals += it })
+        scheduler.waitForNextKeepalive(30_000, forwardWork = MutableStateFlow(true), forwarding = true)
+        assertEquals(listOf(30_000L), intervals)
+    }
+
+    @Test fun acceptingAClientCancelsTheIdleAlarmImmediately() = runBlocking {
+        val clients = MutableStateFlow(false)
+        var scheduled = false
+        var cancelled = false
+        val scheduler = SessionKeepaliveScheduler(MutableStateFlow(false), KeepaliveAlarm { _, _ ->
+            scheduled = true
+            val cancel: () -> Unit = { cancelled = true }
+            cancel
+        })
+        val wait = launch { scheduler.waitForNextKeepalive(30_000, forwardWork = clients, forwarding = true) }
+        withTimeout(1_000) { while (!scheduled) yield() }
+        clients.value = true
+        withTimeout(1_000) { wait.join() }
+        assertTrue(cancelled)
+    }
     @Test
     fun backgroundIntervalScalesAndClamps() {
         assertEquals(120_000L, SessionKeepaliveScheduler.backgroundInterval(30_000L, 4))

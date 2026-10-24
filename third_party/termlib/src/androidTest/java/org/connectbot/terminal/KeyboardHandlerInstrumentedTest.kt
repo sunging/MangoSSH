@@ -119,6 +119,39 @@ class KeyboardHandlerInstrumentedTest {
         assertKeyEmits("\r", KeyEvent.KEYCODE_ENTER, CTRL)
     }
 
+    /** Claude Code and Codex bind Ctrl+J, not Ctrl+Enter, to newline, so the option sends LF. */
+    @Test
+    fun ctrlEnterSendsLineFeedWhenEnabledWhateverTheApplicationNegotiated() {
+        handler.ctrlEnterSendsLineFeed = true
+        assertKeyEmits("\n", KeyEvent.KEYCODE_ENTER, CTRL)
+        assertKeyEmits("\r", KeyEvent.KEYCODE_ENTER)
+        assertKeyEmits("\r", KeyEvent.KEYCODE_ENTER, CTRL or SHIFT)
+        assertKeyEmits("\u001b\r", KeyEvent.KEYCODE_ENTER, CTRL or ALT)
+
+        emulator.writeInput("\u001b[>1u".toByteArray())
+        assertKeyEmits("\n", KeyEvent.KEYCODE_ENTER, CTRL)
+        assertKeyEmits("\u001b[13;2u", KeyEvent.KEYCODE_ENTER, SHIFT)
+        emulator.writeInput("\u001b[<u".toByteArray())
+
+        emulator.writeInput("\u001b[>4;2m".toByteArray())
+        assertKeyEmits("\n", KeyEvent.KEYCODE_ENTER, CTRL)
+    }
+
+    @Test
+    fun stickyCtrlWithSoftKeyboardEnterSendsLineFeedWhenEnabled() {
+        handler.ctrlEnterSendsLineFeed = true
+        val sticky = StickyModifiers(ctrl = true)
+        handler.modifierManager = sticky
+        assertEmits("\n") { handler.onKeyEvent(keyDown(KeyEvent.KEYCODE_ENTER)) }
+
+        sticky.ctrl = true
+        assertEmits("\n") { handler.onTextInput("\n".toByteArray()) }
+
+        sticky.ctrl = true
+        assertEmits("\n") { handler.onCommittedText("\r\n") }
+        assertFalse(sticky.ctrl)
+    }
+
     private fun assertKeyEmits(expected: String, code: Int, metaState: Int = 0) {
         assertEmits(expected) {
             assertTrue("Key $code down must be handled", handler.onKeyEvent(keyDown(code, metaState)))

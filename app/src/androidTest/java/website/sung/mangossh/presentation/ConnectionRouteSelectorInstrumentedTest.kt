@@ -19,7 +19,7 @@ class ConnectionRouteSelectorInstrumentedTest {
 
     @Test fun allThreeRoutesRemainUsableAtNarrowWidth() {
         val controller = HostEditorController(HostEditorDraft(hostname = "synthetic.invalid", username = "test",
-            authentication = AuthenticationMethod.PASSWORD)).apply { page = HostEditorPage.CONNECTION }
+            authentication = AuthenticationMethod.AUTOMATIC)).apply { page = HostEditorPage.CONNECTION }
         composeRule.setContent { MaterialTheme {
             Box(Modifier.width(240.dp).height(600.dp)) {
                 HostEditorScreen(controller, emptyList(), ConnectionPreferences(), emptyList(), emptyList(), {}, {})
@@ -35,9 +35,9 @@ class ConnectionRouteSelectorInstrumentedTest {
         }
         composeRule.runOnIdle {
             assertEquals(AuthenticationMethod.TAILSCALE_SSH, controller.draft.authentication)
-            controller.draft = controller.draft.copy(authentication = AuthenticationMethod.PASSWORD)
+            controller.draft = controller.draft.copy(authentication = AuthenticationMethod.AUTOMATIC)
         }
         composeRule.onNodeWithTag("host_editor_route_option_2").performScrollTo().performClick()
-        composeRule.runOnIdle { assertEquals(AuthenticationMethod.PASSWORD, controller.draft.authentication) }
+        composeRule.runOnIdle { assertEquals(AuthenticationMethod.AUTOMATIC, controller.draft.authentication) }
     }
 }

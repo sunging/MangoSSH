@@ -15,14 +15,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import website.sung.mangossh.R
-import website.sung.mangossh.data.vault.StoredSshKey
+import website.sung.mangossh.data.vault.AuthenticationSummary
 import website.sung.mangossh.domain.*
 import website.sung.mangossh.session.BoundedProtocolReader
 import java.util.UUID
 
 /** Import has no side effects until all identities, jumps, and incompatibilities have been reviewed. */
 @Composable
-internal fun SshConfigImportDialog(keys: List<StoredSshKey>, hosts: List<ConnectionProfile>, onSave: (List<ConnectionProfile>) -> Unit, onDismiss: () -> Unit) {
+internal fun SshConfigImportDialog(authentications: List<AuthenticationSummary>, hosts: List<ConnectionProfile>, onSave: (List<ConnectionProfile>) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var contents by remember { mutableStateOf("") }
@@ -31,7 +31,7 @@ internal fun SshConfigImportDialog(keys: List<StoredSshKey>, hosts: List<Connect
     var failed by remember { mutableStateOf(false) }
     var acceptedIssues by remember { mutableStateOf(false) }
     val usernames = remember(preview) { mutableStateMapOf<String, String>() }
-    val keyIds = remember(preview) { mutableStateMapOf<String, String>() }
+    val authenticationIds = remember(preview) { mutableStateMapOf<String, String>() }
     val jumpMappings = remember(preview) { mutableStateMapOf<String, String>() }
     val ids = remember(preview) { preview?.candidates.orEmpty().associate { it.alias to UUID.randomUUID().toString() } }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -49,14 +49,14 @@ internal fun SshConfigImportDialog(keys: List<StoredSshKey>, hosts: List<Connect
     val profiles = candidates.map { candidate ->
         ConnectionProfile(id = ids.getValue(candidate.alias), label = candidate.alias, hostname = candidate.hostname,
             port = candidate.port, username = usernames[candidate.alias] ?: candidate.username.orEmpty(),
-            keyId = keyIds[candidate.alias], authentication = if (keyIds[candidate.alias] == null) AuthenticationMethod.KEYBOARD_INTERACTIVE else AuthenticationMethod.PRIVATE_KEY,
+            authenticationId = authenticationIds[candidate.alias],
             agentForwarding = candidate.forwardAgent,
             overrides = HostConnectionOverrides(candidate.connectTimeoutSeconds, candidate.keepaliveSeconds),
             jumpProfileIds = candidate.proxyJumps.mapNotNull(::mappedJump))
     }
     val ready = candidates.isNotEmpty() && profiles.all { it.username.isNotBlank() && it.overrides.isValid() && it.jumpProfileIds.size <= 4 && it.id !in it.jumpProfileIds && it.jumpProfileIds.distinct().size == it.jumpProfileIds.size } &&
         candidates.all { candidate ->
-            (!(candidate.identitiesOnly || candidate.identityFiles.isNotEmpty()) || keyIds[candidate.alias] != null) &&
+            (!(candidate.identitiesOnly || candidate.identityFiles.isNotEmpty()) || authenticationIds[candidate.alias] != null) &&
                 candidate.proxyJumps.all { raw -> mappedJump(raw)?.let { id -> (profiles + hosts).any { it.id == id && it.jumpProfileIds.isEmpty() && it.protocol == ConnectionProtocol.SSH } } == true }
         } && (preview?.issues.isNullOrEmpty() || acceptedIssues)
     AlertDialog(onDismissRequest = onDismiss, title = { Text(stringResource(R.string.ssh_config_import)) }, text = {
@@ -79,7 +79,10 @@ internal fun SshConfigImportDialog(keys: List<StoredSshKey>, hosts: List<Connect
                         label = { Text(stringResource(R.string.ui_username)) }, singleLine = true)
                     if (candidate.identityFiles.isNotEmpty()) Text(candidate.identityFiles.joinToString("\n"))
                     if (candidate.identitiesOnly || candidate.identityFiles.isNotEmpty()) Text(stringResource(R.string.ssh_config_map_key))
-                    keys.forEach { key -> FilterChip(selected = keyIds[candidate.alias] == key.id, onClick = { keyIds[candidate.alias] = key.id }, label = { Text(key.label) }) }
+                    AuthenticationChoice(authenticationIds[candidate.alias], authentications.filter {
+                        !(candidate.identitiesOnly || candidate.identityFiles.isNotEmpty()) || it.keyId != null
+                    }, { id -> if (id == null) authenticationIds.remove(candidate.alias) else authenticationIds[candidate.alias] = id },
+                        "ssh_config_authentication_${ids.getValue(candidate.alias)}")
                     candidate.proxyJumps.forEach { raw ->
                         Text(stringResource(R.string.ssh_config_jump, raw))
                         val options = hosts.filter { it.protocol == ConnectionProtocol.SSH && it.jumpProfileIds.isEmpty() }.map { it.id to it.label } +

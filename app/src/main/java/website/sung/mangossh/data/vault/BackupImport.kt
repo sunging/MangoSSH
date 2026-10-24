@@ -83,6 +83,7 @@ internal object BackupMerger {
                     else -> conflicts += ImportConflict("$kind:$index", kind, index + 1, kind == "trust", when (item) {
                         is website.sung.mangossh.domain.ConnectionProfile -> item.label
                         is StoredSshKey -> item.label
+                        is StoredAuthentication -> item.label
                         is CommandSnippet -> item.label
                         is PortForwardRule -> profileLabels[item.profileId].orEmpty()
                         is TrustedHostKey -> "${item.hostname}:${item.port}"
@@ -98,6 +99,7 @@ internal object BackupMerger {
             a == b.copy(position = a.position, connectionCount = a.connectionCount, lastConnectedAtEpochMillis = a.lastConnectedAtEpochMillis)
         }
         scan("key", local.keys, remote.keys, { it.id })
+        scan("authentication", local.authentications, remote.authentications, { it.id })
         scan("snippet", local.snippets, remote.snippets, { it.id })
         scan("forward", local.portForwards, remote.portForwards, { it.id })
         scan("trust", local.knownHosts, remote.knownHosts, ::hostId) { a, b -> a.keyBlobBase64 == b.keyBlobBase64 }
@@ -126,6 +128,7 @@ internal object BackupMerger {
         return VaultSnapshot(
             profiles = profiles.mapIndexed { index, profile -> profile.copy(position = index) },
             keys = combine("key", local.keys, remote.keys, { it.id }),
+            authentications = combine("authentication", local.authentications, remote.authentications, { it.id }),
             snippets = combine("snippet", local.snippets, remote.snippets, { it.id }),
             portForwards = combine("forward", local.portForwards, remote.portForwards, { it.id }),
             knownHosts = combine("trust", local.knownHosts, remote.knownHosts, ::hostId),
@@ -145,10 +148,12 @@ internal object BackupValidator {
         }
         unique(snapshot.profiles) { it.id }
         unique(snapshot.keys) { it.id }
+        unique(snapshot.authentications) { it.id }
         unique(snapshot.snippets) { it.id }
         unique(snapshot.portForwards) { it.id }
         valid(snapshot.knownHosts.map { Triple(it.hostname, it.port, it.algorithm) }.distinct().size == snapshot.knownHosts.size)
         val keys = snapshot.keys.map { it.id }.toSet()
+        val authentications = snapshot.authentications.map { it.id }.toSet()
         val snippets = snapshot.snippets.map { it.id }.toSet()
         val profiles = snapshot.profiles.map { it.id }.toSet()
         snapshot.profiles.forEach {
@@ -161,11 +166,17 @@ internal object BackupValidator {
             valid(it.jumpProfileIds.size <= 4 && it.jumpProfileIds.distinct().size == it.jumpProfileIds.size)
             valid(it.jumpProfileIds.isEmpty() || it.protocol == website.sung.mangossh.domain.ConnectionProtocol.SSH)
             valid(it.jumpProfileIds.all { id -> id != it.id && snapshot.profiles.any { jump -> jump.id == id && jump.protocol == website.sung.mangossh.domain.ConnectionProtocol.SSH && jump.jumpProfileIds.isEmpty() } })
-            valid(it.keyId == null || it.keyId in keys)
+            valid(it.authenticationId == null || it.authenticationId in authentications)
             valid(it.startupSnippetId == null || it.startupSnippetId in snippets)
             valid(it.position >= 0 && it.connectionCount >= 0 && it.lastConnectedAtEpochMillis >= 0)
         }
         snapshot.keys.forEach { valid(it.privateKeyPem.isNotBlank() && it.publicKey.isNotBlank() && it.algorithm.isNotBlank() && it.createdAtEpochMillis >= 0) }
+        // A remembered passphrase is meaningful only for an encrypted private key.
+        snapshot.keys.forEach { valid(it.savedPassphrase == null || it.requiresPassphrase) }
+        snapshot.authentications.forEach {
+            valid(it.label.isNotBlank() && it.password?.isEmpty() != true && it.createdAtEpochMillis >= 0)
+            valid(it.keyId == null || it.keyId in keys)
+        }
         snapshot.knownHosts.forEach { valid(it.hostname.isNotBlank() && it.port in 1..65535 && it.algorithm.isNotBlank() && it.keyBlobBase64.isNotBlank() && it.trustedAtEpochMillis >= 0) }
         snapshot.portForwards.forEach {
             valid(it.profileId in profiles && it.bindPort in 1..65535 && it.bindHost.isNotBlank())

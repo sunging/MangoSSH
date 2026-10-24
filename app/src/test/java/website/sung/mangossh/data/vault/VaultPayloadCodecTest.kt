@@ -17,7 +17,7 @@ class VaultPayloadCodecTest {
             getJSONArray("profiles").getJSONObject(0).remove("legacySshAlgorithms")
         }
         val migrated = VaultPayloadCodec.decode(old.toString().encodeToByteArray())
-        assertEquals(7, migrated.schemaVersion)
+        assertEquals(VaultSnapshot.CURRENT_SCHEMA_VERSION, migrated.schemaVersion)
         assertEquals(false, migrated.profiles.single().legacySshAlgorithms)
     }
 

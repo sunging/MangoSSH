@@ -7,7 +7,7 @@ of local-only records it will remove.
 
 ## Merge rules
 
-- Profiles, SSH keys, snippets and forwarding rules match by ID. Different IDs
+- Profiles, authentication entries, SSH keys, snippets and forwarding rules match by ID. Different IDs
   remain different records even if their labels or endpoints are identical.
 - Identical records are skipped. Conflicts keep the local record unless the
   user selects the incoming record.
@@ -35,9 +35,13 @@ with 310,000 iterations.
 
 The v3 authenticated plaintext is a JSON object with `id` (UUID), `createdAt`
 (epoch milliseconds), `appVersion` and `payload` (the versioned vault object).
-The vault schema remains 5. Container versions 1 and 2 remain readable; v1 uses
-the legacy zero-length AAD convention. Vault schemas 1 through 5 migrate to the
-current schema. Missing legacy creation metadata is reported as unknown.
+Vault schema 8 adds unified authentication entries with optional passwords and
+private-key references, plus host authentication references. Container versions
+1 and 2 remain readable; v1 uses the legacy zero-length AAD convention. Vault
+schemas 1 through 7 migrate directly to schema 8. Legacy key references become
+stable authentication entries, shared references stay shared, and unused keys are
+retained. Private-key IDs and agent allowlists keep their existing meaning.
+Missing legacy creation metadata is reported as unknown.
 
 Older app versions cannot read v3 exports. Unknown container or payload versions
 are reported separately from authentication failure. Password errors and failed

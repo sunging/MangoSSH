@@ -72,10 +72,11 @@ on every event and runs them on an emulator for pull requests; without the
 compile step the `androidTest` source set silently stops building.
 
 CI validates both distributions and the terminal/SSH modules without signing
-secrets. Protected `main`/`develop` pushes sign the verified unsigned APK artifacts
-in the separate `ci-signing` environment, using SDK tools without repository
-checkout or Gradle. PR validation never receives signing secrets. Only the
-`main` release workflow publishes releases.
+secrets. `develop` pushes and protected `main` pushes sign the verified unsigned
+APK artifacts in the separate `ci-signing` environment, using SDK tools without
+repository checkout or Gradle. Missing signing secrets fail the signing job.
+PR validation never receives signing secrets. Only the `main` release workflow
+publishes releases.
 
 For an existing developer emulator, audit tests for isolated files, preferences,
 and Keystore aliases before execution. Compare installed/APK/Studio debug

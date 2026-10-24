@@ -111,14 +111,54 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
         snapshot.copy(keys = snapshot.keys.filterNot { it.id == key.id }.plus(key))
     }
 
+    /** Replaces an existing key in place so its list position and profile references stay intact. */
+    suspend fun replaceKey(key: StoredSshKey) = mutate { snapshot ->
+        // A key removed while it was being edited must not be resurrected.
+        if (snapshot.keys.none { it.id == key.id }) null
+        else snapshot.copy(keys = snapshot.keys.map { if (it.id == key.id) key else it })
+    }
+
+    /**
+     * Saves or clears the remembered passphrase of key [id], or does nothing when that key is gone
+     * or its private key changed since [privateKeyPem] was read, so a stale answer never lands on
+     * an edited key.
+     */
+    suspend fun setSavedKeyPassphrase(id: String, privateKeyPem: String, passphrase: String?) = mutate { snapshot ->
+        snapshot.withSavedKeyPassphrase(id, privateKeyPem, passphrase)
+    }
+
     suspend fun removeKey(id: String) = mutate { snapshot ->
         snapshot.copy(
             keys = snapshot.keys.filterNot { it.id == id },
+            authentications = snapshot.authentications.map { if (it.keyId == id) it.copy(keyId = null) else it },
             profiles = snapshot.profiles.map { profile ->
-                profile.copy(keyId = profile.keyId.takeUnless { it == id },
-                    agentPolicy = profile.agentPolicy.copy(allowedKeyIds = profile.agentPolicy.allowedKeyIds?.filterNot { it == id }))
+                profile.copy(agentPolicy = profile.agentPolicy.copy(allowedKeyIds = profile.agentPolicy.allowedKeyIds?.filterNot { it == id }))
             },
         )
+    }
+
+    /** Adds a credential and an optional staged key in one write, rejecting ID collisions. */
+    internal suspend fun addAuthentication(authentication: StoredAuthentication, stagedKey: StagedKeyChange? = null,
+        allowed: () -> Boolean = { true }) = mutate { snapshot ->
+        if (!allowed() || snapshot.authentications.any { it.id == authentication.id }) null
+        else snapshot.withStagedKey(authentication.keyId, stagedKey)?.copy(authentications = snapshot.authentications + authentication)
+    }
+
+    /** Edits the current record under the write lock; a deleted record can never be resurrected. */
+    internal suspend fun editAuthentication(id: String, label: String, replacement: String?, clearPassword: Boolean, keyId: String?,
+        stagedKey: StagedKeyChange? = null, allowed: () -> Boolean = { true }) = mutate { snapshot ->
+        if (!allowed()) null else snapshot.withEditedAuthentication(id, label, replacement, clearPassword, keyId, stagedKey)
+    }
+
+    /** Removes the secret and every host reference in a single persistent mutation. */
+    suspend fun removeAuthentication(id: String, allowed: () -> Boolean = { true }) = mutate { snapshot ->
+        if (!allowed()) null else snapshot.withRemovedAuthentication(id)
+    }
+
+    /** Saves a proven credential copy only while both original host and authentication still match. */
+    suspend fun rememberAuthentication(profile: ConnectionProfile, expectedHost: ConnectionProfile?, expected: StoredAuthentication?,
+        authentication: StoredAuthentication, expectedKey: StoredSshKey? = null, allowed: () -> Boolean = { true }) = mutate { snapshot ->
+        if (!allowed()) null else snapshot.withRememberedAuthentication(profile, expectedHost, expected, authentication, expectedKey)
     }
 
     suspend fun trustHostKey(hostKey: TrustedHostKey) = mutate { snapshot ->
@@ -186,11 +226,12 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
      * Validates references under the write lock and reports why a mutation could not commit.
      * Only Success may acknowledge a save or retain a newly generated key. A failed write
      * leaves the published snapshot and revision unchanged so the caller can preserve its draft.
+     * A transform returns null to reject a mutation whose target no longer exists.
      */
-    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot): VaultMutationResult = withContext(Dispatchers.IO) {
+    private suspend fun mutate(transform: (VaultSnapshot) -> VaultSnapshot?): VaultMutationResult = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
             if (_status.value !is VaultStatus.Ready) return@withLock VaultMutationResult.NotReady
-            val updated = transform(_snapshot.value)
+            val updated = transform(_snapshot.value) ?: return@withLock VaultMutationResult.Invalid
             val removedOrIncompatible = _snapshot.value.profiles.filter { old ->
                 val next = updated.profiles.firstOrNull { it.id == old.id }
                 next == null || next.protocol != website.sung.mangossh.domain.ConnectionProtocol.SSH || next.jumpProfileIds.isNotEmpty()
@@ -210,4 +251,14 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
             }
         }
     }
+}
+
+/**
+ * This snapshot with key [id]'s remembered passphrase set to [passphrase], or null when that key
+ * is gone, no longer holds [privateKeyPem], or is not encrypted.
+ */
+internal fun VaultSnapshot.withSavedKeyPassphrase(id: String, privateKeyPem: String, passphrase: String?): VaultSnapshot? {
+    val current = keys.firstOrNull { it.id == id }
+    if (current == null || current.privateKeyPem != privateKeyPem || !current.requiresPassphrase) return null
+    return copy(keys = keys.map { if (it.id == id) it.copy(savedPassphrase = passphrase) else it })
 }

@@ -18,6 +18,12 @@ class TerminalBehaviorTest {
         assertEquals(TerminalDelKeyMode.DELETE, behavior.delKeyMode)
     }
 
+    /** Deliberately not the prior behavior: Ctrl+Enter should insert a newline in Claude Code and Codex. */
+    @Test
+    fun ctrlEnterSendsLineFeedByDefault() {
+        assertTrue(TerminalBehavior().ctrlEnterSendsLineFeed)
+    }
+
     @Test
     fun outOfRangeScrollbackFallsBackToDefault() {
         val tooFew = TerminalBehavior(scrollbackLines = TerminalBehavior.MIN_SCROLLBACK_LINES - 1).normalized()

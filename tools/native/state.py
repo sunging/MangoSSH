@@ -6,6 +6,7 @@ an entry, and every published output is hashed before it can be reused.
 """
 from __future__ import annotations
 
+from collections.abc import Collection
 import contextlib
 import errno
 import fcntl
@@ -32,10 +33,21 @@ def sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def files(root: Path) -> dict:
-    """Hash relative names, file contents, executable bits and symlink targets."""
+def files(root: Path, exclude: Collection[str] = ()) -> dict:
+    """Hash relative names, file contents, executable bits and symlink targets.
+
+    Top-level names in `exclude` are never walked, which matters for large ignored
+    trees on a Windows drive seen through WSL, where every file access is slow.
+    """
+    paths = []
+    for top in root.iterdir():
+        if top.name in exclude:
+            continue
+        paths.append(top)
+        if top.is_dir() and not top.is_symlink():
+            paths.extend(top.rglob("*"))
     result = {}
-    for path in sorted(root.rglob("*")):
+    for path in sorted(paths):
         name = path.relative_to(root).as_posix()
         if path.is_symlink():
             result[name] = {"link": os.readlink(path)}

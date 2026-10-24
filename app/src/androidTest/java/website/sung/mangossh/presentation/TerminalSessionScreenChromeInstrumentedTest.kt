@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.flow.MutableSharedFlow
 import org.connectbot.terminal.TerminalEmulatorFactory
 import org.junit.Assert.assertEquals
@@ -25,6 +26,7 @@ import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.session.TerminalClipboardCopy
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.TerminalSessionState
+import org.connectbot.terminal.R as TerminalR
 
 /**
  * Covers the terminal screen's chrome visibility controls: the immersive toggle, the title
@@ -142,7 +144,9 @@ class TerminalSessionScreenChromeInstrumentedTest {
     private fun openSelectionMenu() {
         composeRule.onNodeWithTag("terminal_surface").performTouchInput { longClick() }
         composeRule.waitForIdle()
-        composeRule.onNodeWithContentDescription("More options").performClick()
+        val moreOptionsDescription = InstrumentationRegistry.getInstrumentation().targetContext
+            .getString(TerminalR.string.terminal_selection_more_options_description)
+        composeRule.onNodeWithContentDescription(moreOptionsDescription).performClick()
         composeRule.waitForIdle()
     }
 
@@ -175,7 +179,8 @@ class TerminalSessionScreenChromeInstrumentedTest {
                         shortcutConfig = TerminalShortcutConfig.defaults(),
                         clipboardCopies = remember(instanceKey) { MutableSharedFlow<TerminalClipboardCopy>() },
                         onSend = {},
-                        resourceSnapshot = null,
+                        resourceState = website.sung.mangossh.session.ServerResourceState(),
+                        onResourceMonitoringChange = {},
                         onRequestResources = {},
                         onOpenFileBrowser = {},
                         onRequestLeave = {},

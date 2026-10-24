@@ -53,16 +53,64 @@ class NewWorkflowUiInstrumentedTest {
         compose.onAllNodesWithText(text(R.string.editor_direct)).onLast().performClick()
         compose.runOnIdle { assertEquals(TransferConflictAction.DIRECT_OVERWRITE, decision?.action) }
     }
-    @Test fun busyKeyManagementBlocksRepeatedGenerationAndImport() {
+    @Test fun busyAuthenticationManagementBlocksRepeatedAdds() {
+        compose.setContent { MaterialTheme {
+            AuthenticationScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, emptyList(), emptyList(), emptyList(),
+                AuthenticationEditorActions(), { fail("Unexpected removal") }, { _, _, _ -> fail("Unexpected export") }, true)
+        } }
+        compose.onNodeWithText(text(R.string.authentication_add)).assertIsNotEnabled()
+    }
+    @Test fun editingAKeyStagesTheNewNameWithoutTouchingItsEncryption() {
+        val key = website.sung.mangossh.data.vault.SshKeySummary("key", "Old name", "ssh-ed25519", "")
+        var edit: website.sung.mangossh.data.keys.KeyEditRequest? = null
+        compose.setContent { MaterialTheme { EditKeyDialog(key, {}, { edit = it }) } }
+        compose.onNode(hasSetTextAction() and hasText("Old name")).performTextReplacement("New name")
+        compose.onNodeWithText(text(R.string.common_save)).performClick()
+        compose.runOnIdle {
+            assertEquals("New name", edit?.label)
+            assertEquals(website.sung.mangossh.data.keys.KeyPassphraseChange.Keep, edit?.passphrase)
+            assertEquals(false, edit?.rememberPassphrase)
+        }
+    }
+    @Test fun exportMenuOffersClipboardFileAndShareForBothKeyHalves() {
+        val key = website.sung.mangossh.data.vault.StoredSshKey("key", "Key", "ssh-ed25519",
+            "ssh-ed25519 AAAA Key", "SHA256:placeholder", "placeholder")
+        val exports = mutableListOf<Triple<String, KeyExportPart, KeyExportTarget>>()
         compose.setContent {
             MaterialTheme {
-                KeysScreen(website.sung.mangossh.data.vault.VaultStatus.Ready, emptyList(),
-                    { _, _ -> fail("Repeated generation") }, { _, _, _ -> fail("Repeated import") },
-                    { fail("Unexpected removal") }, { _, _ -> fail("Unexpected export") }, busy = true)
+                AuthenticationScreen(website.sung.mangossh.data.vault.VaultStatus.Ready,
+                    listOf(website.sung.mangossh.data.vault.AuthenticationSummary("auth", "Example", keyId = key.id)), listOf(key.summary()), emptyList(),
+                    AuthenticationEditorActions(), { fail("Unexpected removal") }, { id, part, target -> exports += Triple(id, part, target) }, false)
             }
         }
-        compose.onNodeWithText(text(R.string.ui_generate_key)).assertIsNotEnabled()
-        compose.onNodeWithText(text(R.string.ui_import_private_key)).assertIsNotEnabled()
+        // The public half is preselected and carries no private-key warning.
+        compose.onNodeWithText(text(R.string.ui_export)).performClick()
+        compose.onNodeWithText(text(R.string.ui_export_to_file)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.ui_private_key_export_warning)).assertDoesNotExist()
+        compose.onNodeWithText(text(R.string.ui_copy_to_clipboard)).performClick()
+        compose.onNodeWithText(text(R.string.ui_export)).performClick()
+        compose.onNode(hasText(text(R.string.ui_private_key)) and hasClickAction() and
+            SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.Role, androidx.compose.ui.semantics.Role.RadioButton)).performClick()
+        compose.onNodeWithText(text(R.string.ui_private_key_export_warning)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.ui_share_to_app)).performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(Triple("key", KeyExportPart.PUBLIC, KeyExportTarget.Clipboard),
+                Triple("key", KeyExportPart.PRIVATE, KeyExportTarget.Share)), exports)
+        }
+    }
+    @Test fun keyUnlockPromptReturnsThePassphraseAndTheRememberChoice() {
+        val prompt = SessionPrompt.Authentication("request", "session",
+            SessionPromptText.App(SessionPromptTextKind.UNLOCK_KEY_TITLE, "Key"),
+            SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_INSTRUCTION),
+            listOf(AuthenticationField(SessionPromptText.App(SessionPromptTextKind.KEY_PASSPHRASE_FIELD), false),
+                AuthenticationField(SessionPromptText.App(SessionPromptTextKind.REMEMBER_KEY_PASSPHRASE), true, toggle = true)))
+        var answer: List<String>? = null
+        compose.setContent { MaterialTheme { SessionPromptDialog(prompt) { answer = it } } }
+        // Placeholder input: the dialog only relays text and never decrypts anything.
+        compose.onNode(hasSetTextAction()).performTextInput("placeholder")
+        compose.onNodeWithText(text(R.string.ui_remember_passphrase)).assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithText(text(R.string.common_submit)).performClick()
+        compose.runOnIdle { assertEquals(listOf("placeholder", AuthenticationField.TOGGLE_ON), answer) }
     }
 
 }

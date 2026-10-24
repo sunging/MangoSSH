@@ -1,8 +1,7 @@
 package website.sung.mangossh.presentation
 
-import android.content.Context
 import android.net.Uri
-import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +35,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -44,6 +44,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import website.sung.mangossh.R
 import website.sung.mangossh.session.RemoteFileMessage
 import website.sung.mangossh.session.ScpTransferDirection
@@ -88,8 +89,9 @@ internal fun aggregateTransferProgress(transfers: List<ScpTransferState>): Float
 internal fun FileTransferStatusAction(
     transfers: List<ScpTransferState>,
     onClick: () -> Unit,
+    remoteActiveCount: Int = 0,
 ) {
-    val activeCount = transfers.count { it.isActive }
+    val activeCount = transfers.count { it.isActive } + remoteActiveCount
     val progress = aggregateTransferProgress(transfers)
     BadgedBox(
         badge = {
@@ -141,8 +143,14 @@ internal fun FileTransfersSheet(
     onClearFinished: () -> Unit,
     onDismiss: () -> Unit,
     onReconnect: (ScpTransferState) -> Unit = {},
+    operations: List<website.sung.mangossh.session.RemoteOperationState> = emptyList(),
+    onCancelOperation: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val directoryBrowser = rememberLauncherForActivityResult(BrowseDownloadedDirectoryContract()) { document ->
+        if (document != null) scope.launch { launchDocumentViewIntent(context, document) }
+    }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Row(
             modifier = Modifier
@@ -157,7 +165,7 @@ internal fun FileTransfersSheet(
             )
             TextButton(
                 onClick = onClearFinished,
-                enabled = transfers.any { it.isFinished },
+                enabled = transfers.any { it.isFinished } || operations.any { !it.active },
             ) {
                 Text(stringResource(R.string.ui_clear_finished))
             }
@@ -169,6 +177,9 @@ internal fun FileTransfersSheet(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            items(operations.reversed(), key = { "operation-${it.id}" }) { operation ->
+                RemoteOperationCard(operation) { onCancelOperation(operation.id) }
+            }
             items(transfers.reversed(), key = { it.id }) { transfer ->
                 TransferCard(
                     transfer = transfer,
@@ -179,7 +190,14 @@ internal fun FileTransfersSheet(
                     onReconnect = { onReconnect(transfer) },
                     onOpen = {
                         if (transfer.canOpenLocally) {
-                            openDownloadedDocument(context, transfer)
+                            scope.launch {
+                                val uri = transfer.localUri?.let(Uri::parse) ?: return@launch
+                                if (transfer.kind == ScpTransferKind.DIRECTORY) {
+                                    launchDirectoryViewIntent(context, uri) { directoryBrowser.launch(it) }
+                                } else {
+                                    launchDocumentViewIntent(context, uri)
+                                }
+                            }
                         } else {
                             onOpenRemoteDirectory(transfer)
                         }
@@ -334,21 +352,3 @@ private fun ScpTransferPhase.label(): String = when (this) {
     ScpTransferPhase.FAILED -> stringResource(R.string.ui_failed)
     ScpTransferPhase.CANCELLED -> stringResource(R.string.ui_cancelled)
 }
-
-/**
- * Hands a finished download to whichever app can display it.
- *
- * The document is shared read-only for the life of the target activity; nothing
- * is copied out of the location the user picked.
- */
-private fun openDownloadedDocument(context: Context, transfer: ScpTransferState) {
-    val uri = transfer.localUri?.let(Uri::parse) ?: return
-    val mimeType = if (transfer.kind == ScpTransferKind.DIRECTORY) {
-        DocumentsContract.Document.MIME_TYPE_DIR
-    } else {
-        context.contentResolver.getType(uri) ?: FALLBACK_MIME_TYPE
-    }
-    launchViewIntent(context, uri, mimeType)
-}
-
-private const val FALLBACK_MIME_TYPE = "*/*"

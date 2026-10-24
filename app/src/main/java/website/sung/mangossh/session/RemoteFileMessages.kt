@@ -7,8 +7,10 @@ package website.sung.mangossh.session
  * the category against the current locale only when it is displayed.
  */
 sealed interface RemoteFileMessage {
+    data class OperationFailure(val reason: RemoteOperationFailure) : RemoteFileMessage
     data class Failure(val reason: RemoteFileFailure) : RemoteFileMessage
     data object LocalDocumentFailure : RemoteFileMessage
+    data object LocalDocumentWriteFailure : RemoteFileMessage
     data object TreeTooLarge : RemoteFileMessage
     data object TransferSessionClosed : RemoteFileMessage
     data object ResumeRestarted : RemoteFileMessage
@@ -24,12 +26,14 @@ sealed interface RemoteFileMessage {
 
 /** Maps a throwable to a category without retaining library or server text. */
 internal fun Throwable.toRemoteFileMessage(): RemoteFileMessage = when (this) {
+    is RemoteOperationException -> RemoteFileMessage.OperationFailure(reason)
     is MetadataPreservationException -> RemoteFileMessage.MetadataFailure
     is StagingSpaceException -> RemoteFileMessage.InsufficientSpace(requiredBytes)
     is OpenCacheSpaceException -> RemoteFileMessage.OpenSpaceShortage(requiredBytes)
     is SourceChangedException -> RemoteFileMessage.SourceChanged
     is RemoteFileException -> RemoteFileMessage.Failure(failure)
     is LocalDocumentException -> RemoteFileMessage.LocalDocumentFailure
+    is LocalDocumentWriteException -> RemoteFileMessage.LocalDocumentWriteFailure
     is TransferTreeTooLargeException -> RemoteFileMessage.TreeTooLarge
     else -> RemoteFileMessage.IoFailure
 }

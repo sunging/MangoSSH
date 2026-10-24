@@ -11,8 +11,12 @@ import org.gradle.work.DisableCachingByDefault;
 
 /** Runs the local content cache, which also validates external sources and toolchains.
  * Gradle output caching is deliberately disabled until cross-directory reproducibility
- * is verified. Always consulting the adapter prevents stale external worktrees or
- * corrupted outputs from being hidden by a Gradle UP-TO-DATE decision.
+ * is verified. Gradle may still skip the task as UP-TO-DATE when every source it reads
+ * is a declared input; Gradle also reruns it when a published output was changed or
+ * deleted. External worktrees (worktree source mode) are invisible to Gradle, so those
+ * builds always consult the adapter. WSL toolchain identities (Go, JDK, NDK, android.jar,
+ * host tools) are not Gradle inputs either: after upgrading one in place, rerun with
+ * {@code -PmangosshNativeAlwaysRun=true} or {@code --rerun-tasks}.
  */
 @DisableCachingByDefault(because = "Verified component cache owns external source/toolchain identity")
 public abstract class NativeTask extends DefaultTask {
@@ -32,13 +36,27 @@ public abstract class NativeTask extends DefaultTask {
      * because Windows drives are slow through WSL.
      */
     @Input @org.gradle.api.tasks.Optional public abstract Property<String> getHostStateDirectory();
+    /** Always consult the adapter, even when Gradle considers the declared inputs unchanged. */
+    @Internal public abstract Property<Boolean> getAlwaysRun();
     @Inject protected abstract ExecOperations getExecOperations();
 
     public NativeTask() {
-        getOutputs().upToDateWhen(task -> false);
+        getOutputs().upToDateWhen(task -> {
+            NativeTask nativeTask = (NativeTask) task;
+            return !nativeTask.getAlwaysRun().get() && nativeTask.gradleTracksAllSources();
+        });
+        getAlwaysRun().convention(false);
         getSourceMode().convention("locked");
         getOffline().convention(true);
         getBuildEnvironment().convention(Collections.emptyMap());
+    }
+
+    /**
+     * Whether the declared inputs fully identify the sources. Locked sources are pinned
+     * by commit in a declared lock file; a worktree's edits are not visible to Gradle.
+     */
+    protected boolean gradleTracksAllSources() {
+        return "locked".equals(getSourceMode().get());
     }
 
     protected void invoke(String component, Map<String, String> paths) {

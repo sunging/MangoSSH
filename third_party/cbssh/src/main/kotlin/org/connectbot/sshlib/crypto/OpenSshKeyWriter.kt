@@ -18,6 +18,7 @@
 package org.connectbot.sshlib.crypto
 
 import org.connectbot.sshlib.SshException
+import org.connectbot.sshlib.crypto.ed25519.Ed25519PrivateKey
 import java.io.ByteArrayOutputStream
 import java.security.KeyPair
 import java.security.PrivateKey
@@ -27,6 +28,7 @@ import java.security.interfaces.ECPublicKey
 import java.security.interfaces.EdECPrivateKey
 import java.security.interfaces.RSAPrivateCrtKey
 import java.security.interfaces.RSAPublicKey
+import java.security.spec.PKCS8EncodedKeySpec
 
 internal object OpenSshKeyWriter {
 
@@ -162,8 +164,24 @@ internal object OpenSshKeyWriter {
                 }
             }
 
-            else -> platformEd25519Seed(privKey)
-                ?: throw SshException("Cannot extract Ed25519 seed from ${privKey.javaClass}")
+            else -> platformEd25519Seed(privKey) ?: pkcs8Ed25519Seed(privKey)
+        }
+    }
+
+    /**
+     * Providers such as Android's Conscrypt return Ed25519 keys that implement neither our class
+     * nor EdECPrivateKey; their RFC 8410 PKCS#8 encoding still carries the seed, which is how
+     * signing reads these keys too.
+     */
+    private fun pkcs8Ed25519Seed(privKey: PrivateKey): ByteArray {
+        val encoded = privKey.encoded?.takeIf { privKey.format == "PKCS#8" }
+            ?: throw SshException("Cannot extract Ed25519 seed from ${privKey.javaClass}")
+        return try {
+            Ed25519PrivateKey(PKCS8EncodedKeySpec(encoded)).getSeed()
+        } catch (e: Exception) {
+            throw SshException("Cannot extract Ed25519 seed from ${privKey.javaClass}", e)
+        } finally {
+            encoded.fill(0)
         }
     }
 

@@ -17,7 +17,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.data.vault.CommandSnippet
-import website.sung.mangossh.data.vault.StoredSshKey
+import website.sung.mangossh.data.vault.SshKeySummary
+import website.sung.mangossh.data.vault.AuthenticationSummary
 import website.sung.mangossh.domain.*
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 import website.sung.mangossh.ui.components.SettingsSwitchRow
@@ -25,9 +26,9 @@ import website.sung.mangossh.ui.components.SettingsSwitchRow
 /** Detail pages expose only the settings for the selected category, while all edits stay local. */
 @Composable
 internal fun HostEditorDetails(controller: HostEditorController, hosts: List<ConnectionProfile>,
-    defaults: ConnectionPreferences, keys: List<StoredSshKey>, snippets: List<CommandSnippet>) {
+    defaults: ConnectionPreferences, keys: List<SshKeySummary>, snippets: List<CommandSnippet>, authentications: List<AuthenticationSummary> = emptyList()) {
     when (controller.page) {
-        HostEditorPage.CONNECTION -> ConnectionDetail(controller, keys)
+        HostEditorPage.CONNECTION -> ConnectionDetail(controller, authentications)
         HostEditorPage.JUMPS -> JumpChainEditor(controller.draft.jumpIds,
             { controller.draft = controller.draft.copy(jumpIds = it) }, hosts, controller.draft.id, controller.draft.protocol)
         HostEditorPage.STARTUP -> StartupDetail(controller, snippets)
@@ -38,7 +39,7 @@ internal fun HostEditorDetails(controller: HostEditorController, hosts: List<Con
 }
 
 @Composable
-private fun ConnectionDetail(controller: HostEditorController, keys: List<StoredSshKey>) {
+private fun ConnectionDetail(controller: HostEditorController, authentications: List<AuthenticationSummary>) {
     val draft = controller.draft
     MangoPreferenceGroup {
         HostEditorChoice(stringResource(R.string.ui_protocol), draft.protocol.label, draft.protocol,
@@ -51,16 +52,11 @@ private fun ConnectionDetail(controller: HostEditorController, keys: List<Stored
                 controller.draft = draft.copy(route = route, authentication = if (route == draft.route) draft.authentication else authenticationAfterRouteSelection(route, draft.authentication))
             }, "host_editor_route")
         if (draft.route != ConnectionRoute.TAILNET) {
-            HostEditorChoice(stringResource(R.string.ui_authentication), draft.authentication.label(), draft.authentication,
-                AuthenticationMethod.entries.filterNot { draft.route == ConnectionRoute.DIRECT && it == AuthenticationMethod.TAILSCALE_SSH },
-                { it.label() }, { controller.draft = draft.copy(authentication = it) }, "host_editor_authentication")
-            if (draft.authentication == AuthenticationMethod.PRIVATE_KEY) {
-                fun keyName(id: String?) = keys.firstOrNull { it.id == id }?.label
-                HostEditorChoice(stringResource(R.string.ui_shared_private_key), keyName(draft.keyId) ?: stringResource(R.string.host_editor_select_key),
-                    draft.keyId, keys.map { it.id as String? }, { keyName(it).orEmpty() },
-                    { controller.draft = draft.copy(keyId = it) }, "host_editor_key", searchable = true, error = keyName(draft.keyId) == null)
-                if (keys.isEmpty()) Text(stringResource(R.string.ui_generate_or_import_a_private_key_on_the_keys_page_first),
-                    color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            if (draft.route == ConnectionRoute.TSNET) HostEditorChoice(stringResource(R.string.ui_authentication), draft.authentication.label(), draft.authentication,
+                AuthenticationMethod.entries, { it.label() }, { controller.draft = draft.copy(authentication = it) }, "host_editor_authentication")
+            if (draft.authentication == AuthenticationMethod.AUTOMATIC) {
+                AuthenticationChoice(draft.authenticationId, authentications,
+                    { controller.draft = draft.copy(authenticationId = it) }, "host_editor_credential")
             }
         }
     }
@@ -110,7 +106,7 @@ private fun StartupDetail(controller: HostEditorController, snippets: List<Comma
 }
 
 @Composable
-private fun SecurityDetail(controller: HostEditorController, keys: List<StoredSshKey>) {
+private fun SecurityDetail(controller: HostEditorController, keys: List<SshKeySummary>) {
     val draft = controller.draft
     MangoPreferenceGroup {
         if (draft.protocol == ConnectionProtocol.SSH) SettingsSwitchRow(stringResource(R.string.ui_enable_ssh_agent_forwarding),
@@ -134,7 +130,7 @@ private fun SecurityDetail(controller: HostEditorController, keys: List<StoredSs
 }
 
 @Composable
-private fun AgentAllowlist(allowed: List<String>?, keys: List<StoredSshKey>, change: (List<String>?) -> Unit) {
+private fun AgentAllowlist(allowed: List<String>?, keys: List<SshKeySummary>, change: (List<String>?) -> Unit) {
     var picking by rememberSaveable { mutableStateOf(false) }
     HostEditorRow(stringResource(R.string.host_policy_agent), if (allowed == null) stringResource(R.string.host_policy_selected_key)
         else pluralStringResource(R.plurals.host_editor_key_count, allowed.size, allowed.size), { picking = true }, Modifier.testTag("host_editor_agent_keys"), dense = true)

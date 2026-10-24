@@ -121,6 +121,15 @@ alone does not authenticate a vendor directory.
 `<state>` is `build/native` when Gradle runs on Linux (including CI), the WSL
 directory above when it runs on Windows, or `mangosshNativeStateDir` when set.
 
+Gradle skips `buildEmbeddedTsnetAar` as UP-TO-DATE when its declared inputs
+(bridge sources, scripts, `toolchains.json`, ABIs and environment) and its
+published outputs are unchanged, so an unchanged debug build never reaches WSL.
+`buildMosh` is skipped the same way in locked mode, where `tools/fdroid-sources.lock`
+pins every source; worktree mode always consults the adapter because Gradle
+cannot see external worktree edits. Toolchains used inside WSL are verified only
+by the adapter: after replacing one in place, run once with
+`-PmangosshNativeAlwaysRun=true` (or `--rerun-tasks`).
+
 No binary or terminfo archive is generated into a source directory. Because AGP
 would still package them, `verifyNoNativeSourceBinaries` fails the build when
 any `app/src/*/jniLibs` file or `assets/mosh/terminfo.zip` exists. Root LICENSE and static license assets are maintained
@@ -180,6 +189,18 @@ to producer manifests and local CMake source identities. ZIP alignment remains a
 separate SDK check. Neither static validation nor compilation replaces device
 acceptance for PTY lifecycle, terminal resize, Mosh reconnect and tsnet routing.
 
+Release optimization must preserve the Ed25519 JCA provider's reflective service
+classes and their public no-argument constructors. The cbssh JAR supplies these
+consumer rules in `META-INF/proguard/cbssh.pro`. CI and release publication verify
+the actual DEX definitions in both release APKs, since debug tests and string
+searches cannot detect removed constructors or renamed services:
+
+```sh
+python3 tools/check-ed25519-apk.py --dexdump "$ANDROID_HOME/build-tools/36.0.0/dexdump" \
+  app/build/outputs/apk/github/release/app-github-release-unsigned.apk \
+  app/build/outputs/apk/fdroid/release/app-fdroid-release-unsigned.apk
+```
+
 For reproducibility, build with two independent `--state` directories and compare
 packaged ELF, terminfo and AAR contents (including classes.jar); metadata containing
 local build paths need not match. Use `tools/native/compare-artifacts.py` for a
@@ -200,3 +221,28 @@ The standalone PTY script is a diagnostic build and writes under `build/native`.
 The authoritative fdroiddata recipe remains external. Update its SDK CMake/Python
 prerequisites for this revision; previously published versions keep their original
 build recipes. Source and compiler setup must finish before network isolation.
+
+### Disposable emulator regression diagnostics
+
+`tools/run-device-regressions.sh` is CI-only. It compiles the APKs first, starts
+loopback SSH/echo and normal/stalled resource fixtures, and runs the GitHub,
+F-Droid and termlib device suites sequentially. Before each suite it checks the
+emulator, exercises Doze and restores ACTIVE, enables both networks, verifies
+reverse mappings, and authenticates through both host and device-side listeners.
+The authentication probe uses only the fixture's synthetic `fixture` account.
+It does not validate application-level SSH behavior; the instrumented tests do.
+
+Run the support checks with the fixture virtual environment:
+
+```sh
+python tools/test-device-regression-support.py  # requires Paramiko 4.0.0
+bash -n tools/run-device-regressions.sh
+```
+
+`build/device-diagnostics` is uploaded even after a failure. It contains preflight
+stages, device/mapping state, and allowlisted event summaries from logcat and
+fixture logs, never raw server messages or credentials. The Downloads test logs
+only accessibility structure (no text), and captures a screenshot only when the
+active window is DocumentsUI and CI diagnostics are explicitly enabled. Existing
+JUnit failures and skips remain fatal. A missing/failed preflight also fails the
+job; no fixture opt-in is silently skipped.

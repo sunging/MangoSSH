@@ -1,18 +1,23 @@
 package website.sung.mangossh.presentation.settings
 
+import androidx.annotation.StringRes
+import website.sung.mangossh.R
+
 /**
  * One bundled dependency shown on the About page.
  *
  * [name], [license], and [url] are ASCII proper nouns / SPDX identifiers and
  * are deliberately not routed through string resources. [licenseAsset] is a
  * path under `assets/` when the full license text ships in the APK; `null`
- * when it does not (the entry still records the attribution).
+ * when it does not (the entry still records the attribution). Optional
+ * [descriptionResource] adds source-availability details inside the notice only.
  */
 internal data class ThirdPartyNotice(
     val name: String,
     val license: String,
     val url: String,
     val licenseAsset: String?,
+    @StringRes val descriptionResource: Int? = null,
 )
 
 /**
@@ -37,6 +42,7 @@ internal val thirdPartyNotices = listOf(
         license = "GPL-3.0-or-later",
         url = "https://github.com/connectbot/mosh4android",
         licenseAsset = "licenses/GPL-3.0-or-later.txt",
+        descriptionResource = R.string.settings_about_mosh_gpl_notice,
     ),
     ThirdPartyNotice(
         name = "ConnectBot termlib",

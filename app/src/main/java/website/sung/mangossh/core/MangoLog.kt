@@ -125,6 +125,8 @@ enum class MangoLogEvent(val code: String) {
     MOSH_COMPANION_SSH_RECONNECT_FAILED("mosh.companion_ssh.reconnect.failed"),
     TRANSFER_REMOTE_TEMP_CLEANUP_FAILED("transfer.remote_temp.cleanup.failed"),
     TRANSFER_REBOUND("transfer.rebound"),
+    /** A SAF provider refused to open the approved download target for writing. */
+    TRANSFER_LOCAL_TARGET_OPEN_FAILED("transfer.local_target.open.failed"),
 
     /** Another app opened, closed, or failed to read a streamed remote file. */
     REMOTE_STREAM_OPENED("remote_stream.opened"),
@@ -135,6 +137,9 @@ enum class MangoLogEvent(val code: String) {
 
     /** Generating or encoding a new client key failed before it reached the vault. */
     KEY_GENERATION_FAILED("key.generation.failed"),
+
+    /** Renaming or re-encrypting a stored client key failed before it reached the vault. */
+    KEY_EDIT_FAILED("key.edit.failed"),
     TSNET_STARTING("tsnet.starting"),
     TSNET_RUNNING("tsnet.running"),
     TSNET_FAILED("tsnet.failed"),

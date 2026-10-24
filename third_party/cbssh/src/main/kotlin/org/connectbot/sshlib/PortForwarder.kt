@@ -18,6 +18,7 @@
 package org.connectbot.sshlib
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Handle to an active port forwarding.
@@ -38,11 +39,17 @@ interface PortForwarder : AutoCloseable {
     /** Connection counts and the time data last moved; no byte counters are kept. */
     val activity: PortForwardActivity get() = PortForwardActivity(0, 0, null)
 
+    /** Listener and client lifecycle events; byte traffic does not emit updates. */
+    val status: StateFlow<PortForwardStatus>? get() = null
+
     suspend fun stop()
     override fun close() {
         runBlocking { stop() }
     }
 }
+
+/** A client being opened also needs CPU time before its SSH data channel exists. */
+data class PortForwardStatus(val isActive: Boolean, val activeConnections: Int, val pendingConnections: Int = 0)
 
 /**
  * Usage of one port forward.

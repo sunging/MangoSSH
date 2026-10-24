@@ -49,7 +49,7 @@ class AndroidKeystoreVault(context: Context, private val keyAlias: String = KEY_
             val snapshot = VaultPayloadCodec.decode(plaintext)
             val originalVersion = org.json.JSONObject(plaintext.decodeToString()).getInt("schemaVersion")
             if (originalVersion < VaultSnapshot.CURRENT_SCHEMA_VERSION) {
-                // Preserve the already encrypted original before any later schema-6 mutation.
+                // Preserve the encrypted original before any mutation using the current schema.
                 val recovery = AtomicFile(File(appContext.noBackupFilesDir, "vault-upgrade-recovery-v$originalVersion.bin"))
                 if (!recovery.baseFile.exists()) {
                     val output = recovery.startWrite()

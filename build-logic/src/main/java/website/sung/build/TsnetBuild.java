@@ -10,6 +10,11 @@ import org.gradle.work.DisableCachingByDefault;
 public abstract class TsnetBuild extends NativeTask {
     @OutputDirectory public abstract DirectoryProperty getOutputDirectory();
 
+    /** The bridge and its scripts are declared source inputs; no external worktree is read. */
+    @Override protected boolean gradleTracksAllSources() {
+        return true;
+    }
+
     @TaskAction public void build() {
         invoke("tsnet", Map.of("MANGOSSH_TSNET_OUTPUT_DIR", getOutputDirectory().get().getAsFile().getAbsolutePath()));
     }
