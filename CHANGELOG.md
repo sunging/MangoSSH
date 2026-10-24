@@ -1,56 +1,24 @@
 # Changelog
 
-## [0.8.0](https://github.com/sunging/MangoSSH/compare/v0.7.0...v0.8.0) (2026-10-24)
+## [0.8.0](https://github.com/sunging/MangoSSH/compare/v0.7.0...v0.8.0) (2026-10-25)
 
+### Features and improvements
 
-### Features
+- Manage reusable authentication entries with passwords and private keys in the encrypted vault. Optionally save passwords and key passphrases; rejected keys can fall back to password and manual interactive authentication.
+- Edit SSH key labels and passphrases, and export public or private keys from the authentication editor.
+- Create, rename, copy, move and delete remote files and folders, select multiple items, and edit POSIX permissions. Browse with compact breadcrumbs, an adaptive toolbar and pull-to-refresh, and follow operations in the task panel.
+- Preview complete folder uploads and downloads before writing, including destination, item counts, size and optional SHA-256 verification.
+- View a live Linux/Windows server resource panel with CPU, memory, disks and network rates, automatic refresh while visible, and selectable text.
+- Keep port forwards running after closing their terminal, and automatically recover disconnected tunnels. Forwarding setup now explains directions and suggests loopback addresses.
+- Simplify About and license pages, show the source revision and distribution, localize terminal selection menus, and add a Ctrl+Enter newline option.
+- Optimize release packages to reduce download size.
 
-* add cross-platform server resource panel ([2d279ba](https://github.com/sunging/MangoSSH/commit/2d279baed80242fe3f2e9e7b48ddc6f10dd1c221))
-* add remote file management operations ([a2db262](https://github.com/sunging/MangoSSH/commit/a2db262a0144f67237650a7d0174a630745551a5))
-* **auth:** unify credentials and SSH authentication fallback ([12cb333](https://github.com/sunging/MangoSSH/commit/12cb33385ed2535d77303a0f45340185369f1f08))
-* clarify port forwarding setup and simplify host selection ([52c06fb](https://github.com/sunging/MangoSSH/commit/52c06fb83bf12a7d43bdba44ec643a7bceea83af))
-* **files:** streamline remote browser toolbar and refresh ([c69d565](https://github.com/sunging/MangoSSH/commit/c69d565e2c999c2c257b897b83f41d27181e0df7))
-* **keys:** edit keys, manage passphrases and unify export ([17d7347](https://github.com/sunging/MangoSSH/commit/17d73475d3c5bb110ba3894cbf984ec4ae045c35))
-* **settings:** simplify about and license pages ([1f2a194](https://github.com/sunging/MangoSSH/commit/1f2a194c9206d6d13f32756cd8efb6c5d5585d60))
-* show build revision and distribution in about ([9413144](https://github.com/sunging/MangoSSH/commit/9413144fc2493003c4072149765903564fdeac69))
-* **ssh:** offer to remember a key passphrase when connecting ([066fa8a](https://github.com/sunging/MangoSSH/commit/066fa8a0f5e868c7eafa0a629775343d16aeebf1))
+### Fixes since v0.7.0
 
-
-### Bug Fixes
-
-* **auth:** finish sessions when authentication is cancelled ([603d894](https://github.com/sunging/MangoSSH/commit/603d894cafacd9909b775c551c6e800439b7f340))
-* clarify local transfer overwrite warning ([98b6b26](https://github.com/sunging/MangoSSH/commit/98b6b26d8fb232f293fdd345e69b58e36fce654c))
-* clarify port forwarding lifecycle text ([339054b](https://github.com/sunging/MangoSSH/commit/339054b293f52035420238f275d69f9805809fa3))
-* distinguish newly created download documents from existing files ([4293378](https://github.com/sunging/MangoSSH/commit/429337874342128516b805a79731af5176974290))
-* enable release optimization and preserve terminal JNI ([ca51ab6](https://github.com/sunging/MangoSSH/commit/ca51ab6c5307a71291d1c3e0b0f3e3f217790ebb))
-* **files:** compact breadcrumbs and reveal current directory ([348012d](https://github.com/sunging/MangoSSH/commit/348012d22d0f6f04efe93d8e261bd88d133bc8e8))
-* **files:** expose folder download destinations ([114aabe](https://github.com/sunging/MangoSSH/commit/114aabed06d29fe62e594928b54cc85a71041596))
-* **files:** open actual downloaded folders ([ac7a51f](https://github.com/sunging/MangoSSH/commit/ac7a51f4c9804985dd170fac672dee52ad6740aa))
-* **files:** preserve suggested filenames when saving ([a027897](https://github.com/sunging/MangoSSH/commit/a02789778777d115521aa8d4e7af668504ff10b0))
-* **files:** preview folder downloads before local writes ([2e9838a](https://github.com/sunging/MangoSSH/commit/2e9838a1cc02c1cb45020c8afe465d78183f84b4))
-* **files:** use compact text-only entry menus ([34f26db](https://github.com/sunging/MangoSSH/commit/34f26db017fde613b6f86a63c3dd3d6facc14602))
-* handle unwritable download destinations ([1b4ff81](https://github.com/sunging/MangoSSH/commit/1b4ff8184f0dcc2f96b54f54bb36ef7ceb829a43))
-* improve transfer preview dialog layout ([d2d6eef](https://github.com/sunging/MangoSSH/commit/d2d6eef9c282025786184f4c92d8f5715a6eadb9))
-* make terminal failure and query cancellation consistent ([01b51d7](https://github.com/sunging/MangoSSH/commit/01b51d767c858c3ac26978a40be5d2b9fc46b16d))
-* preserve forwarding recovery during connection cleanup ([eab7edb](https://github.com/sunging/MangoSSH/commit/eab7edb49433908a941d52908a79adc9be8fd735))
-* preserve port forwards and recover disconnected tunnels ([9700ce5](https://github.com/sunging/MangoSSH/commit/9700ce5049e5b8b93acd95095ab73ef988b010f8))
-* repair uploads and task confirmation flow ([3b0e380](https://github.com/sunging/MangoSSH/commit/3b0e3800a0a58dcef6f98f15c1a1721f0ad758b8))
-* retain ownership of cancelled SFTP handshakes ([9a89ac2](https://github.com/sunging/MangoSSH/commit/9a89ac2de5fe0edc2e7ea0c6529b871145ec5175))
-* serialize suspended SSH protocol transitions ([0bfdef4](https://github.com/sunging/MangoSSH/commit/0bfdef4a98d92a55a7200b49b26bbfb8dbd73134))
-* **settings:** move about metadata to bottom footer ([fc7ab9e](https://github.com/sunging/MangoSSH/commit/fc7ab9eabdde7fa7967e9bed507ef39f786988e4))
-* **ssh:** correct SFTP symlink argument order ([bc39058](https://github.com/sunging/MangoSSH/commit/bc3905803d763a88245e3d0a7f9e9a414c76f080))
-* **ssh:** preserve Ed25519 services in release builds ([4ff9505](https://github.com/sunging/MangoSSH/commit/4ff95055df91d3a1bf114028ff1d2cf74fdaea48))
-* **ssh:** write Ed25519 keys decoded by the platform provider ([212aef4](https://github.com/sunging/MangoSSH/commit/212aef4bac8e17ec7ccf72830ce270cd27c13bf5))
-* stabilize regression fixtures and session recovery ([716eb81](https://github.com/sunging/MangoSSH/commit/716eb8108b07a289d14f78fd037ea5475c052152))
-* **terminal:** localize selection context menu ([8d4764b](https://github.com/sunging/MangoSSH/commit/8d4764b6f81dbd09247f09d9386a174ad3a1a057))
-* **terminal:** open the leave prompt on the first Back ([853833d](https://github.com/sunging/MangoSSH/commit/853833d044fb9332b595511c017fddcc6bb4146c))
-* **terminal:** send Ctrl+J for Ctrl+Enter so it inserts a newline ([b7afd67](https://github.com/sunging/MangoSSH/commit/b7afd676d4746b4461f7edcd6fd260482aa5d949))
-* **tsnet:** let the Mosh UDP relay follow the client's new port ([5df1c26](https://github.com/sunging/MangoSSH/commit/5df1c265f503d08d09288f272aa8d2bd969d6b08))
-
-
-### Miscellaneous Chores
-
-* merge develop into main ([b5c4a13](https://github.com/sunging/MangoSSH/commit/b5c4a13761d7ec22d331d822710d5416359f6570))
+- Preserve complete suggested download and export filenames, including dotfiles and extensionless files. Downloads suggest internal storage and explain how to choose another location when a destination is unwritable.
+- Open completed folder downloads in the system document browser at their saved subfolder, including when the provider adjusts the folder name.
+- Allow Mosh over Embedded Tailscale to recover when its client changes the local UDP port after a connection outage.
+- Clean up pending connection setup when authentication is cancelled.
 
 ## [0.7.0](https://github.com/sunging/MangoSSH/compare/v0.6.2...v0.7.0) (2026-10-04)
 

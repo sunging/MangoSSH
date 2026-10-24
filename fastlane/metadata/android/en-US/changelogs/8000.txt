@@ -1,0 +1,12 @@
+Manage reusable authentication entries with passwords and private keys in the encrypted vault. Optionally save passwords and key passphrases; rejected keys can fall back to password and manual interactive authentication.
+Edit SSH key labels and passphrases, and export public or private keys from the authentication editor.
+Create, rename, copy, move and delete remote files and folders, select multiple items, and edit POSIX permissions. Browse with compact breadcrumbs, an adaptive toolbar and pull-to-refresh, and follow operations in the task panel.
+Preview complete folder uploads and downloads before writing, including destination, item counts, size and optional SHA-256 verification.
+View a live Linux/Windows server resource panel with CPU, memory, disks and network rates, automatic refresh while visible, and selectable text.
+Keep port forwards running after closing their terminal, and automatically recover disconnected tunnels. Forwarding setup now explains directions and suggests loopback addresses.
+Simplify About and license pages, show the source revision and distribution, localize terminal selection menus, and add a Ctrl+Enter newline option.
+Optimize release packages to reduce download size.
+Preserve complete suggested download and export filenames, including dotfiles and extensionless files. Downloads suggest internal storage and explain how to choose another location when a destination is unwritable.
+Open completed folder downloads in the system document browser at their saved subfolder, including when the provider adjusts the folder name.
+Allow Mosh over Embedded Tailscale to recover when its client changes the local UDP port after a connection outage.
+Clean up pending connection setup when authentication is cancelled.
