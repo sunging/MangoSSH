@@ -8,6 +8,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <queries>
+        <!-- Discover eligible system pickers for document creation. -->
+        <intent>
+            <action android:name="android.intent.action.CREATE_DOCUMENT" />
+            <data android:mimeType="*/*" />
+        </intent>
+    </queries>
     <application
         android:name=".MangoSshApplication"
         android:allowBackup="false"

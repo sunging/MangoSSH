@@ -138,7 +138,7 @@ class DownloadsUploadInstrumentedTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val selected = AtomicReference<Uri?>()
         val name = "mangossh-transfer-test-${UUID.randomUUID()}.txt"
-        val contract = if (externalStorage) DownloadDocumentContract(mimeType) else object : ActivityResultContracts.CreateDocument(mimeType) {
+        val contract = if (externalStorage) DownloadDocumentContract() else object : ActivityResultContracts.CreateDocument(mimeType) {
             override fun createIntent(context: Context, input: String): Intent = super.createIntent(context, input).apply {
                 putExtra(DocumentsContract.EXTRA_INITIAL_URI,
                     DocumentsContract.buildRootUri("com.android.providers.downloads.documents", "downloads"))

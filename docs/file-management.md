@@ -45,6 +45,21 @@ the task explains how to retry with Save as and choose a writable location. Acce
 always uses the picker-granted URI; the app does not infer filesystem paths or request
 broad storage permission. Failed writes and readback verification remain commit failures.
 
+Download and Save as keep the complete suggested filename, including its original
+extension and capitalization. Recognized extensions supply the device's matching
+MIME type. Unknown, binary and extensionless names use an unspecified type so the
+picker does not append a `.bin` suffix. Folder downloads use the same rules for
+their child files. The system still handles duplicate names and returns the
+actual destination URI.
+
+All document-save actions (Download, Save as, backup export and key export) prefer
+the device's platform Android DocumentsUI when it is available, keeping suggested
+filenames intact, including dotfiles such as `.z`. Only an enabled, exported system
+picker that the app can launch is selected. An already selected platform picker
+remains preferred, and the existing dialog is the fallback when no platform picker
+is available. The system-wide default is not changed, and saved files are not
+renamed after selection.
+
 ## Platform and access policy
 
 The browser's platform choice lasts for the live connection. Auto recognizes

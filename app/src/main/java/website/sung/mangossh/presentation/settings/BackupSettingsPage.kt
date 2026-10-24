@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import website.sung.mangossh.presentation.SystemDocumentContract
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
@@ -51,7 +52,7 @@ internal fun BackupSettingsPage(state: BackupSettingsState, callbacks: BackupSet
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) { importUri = uri; action = BackupAction.IMPORT }
     }
-    val exportPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+    val exportPicker = rememberLauncherForActivityResult(SystemDocumentContract("application/octet-stream")) { uri ->
         callbacks.onWriteExport(uri)
     }
     LaunchedEffect(Unit) { callbacks.onRefresh() }

@@ -163,7 +163,7 @@ class DirectoryDownloadInstrumentedTest {
                 files.mkdirIfMissing(connection, "$remote/empty-folder")
                 val bytes = ByteArray(80_000) { (it % 251).toByte() }
                 BlockingOperation().use { control ->
-                    files.upload(connection, bytes.inputStream(), "$remote/nested", "data", 0, bytes.size.toLong(),
+                    files.upload(connection, bytes.inputStream(), "$remote/nested", "data.PDF", 0, bytes.size.toLong(),
                         bytes.size.toLong(), control) { _, _ -> }
                     files.upload(connection, "small".byteInputStream(), remote, "small", 0, 5, 1024, control) { _, _ -> }
                 }
@@ -197,6 +197,8 @@ class DirectoryDownloadInstrumentedTest {
                 assertEquals("small", context.contentResolver.openInputStream(children.single { it.name == "small" }.documentUri)!!.use { it.reader().readText() })
                 val nested = children.single { it.name == "nested" }.documentUri
                 val data = LocalDocumentTree.listChildren(context.contentResolver, tree, nested).single()
+                assertEquals("data.PDF", data.name)
+                assertEquals("application/pdf", context.contentResolver.getType(data.documentUri))
                 assertArrayEquals(bytes, context.contentResolver.openInputStream(data.documentUri)!!.use { it.readBytes() })
                 assertTrue(LocalDocumentTree.listChildren(context.contentResolver, tree,
                     children.single { it.name == "empty-folder" }.documentUri).isEmpty())

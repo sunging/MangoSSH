@@ -64,10 +64,10 @@ internal fun AuthenticationScreen(vaultStatus: VaultStatus, authentications: Lis
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var exportingId by remember { mutableStateOf<String?>(null) }
     var exportFileId by remember { mutableStateOf<String?>(null) }
-    val publicFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+    val publicFile = rememberLauncherForActivityResult(SystemDocumentContract("text/plain")) { uri ->
         exportFileId?.let { if (uri != null) onExport(it, KeyExportPart.PUBLIC, KeyExportTarget.File(uri)) }; exportFileId = null
     }
-    val privateFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-pem-file")) { uri ->
+    val privateFile = rememberLauncherForActivityResult(SystemDocumentContract("application/x-pem-file")) { uri ->
         exportFileId?.let { if (uri != null) onExport(it, KeyExportPart.PRIVATE, KeyExportTarget.File(uri)) }; exportFileId = null
     }
     LazyColumn(Modifier.fillMaxSize().testTag("authentication_list"), contentPadding = PaddingValues(16.dp),

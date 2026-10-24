@@ -770,7 +770,7 @@ internal class FileTransferManager(
             val base = transferred
             val fileBytes = stagedDownload(transferId, handle, connection, entry.absolutePath,
                 SourceIdentity(entry.absolutePath, entry.sizeBytes, entry.modifiedEpochMillis), document, 0L,
-                createDestination = { targets.createFile(parent, name, DEFAULT_MIME_TYPE) },
+                createDestination = { targets.createFile(parent, name, downloadDocumentMimeType(name)) },
                 lookupDestination = { targets.findFile(parent, name) }) { fileTransferred, _ ->
                 if (throttle.shouldEmit(base + fileTransferred, walk.totalBytes))
                     updateProgress(transferId, base + fileTransferred, walk.totalBytes)
@@ -1138,7 +1138,6 @@ internal class FileTransferManager(
         const val MAX_REMOTE_FILENAME_CHARS = 255
         const val PROGRESS_MIN_BYTES = 256L * 1024L
         const val PROGRESS_MIN_INTERVAL_MILLIS = 200L
-        const val DEFAULT_MIME_TYPE = "application/octet-stream"
 
         /** Used when a picked folder reports no name, or the remote root is transferred. */
         const val FALLBACK_DIRECTORY_NAME = "download"
