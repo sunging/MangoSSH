@@ -88,6 +88,7 @@
         <item quantity="other">已跳过 %1$d 项：符号链接和特殊文件不参与传输。</item>
     </plurals>
     <string name="remote_file_no_app_to_open">没有可以打开此文件的应用。</string>
+    <string name="remote_file_no_app_to_open_folder">系统文件浏览器不可用。</string>
     <string name="remote_file_actions">文件操作</string>
     <string name="remote_open_elsewhere">在其他应用中打开</string>
     <string name="remote_open_with_app">用其他应用打开…</string>

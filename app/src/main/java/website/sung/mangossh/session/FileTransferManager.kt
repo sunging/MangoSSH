@@ -746,6 +746,9 @@ internal class FileTransferManager(
         }
         val targets = LocalDocumentTree.Targets(resolver, treeUri)
         val localRoot = targets.directory(destinationRoot, rootName)
+        // Providers may rename a created directory or use opaque document IDs.
+        // Keep the actual result for Open; retries still use request.destinationTree.
+        update(transferId) { it.copy(localUri = localRoot.toString()) }
         val directories = mutableMapOf("" to localRoot)
         walk.directories.forEach { relative ->
             val parent = directories.getValue(parentRelativePath(relative))

@@ -31,15 +31,24 @@ class TransferSafetyInstrumentedTest {
         var blockReads = false
         var unknownSizes = false
         var stallReadContent = false
+        var renameCreatedDirectories = false
+        var opaqueDirectoryIds = false
+        private val directoryIds = mutableMapOf<File, String>()
         val stalledWriters = java.util.concurrent.CopyOnWriteArrayList<ParcelFileDescriptor>()
         val openedRead = java.util.concurrent.CountDownLatch(1)
         val allowRead = java.util.concurrent.CountDownLatch(1)
         val modes = java.util.concurrent.CopyOnWriteArrayList<String>()
         val tree: Uri = Uri.parse("content://mangossh.test.documents/tree/root")
-        fun uri(name: String) = DocumentsContract.buildDocumentUriUsingTree(tree, "root/$name")
+        fun uri(name: String) = DocumentsContract.buildDocumentUriUsingTree(tree, documentId(File(root, name)))
+        private fun documentId(file: File): String = when {
+            file == root -> "root"
+            opaqueDirectoryIds && file.isDirectory -> directoryIds.getOrPut(file) { UUID.randomUUID().toString() }
+            else -> "root/" + file.relativeTo(root).invariantSeparatorsPath
+        }
         private fun file(uri: Uri): File {
             val id = DocumentsContract.getDocumentId(uri)
-            val result = if (id == "root") root else File(root, id.removePrefix("root/"))
+            val result = directoryIds.entries.firstOrNull { it.value == id }?.key
+                ?: if (id == "root") root else File(root, id.removePrefix("root/"))
             require(result.canonicalFile == root.canonicalFile || result.canonicalPath.startsWith(root.canonicalPath + File.separator))
             return result
         }
@@ -51,7 +60,7 @@ class TransferSafetyInstrumentedTest {
             val columns = requireNotNull(projection)
             return MatrixCursor(columns).apply {
                 entries.filter { it.exists() }.forEach { entry -> addRow(columns.map { column -> when (column) {
-                    DocumentsContract.Document.COLUMN_DOCUMENT_ID -> if (entry == root) "root" else "root/" + entry.relativeTo(root).invariantSeparatorsPath
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID -> documentId(entry)
                     DocumentsContract.Document.COLUMN_DISPLAY_NAME -> entry.name
                     DocumentsContract.Document.COLUMN_MIME_TYPE -> if (entry.isDirectory) DocumentsContract.Document.MIME_TYPE_DIR else "application/octet-stream"
                     DocumentsContract.Document.COLUMN_SIZE -> if (unknownSizes) null else entry.length()
@@ -87,9 +96,10 @@ class TransferSafetyInstrumentedTest {
                 "android:createDocument" -> {
                     val parent = file(document)
                     val name = requireNotNull(extras.getString(DocumentsContract.Document.COLUMN_DISPLAY_NAME))
-                    val created = File(parent, name)
+                    val directory = extras.getString(DocumentsContract.Document.COLUMN_MIME_TYPE) == DocumentsContract.Document.MIME_TYPE_DIR
+                    val created = File(parent, if (directory && renameCreatedDirectories) "$name-provider" else name)
                     check(!created.exists())
-                    if (extras.getString(DocumentsContract.Document.COLUMN_MIME_TYPE) == DocumentsContract.Document.MIME_TYPE_DIR) check(created.mkdir()) else check(created.createNewFile())
+                    if (directory) check(created.mkdir()) else check(created.createNewFile())
                     android.os.Bundle().apply { putParcelable("uri", uri(created.relativeTo(root).invariantSeparatorsPath)) }
                 }
                 "android:deleteDocument" -> { check(file(document).delete()); android.os.Bundle() }
@@ -638,6 +648,7 @@ class TransferSafetyInstrumentedTest {
         assertEquals(2, state.completedItems)
         assertTrue(manager.conflicts.value.isEmpty())
         val downloaded = File(provider.root, preview.name)
+        assertEquals(provider.uri(downloaded.name).toString(), state.localUri)
         assertEquals("small contents", File(downloaded, "small").readText())
         assertArrayEquals(large, File(downloaded, "nested/large").readBytes())
         assertTrue(File(downloaded, "empty-folder").isDirectory)
@@ -656,13 +667,34 @@ class TransferSafetyInstrumentedTest {
         val cancelled = manager.transfers.first { it.single().isFinished }.single()
         assertEquals(ScpTransferPhase.CANCELLED, cancelled.phase)
         assertTrue(provider.root.listFiles()!!.isEmpty())
+        assertEquals(provider.tree.toString(), cancelled.localUri)
         manager.retry(cancelled.id)
         val retry = manager.conflicts.first { it.isNotEmpty() }.single()
         assertEquals(TransferPromptKind.DIRECTORY_PREVIEW, retry.promptKind)
         assertTrue(provider.root.listFiles()!!.isEmpty())
         manager.resolveConflict(retry.id, TransferConflictDecision(TransferConflictAction.PROCEED))
-        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        val finished = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.COMPLETED, finished.phase)
+        assertEquals(provider.uri(directory.substringAfterLast('/')).toString(), finished.localUri)
         assertTrue(File(provider.root, directory.substringAfterLast('/')).isDirectory)
+    }
+
+    @Test fun directoryDownloadOpensTheProviderReturnedRenamedOpaqueDirectory() = fixture { connection, provider, manager ->
+        provider.renameCreatedDirectories = true
+        provider.opaqueDirectoryIds = true
+        val directory = "/" + UUID.randomUUID().toString()
+        RemoteFileClient().mkdirIfMissing(connection, directory)
+        manager.downloadDirectory("fixture", directory, provider.tree)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        assertTrue(provider.root.listFiles()!!.isEmpty())
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.PROCEED))
+        val finished = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.COMPLETED, finished.phase)
+        val downloaded = provider.root.listFiles()!!.single()
+        assertEquals("${preview.name}-provider", downloaded.name)
+        val actual = provider.uri(downloaded.name)
+        assertEquals(actual.toString(), finished.localUri)
+        assertFalse(DocumentsContract.getDocumentId(actual).contains(downloaded.name))
     }
 
     @Test fun resumedDirectoryDownloadKeepsApprovalAndOriginalManifest() = fixture { connection, provider, manager ->
@@ -691,7 +723,9 @@ class TransferSafetyInstrumentedTest {
         val resumed = manager.conflicts.first { it.any { prompt -> prompt.id != conflict.id } }.single()
         assertEquals(TransferPromptKind.FILE_CONFLICT, resumed.promptKind)
         manager.resolveConflict(resumed.id, TransferConflictDecision(TransferConflictAction.DIRECT_OVERWRITE))
-        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        val finished = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.COMPLETED, finished.phase)
+        assertEquals(provider.uri(downloaded.name).toString(), finished.localUri)
         assertEquals("first", File(downloaded, "a").readText())
         assertEquals("second", File(downloaded, "b").readText())
         assertFalse(File(downloaded, "c").exists())
@@ -715,6 +749,7 @@ class TransferSafetyInstrumentedTest {
         val state = manager.transfers.first { it.single().isFinished }.single()
         assertEquals(ScpTransferPhase.COMPLETED, state.phase)
         assertEquals(1, state.skippedItems); assertEquals(0, state.completedItems)
+        assertEquals(provider.uri(downloaded.name).toString(), state.localUri)
         assertEquals("original", original.readText())
     }
 

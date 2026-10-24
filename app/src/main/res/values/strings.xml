@@ -92,6 +92,7 @@
         <item quantity="other">%1$d entries were skipped because symbolic links and special files are not transferred.</item>
     </plurals>
     <string name="remote_file_no_app_to_open">No installed app can open this file.</string>
+    <string name="remote_file_no_app_to_open_folder">The system file browser is unavailable.</string>
     <string name="remote_file_actions">File actions</string>
     <string name="remote_open_elsewhere">Open in another app</string>
     <string name="remote_open_with_app">Open with…</string>

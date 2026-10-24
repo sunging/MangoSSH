@@ -224,7 +224,9 @@ data class ScpTransferState(
     val totalBytes: Long? = null,
     /**
      * Download destination or upload source document, as a string so this model
-     * stays free of Android types. Null when there is no local document, which
+     * stays free of Android types. A folder download initially holds the picked
+     * tree and switches to its actual download directory once created or found.
+     * Null when there is no local document, which
      * means the transfer cannot be resumed, retried, or opened.
      */
     val localUri: String? = null,

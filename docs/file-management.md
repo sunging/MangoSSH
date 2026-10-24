@@ -24,6 +24,20 @@ by default. Choose any writable folder the system allows, including folders outs
 Download. The initial location and storage visibility are picker hints; Android's
 directory access restrictions still apply.
 
+Opening a completed folder download opens the system document browser at the actual
+downloaded subfolder, including when the provider adjusts its name. Folder tasks
+skip the app chooser because some OEM file managers reject directory document URIs
+or open a storage root instead. The app checks the directory and asks the provider
+for a concrete document reference off the UI thread, falling back to the original
+directory document when canonicalization is unsupported. It uses
+`ACTION_OPEN_DOCUMENT` with `DocumentsContract.EXTRA_INITIAL_URI`; locating that
+directory still depends on the system picker and provider supporting the hint.
+You can browse subfolders and select a file to open with an app, or press Back to
+return to the task. Browsing does not change the download destination or persist a
+new storage grant. File viewers receive temporary read access only. Missing
+directories and revoked access show a local-access error; an unavailable system
+browser shows a folder-specific error. Single-file tasks keep their app chooser.
+
 Single-file Download and Save as dialogs initially suggest Internal storage > Download through
 the system storage document provider. Some OEM Downloads providers create a document
 and advertise write support but reject every write mode. If opening the target fails,
