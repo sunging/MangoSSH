@@ -25,12 +25,16 @@ cleanup() {
   for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
 }
 trap cleanup EXIT
-"$python" tools/test-device-regression-support.py
-"$python" tools/test-device-completion.py
-# Finish compilation before installing reverse listeners and probing the device.
-./gradlew --no-daemon :app:assembleGithubDebug :app:assembleGithubDebugAndroidTest \
-  :app:assembleFdroidDebug :app:assembleFdroidDebugAndroidTest \
-  :third_party:termlib:assembleDebug :third_party:termlib:assembleDebugAndroidTest
+# The workflow compiles before starting Android so Gradle cannot starve boot.
+# Refuse to turn this entry point back into a build on a running emulator.
+for apk in \
+  app/build/outputs/apk/github/debug/app-github-debug.apk \
+  app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk \
+  app/build/outputs/apk/androidTest/github/debug/app-github-debug-androidTest.apk \
+  app/build/outputs/apk/androidTest/fdroid/debug/app-fdroid-debug-androidTest.apk \
+  third_party/termlib/build/outputs/apk/androidTest/debug/termlib-debug-androidTest.apk; do
+  [[ -s "$apk" ]] || { echo "Missing prebuilt device-test APK: $apk" >&2; exit 1; }
+done
 "$python" tools/device-regression-support.py prepare | tee "$diagnostics/prepare.jsonl"
 wait_port() {
   "$python" -c 'import socket,time,sys

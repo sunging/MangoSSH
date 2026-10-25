@@ -43,13 +43,49 @@ class DiagnosticsTest(unittest.TestCase):
         with patch.object(support, 'adb', return_value='IDLE'), redirect_stdout(io.StringIO()):
             with self.assertRaises(RuntimeError): support.wait_idle('ACTIVE', 'doze-not-restored', timeout=0)
 
+    def test_active_anr_is_rejected_before_network_or_doze_changes(self):
+        dump = 'mCurrentFocus=Window{abc u0 Application Not Responding: com.android.systemui}\nprivate-document'
+        output = io.StringIO()
+        with patch.object(support, 'check_emulator'), patch.object(support, 'adb', return_value=dump) as adb, \
+             redirect_stdout(output):
+            with self.assertRaisesRegex(RuntimeError, 'device-anr-dialog'): support.prepare()
+        adb.assert_called_once_with('shell', 'dumpsys', 'window', 'displays')
+        self.assertEqual('com.android.systemui', json.loads(output.getvalue())['anr_process'])
+        self.assertNotIn('private-document', output.getvalue())
+        self.assertNotIn('Application Not Responding', output.getvalue())
+
+    def test_old_anr_window_does_not_override_current_launcher_focus(self):
+        dump = ('Window{old u0 Application Not Responding: com.android.systemui}\n'
+                '  mCurrentFocus=Window{new u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity}')
+        self.assertEqual(dict(focused=True, anr=False, anr_process=None), support.window_health(dump))
+
+    def test_unknown_anr_title_is_rejected_without_logging_its_contents(self):
+        output = io.StringIO()
+        dump = 'mCurrentFocus=Window{abc u0 Application Not Responding: /private-document/secret-key}'
+        with patch.object(support, 'adb', return_value=dump), redirect_stdout(output):
+            with self.assertRaisesRegex(RuntimeError, 'device-anr-dialog'): support.wait_window_ready()
+        self.assertIsNone(json.loads(output.getvalue())['anr_process'])
+        self.assertNotIn('private-document', output.getvalue())
+
+    def test_window_readiness_waits_for_focus_after_boot(self):
+        with patch.object(support, 'adb', side_effect=[
+            'mCurrentFocus=null', 'mCurrentFocus=Window{abc u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity}',
+        ]) as adb, patch.object(support.time, 'sleep'), redirect_stdout(io.StringIO()):
+            support.wait_window_ready()
+            self.assertEqual(2, adb.call_count)
+
+    def test_window_focus_timeout_remains_fatal(self):
+        with patch.object(support, 'adb', return_value='mCurrentFocus=null'), redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'device-window-not-ready'): support.wait_window_ready(timeout=0)
+
     def test_device_forward_is_removed_when_probe_fails(self):
         maps = '\n'.join(f'emulator tcp:{p} tcp:{p}' for p in support.REVERSE_PORTS)
         def adb(*args):
             if args == ('reverse', '--list'): return maps
             if args[0:2] == ('forward', 'tcp:0'): return '45678'
             return ''
-        with patch.object(support, 'check_emulator'), patch.object(support, 'adb', side_effect=adb) as calls, \
+        with patch.object(support, 'check_emulator'), patch.object(support, 'wait_window_ready'), \
+             patch.object(support, 'adb', side_effect=adb) as calls, \
              patch.object(support, 'ssh_probe', side_effect=[None, RuntimeError('device-probe')]), redirect_stdout(io.StringIO()):
             with self.assertRaises(RuntimeError): support.probe()
             self.assertIn(unittest.mock.call('forward', '--remove', 'tcp:45678'), calls.call_args_list)

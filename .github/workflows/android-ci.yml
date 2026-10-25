@@ -247,6 +247,15 @@ jobs:
         with:
           component-cache: restore
 
+      # Keep Kotlin/native compilation away from Android's first boot: sharing
+      # the runner with Gradle can leave a system ANR dialog above every test.
+      - name: Compile device test packages before booting the emulator
+        run: |
+          ./gradlew --no-daemon --stacktrace \
+            :app:assembleGithubDebug :app:assembleGithubDebugAndroidTest \
+            :app:assembleFdroidDebug :app:assembleFdroidDebugAndroidTest \
+            :third_party:termlib:assembleDebug :third_party:termlib:assembleDebugAndroidTest
+
       # Without hardware acceleration the emulator does not finish booting
       # inside the job's budget, and the runner exposes /dev/kvm only after its
       # permissions are opened to every user.
@@ -264,6 +273,8 @@ jobs:
           sudo apt-get install --yes tmux mosh openssh-client
           python3 -m venv "$RUNNER_TEMP/ssh-fixture-venv"
           "$RUNNER_TEMP/ssh-fixture-venv/bin/pip" install paramiko==4.0.0
+          "$RUNNER_TEMP/ssh-fixture-venv/bin/python" tools/test-device-regression-support.py
+          "$RUNNER_TEMP/ssh-fixture-venv/bin/python" tools/test-device-completion.py
 
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
