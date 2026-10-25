@@ -224,11 +224,14 @@ build recipes. Source and compiler setup must finish before network isolation.
 
 ### Disposable emulator regression diagnostics
 
-`tools/run-device-regressions.sh` is CI-only. It compiles the APKs first, starts
-loopback SSH/echo and normal/stalled resource fixtures, and runs the GitHub,
+The CI workflow compiles all device-test APKs and tests the host helpers before
+booting Android, so heavy Gradle work does not compete with system startup.
+`tools/run-device-regressions.sh` is CI-only and requires those prebuilt APKs. It
+starts loopback SSH/echo and normal/stalled resource fixtures and runs the GitHub,
 F-Droid and termlib device suites sequentially. Before each suite it checks the
-emulator, exercises Doze and restores ACTIVE, enables both networks, verifies
-reverse mappings, and authenticates through both host and device-side listeners.
+emulator and focused window, rejects an existing ANR dialog, exercises Doze and
+restores ACTIVE, enables both networks, verifies reverse mappings, and
+authenticates through both host and device-side listeners.
 The authentication probe uses only the fixture's synthetic `fixture` account.
 It does not validate application-level SSH behavior; the instrumented tests do.
 
@@ -240,8 +243,10 @@ bash -n tools/run-device-regressions.sh
 ```
 
 `build/device-diagnostics` is uploaded even after a failure. It contains preflight
-stages, device/mapping state, and allowlisted event summaries from logcat and
-fixture logs, never raw server messages or credentials. The Downloads test logs
+stages, device/mapping state, sanitized focused-window/ANR process metadata, and
+allowlisted event summaries from logcat and fixture logs, never raw server
+messages, window titles or credentials. ANR dialogs are never automatically
+dismissed. The Downloads test logs
 only accessibility structure (no text), and captures a screenshot only when the
 active window is DocumentsUI and CI diagnostics are explicitly enabled. Existing
 JUnit failures and skips remain fatal. A missing/failed preflight also fails the
