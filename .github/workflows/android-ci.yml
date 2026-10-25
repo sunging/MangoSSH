@@ -302,12 +302,14 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          target: google_apis
+          # Use the full AOSP image, including SystemUI and DocumentsUI. The
+          # Google APIs image's NexusLauncher ANRs before this suite starts;
+          # stripped-down ATD images would omit system UI used by these tests.
+          target: default
           arch: x86_64
           profile: pixel_6
-          # First-boot NexusLauncher has ANRed with the profile defaults on the
-          # shared runner. Give Android an explicit budget after Gradle exits;
-          # retain the strict ANR preflight instead of dismissing the dialog.
+          # Give Android an explicit budget after Gradle exits and retain the
+          # strict ANR preflight instead of dismissing system error dialogs.
           cores: 4
           ram-size: 4096M
           heap-size: 512M
