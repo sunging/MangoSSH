@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import website.sung.mangossh.diagnostics.CiRegressionDiagnostics
 import website.sung.mangossh.session.LocalDocumentTree
 
 /**
@@ -123,11 +124,16 @@ class DownloadNamesInstrumentedTest {
 
     /** Polls only the picker and never records the text of unrelated nodes. */
     private fun awaitPicker(action: (AccessibilityNodeInfo) -> Boolean) {
-        compose.waitUntil(15_000) {
-            val root = automation.rootInActiveWindow
-            root?.let { try {
-                it.packageName?.toString()?.endsWith(".documentsui") == true && action(it)
-            } finally { it.recycle() } } ?: false
+        try {
+            compose.waitUntil(15_000) {
+                val root = automation.rootInActiveWindow
+                root?.let { try {
+                    it.packageName?.toString()?.endsWith(".documentsui") == true && action(it)
+                } finally { it.recycle() } } ?: false
+            }
+        } catch (failure: Throwable) {
+            CiRegressionDiagnostics.pickerState("download-names")
+            throw failure
         }
     }
 

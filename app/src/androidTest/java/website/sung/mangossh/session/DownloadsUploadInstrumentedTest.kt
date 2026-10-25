@@ -255,6 +255,7 @@ class DownloadsUploadInstrumentedTest {
 
     /** Records structure, never text or document names; screenshots are CI-only DocumentsUI. */
     private fun recordPickerFailure(automation: android.app.UiAutomation) {
+        CiRegressionDiagnostics.pickerState("downloads-transfer")
         val root = automation.rootInActiveWindow ?: return
         try {
             fun describe(node: AccessibilityNodeInfo, depth: Int) {

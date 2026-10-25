@@ -11,6 +11,8 @@
   <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/4-files.png" width="200" alt="SFTP 文件浏览">
   <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/5-forwarding.png" width="200" alt="端口转发">
   <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/6-settings.png" width="200" alt="设置">
+  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/7-authentication.png" width="200" alt="可复用认证条目">
+  <img src="fastlane/metadata/android/zh-CN/images/phoneScreenshots/8-resources.png" width="200" alt="实时服务器资源">
 </p>
 
 ## 功能
