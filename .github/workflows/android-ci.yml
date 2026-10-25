@@ -45,7 +45,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      # Save task outputs as well as dependencies, with a new entry per commit.
+      # Only the long-lived branch verification jobs publish shared cache state.
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.event_name != 'push' || (github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop') }}
 
       # Git preserves Windows checkout permissions, so restore the executable bit
       # required by the Linux runner before invoking the wrapper.
@@ -60,8 +66,8 @@ jobs:
       # androidTest source set that no longer builds against the app it tests.
       - name: Verify version, test, lint, and package both distributions
         run: |
-          ./gradlew --no-daemon -p build-logic test
-          ./gradlew --no-daemon \
+          ./gradlew --no-daemon --build-cache --profile -p build-logic test
+          ./gradlew --no-daemon --profile -Pkotlin.build.report.output=file \
             :app:verifyReleaseVersion \
             :app:testGithubDebugUnitTest \
             :app:testFdroidDebugUnitTest \
@@ -78,6 +84,18 @@ jobs:
             :third_party:cbssh:protocol:test \
             :app:assembleGithubRelease \
             :app:assembleFdroidRelease
+
+      - name: Upload build performance reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: MangoSSH-build-performance-${{ github.sha }}
+          path: |
+            build/reports/profile
+            build/reports/kotlin-build
+            build-logic/build/reports/profile
+          if-no-files-found: warn
+          retention-days: 14
 
       # Restore-keys bring back older cache archives; drop every entry the
       # published Mosh/tsnet manifests do not reference before the cache is saved.
@@ -236,7 +254,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - name: Restore Gradle cache
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
