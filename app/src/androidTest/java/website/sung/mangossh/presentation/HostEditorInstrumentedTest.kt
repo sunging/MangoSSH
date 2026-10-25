@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -137,7 +138,9 @@ class HostEditorInstrumentedTest {
         compose.onNodeWithTag("host_editor_label").performTextReplacement("Updated")
         compose.onNodeWithTag("host_editor_open_ADVANCED").performScrollTo()
         val scroll = compose.onNodeWithTag("host_editor_scroll_MAIN").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-        compose.onNodeWithTag("host_editor_open_ADVANCED").performClick()
+        // Exercise saved navigation state independently of a moving IME's
+        // pointer coordinates; the other editor cases retain touch coverage.
+        compose.onNodeWithTag("host_editor_open_ADVANCED").performSemanticsAction(SemanticsActions.OnClick) { assertTrue(it()) }
         compose.runOnIdle { assertEquals(HostEditorPage.ADVANCED, controller.page) }
         restoration.emulateSavedInstanceStateRestore()
         compose.runOnIdle { assertEquals(HostEditorPage.ADVANCED, controller.page) }

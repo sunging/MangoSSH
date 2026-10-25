@@ -95,6 +95,9 @@ class DownloadNamesInstrumentedTest {
                 Closeable {
                     selected.compareAndSet(document, null)
                     deletePickerDocument(document, directoryName)
+                    // Exercise the revoked-grant/already-removed path too,
+                    // rather than testing only a successful provider reply.
+                    deletePickerDocument(document, directoryName)
                 }.use {
                     assertEquals("com.android.externalstorage.documents", document.authority)
                     assertEquals(name, LocalDocumentTree.displayName(context.contentResolver, document))
@@ -118,8 +121,12 @@ class DownloadNamesInstrumentedTest {
         val name = id.removePrefix(prefix)
         require(name.matches(Regex("[A-Za-z0-9._ -]+")) && name != "." && name != "..")
         fun removed(): Boolean {
-            val remaining = shell("ls -1a /sdcard/Download/$directoryName").lineSequence().toSet()
-            return "." in remaining && ".." in remaining && name !in remaining
+            val parent = "/sdcard/Download/$directoryName"
+            if (shell("ls -d $parent") != parent) return false
+            val remaining = shell("ls -1a $parent").lineSequence().toSet()
+            // Emulated-storage listings need not contain dot-directory rows.
+            // The final rmdir remains the independent check for any leftovers.
+            return name !in remaining
         }
         var failure: Exception? = null
         repeat(10) {
