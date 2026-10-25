@@ -235,13 +235,27 @@ jobs:
           retention-days: 14
 
   instrumented-tests:
-    name: Run instrumented tests on an emulator
+    name: Run instrumented tests on an emulator (${{ matrix.suite }})
     # Booting an emulator is the slowest signal in this workflow, so it gates
     # pull requests automatically and manual acceptance runs by default.
     # The verify job still compiles instrumented tests on every event.
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.run_device_tests)
     runs-on: ubuntu-latest
     timeout-minutes: 150
+    # Each distribution gets its own emulator so the suites run in parallel;
+    # the small termlib suite rides with F-Droid, which has fewer app tests.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: github
+            device-suites: github
+            gradle-tasks: :app:assembleGithubDebug :app:assembleGithubDebugAndroidTest
+          - suite: fdroid
+            device-suites: fdroid termlib
+            gradle-tasks: >-
+              :app:assembleFdroidDebug :app:assembleFdroidDebugAndroidTest
+              :third_party:termlib:assembleDebug :third_party:termlib:assembleDebugAndroidTest
 
     steps:
       - name: Check out source and native Mosh source
@@ -272,11 +286,9 @@ jobs:
       # Keep Kotlin/native compilation away from Android's first boot: sharing
       # the runner with Gradle can leave a system ANR dialog above every test.
       - name: Compile device test packages before booting the emulator
-        run: |
-          ./gradlew --no-daemon --stacktrace \
-            :app:assembleGithubDebug :app:assembleGithubDebugAndroidTest \
-            :app:assembleFdroidDebug :app:assembleFdroidDebugAndroidTest \
-            :third_party:termlib:assembleDebug :third_party:termlib:assembleDebugAndroidTest
+        env:
+          GRADLE_TASKS: ${{ matrix.gradle-tasks }}
+        run: ./gradlew --no-daemon --stacktrace $GRADLE_TASKS
 
       # Without hardware acceleration the emulator does not finish booting
       # inside the job's budget, and the runner exposes /dev/kvm only after its
@@ -298,30 +310,28 @@ jobs:
           "$RUNNER_TEMP/ssh-fixture-venv/bin/python" tools/test-device-regression-support.py
           "$RUNNER_TEMP/ssh-fixture-venv/bin/python" tools/test-device-completion.py
 
+      # Use the full AOSP image, including SystemUI and DocumentsUI. The Google
+      # APIs image's NexusLauncher ANRs before this suite starts; stripped-down
+      # ATD images would omit system UI used by these tests. The script boots
+      # without injecting keys (android-emulator-runner always sends MENU, which
+      # ANRs the restarting Launcher3) and keeps the strict ANR preflight.
+      - name: Boot disposable emulator
+        run: bash tools/start-ci-emulator.sh
+
       - name: Run instrumented tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          # Use the full AOSP image, including SystemUI and DocumentsUI. The
-          # Google APIs image's NexusLauncher ANRs before this suite starts;
-          # stripped-down ATD images would omit system UI used by these tests.
-          target: default
-          arch: x86_64
-          profile: pixel_6
-          # Give Android an explicit budget after Gradle exits and retain the
-          # strict ANR preflight instead of dismissing system error dialogs.
-          cores: 4
-          ram-size: 4096M
-          heap-size: 512M
-          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: true
-          script: bash tools/run-device-regressions.sh
+        env:
+          DEVICE_SUITES: ${{ matrix.device-suites }}
+        run: bash tools/run-device-regressions.sh
+
+      - name: Stop emulator
+        if: always()
+        run: adb -s emulator-5554 emu kill || true
 
       - name: Upload instrumented test report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: MangoSSH-instrumented-test-report-${{ github.sha }}
+          name: MangoSSH-instrumented-test-report-${{ matrix.suite }}-${{ github.sha }}
           path: |
             build/device-diagnostics
             app/build/reports/androidTests/connected

@@ -25,14 +25,26 @@ cleanup() {
   for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
 }
 trap cleanup EXIT
+# CI runs the distributions as parallel jobs; each selects its suites here.
+read -r -a suites <<<"${DEVICE_SUITES:-github fdroid termlib}"
+(( ${#suites[@]} > 0 )) || { echo "No device suites selected" >&2; exit 1; }
 # The workflow compiles before starting Android so Gradle cannot starve boot.
 # Refuse to turn this entry point back into a build on a running emulator.
-for apk in \
-  app/build/outputs/apk/github/debug/app-github-debug.apk \
-  app/build/outputs/apk/fdroid/debug/app-fdroid-debug.apk \
-  app/build/outputs/apk/androidTest/github/debug/app-github-debug-androidTest.apk \
-  app/build/outputs/apk/androidTest/fdroid/debug/app-fdroid-debug-androidTest.apk \
-  third_party/termlib/build/outputs/apk/androidTest/debug/termlib-debug-androidTest.apk; do
+apks=()
+results=()
+for phase in "${suites[@]}"; do
+  case "$phase" in
+    github|fdroid)
+      apks+=(app/build/outputs/apk/$phase/debug/app-$phase-debug.apk
+        app/build/outputs/apk/androidTest/$phase/debug/app-$phase-debug-androidTest.apk)
+      results+=(app/build/outputs/androidTest-results/connected/debug/flavors/$phase) ;;
+    termlib)
+      apks+=(third_party/termlib/build/outputs/apk/androidTest/debug/termlib-debug-androidTest.apk)
+      results+=(third_party/termlib/build/outputs/androidTest-results/connected) ;;
+    *) echo "Unknown device suite: $phase" >&2; exit 1 ;;
+  esac
+done
+for apk in "${apks[@]}"; do
   [[ -s "$apk" ]] || { echo "Missing prebuilt device-test APK: $apk" >&2; exit 1; }
 done
 "$python" tools/device-regression-support.py prepare | tee "$diagnostics/prepare.jsonl"
@@ -89,7 +101,7 @@ arguments=(
 )
 gradle_status=0
 # Separate invocations ensure preflight runs immediately before each variant.
-for phase in github fdroid termlib; do
+for phase in "${suites[@]}"; do
   case "$phase" in
     github) task=:app:connectedGithubDebugAndroidTest ;;
     fdroid) task=:app:connectedFdroidDebugAndroidTest ;;
@@ -118,9 +130,7 @@ for phase in github fdroid termlib; do
   fi
 done
 report_status=0
-"$python" tools/check-regression-results.py \
-  app/build/outputs/androidTest-results/connected \
-  third_party/termlib/build/outputs/androidTest-results/connected || report_status=$?
+"$python" tools/check-regression-results.py "${results[@]}" || report_status=$?
 if (( gradle_status != 0 )); then
   exit "$gradle_status"
 fi

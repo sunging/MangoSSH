@@ -102,6 +102,49 @@ class DiagnosticsTest(unittest.TestCase):
         with patch.object(support, 'adb', return_value='mCurrentFocus=null'), redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError, 'device-window-not-ready'): support.wait_window_ready(timeout=0)
 
+    def settle_with(self, dumps, timeout=120):
+        """Each window dump advances the fake clock by one second."""
+        windows = iter(dumps)
+        clock = iter(range(1000))
+        output = io.StringIO()
+        def adb(*args):
+            return next(windows) if args == ('shell', 'dumpsys', 'window', 'displays') else ''
+        with patch.object(support, 'check_emulator'), patch.object(support, 'adb', side_effect=adb) as calls, \
+             patch.object(support.time, 'monotonic', side_effect=lambda: next(clock)), \
+             patch.object(support.time, 'sleep'), redirect_stdout(output):
+            try:
+                support.settle(stable=3, timeout=timeout)
+            finally:
+                self.settle_calls, self.settle_output = calls.call_args_list, output.getvalue()
+
+    def test_settle_waits_for_restarted_launcher_focus_to_stay_stable(self):
+        old = 'mCurrentFocus=Window{old u0 com.android.launcher3/.Launcher}'
+        new = 'mCurrentFocus=Window{new u0 com.android.launcher3/.Launcher}'
+        self.settle_with([old, old, 'mCurrentFocus=null', new, new, new, new])
+        dumps = [c for c in self.settle_calls if c == unittest.mock.call('shell', 'dumpsys', 'window', 'displays')]
+        self.assertEqual(7, len(dumps))
+        self.assertEqual(unittest.mock.call('shell', 'wm', 'dismiss-keyguard'), self.settle_calls[-1])
+        self.assertEqual('ready', json.loads(self.settle_output)['status'])
+        self.assertNotIn('launcher3', self.settle_output)
+
+    def test_settle_never_injects_input(self):
+        focus = 'mCurrentFocus=Window{abc u0 com.android.launcher3/.Launcher}'
+        self.settle_with([focus] * 5)
+        self.assertFalse([c for c in self.settle_calls if 'input' in c.args])
+
+    def test_settle_anr_is_fatal_without_dismissing_it(self):
+        anr = 'mCurrentFocus=Window{abc u0 Application Not Responding: com.android.launcher3}'
+        with self.assertRaisesRegex(RuntimeError, 'device-anr-dialog'):
+            self.settle_with([anr])
+        self.assertNotIn(unittest.mock.call('shell', 'wm', 'dismiss-keyguard'), self.settle_calls)
+        self.assertFalse([c for c in self.settle_calls if 'input' in c.args])
+
+    def test_settle_timeout_remains_fatal_without_reporting_titles(self):
+        flapping = [f'mCurrentFocus=Window{{w{i} u0 private-document-{i}}}' for i in range(10)]
+        with self.assertRaisesRegex(RuntimeError, 'boot-not-settled'):
+            self.settle_with(flapping, timeout=4)
+        self.assertNotIn('private-document', self.settle_output)
+
     def test_device_forward_is_removed_when_probe_fails(self):
         maps = '\n'.join(f'emulator tcp:{p} tcp:{p}' for p in support.REVERSE_PORTS)
         def adb(*args):

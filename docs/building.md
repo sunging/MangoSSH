@@ -253,17 +253,27 @@ build recipes. Source and compiler setup must finish before network isolation.
 
 ### Disposable emulator regression diagnostics
 
-The CI workflow compiles all device-test APKs and tests the host helpers before
-booting Android, so heavy Gradle work does not compete with system startup.
+The CI workflow runs two parallel jobs, GitHub and F-Droid plus termlib, each
+with its own emulator. Each job compiles its device-test APKs and tests the host
+helpers before booting Android, so heavy Gradle work does not compete with
+system startup.
 The API 35 emulator uses the full AOSP (`default`) image, retaining SystemUI and
 DocumentsUI for real system-picker tests. The Google APIs image repeatedly
 reached preflight with NexusLauncher already in an ANR dialog, even after
 increasing its resources. The emulator has four virtual CPUs, 4 GiB RAM and a
-512 MiB heap, with snapshots disabled; preflight still rejects any ANR dialog
-before running tests.
+512 MiB heap, with snapshots disabled.
+`tools/start-ci-emulator.sh` boots it without injecting any key event. On this
+image Launcher3 is force-stopped and restarted just after `sys.boot_completed`,
+and the MENU key that `android-emulator-runner` always sends at that point made
+Launcher3 ANR before preflight. Instead, `device-regression-support.py settle`
+disables animations, waits until the focused window has stayed unchanged for
+five seconds, and then dismisses the insecure keyguard through WindowManager.
+An ANR dialog seen while settling is still fatal, and preflight still rejects
+any ANR dialog before running tests.
 `tools/run-device-regressions.sh` is CI-only and requires those prebuilt APKs. It
-starts loopback SSH/echo and normal/stalled resource fixtures and runs the GitHub,
-F-Droid and termlib device suites sequentially. Before each suite it checks the
+starts loopback SSH/echo and normal/stalled resource fixtures and runs the suites
+named by `DEVICE_SUITES` (default `github fdroid termlib`) sequentially, checking
+each selected suite's JUnit reports. Before each suite it checks the
 emulator and focused window, rejects an existing ANR dialog, explicitly enables
 and verifies deep Doze before exercising IDLE and restoring ACTIVE, enables both
 networks, verifies reverse mappings, and
