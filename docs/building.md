@@ -25,6 +25,11 @@ The historically named `tools/fdroid-sources.lock` is the single source lock for
 Mosh dependencies in **all** distributions. External F-Droid srclibs can provide
 the same directory layout: zlib, protobuf (recursive submodules), ncurses, nettle.
 
+The build adapters, compiler contract and vendored Go text use canonical LF
+endings on every host. Respect `.gitattributes` when creating Windows worktrees:
+CRLF in `vendor/modules.txt` breaks the shell version check and different file
+bytes produce different native cache identities. Binary vendor fixtures remain binary.
+
 Preparation moves a clean existing dependency checkout to the locked commit and
 resumes an interrupted fetch in place. It refuses checkouts with local changes
 and non-Git directories; preserve that work before retrying. Ordinary compilation never
@@ -39,7 +44,7 @@ using it. CI's shared preparation action follows this same separation.
 # Only the ABIs needed by a local debug device:
 ./gradlew -PmangosshAbis=arm64-v8a :app:assembleGithubDebug
 # F-Droid, with dependencies already available locally:
-./gradlew --offline -PmangosshOfflineBuild=true :app:assembleFdroidRelease
+./gradlew --offline --no-build-cache -PmangosshOfflineBuild=true :app:assembleFdroidRelease
 ```
 
 Release tasks require all four ABIs and locked sources. Both distributions use
@@ -110,6 +115,14 @@ alone does not authenticate a vendor directory.
 
 ## Outputs, incrementality and concurrency
 
+Gradle configuration caching and task-output caching are enabled. Keep normal
+edit/build cycles incremental; `clean` is for explicitly testing reconstruction,
+not a prerequisite to building. The command-line examples can use `--no-daemon`
+when the Gradle JVM should exit at build completion. Kotlin stays in-process;
+the pinned Kotlin 2.4.20 plugin uses BTA and supports incremental compilation in
+that mode. See [build performance](build-performance.md) for profiling, measured
+baselines, cache boundaries and CI behavior.
+
 | Location | Purpose |
 | --- | --- |
 | `<state>/work/<component>/<fingerprint>/` | Isolated build trees and `build.log` |
@@ -129,6 +142,13 @@ pins every source; worktree mode always consults the adapter because Gradle
 cannot see external worktree edits. Toolchains used inside WSL are verified only
 by the adapter: after replacing one in place, run once with
 `-PmangosshNativeAlwaysRun=true` (or `--rerun-tasks`).
+The input sets include the producer scripts and notices generator, but exclude
+unrelated test/verification tools and Python `__pycache__` files.
+
+The Git revision and distribution are generated as untranslatable Android
+resources, with the same twelve-character revision and archive fallback as
+before. Changing only HEAD or `mangosshBuildRevision` updates resource packaging
+without changing Kotlin source or its compile-time constants.
 
 No binary or terminfo archive is generated into a source directory. Because AGP
 would still package them, `verifyNoNativeSourceBinaries` fails the build when
@@ -146,20 +166,27 @@ The adapter verifies every cache hit against hashes of all installed outputs.
 An empty or failed build never publishes a success manifest. Per-component locks
 serialize identical work; ABI workers own separate writable source/build trees.
 `MANGOSSH_ABI_PARALLELISM` defaults to 2, and `MANGOSSH_ABI_BUILD_JOBS` to 2.
+Mosh and tsnet can execute concurrently when Gradle has available workers. Their
+shared content-addressed cache is managed by adapter locks, rather than declared
+as an overlapping Gradle `LocalState` output that would serialize both tasks.
+Account for Go and ABI compiler processes when choosing a Gradle worker limit;
+increasing every parallelism setting together can exhaust RAM.
 Publication replaces the whole ABI directory so a narrower debug build cannot
 retain stale ABIs. Do not run different Gradle invocations that publish into the
 same checkout concurrently; use separate checkouts for independent builds.
 
-Gradle's native script tasks intentionally consult the adapter on every run;
-remote Gradle task caching is disabled. This is necessary to check external
-source trees and output integrity. An unchanged invocation validates and reuses
-component output; it does not recompile native code. AGP owns PTY/termlib's normal
+Gradle task-output caching remains disabled for the native script tasks. When a
+producer needs to run, its adapter verifies external source trees and output
+integrity before reusing component output. An unchanged locked build can skip
+the producer entirely as described above. AGP owns PTY/termlib's normal
 CMake incrementality. A tsnet publication whose AAR and manifest are unchanged
 is left in place. CI archive restoration is only a retrieval hint and does not
 bypass the source/manifest checks. The CI verify job prunes entries that the
 published manifests do not reference before saving the cache
 (`python3 tools/native/build.py prune --keep <manifest>...`); the release
-workflow does not restore component caches and compiles every component.
+workflow does not restore component caches and explicitly disables Gradle task
+output caching when compiling release artifacts. CodeQL also disables task and
+configuration caching so its tracer observes compiler execution.
 
 ## Verification
 
@@ -217,6 +244,8 @@ combines this with offline unsigned assembly and APK verification. Signing varia
 remain forbidden in the F-Droid wrapper. Existing `build-mosh-android*` and host-tool
 scripts delegate to the shared adapter; `install-mosh-assets.sh` is verification-only.
 The standalone PTY script is a diagnostic build and writes under `build/native`.
+The F-Droid verification wrapper explicitly disables Gradle task-output caching;
+ordinary developer builds can use the cache independently of that entry point.
 
 The authoritative fdroiddata recipe remains external. Update its SDK CMake/Python
 prerequisites for this revision; previously published versions keep their original

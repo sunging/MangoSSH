@@ -5,8 +5,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
+import javax.xml.parsers.DocumentBuilderFactory;
 import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
+import org.gradle.testkit.runner.TaskOutcome;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -81,12 +83,36 @@ public class AppBuildInfoTest {
     private void assertIdentity(File root, String revision) throws Exception {
         for (String channel : new String[] {"github", "fdroid"}) {
             for (String kind : new String[] {"Debug", "Release"}) {
-                String source = Files.readString(new File(root,
-                    "build/identity/" + channel + kind + "/website/sung/mangossh/core/AppBuildInfo.kt").toPath());
-                assertTrue(source, source.contains("GIT_REVISION: String = \"" + revision + "\""));
-                assertTrue(source, source.contains("DISTRIBUTION: String = \"" + channel + "\""));
+                var document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(new File(root,
+                    "build/identity/" + channel + kind + "/values/app_build_info.xml"));
+                var strings = document.getElementsByTagName("string");
+                assertEquals(2, strings.getLength());
+                for (int index = 0; index < strings.getLength(); index++) {
+                    var element = (org.w3c.dom.Element) strings.item(index);
+                    assertEquals("false", element.getAttribute("translatable"));
+                    assertEquals(index == 0 ? "app_build_revision" : "app_build_distribution", element.getAttribute("name"));
+                    assertEquals(index == 0 ? revision : channel, element.getTextContent());
+                }
             }
         }
+    }
+
+    @Test public void identicalResourcesAreRestoredAcrossCheckoutDirectories() throws Exception {
+        File cache = temporary.newFolder();
+        String revision = "ab".repeat(20);
+        File first = fixture();
+        File second = fixture();
+        for (File root : new File[] {first, second}) {
+            Files.writeString(new File(root, "settings.gradle").toPath(),
+                "rootProject.name = 'build-info-test'\nbuildCache { local { directory = new File(new URI('"
+                    + cache.toURI() + "')) } }\n");
+        }
+        run(first, false, "--build-cache", "-PmangosshBuildRevision=" + revision);
+        BuildResult restored = run(second, false, "--build-cache", "-PmangosshBuildRevision=" + revision);
+        for (String variant : new String[] {"GithubDebug", "GithubRelease", "FdroidDebug", "FdroidRelease"}) {
+            assertEquals(TaskOutcome.FROM_CACHE, restored.task(":generate" + variant + "AppBuildInfo").getOutcome());
+        }
+        assertIdentity(second, revision.substring(0, 12));
     }
 
     @Test public void variantsKeepSeparateChannelsAndHeadChangesInvalidateConfigurationCache() throws Exception {

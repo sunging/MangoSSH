@@ -25,10 +25,15 @@ public abstract class NativeTask extends DefaultTask {
     @Input public abstract Property<String> getSourceMode();
     @Input public abstract Property<Boolean> getOffline();
     @Input public abstract MapProperty<String, String> getBuildEnvironment();
-    @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE) @IgnoreEmptyDirectories
     public abstract ConfigurableFileCollection getSourceInputs();
-    /** Component state for builds that run on this host; Windows builds keep state in WSL instead. */
-    @LocalState public abstract DirectoryProperty getStateDirectory();
+    /**
+     * Shared content-addressed cache owned and locked by the adapter. This is not
+     * Gradle LocalState: declaring the shared root as mutable task state serializes
+     * otherwise independent Mosh/tsnet producers (even on Windows, where it is
+     * unused). Component and publication locks protect concurrent adapter calls.
+     */
+    @Internal public abstract DirectoryProperty getStateDirectory();
     /**
      * Optional state directory as the build host sees it, for example a WSL path such as
      * {@code /home/user/.cache/mangossh} when Gradle runs on Windows. When absent, Windows

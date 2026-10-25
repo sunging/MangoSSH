@@ -31,7 +31,7 @@ export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-315532800}"
 cd "$PROJECT_DIR"
 bash tools/prepare-fdroid-native.sh
 "${MANGOSSH_GRADLE_BIN:-$PROJECT_DIR/gradlew}" \
-    --offline --no-daemon \
+    --offline --no-daemon --no-build-cache \
     -PmangosshOfflineBuild=true \
     :app:verifyReleaseVersion \
     :app:assembleFdroidRelease

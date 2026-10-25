@@ -5,6 +5,7 @@ import website.sung.build.MoshBuild
 import website.sung.build.TsnetBuild
 import website.sung.build.NativeTask
 import website.sung.build.NativeSettings
+import website.sung.build.NativeInputs
 
 plugins {
     id("mangossh.native-tools")
@@ -120,14 +121,14 @@ fun NativeTask.configureNativeInputs() {
         "ANDROID_NDK_HOME" to nativeNdk.directory(),
         "JAVA_HOME" to System.getProperty("java.home"),
     ))
-    sourceInputs.from(rootProject.fileTree("tools/native"), rootProject.file("native/toolchains.json"))
+    sourceInputs.from(NativeInputs.common(rootProject))
 }
 
 val buildMosh = tasks.register<MoshBuild>("buildMosh") {
     group = "build"
     description = "Builds and verifies Mosh from pinned local sources."
     configureNativeInputs()
-    sourceInputs.from(rootProject.fileTree("native/mosh"), rootProject.file("tools/fdroid-sources.lock"))
+    sourceInputs.from(NativeInputs.mosh(rootProject))
     // Explicit locations override AGP's generated-source convention, so Gradle,
     // the standalone CLI and tools/install-mosh-assets.sh share one layout.
     jniDirectory.set(layout.buildDirectory.dir("generated/native/mosh/jniLibs"))
@@ -140,8 +141,7 @@ val buildEmbeddedTsnetAar = tasks.register<TsnetBuild>("buildEmbeddedTsnetAar") 
     group = "build"
     description = "Builds the vendored tsnet bridge for the requested ABIs."
     configureNativeInputs()
-    sourceInputs.from(rootProject.fileTree("native/tsnetbridge") { exclude(".build/**") })
-    sourceInputs.from(rootProject.fileTree("tools") { include("*.sh", "*.py", "lib/**", "patches/tailscale-*") })
+    sourceInputs.from(NativeInputs.tsnet(rootProject))
     outputDirectory.set(layout.buildDirectory.dir("generated/tsnet"))
 }
 val embeddedTsnetAar = buildEmbeddedTsnetAar.flatMap { it.outputDirectory.file("mangossh-tsnet.aar") }
@@ -330,9 +330,9 @@ androidComponents.onVariants { variant ->
         description = "Generates the source revision and distribution shown in About."
         gitRevision.set(appBuildRevision)
         distribution.set(variant.productFlavors.single { it.first == "distribution" }.second)
-        outputDirectory.set(layout.buildDirectory.dir("generated/source/appBuildInfo/${variant.name}"))
+        outputDirectory.set(layout.buildDirectory.dir("generated/res/appBuildInfo/${variant.name}"))
     }
-    requireNotNull(variant.sources.kotlin) { "Kotlin sources are required" }
+    requireNotNull(variant.sources.res) { "Android resources are required" }
         .addGeneratedSourceDirectory(generateAppBuildInfo, GenerateAppBuildInfo::getOutputDirectory)
     variant.sources.jniLibs?.addGeneratedSourceDirectory(buildMosh, MoshBuild::getJniDirectory)
     variant.sources.assets?.addGeneratedSourceDirectory(buildMosh, MoshBuild::getAssetsDirectory)

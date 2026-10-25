@@ -66,7 +66,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - name: Restore Gradle dependencies
+        if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
 
       - name: Prepare native inputs
         if: matrix.language == 'java-kotlin'

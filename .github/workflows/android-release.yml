@@ -90,7 +90,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
+
+      - name: Restore Gradle dependencies
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
@@ -170,7 +174,19 @@ jobs:
           MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.7
         run: |
           read -ra release_tasks <<< "$RELEASE_GRADLE_TASKS"
-          ./gradlew --no-daemon --offline -PmangosshOfflineBuild=true "${release_tasks[@]}"
+          ./gradlew --no-daemon --offline --no-build-cache --profile \
+            -Pkotlin.build.report.output=file -PmangosshOfflineBuild=true "${release_tasks[@]}"
+
+      - name: Upload release build performance reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: MangoSSH-release-build-performance-${{ github.sha }}
+          path: |
+            build/reports/profile
+            build/reports/kotlin-build
+          if-no-files-found: warn
+          retention-days: 14
 
       # Build Tools 34 is deliberately used for the APK signature because its
       # v2/v3 signing block is compatible with F-Droid's apksigcopier-based
