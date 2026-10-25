@@ -244,27 +244,24 @@ class DirectoryDownloadInstrumentedTest {
     private fun awaitOpenedDirectory(name: String) {
         // Pump Compose's test clock while the provider lookup returns to the
         // sheet coroutine. Accessibility polling alone would leave it suspended.
-        compose.waitUntil(15_000) {
-            val root = automation.rootInActiveWindow
-            root?.let { try { it.packageName?.toString()?.endsWith(".documentsui") == true } finally { it.recycle() } } ?: false
-        }
-        val deadline = SystemClock.uptimeMillis() + 15_000
         var lastPackage: String? = null
         var titleVisible = false
         var childrenVisible = false
-        while (SystemClock.uptimeMillis() < deadline) {
-            val root = automation.rootInActiveWindow
-            if (root != null) try {
-                lastPackage = root.packageName?.toString()
-                titleVisible = visit(root) { it.text?.toString() == name && isInToolbar(it) }
-                childrenVisible = listOf("small", "nested", "empty-folder").all { child ->
-                    visit(root) { it.text?.toString() == child }
-                }
-                if (lastPackage?.endsWith(".documentsui") == true && titleVisible && childrenVisible) return
-            } finally { root.recycle() }
-            SystemClock.sleep(150)
+        try {
+            compose.waitUntil(15_000) {
+                val root = automation.rootInActiveWindow
+                if (root == null) false else try {
+                    lastPackage = root.packageName?.toString()
+                    titleVisible = visit(root) { it.text?.toString() == name && isInToolbar(it) }
+                    childrenVisible = listOf("small", "nested", "empty-folder").all { child ->
+                        visit(root) { it.text?.toString() == child }
+                    }
+                    lastPackage?.endsWith(".documentsui") == true && titleVisible && childrenVisible
+                } finally { root.recycle() }
+            }
+        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+            throw AssertionError("Product directory browser location not confirmed: package=$lastPackage, title=$titleVisible, children=$childrenVisible", failure)
         }
-        fail("Product directory browser location not confirmed: package=$lastPackage, title=$titleVisible, children=$childrenVisible")
     }
 
     /** Back only navigates the system viewer; it never selects another tree or edits documents. */
