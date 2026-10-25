@@ -255,10 +255,12 @@ build recipes. Source and compiler setup must finish before network isolation.
 
 The CI workflow compiles all device-test APKs and tests the host helpers before
 booting Android, so heavy Gradle work does not compete with system startup.
-The API 35 Google APIs emulator uses four virtual CPUs, 4 GiB RAM and a 512 MiB
-heap, with snapshots disabled. This gives its first-boot launcher an explicit
-resource budget after a CI run reached preflight with NexusLauncher already in
-an ANR dialog; the preflight continues to reject that condition before any tests.
+The API 35 emulator uses the full AOSP (`default`) image, retaining SystemUI and
+DocumentsUI for real system-picker tests. The Google APIs image repeatedly
+reached preflight with NexusLauncher already in an ANR dialog, even after
+increasing its resources. The emulator has four virtual CPUs, 4 GiB RAM and a
+512 MiB heap, with snapshots disabled; preflight still rejects any ANR dialog
+before running tests.
 `tools/run-device-regressions.sh` is CI-only and requires those prebuilt APKs. It
 starts loopback SSH/echo and normal/stalled resource fixtures and runs the GitHub,
 F-Droid and termlib device suites sequentially. Before each suite it checks the
