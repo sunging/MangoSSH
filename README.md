@@ -13,6 +13,8 @@ keep on your own WebDAV server.
   <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4-files.png" width="200" alt="SFTP file browser">
   <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/5-forwarding.png" width="200" alt="Port forwarding">
   <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/6-settings.png" width="200" alt="Settings">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/7-authentication.png" width="200" alt="Reusable authentication entries">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/8-resources.png" width="200" alt="Live server resources">
 </p>
 
 ## Features
