@@ -56,10 +56,14 @@ def wait_idle(expected, stage, timeout=15):
         time.sleep(.2)
 
 
+def current_focus(text):
+    match = re.search(r'^\s*mCurrentFocus=(.*)$', text, re.MULTILINE)
+    return match.group(1).strip() if match else ''
+
+
 def window_health(text):
     """Inspect only current focus; never retain window titles or other UI text."""
-    match = re.search(r'^\s*mCurrentFocus=(.*)$', text, re.MULTILINE)
-    focus = match.group(1).strip() if match else ''
+    focus = current_focus(text)
     anr = 'Application Not Responding:' in focus
     process = re.search(r'Application Not Responding:\s+([A-Za-z0-9_.:]+)(?:\s|})', focus)
     return dict(focused=focus.startswith('Window{'), anr=anr,
@@ -80,13 +84,40 @@ def wait_window_ready(timeout=15):
         time.sleep(.2)
 
 
-def checked_window_state():
+def checked_window_state(text=None):
     """Check current display focus without requiring a sleeping device to be awake yet."""
-    state = window_health(adb('shell', 'dumpsys', 'window', 'displays'))
+    state = window_health(adb('shell', 'dumpsys', 'window', 'displays') if text is None else text)
     if state['anr']:
         event('device-window', 'failed', **state)
         raise RuntimeError('device-anr-dialog')
     return state
+
+
+def settle(stable=5, timeout=120):
+    """Wait out post-boot launcher restarts. Input sent to a restarting launcher
+    raises an ANR, so never inject key events here or dismiss any dialog."""
+    check_emulator()
+    for name in ('window_animation_scale', 'transition_animation_scale', 'animator_duration_scale'):
+        adb('shell', 'settings', 'put', 'global', name, '0.0')
+    start = time.monotonic()
+    previous, since = None, start
+    while True:
+        text = adb('shell', 'dumpsys', 'window', 'displays')
+        state = checked_window_state(text)
+        # The focused window identity is compared in memory only, never reported.
+        focus = current_focus(text)
+        now = time.monotonic()
+        if not state['focused'] or focus != previous:
+            previous, since = focus, now
+        elif now - since >= stable:
+            break
+        if now - start >= timeout:
+            event('boot-settle', 'failed', **state)
+            raise RuntimeError('boot-not-settled')
+        time.sleep(.5)
+    # Insecure keyguard only; this is a WindowManager command, not app input.
+    adb('shell', 'wm', 'dismiss-keyguard')
+    event('boot-settle', 'ready', seconds=round(time.monotonic() - start, 1))
 
 
 def prepare():
@@ -236,13 +267,14 @@ def collect(output, fixture_directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('prepare', 'probe', 'collect'))
+    parser.add_argument('action', choices=('settle', 'prepare', 'probe', 'collect'))
     parser.add_argument('--output', type=Path, default=Path('build/device-diagnostics'))
     parser.add_argument('--fixture-directory', type=Path, default=Path('/tmp'))
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)  # Paramiko must not emit server details.
     try:
-        if args.action == 'prepare': prepare()
+        if args.action == 'settle': settle()
+        elif args.action == 'prepare': prepare()
         elif args.action == 'probe': probe()
         else: collect(args.output, args.fixture_directory)
     except Exception as error:
