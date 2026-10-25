@@ -316,7 +316,10 @@ jobs:
       # without injecting keys (android-emulator-runner always sends MENU, which
       # ANRs the restarting Launcher3) and keeps the strict ANR preflight.
       - name: Boot disposable emulator
-        run: bash tools/start-ci-emulator.sh
+        run: |
+          # The runner image does not put adb on PATH; later steps need it too.
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          PATH="$ANDROID_HOME/platform-tools:$PATH" bash tools/start-ci-emulator.sh
 
       - name: Run instrumented tests
         env:
