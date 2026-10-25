@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import website.sung.mangossh.data.vault.PortForwardRule
 import kotlin.random.Random
 
@@ -77,6 +79,21 @@ internal class PortForwardRecovery(
     }
 
     fun current(ruleId: String): Intent? = synchronized(lock) { intents[ruleId] }
+
+    /**
+     * Queued carrier acquisition is an operation wait, including when another
+     * rule holds the profile lock while asking for authentication. Only the
+     * lock owner may publish an active attempt; stopped generations cannot enter.
+     */
+    suspend fun <T> withCarrierLock(intent: Intent, mutex: Mutex, action: suspend () -> T): T {
+        whileCurrent(intent) { publish(intent, PortForwardRuntimePhase.WAITING_FOR_OPERATION, null) }
+        return mutex.withLock {
+            if (current(intent.rule.id) !== intent) throw CancellationException()
+            whileCurrent(intent) { publish(intent, if (intent.recovering) PortForwardRuntimePhase.RECONNECTING
+                else PortForwardRuntimePhase.STARTING, null) }
+            action()
+        }
+    }
 
     /** Cancels before the caller closes sockets, preventing close-triggered recovery. */
     fun stop(ruleId: String): Intent? {

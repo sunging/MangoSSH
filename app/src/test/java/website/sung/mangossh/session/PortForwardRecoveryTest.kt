@@ -8,6 +8,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
 import org.junit.Assert.*
 import org.junit.Test
 import website.sung.mangossh.data.vault.PortForwardRule
@@ -50,6 +52,56 @@ class PortForwardRecoveryTest {
             assertEquals(2, fixture.opens)
             assertEquals("rule", intent.runtimeId)
             assertEquals("carrier-2", intent.sessionId)
+        } finally { fixture.close() }
+    }
+
+    @Test fun queuedCarrierWaitDoesNotKeepAnAttemptActiveDuringAuthorization() = runBlocking {
+        val fixture = Fixture()
+        val carrier = Mutex()
+        val authorization = CompletableDeferred<Unit>()
+        fixture.action = { intent ->
+            fixture.recovery.withCarrierLock(intent, carrier) {
+                fixture.opens++
+                if (fixture.opens == 1) {
+                    fixture.phases[intent.runtimeId] = PortForwardRuntimePhase.WAITING_FOR_OPERATION
+                    authorization.await()
+                }
+                fixture.phases[intent.runtimeId] = PortForwardRuntimePhase.ACTIVE
+            }
+        }
+        try {
+            fixture.recovery.start(fixture.rule)
+            fixture.recovery.start(fixture.rule.copy(id = "queued"))
+            assertEquals(1, fixture.opens)
+            assertEquals(setOf("rule", "queued"), fixture.recovery.opening.value)
+            assertTrue(fixture.phases.values.all { it == PortForwardRuntimePhase.WAITING_FOR_OPERATION })
+            authorization.complete(Unit)
+            yield()
+            assertEquals(2, fixture.opens)
+            assertTrue(fixture.phases.values.all { it == PortForwardRuntimePhase.ACTIVE })
+        } finally { fixture.close() }
+    }
+
+    @Test fun stoppedCarrierWaiterCannotStartWhenTheProfileLockIsReleased() = runBlocking {
+        val fixture = Fixture()
+        val carrier = Mutex()
+        val authorization = CompletableDeferred<Unit>()
+        fixture.action = { intent ->
+            fixture.recovery.withCarrierLock(intent, carrier) {
+                fixture.opens++
+                if (fixture.opens == 1) authorization.await()
+                fixture.phases[intent.runtimeId] = PortForwardRuntimePhase.ACTIVE
+            }
+        }
+        try {
+            fixture.recovery.start(fixture.rule)
+            fixture.recovery.start(fixture.rule.copy(id = "queued"))
+            fixture.recovery.stop("queued")
+            authorization.complete(Unit)
+            yield()
+            assertEquals(1, fixture.opens)
+            assertNull(fixture.recovery.current("queued"))
+            assertEquals(PortForwardRuntimePhase.ACTIVE, fixture.phases["rule"])
         } finally { fixture.close() }
     }
 
