@@ -56,8 +56,42 @@ def wait_idle(expected, stage, timeout=15):
         time.sleep(.2)
 
 
+def window_health(text):
+    """Inspect only current focus; never retain window titles or other UI text."""
+    match = re.search(r'^\s*mCurrentFocus=(.*)$', text, re.MULTILINE)
+    focus = match.group(1).strip() if match else ''
+    anr = 'Application Not Responding:' in focus
+    process = re.search(r'Application Not Responding:\s+([A-Za-z0-9_.:]+)(?:\s|})', focus)
+    return dict(focused=focus.startswith('Window{'), anr=anr,
+                anr_process=process.group(1) if process else None)
+
+
+def wait_window_ready(timeout=15):
+    """Reject an ANR before the suite; never dismiss a dialog or hide app failures."""
+    deadline = time.monotonic() + timeout
+    while True:
+        state = checked_window_state()
+        if state['focused']:
+            event('device-window', 'ready', **state)
+            return
+        if time.monotonic() >= deadline:
+            event('device-window', 'failed', **state)
+            raise RuntimeError('device-window-not-ready')
+        time.sleep(.2)
+
+
+def checked_window_state():
+    """Check current display focus without requiring a sleeping device to be awake yet."""
+    state = window_health(adb('shell', 'dumpsys', 'window', 'displays'))
+    if state['anr']:
+        event('device-window', 'failed', **state)
+        raise RuntimeError('device-anr-dialog')
+    return state
+
+
 def prepare():
     check_emulator()
+    checked_window_state()
     adb('shell', 'svc', 'wifi', 'enable')
     adb('shell', 'svc', 'data', 'enable')
     for _ in range(30):
@@ -75,6 +109,7 @@ def prepare():
     adb('shell', 'dumpsys', 'deviceidle', 'unforce')
     adb('shell', 'input', 'keyevent', '224')
     wait_idle('ACTIVE', 'doze-not-restored')
+    wait_window_ready()
     event('network-and-doze-preconditions', 'ready')
 
 
@@ -118,6 +153,7 @@ def echo_probe(port):
 
 def probe():
     check_emulator()
+    wait_window_ready()
     before = mappings(adb('reverse', '--list'))
     event('reverse-before', 'observed', mappings=before)
     for port in REVERSE_PORTS:
@@ -160,6 +196,11 @@ def safe_log_summary(text):
 
 def collect(output, fixture_directory):
     output.mkdir(parents=True, exist_ok=True)
+    try:
+        windows = window_health(adb('shell', 'dumpsys', 'window', 'displays'))
+    except Exception as error:
+        windows = {'collection_error': type(error).__name__}
+    (output / 'window-state.json').write_text(json.dumps(windows, indent=2))
     state = {}
     for name, args in {'device': ('get-state',), 'reverse': ('reverse', '--list'),
                        'idle': ('shell', 'dumpsys', 'deviceidle', 'get', 'deep'),
