@@ -7,6 +7,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -93,7 +94,10 @@ class AuthenticationInstrumentedTest {
                 save = { _, _ -> fail("Cancelled editors cannot save") })) { visible = false }
         } }
         compose.onNodeWithTag("authentication_password_value").performTextInput(UUID.randomUUID().toString())
-        compose.onNodeWithTag("authentication_cancel").performClick()
+        // This checks disposal, while separate interaction tests cover pointer
+        // targeting. IME/inset animation must not redirect this activation.
+        compose.onNodeWithTag("authentication_cancel").performSemanticsAction(SemanticsActions.OnClick) { assertTrue(it()) }
+        compose.runOnIdle { assertFalse(visible) }
         // Cancel requests removal; DisposableEffect cleanup happens when that removal is applied.
         compose.waitUntil(timeoutMillis = 5_000) { discarded.get() != null }
         compose.onNodeWithTag("authentication_editor").assertDoesNotExist()
