@@ -42,6 +42,7 @@ import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
+import website.sung.mangossh.diagnostics.CiRegressionDiagnostics
 import website.sung.mangossh.presentation.DownloadDirectoryContract
 import website.sung.mangossh.presentation.FileTransfersSheet
 import website.sung.mangossh.R
@@ -316,6 +317,7 @@ class DirectoryDownloadInstrumentedTest {
             } finally { root.recycle() }
             SystemClock.sleep(150)
         }
+        CiRegressionDiagnostics.pickerState("directory-download")
         fail("System directory picker did not expose the required action")
     }
 
