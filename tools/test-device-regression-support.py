@@ -43,6 +43,30 @@ class DiagnosticsTest(unittest.TestCase):
         with patch.object(support, 'adb', return_value='IDLE'), redirect_stdout(io.StringIO()):
             with self.assertRaises(RuntimeError): support.wait_idle('ACTIVE', 'doze-not-restored', timeout=0)
 
+    def test_deep_idle_is_enabled_and_verified_before_forcing_it(self):
+        with patch.object(support, 'check_emulator'), patch.object(support, 'checked_window_state'), \
+             patch.object(support, 'adb', return_value='1') as adb, \
+             patch.object(support, 'wait_idle') as wait_idle, \
+             patch.object(support, 'wait_window_ready'), redirect_stdout(io.StringIO()):
+            support.prepare()
+        calls = adb.call_args_list
+        enable = calls.index(unittest.mock.call('shell', 'dumpsys', 'deviceidle', 'enable', 'deep'))
+        verify = calls.index(unittest.mock.call('shell', 'dumpsys', 'deviceidle', 'enabled', 'deep'))
+        force = calls.index(unittest.mock.call('shell', 'dumpsys', 'deviceidle', 'force-idle'))
+        self.assertLess(enable, verify)
+        self.assertLess(verify, force)
+        self.assertEqual([unittest.mock.call('IDLE', 'doze-unavailable'),
+                          unittest.mock.call('ACTIVE', 'doze-not-restored')], wait_idle.call_args_list)
+
+    def test_disabled_deep_idle_aborts_before_sleeping_or_forcing_it(self):
+        def response(*args):
+            return '0' if args == ('shell', 'dumpsys', 'deviceidle', 'enabled', 'deep') else '1'
+        with patch.object(support, 'check_emulator'), patch.object(support, 'checked_window_state'), \
+             patch.object(support, 'adb', side_effect=response) as adb, redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, 'doze-disabled'): support.prepare()
+        self.assertNotIn(unittest.mock.call('shell', 'input', 'keyevent', '223'), adb.call_args_list)
+        self.assertNotIn(unittest.mock.call('shell', 'dumpsys', 'deviceidle', 'force-idle'), adb.call_args_list)
+
     def test_active_anr_is_rejected_before_network_or_doze_changes(self):
         dump = 'mCurrentFocus=Window{abc u0 Application Not Responding: com.android.systemui}\nprivate-document'
         output = io.StringIO()

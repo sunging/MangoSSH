@@ -264,8 +264,9 @@ before running tests.
 `tools/run-device-regressions.sh` is CI-only and requires those prebuilt APKs. It
 starts loopback SSH/echo and normal/stalled resource fixtures and runs the GitHub,
 F-Droid and termlib device suites sequentially. Before each suite it checks the
-emulator and focused window, rejects an existing ANR dialog, exercises Doze and
-restores ACTIVE, enables both networks, verifies reverse mappings, and
+emulator and focused window, rejects an existing ANR dialog, explicitly enables
+and verifies deep Doze before exercising IDLE and restoring ACTIVE, enables both
+networks, verifies reverse mappings, and
 authenticates through both host and device-side listeners.
 The authentication probe uses only the fixture's synthetic `fixture` account.
 It does not validate application-level SSH behavior; the instrumented tests do.

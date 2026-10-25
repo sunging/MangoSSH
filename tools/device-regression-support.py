@@ -100,6 +100,10 @@ def prepare():
         time.sleep(.5)
     else:
         raise RuntimeError('network-preconditions')
+    # Full AOSP images can ship with automatic idle modes disabled. Enable deep
+    # idle only on this disposable emulator, then prove the real transition.
+    adb('shell', 'dumpsys', 'deviceidle', 'enable', 'deep')
+    require(adb('shell', 'dumpsys', 'deviceidle', 'enabled', 'deep') == '1', 'doze-disabled')
     # Emulate an unplugged device so force-idle is meaningful, then restore ACTIVE.
     adb('shell', 'dumpsys', 'battery', 'unplug')
     adb('shell', 'dumpsys', 'deviceidle', 'unforce')
@@ -204,12 +208,13 @@ def collect(output, fixture_directory):
     state = {}
     for name, args in {'device': ('get-state',), 'reverse': ('reverse', '--list'),
                        'idle': ('shell', 'dumpsys', 'deviceidle', 'get', 'deep'),
+                       'deep_idle_enabled': ('shell', 'dumpsys', 'deviceidle', 'enabled', 'deep'),
                        'wifi': ('shell', 'settings', 'get', 'global', 'wifi_on'),
                        'mobile_data': ('shell', 'settings', 'get', 'global', 'mobile_data'),
                        'boot': ('shell', 'getprop', 'sys.boot_completed')}.items():
         try:
             value = adb(*args)
-            state[name] = mappings(value) if name == 'reverse' else value if value in ('device', 'offline', 'ACTIVE', 'IDLE', '1') else 'other'
+            state[name] = mappings(value) if name == 'reverse' else value if value in ('device', 'offline', 'ACTIVE', 'IDLE', '0', '1') else 'other'
         except Exception as error:
             state[name] = type(error).__name__
     (output / 'device-state.json').write_text(json.dumps(state, indent=2))
