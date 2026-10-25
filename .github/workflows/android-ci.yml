@@ -305,7 +305,13 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # First-boot NexusLauncher has ANRed with the profile defaults on the
+          # shared runner. Give Android an explicit budget after Gradle exits;
+          # retain the strict ANR preflight instead of dismissing the dialog.
+          cores: 4
+          ram-size: 4096M
+          heap-size: 512M
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: bash tools/run-device-regressions.sh
 
