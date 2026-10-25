@@ -138,8 +138,10 @@ class HostEditorInstrumentedTest {
         compose.onNodeWithTag("host_editor_open_ADVANCED").performScrollTo()
         val scroll = compose.onNodeWithTag("host_editor_scroll_MAIN").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
         compose.onNodeWithTag("host_editor_open_ADVANCED").performClick()
+        compose.runOnIdle { assertEquals(HostEditorPage.ADVANCED, controller.page) }
         restoration.emulateSavedInstanceStateRestore()
-        compose.onNodeWithTag("host_editor_timeout").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(HostEditorPage.ADVANCED, controller.page) }
+        compose.onNodeWithTag("host_editor_timeout").performScrollTo().assertIsDisplayed()
         compose.runOnIdle { assertEquals("Updated", controller.draft.label) }
         back()
         val restoredScroll = compose.onNodeWithTag("host_editor_scroll_MAIN").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()

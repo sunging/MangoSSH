@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -48,7 +49,7 @@ class DownloadNamesInstrumentedTest {
         var ownsDirectory = false
         Closeable {
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
-            selected.getAndSet(null)?.let { DocumentsContract.deleteDocument(context.contentResolver, it) }
+            selected.getAndSet(null)?.let { deletePickerDocument(it, directoryName) }
             // rmdir only removes the empty test-owned directory; unexpected contents are preserved.
             if (ownsDirectory) assertEquals("", shell("rmdir $shellPath"))
         }.use {
@@ -93,8 +94,7 @@ class DownloadNamesInstrumentedTest {
                 // Consume cleanup ownership first; use preserves a failed assertion if deletion also fails.
                 Closeable {
                     selected.compareAndSet(document, null)
-                    assertTrue("Delete only this picker-created document",
-                        DocumentsContract.deleteDocument(context.contentResolver, document))
+                    deletePickerDocument(document, directoryName)
                 }.use {
                     assertEquals("com.android.externalstorage.documents", document.authority)
                     assertEquals(name, LocalDocumentTree.displayName(context.contentResolver, document))
@@ -104,6 +104,39 @@ class DownloadNamesInstrumentedTest {
                 }
             }
         }
+    }
+
+    /**
+     * Removes only a document inside this test's UUID directory. Some provider
+     * versions report deletion failure after removing a just-written dotfile;
+     * verify actual absence instead, while the final rmdir still rejects leaks.
+     */
+    private fun deletePickerDocument(document: Uri, directoryName: String) {
+        val prefix = "primary:Download/$directoryName/"
+        val id = DocumentsContract.getDocumentId(document)
+        require(document.authority == "com.android.externalstorage.documents" && id.startsWith(prefix))
+        val name = id.removePrefix(prefix)
+        require(name.matches(Regex("[A-Za-z0-9._ -]+")) && name != "." && name != "..")
+        fun removed(): Boolean {
+            val remaining = shell("ls -1a /sdcard/Download/$directoryName").lineSequence().toSet()
+            return "." in remaining && ".." in remaining && name !in remaining
+        }
+        var failure: Exception? = null
+        repeat(10) {
+            try {
+                if (DocumentsContract.deleteDocument(context.contentResolver, document)) return
+            } catch (denied: SecurityException) {
+                if (removed()) return
+                throw denied
+            } catch (error: Exception) {
+                failure = error
+            }
+            // UiAutomation executes argv directly, not shell syntax. Listing
+            // this UUID directory also handles fixed fixture names with spaces.
+            if (removed()) return
+            SystemClock.sleep(100)
+        }
+        throw AssertionError("Remove only the picker-created document", failure)
     }
 
     /** Polls Save readiness without clicking; a delayed result must never cause another Save request. */
@@ -155,7 +188,7 @@ class DownloadNamesInstrumentedTest {
         } finally { bitmap.recycle() }
     }
 
-    /** The only interpolated shell value is a test-generated UUID below a fixed directory. */
+    /** Shell paths contain only test-generated UUIDs and validated fixed fixture basenames. */
     private fun shell(command: String): String = automation.executeShellCommand(command).use {
         ParcelFileDescriptor.AutoCloseInputStream(it).use { input -> input.readBytes().toString(Charsets.UTF_8).trim() }
     }
