@@ -182,6 +182,12 @@ class PortForwardLifecycleInstrumentedTest {
             synchronized(transports) { transports.single() }.close()
             CiRegressionDiagnostics.phase("forward-authorization-await")
             val request = controller.forwardAuthorization.first { it.isNotEmpty() }.single()
+            // Reach the held carrier lock with every retry worker, rather than
+            // observing an idle gap while another worker is still in backoff.
+            CiRegressionDiagnostics.phase("forward-all-authorization-waiters")
+            controller.portForwards.first { states ->
+                states.size == rules.size && states.all { it.phase == PortForwardRuntimePhase.WAITING_FOR_OPERATION }
+            }
             CiRegressionDiagnostics.phase("forward-idle-await")
             assertFalse(controller.forwardingWork.first { !it.awake }.awake)
             assertEquals(1, connections.size)

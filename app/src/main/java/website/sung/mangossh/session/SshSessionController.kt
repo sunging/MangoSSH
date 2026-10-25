@@ -687,7 +687,7 @@ class SshSessionController internal constructor(
 
     /** Serializes carrier acquisition per profile, including authentication and companion recovery. */
     private suspend fun acquireForwardCarrier(intent: PortForwardRecovery.Intent): Triple<String, ManagedSession, SshConnection> =
-        forwardCarrierLocks.getOrPut(intent.rule.profileId) { Mutex() }.withLock {
+        forwardRecovery.withCarrierLock(intent, forwardCarrierLocks.getOrPut(intent.rule.profileId) { Mutex() }) {
             if (forwardRecovery.current(intent.rule.id) !== intent) throw CancellationException()
             val profile = vault.snapshot.value.profiles.firstOrNull { it.id == intent.rule.profileId }
                 ?: throw IllegalArgumentException("Forward profile no longer exists")
