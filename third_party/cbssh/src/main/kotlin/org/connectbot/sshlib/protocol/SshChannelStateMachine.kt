@@ -19,6 +19,7 @@ package org.connectbot.sshlib.protocol
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.connectbot.sshlib.client.ProtocolExecutor
 import ru.nsk.kstatemachine.event.Event
 import ru.nsk.kstatemachine.metainfo.MetaInfo
 import ru.nsk.kstatemachine.state.IState
@@ -65,6 +66,7 @@ internal enum class SshChannelEffect {
     SEND_OPEN,
     SEND_OPEN_CONFIRMATION,
     SEND_REQUEST,
+    SEND_WINDOW_ADJUST,
 }
 
 internal enum class SshChannelConstructionId {
@@ -89,6 +91,7 @@ internal enum class SshChannelEventId(
     SEND_DATA("SendData"),
     SEND_EOF("SendEof"),
     SEND_REQUEST("SendRequest"),
+    SEND_WINDOW_ADJUST("SendWindowAdjust"),
 }
 
 internal enum class SshChannelEventOrigin {
@@ -111,6 +114,8 @@ internal enum class SshChannelTransitionId {
     SEND_DATA_REMOTE_EOF,
     RECEIVE_DATA_OPEN,
     RECEIVE_DATA_LOCAL_EOF,
+    SEND_WINDOW_ADJUST_OPEN,
+    SEND_WINDOW_ADJUST_LOCAL_EOF,
     SEND_REQUEST_OPEN,
     SEND_REQUEST_LOCAL_EOF,
     SEND_REQUEST_REMOTE_EOF,
@@ -224,6 +229,8 @@ internal data class SshChannelFormalModel(
  */
 internal class SshChannelStateMachine(
     initialState: SshChannelState,
+    private val owner: ProtocolExecutor? = null,
+    private val readyForLocalCommand: () -> Boolean = { true },
 ) {
     init {
         require(initialState == SshChannelState.OPENING || initialState == SshChannelState.OPEN) {
@@ -289,6 +296,13 @@ internal class SshChannelStateMachine(
                 SshChannelEventId.RECEIVE_WINDOW_ADJUST,
                 setOf(SshChannelEffect.ADJUST_WINDOW),
                 SshChannelEventOrigin.PARSED_PACKET,
+                action,
+            )
+        class SendWindowAdjust(action: suspend (SshChannelAcceptedTransition) -> Unit) :
+            ChannelEvent(
+                SshChannelEventId.SEND_WINDOW_ADJUST,
+                setOf(SshChannelEffect.SEND_WINDOW_ADJUST),
+                SshChannelEventOrigin.LOCAL_COMMAND,
                 action,
             )
         class SendEof(action: suspend (SshChannelAcceptedTransition) -> Unit) :
@@ -387,6 +401,9 @@ internal class SshChannelStateMachine(
         remoteEof.channelTransition(ChannelEvent.ReceiveWindowAdjust {}, SshChannelTransitionId.RECEIVE_WINDOW_ADJUST_REMOTE_EOF)
         bothEof.channelTransition(ChannelEvent.ReceiveWindowAdjust {}, SshChannelTransitionId.RECEIVE_WINDOW_ADJUST_BOTH_EOF)
 
+        open.channelTransition(ChannelEvent.SendWindowAdjust {}, SshChannelTransitionId.SEND_WINDOW_ADJUST_OPEN)
+        localEof.channelTransition(ChannelEvent.SendWindowAdjust {}, SshChannelTransitionId.SEND_WINDOW_ADJUST_LOCAL_EOF)
+
         open.channelTransition(ChannelEvent.SendEof {}, SshChannelTransitionId.SEND_EOF_OPEN, localEof)
         remoteEof.channelTransition(ChannelEvent.SendEof {}, SshChannelTransitionId.SEND_EOF_REMOTE_EOF, bothEof)
         open.channelTransition(ChannelEvent.ReceiveEof {}, SshChannelTransitionId.RECEIVE_EOF_OPEN, remoteEof)
@@ -433,6 +450,7 @@ internal class SshChannelStateMachine(
     suspend fun sendRequest(action: suspend (SshChannelAcceptedTransition) -> Unit) = process(ChannelEvent.SendRequest(action))
     suspend fun receiveRequest(action: suspend (SshChannelAcceptedTransition) -> Unit) = process(ChannelEvent.ReceiveRequest(action))
     suspend fun receiveWindowAdjust(action: suspend (SshChannelAcceptedTransition) -> Unit) = process(ChannelEvent.ReceiveWindowAdjust(action))
+    suspend fun sendWindowAdjust(action: suspend (SshChannelAcceptedTransition) -> Unit) = process(ChannelEvent.SendWindowAdjust(action))
     suspend fun sendEof(action: suspend (SshChannelAcceptedTransition) -> Unit) = process(ChannelEvent.SendEof(action))
     suspend fun receiveEof(action: suspend (SshChannelAcceptedTransition) -> Unit) = process(ChannelEvent.ReceiveEof(action))
     suspend fun sendClose(action: suspend (SshChannelAcceptedTransition) -> Unit) = process(ChannelEvent.SendClose(action))
@@ -499,8 +517,13 @@ internal class SshChannelStateMachine(
         )
     }
 
-    private suspend fun process(event: ChannelEvent): Boolean = eventMutex.withLock {
-        stateMachine.processEvent(event) == ProcessingResult.PROCESSED
+    private suspend fun process(event: ChannelEvent): Boolean {
+        suspend fun accept(): Boolean = eventMutex.withLock {
+            stateMachine.processEvent(event) == ProcessingResult.PROCESSED
+        }
+        return owner?.run(ready = { event.origin != SshChannelEventOrigin.LOCAL_COMMAND || readyForLocalCommand() }) {
+            accept()
+        } ?: deferIo { accept() }
     }
 
     private fun bindState(state: IState, lifecycleState: SshChannelState) {
@@ -527,9 +550,7 @@ internal class SshChannelStateMachine(
                 requiresAuthenticatedConnection = event.requiresAuthenticatedConnection,
             )
         }.onTriggered {
-            // CLOSE_SENT accepts and discards in-flight packets. Empty effects must
-            // not invoke stream delivery after its local owner has cancelled it.
-            if (effects.isNotEmpty()) it.event.action(SshChannelAcceptedTransition(id, effects, event.origin))
+            it.event.action(SshChannelAcceptedTransition(id, effects, event.origin))
         }
     }
 

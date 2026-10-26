@@ -5,6 +5,7 @@ meta:
   license: CC0-1.0
   imports:
   - ssh_enums
+  - ssh_hybrid_kex_blob
   - channel_open_direct_streamlocal_openssh
   - channel_open_direct_tcpip
   - channel_open_forwarded_streamlocal_openssh
@@ -32,6 +33,7 @@ meta:
   - global_request_cancel_tcpip_forward
   - global_request_hostkeys_00_openssh
   - global_request_hostkeys_prove_00_openssh
+  - global_request_response_hostkeys_prove_00_openssh
   - global_request_response
   - global_request_response_empty
   - global_request_response_tcpip_forward
@@ -56,6 +58,11 @@ meta:
   - ssh_ed25519_signature_blob
   - ssh_ed448_public_key_blob
   - ssh_ed448_signature_blob
+  - ssh_mldsa_p384_public_key_blob
+  - ssh_mldsa_p384_signature_blob
+  - ssh_mldsa_public_key_blob
+  - ssh_mldsa_signature_blob
+  - openssh_mldsa_ed25519_private_key
   - ssh_msg_channel_close
   - ssh_msg_channel_data
   - ssh_msg_channel_eof

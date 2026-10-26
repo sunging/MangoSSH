@@ -17,8 +17,8 @@
 
 package org.connectbot.sshlib.client
 
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -32,6 +32,7 @@ import kotlinx.coroutines.sync.withLock
 import org.connectbot.sshlib.SessionExit
 import org.connectbot.sshlib.SshSession
 import org.connectbot.sshlib.protocol.ByteString
+import org.connectbot.sshlib.protocol.ChannelRequestEnv
 import org.connectbot.sshlib.protocol.ChannelRequestExec
 import org.connectbot.sshlib.protocol.ChannelRequestPtyReq
 import org.connectbot.sshlib.protocol.ChannelRequestShell
@@ -40,7 +41,9 @@ import org.connectbot.sshlib.protocol.ChannelRequestWindowChange
 import org.connectbot.sshlib.protocol.SshChannelEffect
 import org.connectbot.sshlib.protocol.SshChannelState
 import org.connectbot.sshlib.protocol.SshChannelStateMachine
+import org.connectbot.sshlib.protocol.createByteString
 import org.slf4j.LoggerFactory
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
@@ -56,37 +59,95 @@ class SessionChannel internal constructor(
     private val obscureKeystrokeTimingIntervalMs: Long = 20L,
     private val obfuscatorClockMs: () -> Long = { System.nanoTime() / 1_000_000L },
     private val obfuscatorRandom: Random = Random.Default,
+    private val bufferedStdout: Boolean = false,
     private val lifecycle: SshChannelStateMachine = SshChannelStateMachine(SshChannelState.OPEN),
 ) : SshSession {
     companion object {
         private val logger = LoggerFactory.getLogger(SessionChannel::class.java)
     }
 
-    private val window = LocalChannelWindow(initialWindowSize, remoteInitial = remoteWindowSizeInitial)
+    private val window = LocalChannelWindow(
+        initialWindowSize,
+        remoteInitial = remoteWindowSizeInitial,
+        adjustmentThreshold = maxOf(1, initialWindowSize / 2),
+    )
     private val windowAvailable = Channel<Unit>(Channel.CONFLATED)
 
     private val stdoutIngress = Channel<ByteArray>(Channel.UNLIMITED)
     private val stderrIngress = Channel<ByteArray>(Channel.UNLIMITED)
     private val extendedDataIngress = Channel<Pair<Int, ByteArray>>(Channel.UNLIMITED)
     private val _stdout = Channel<ByteArray>(Channel.RENDEZVOUS)
+    private val stdoutBufferIngress = Channel<ByteBuffer>(Channel.UNLIMITED)
+    private val stdoutBufferConsumed = Channel<Unit>(1)
+    private val stdoutBuffers = Channel<ByteBuffer>(Channel.RENDEZVOUS, onUndeliveredElement = {
+        stdoutBufferConsumed.trySend(Unit)
+    })
     private val _stderr = Channel<ByteArray>(Channel.RENDEZVOUS)
     private val _extendedData = Channel<Pair<Int, ByteArray>>(Channel.RENDEZVOUS)
 
     @Volatile private var inboundDeliveryOpen = true
+    internal val delivery = ChannelDelivery(connectionScope.coroutineContext)
 
-    private val stdoutDeliveryJob = connectionScope.launch {
-        deliverData(stdoutIngress, _stdout) { it.size }
-    }
-    private val stderrDeliveryJob = connectionScope.launch {
-        deliverData(stderrIngress, _stderr) { it.size }
-    }
-    private val extendedDeliveryJob = connectionScope.launch {
-        deliverData(extendedDataIngress, _extendedData) { it.second.size }
+    private val arrayStdout by lazy {
+        if (bufferedStdout) {
+            val adapter = delivery.launch {
+                try {
+                    for (buffer in stdoutBuffers) {
+                        _stdout.send(buffer.toByteArray())
+                        stdoutBufferConsumed.trySend(Unit)
+                    }
+                } catch (cancelled: CancellationException) {
+                    // Cancelling the public array stream abandons its buffer too. Do not leave
+                    // the buffer pump waiting forever for acknowledgement from this adapter.
+                    stdoutBufferConsumed.cancel(cancelled)
+                    stdoutBuffers.cancel(cancelled)
+                    throw cancelled
+                } catch (failure: Exception) {
+                    _stdout.close(failure)
+                } finally {
+                    _stdout.close()
+                }
+            }
+            // All buffers may have drained through readBuffer(), or explicit close may have
+            // retired delivery before the public array adapter was first requested.
+            if (adapter == null) _stdout.close()
+        }
+        _stdout
     }
 
-    override val isOpen: Boolean get() = lifecycle.isOpen
+    init {
+        delivery.launch {
+            if (bufferedStdout) {
+                deliverData(stdoutBufferIngress, stdoutBuffers, { it.remaining() }) { stdoutBufferConsumed.receive() }
+            } else {
+                deliverData(stdoutIngress, _stdout, { it.size })
+            }
+        }
+        delivery.launch { deliverData(stderrIngress, _stderr, { it.size }) }
+        delivery.launch { deliverData(extendedDataIngress, _extendedData, { it.second.size }) }
+        delivery.initialize(
+            abortStreams = {
+                inboundDeliveryOpen = false
+                stdoutIngress.cancel()
+                stdoutBufferIngress.cancel()
+                stderrIngress.cancel()
+                extendedDataIngress.cancel()
+                stdoutBuffers.close()
+                stdoutBufferConsumed.close()
+                _stdout.close()
+                _stderr.close()
+                _extendedData.close()
+            },
+            resources = connection.deliveryResources,
+        )
+    }
+
+    // AutoCloseable.close() cannot await the owner. Publish the local API close request
+    // immediately; packet authorization remains exclusively in the lifecycle machine.
+    @Volatile private var closeRequested = false
+    override val isOpen: Boolean get() = !closeRequested && lifecycle.isOpen
     override val remoteChannelNumber: Int get() = _remoteChannelNumber
-    override val stdout: ReceiveChannel<ByteArray> get() = _stdout
+    override val stdout: ReceiveChannel<ByteArray> get() = arrayStdout
     override val stderr: ReceiveChannel<ByteArray> get() = _stderr
 
     private val _exitInfo = CompletableDeferred<SessionExit?>()
@@ -116,10 +177,35 @@ class SessionChannel internal constructor(
     private val obfuscationActive: Boolean
         get() = ptyGranted && canSendChaff && obscureKeystrokeTimingIntervalMs > 0
 
+    internal suspend fun onData(data: ByteString) {
+        if (bufferedStdout) onData(data.asReadOnlyBuffer()) else onData(data.data())
+    }
+
     internal suspend fun onData(data: ByteArray) {
-        if (!lifecycle.receiveData {
-                window.consumeLocal(data.size)
-                if (stdoutIngress.trySend(data).isFailure) {
+        if (bufferedStdout) {
+            onData(ByteBuffer.wrap(data).asReadOnlyBuffer())
+        } else {
+            receiveStdout(data.size) { stdoutIngress.trySend(data).isSuccess }
+        }
+    }
+
+    // Packet plaintext is owned and never recycled while these views are retained.
+    internal suspend fun onData(data: ByteBuffer) {
+        if (!bufferedStdout) {
+            onData(data.toByteArray())
+            return
+        }
+        val view = data.slice().asReadOnlyBuffer()
+        receiveStdout(view.remaining()) { stdoutBufferIngress.trySend(view).isSuccess }
+    }
+
+    private suspend fun receiveStdout(size: Int, enqueue: () -> Boolean) {
+        if (!lifecycle.receiveData { transition ->
+                // After a local CLOSE the peer may still send data until its own CLOSE arrives
+                // (RFC 4254 5.3). The lifecycle accepts it without DELIVER_DATA: nobody reads it.
+                if (SshChannelEffect.DELIVER_DATA !in transition.effects) return@receiveData
+                window.consumeLocal(size)
+                if (!enqueue()) {
                     throw org.connectbot.sshlib.SshException("Received data for a closed stdout stream")
                 }
             }
@@ -129,7 +215,8 @@ class SessionChannel internal constructor(
     }
 
     internal suspend fun onExtendedData(dataType: Int, data: ByteArray) {
-        if (!lifecycle.receiveData {
+        if (!lifecycle.receiveData { transition ->
+                if (SshChannelEffect.DELIVER_DATA !in transition.effects) return@receiveData
                 window.consumeLocal(data.size)
                 if (dataType == 1) {
                     if (stderrIngress.trySend(data).isFailure) {
@@ -148,24 +235,31 @@ class SessionChannel internal constructor(
         ingress: ReceiveChannel<T>,
         output: Channel<T>,
         sizeOf: (T) -> Int,
+        awaitConsumption: suspend () -> Unit = {},
     ) {
         try {
             for (value in ingress) {
+                val size = sizeOf(value)
                 output.send(value)
-                val adjust = window.releaseLocal(sizeOf(value))
-                if (inboundDeliveryOpen) {
+                awaitConsumption()
+                val adjust = if (size == 0) 0 else window.releaseLocal(size)
+                if (inboundDeliveryOpen && adjust > 0) {
                     try {
-                        connection.sendWindowAdjust(_remoteChannelNumber, adjust)
+                        lifecycle.sendWindowAdjust { connection.sendWindowAdjust(_remoteChannelNumber, adjust) }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (failure: Exception) {
-                        // The connection may close between delivering data and returning
-                        // window credit. This channel's delivery must not fail its siblings.
-                        inboundDeliveryOpen = false
-                        logger.debug("Unable to return session window credit", failure)
+                        // A write admitted before remote CLOSE may fail when auto-disconnect
+                        // tears down the writer. That obsolete credit must not drop the tail.
+                        if (lifecycle.state != SshChannelState.CLOSED || delivery.isAborted) throw failure
                     }
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            output.close(failure)
+            connection.transportFailed(failure)
         } finally {
             output.close()
         }
@@ -211,18 +305,14 @@ class SessionChannel internal constructor(
     private fun finishInboundDelivery() {
         inboundDeliveryOpen = false
         stdoutIngress.close()
+        stdoutBufferIngress.close()
         stderrIngress.close()
         extendedDataIngress.close()
+        delivery.finish()
     }
 
     private fun abortInboundDelivery() {
-        finishInboundDelivery()
-        stdoutDeliveryJob.cancel()
-        stderrDeliveryJob.cancel()
-        extendedDeliveryJob.cancel()
-        _stdout.close()
-        _stderr.close()
-        _extendedData.close()
+        delivery.abort()
     }
 
     private suspend fun closeResources(replyRequired: Boolean, preserveInbound: Boolean, reason: String) {
@@ -274,16 +364,23 @@ class SessionChannel internal constructor(
             while (window.remoteRemaining <= 0) {
                 windowAvailable.receive()
             }
-            val chunkSize = window.sendChunkSize(data.size - offset, maxPacketSize)
-            val chunk = data.copyOfRange(offset, offset + chunkSize)
+            var admittedBytes = 0
             if (!lifecycle.sendData {
-                    connection.sendChannelData(_remoteChannelNumber, chunk)
-                    window.consumeRemote(chunkSize)
+                    // Four packets per admission keep eight concurrent local admissions below
+                    // the ordinary writer's 64-packet capacity. Never wait for credit here.
+                    repeat(4) {
+                        val position = offset + admittedBytes
+                        val chunkSize = window.sendChunkSize(data.size - position, maxPacketSize)
+                        if (chunkSize == 0) return@sendData
+                        connection.sendChannelData(_remoteChannelNumber, data, position, chunkSize)
+                        window.consumeRemote(chunkSize)
+                        admittedBytes += chunkSize
+                    }
                 }
             ) {
                 throw org.connectbot.sshlib.SshException("Cannot send data after EOF or CLOSE on channel $localChannelNumber")
             }
-            offset += chunkSize
+            offset += admittedBytes
         }
     }
 
@@ -325,33 +422,51 @@ class SessionChannel internal constructor(
     private fun startChaffLoopIfNeeded(obs: KeystrokeObfuscator) {
         if (chaffJob?.isActive == true) return
         chaffJob = connectionScope.launch {
-            while (obfuscatorMutex.withLock { obs.isActive() }) {
-                val delayMs = obfuscatorMutex.withLock {
-                    obs.delayUntilNextSendMs()
-                }
-                if (delayMs > 0) {
-                    delay(delayMs)
-                }
-                val shouldSendChaff = obfuscatorMutex.withLock {
-                    if (!obs.isActive()) {
-                        false
-                    } else if (pendingObfuscatedWrites.get() > 0) {
-                        null
-                    } else {
-                        obs.advanceInterval()
-                        true
+            try {
+                while (obfuscatorMutex.withLock { obs.isActive() }) {
+                    val delayMs = obfuscatorMutex.withLock {
+                        obs.delayUntilNextSendMs()
+                    }
+                    if (delayMs > 0) {
+                        delay(delayMs)
+                    }
+                    val shouldSendChaff = obfuscatorMutex.withLock {
+                        if (!obs.isActive()) {
+                            false
+                        } else if (pendingObfuscatedWrites.get() > 0) {
+                            null
+                        } else {
+                            obs.advanceInterval()
+                            true
+                        }
+                    }
+                    when (shouldSendChaff) {
+                        true -> connection.sendChaff()
+                        false -> break
+                        null -> obfuscatedWritesIdle.receiveCatching()
                     }
                 }
-                when (shouldSendChaff) {
-                    true -> connection.sendChaff()
-                    false -> break
-                    null -> obfuscatedWritesIdle.receiveCatching()
-                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                // An admitted packet may fail with a transport error after cancellation.
+                // Chaff has no caller to receive it; use the normal connection failure path.
+                connection.transportFailed(failure)
             }
         }
     }
 
-    override suspend fun read(): ByteArray? = _stdout.receiveCatching().getOrNull()
+    override suspend fun read(): ByteArray? = if (bufferedStdout) {
+        readBuffer()?.toByteArray()
+    } else {
+        _stdout.receiveCatching().getOrNull()
+    }
+
+    internal suspend fun readBuffer(): ByteBuffer? = if (bufferedStdout) {
+        stdoutBuffers.receiveCatching().getOrNull()?.also { stdoutBufferConsumed.trySend(Unit) }
+    } else {
+        _stdout.receiveCatching().getOrNull()?.let { ByteBuffer.wrap(it).asReadOnlyBuffer() }
+    }
 
     override suspend fun readExtended(): Pair<Int, ByteArray>? = _extendedData.receiveCatching().getOrNull()
 
@@ -435,6 +550,22 @@ class SessionChannel internal constructor(
         return granted
     }
 
+    override suspend fun requestEnv(name: String, value: String): Boolean = sendEnv(name, value, wantReply = true)
+
+    internal suspend fun sendEnv(name: String, value: String, wantReply: Boolean): Boolean {
+        if ('\u0000' in name || '\u0000' in value) return false
+        return performSendRequest {
+            connection.beginChannelRequest(_remoteChannelNumber, "env", wantReply) { msg ->
+                val env = ChannelRequestEnv().apply {
+                    setVariableName(createByteString(name.toByteArray(Charsets.UTF_8)))
+                    setVariableValue(createByteString(value.toByteArray(Charsets.UTF_8)))
+                    _check()
+                }
+                msg.setRequestSpecificFields(env)
+            }
+        }
+    }
+
     override suspend fun requestShell(): Boolean = performSendRequest {
         logger.debug("Requesting shell on channel $localChannelNumber")
         connection.beginChannelRequest(
@@ -491,25 +622,34 @@ class SessionChannel internal constructor(
     }
 
     override fun close() {
+        closeRequested = true
         connectionScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            lifecycle.sendClose { transition ->
-                logger.debug("Closing channel $localChannelNumber")
-                obfuscatorMutex.withLock { obfuscator?.stop() }
-                chaffJob?.cancel()
-                abortInboundDelivery()
-                windowAvailable.close()
-                _exitInfo.complete(null)
-                try {
-                    connection.sendChannelClose(_remoteChannelNumber)
-                } catch (e: Exception) {
-                    logger.debug("Failed to send CHANNEL_CLOSE", e)
+            try {
+                lifecycle.sendClose { transition ->
+                    logger.debug("Closing channel $localChannelNumber")
+                    obfuscatorMutex.withLock { obfuscator?.stop() }
+                    chaffJob?.cancel()
+                    abortInboundDelivery()
+                    windowAvailable.close()
+                    _exitInfo.complete(null)
+                    try {
+                        connection.sendChannelClose(_remoteChannelNumber)
+                    } catch (e: Exception) {
+                        logger.debug("Failed to send CHANNEL_CLOSE", e)
+                    }
+                    if (SshChannelEffect.CLOSE_CHANNEL in transition.effects) {
+                        connection.notifyChannelClosed(localChannelNumber)
+                    }
                 }
-                if (SshChannelEffect.CLOSE_CHANNEL in transition.effects) {
-                    connection.notifyChannelClosed(localChannelNumber)
-                }
+            } catch (e: Exception) {
+                logger.debug("Channel close ended with the connection", e)
             }
             // A remote CLOSE makes sendClose a no-op, but close() still owns
             // releasing any unread delivery job retained for graceful draining.
+            abortInboundDelivery()
+            windowAvailable.close()
+            _exitInfo.complete(null)
+        }.invokeOnCompletion {
             abortInboundDelivery()
             windowAvailable.close()
             _exitInfo.complete(null)

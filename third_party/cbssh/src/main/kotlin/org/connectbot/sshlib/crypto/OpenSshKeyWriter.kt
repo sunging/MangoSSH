@@ -1,6 +1,6 @@
 /*
  * ConnectBot SSH Library
- * Copyright 2025 Kenny Root
+ * Copyright 2025-2026 Kenny Root
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ package org.connectbot.sshlib.crypto
 
 import org.connectbot.sshlib.SshException
 import org.connectbot.sshlib.crypto.ed25519.Ed25519PrivateKey
+import org.connectbot.sshlib.protocol.OpensshMldsaEd25519PrivateKey
+import org.connectbot.sshlib.protocol.toByteArray
 import java.io.ByteArrayOutputStream
 import java.security.KeyPair
 import java.security.PrivateKey
@@ -107,6 +109,7 @@ internal object OpenSshKeyWriter {
         out.write(encodeUint32(checkInt))
 
         when {
+            keyType == "ssh-mldsa44-ed25519" -> writeMldsaEd25519Private(out, keyPair)
             keyType == "ssh-ed25519" -> writeEd25519Private(out, keyPair)
             keyType.startsWith("ecdsa-sha2-") -> writeEcdsaPrivate(out, keyPair, keyType)
             keyType == "ssh-rsa" -> writeRsaPrivate(out, keyPair)
@@ -125,6 +128,20 @@ internal object OpenSshKeyWriter {
         }
 
         return out.toByteArray()
+    }
+
+    private fun writeMldsaEd25519Private(out: ByteArrayOutputStream, keyPair: KeyPair) {
+        val rawPublic = MldsaAlgorithm.decodePublicKey(keyPair.public).second
+        val seeds = MldsaPrivateKeys.openSshSeeds(keyPair)
+        val fields = OpensshMldsaEd25519PrivateKey().apply {
+            setLenPublicKey(rawPublic.size.toLong())
+            setPublicKey(rawPublic)
+            setLenPrivateKey(seeds.size.toLong())
+            setPrivateKey(seeds)
+            _check()
+        }
+        out.write(encodeSshString("ssh-mldsa44-ed25519".toByteArray(Charsets.US_ASCII)))
+        out.write(fields.toByteArray())
     }
 
     private fun writeEd25519Private(out: ByteArrayOutputStream, keyPair: KeyPair) {
@@ -154,13 +171,17 @@ internal object OpenSshKeyWriter {
             privKey.javaClass.name.contains("Ed25519PrivateKey") -> {
                 // Our Ed25519PrivateKey or similar — extract from PKCS#8 encoding
                 val encoded = privKey.encoded
-                val reader = DerReader(encoded)
-                reader.readSequence { seq ->
-                    seq.readInteger() // version
-                    seq.readSequence { algId -> while (algId.hasRemaining()) algId.skipTag() }
-                    val innerBytes = seq.readOctetString()
-                    val innerReader = DerReader(innerBytes)
-                    innerReader.readOctetString()
+                runCatching {
+                    val reader = DerReader(encoded)
+                    reader.readSequence { seq ->
+                        seq.readInteger() // version
+                        seq.readSequence { algId -> while (algId.hasRemaining()) algId.skipTag() }
+                        val innerBytes = seq.readOctetString()
+                        val innerReader = DerReader(innerBytes)
+                        innerReader.readOctetString()
+                    }
+                }.getOrElse {
+                    throw SshException("Cannot extract Ed25519 seed from ${privKey.javaClass}", it)
                 }
             }
 

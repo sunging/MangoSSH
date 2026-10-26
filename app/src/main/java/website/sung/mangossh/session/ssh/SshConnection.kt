@@ -200,6 +200,10 @@ internal class SshConnection(
                             override suspend fun verify(key: PublicKey): Boolean = verify(key.type, key.encoded.copyOf())
                         }
                         applyMangoAlgorithmPolicy(legacyAlgorithms, trustedHostKeyFamilies)
+                        // Each channel may buffer one window of unread data. Shells keep the
+                        // previous 64 KiB; SFTP gets enough for bulk transfers on slower links.
+                        sessionWindowSize = 64 * 1024
+                        sftpWindowSize = 1024 * 1024
                     }
                     val active = SshClient(config)
                     check(client.compareAndSet(null, active)) { "Connection already started" }

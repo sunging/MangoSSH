@@ -2,8 +2,8 @@
 
 ## cbssh
 
-[cbssh 0.4.2](https://github.com/connectbot/cbssh/tree/v0.4.2), commit
-`9811f5a321c1afd88721498cdd7a5201c0c4abc0`, is vendored as source under
+[cbssh 0.6.4](https://github.com/connectbot/cbssh/tree/v0.6.4), commit
+`1a84dc6db2167827defc56f3cadad31f87564acc`, is vendored as source under
 `third_party/cbssh`. Its protocol codecs are generated from the pinned Kaitai
 definitions during the JDK 17 build. Source archive SHA-256, import mapping and
 local patches are recorded in `third_party/cbssh/README.md`.
@@ -12,9 +12,9 @@ The Apache License, Version 2.0 is retained in `third_party/cbssh/LICENSE` and
 packaged as `assets/licenses/Apache-2.0-cbssh.txt`. SLF4J uses its no-output
 provider because upstream protocol diagnostics may contain sensitive data.
 
-cbssh's Poly1305 implementation is extracted from Bouncy Castle 1.86
-(`bcprov-jdk18on`), © The Legion of the Bouncy Castle Inc., under the MIT
-License, packaged as `assets/licenses/MIT-BouncyCastle.txt`.
+cbssh's Poly1305 and SNTRUP761 implementations are extracted from Bouncy
+Castle 1.86 (`bcprov-jdk18on`), © The Legion of the Bouncy Castle Inc., under
+the MIT License, packaged as `assets/licenses/MIT-BouncyCastle.txt`.
 
 ## OkHttp and Okio
 

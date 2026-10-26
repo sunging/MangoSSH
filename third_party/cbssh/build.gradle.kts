@@ -13,10 +13,13 @@ dependencies {
     implementation("org.slf4j:slf4j-api:2.0.20")
     implementation("com.google.crypto.tink:tink:1.24.0") { isTransitive = false }
     implementation("asia.hombre:kyber:2.1.0")
+    // Kyber 2.1.0 pulls Keccak 2.3.0, which is Java 21 bytecode; 2.5.1 keeps Java 17.
+    implementation("asia.hombre:keccak-jvm") { version { strictly("2.5.1") } }
     implementation("org.connectbot:jbcrypt:1.0.2")
     testImplementation(kotlin("test"))
     testImplementation("nl.jqno.equalsverifier:equalsverifier:4.5.2")
     testImplementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    testImplementation("org.conscrypt:conscrypt-openjdk-uber:2.8.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.3")

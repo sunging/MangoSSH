@@ -50,7 +50,7 @@ internal class SshFiles internal constructor(
     private val released: (SshFiles) -> Unit,
 ) : Closeable {
     private val closed = AtomicBoolean()
-    val atomicReplaceSupported get() = delegate.extensions["posix-rename@openssh.com"] == "1"
+    val atomicReplaceSupported get() = delegate.extensionVersions["posix-rename@openssh.com"] == "1"
 
     suspend fun canonicalPath(path: String): String = request { delegate.realpath(path) }
     suspend fun stat(path: String): SshFileAttributes = request { delegate.stat(path) }.appAttributes()

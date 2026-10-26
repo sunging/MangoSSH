@@ -1,6 +1,6 @@
 /*
  * ConnectBot SSH Library
- * Copyright 2025 Kenny Root
+ * Copyright 2025-2026 Kenny Root
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,11 @@
 
 package org.connectbot.sshlib
 
+import org.connectbot.sshlib.crypto.MldsaAlgorithm
 import org.connectbot.sshlib.crypto.PrivateKeyReader
 import org.connectbot.sshlib.crypto.SignatureEntry
 import org.connectbot.sshlib.crypto.SshPublicKeyEncoder
+import org.connectbot.sshlib.crypto.certificateSignatureAlgorithm
 import org.connectbot.sshlib.crypto.inferKeyType
 import java.security.KeyPair
 import java.security.PublicKey
@@ -49,9 +51,10 @@ object SshSigning {
     ): ByteArray {
         rejectSkAlgorithm(algorithmName)
         val privateKey = PrivateKeyReader.read(privateKeyData, passphrase)
-        val sigEntry = SignatureEntry.fromSshName(algorithmName)
+        val signatureAlgorithm = certificateSignatureAlgorithm(algorithmName)
+        val sigEntry = SignatureEntry.fromSshName(signatureAlgorithm)
             ?: throw SshException("Unknown signature algorithm: $algorithmName")
-        return sigEntry.algorithm.sign(algorithmName, privateKey.jcaKeyPair.private, dataToSign)
+        return sigEntry.algorithm.sign(signatureAlgorithm, privateKey.jcaKeyPair.private, dataToSign)
     }
 
     /**
@@ -111,6 +114,9 @@ object SshSigning {
      * "rsa-sha2-256", construct the [AuthPublicKey] with the desired algorithm name
      * using the returned blob.
      *
+     * ML-DSA keys and complete ML-DSA-44/Ed25519 composite keys are supported
+     * when supplied by a capable platform provider. See [SshKeys] for private-key import/export.
+     *
      * @param keyPair JCA key pair
      * @return The corresponding [AuthPublicKey]
      */
@@ -125,6 +131,7 @@ object SshSigning {
      *
      * @param algorithmName SSH signature algorithm (e.g., "ssh-ed25519", "rsa-sha2-256")
      * @param keyPair JCA key pair containing the private key
+     *   (including complete ML-DSA-44/Ed25519 composite key pairs)
      * @param dataToSign The data to sign (as provided by [AuthHandler.onSignatureRequest])
      * @return SSH-encoded signature blob
      */
@@ -134,9 +141,13 @@ object SshSigning {
         dataToSign: ByteArray,
     ): ByteArray {
         rejectSkAlgorithm(algorithmName)
-        val sigEntry = SignatureEntry.fromSshName(algorithmName)
+        if (MldsaAlgorithm.fromSshName(algorithmName) != null && inferKeyType(keyPair) != algorithmName) {
+            throw SshException("Key pair does not match $algorithmName")
+        }
+        val signatureAlgorithm = certificateSignatureAlgorithm(algorithmName)
+        val sigEntry = SignatureEntry.fromSshName(signatureAlgorithm)
             ?: throw SshException("Unknown signature algorithm: $algorithmName")
-        return sigEntry.algorithm.sign(algorithmName, keyPair.private, dataToSign)
+        return sigEntry.algorithm.sign(signatureAlgorithm, keyPair.private, dataToSign)
     }
 
     private fun rejectSkAlgorithm(algorithmName: String) {
