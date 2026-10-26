@@ -16,6 +16,7 @@ dependencies {
     implementation("org.connectbot:jbcrypt:1.0.2")
     testImplementation(kotlin("test"))
     testImplementation("nl.jqno.equalsverifier:equalsverifier:4.5.2")
+    testImplementation("org.bouncycastle:bcprov-jdk18on:1.86")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.3")

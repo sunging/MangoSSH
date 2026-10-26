@@ -12,6 +12,10 @@ The Apache License, Version 2.0 is retained in `third_party/cbssh/LICENSE` and
 packaged as `assets/licenses/Apache-2.0-cbssh.txt`. SLF4J uses its no-output
 provider because upstream protocol diagnostics may contain sensitive data.
 
+cbssh's Poly1305 implementation is extracted from Bouncy Castle 1.86
+(`bcprov-jdk18on`), © The Legion of the Bouncy Castle Inc., under the MIT
+License, packaged as `assets/licenses/MIT-BouncyCastle.txt`.
+
 ## OkHttp and Okio
 
 WebDAV uses [OkHttp 5.5.1](https://github.com/square/okhttp) and its

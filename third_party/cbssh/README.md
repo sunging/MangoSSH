@@ -58,6 +58,24 @@ No upstream version changes are inferred from local modifications.
   registered until peer CLOSE, and isolate failed forwarding sockets from their
   shared connection and the application's uncaught exception handler.
 
+## Upstream backports
+
+These later upstream commits are applied on top of v0.4.2; the rest of the
+v0.4.2..v0.6.4 range is not imported.
+
+- `0623133` (v0.6.2): Poly1305 uses the Bouncy Castle 1.86 raw-key extraction
+  (`src/main/java/.../Poly1305Core.java`, `Poly1305Pack.java`) behind the
+  existing `Poly1305` adapter. The previous limb implementation could produce
+  wrong `chacha20-poly1305@openssh.com` tags for some inputs. The MIT license
+  is kept at `src/main/resources/META-INF/LICENSE-bouncycastle.md` and packaged
+  as `assets/licenses/MIT-BouncyCastle.txt`. Bouncy Castle is a test-only
+  dependency, used to cross-check the extraction.
+- `4dbcd51`: the identification line may end in LF or CRLF; NUL or text after
+  CR is rejected and the 255-byte limit includes the terminator.
+- `520c5a1` (`MlKemHybridKeyExchange` only): ML-KEM and X25519 shared secrets
+  must be exactly 32 bytes; the all-zero check runs in constant time. The
+  disconnect-reason changes in `SshConnection` are not imported.
+
 Tests imported from the same revision cover protocol serialization, SFTP
 framing, attributes, dispatch and client operations, plus connection close.
 Local tests cover malformed/duplicate extension declarations, blocked-send
