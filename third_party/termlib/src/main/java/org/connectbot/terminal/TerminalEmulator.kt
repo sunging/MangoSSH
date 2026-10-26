@@ -16,6 +16,7 @@
  */
 // Modified by MangoSSH in 2026 to rebuild visible rows after terminal resize.
 // Modified by MangoSSH in 2026 to make the scrollback line limit configurable.
+// Modified by MangoSSH in 2026 to keep Windows ConPTY history intact across resizes.
 package org.connectbot.terminal
 
 import android.icu.lang.UCharacter
@@ -378,6 +379,9 @@ internal class TerminalEmulatorImpl(
     // can forward swipes as wheel reports instead of panning local scrollback.
     private var mouseTrackingActive = false
 
+    // Set once the remote turns out to be Windows ConPTY; see popScrollbackLine.
+    private val conptyDetector = ConptyDetector()
+
     // Scrollback buffer
     private val scrollback = mutableListOf<TerminalLine>()
 
@@ -430,6 +434,7 @@ internal class TerminalEmulatorImpl(
      * Write data to the terminal (from PTY/transport).
      */
     override fun writeInput(data: ByteArray, offset: Int, length: Int) {
+        conptyDetector.observe(data, offset, length)
         terminalNative.writeInput(data, offset, length)
     }
 
@@ -437,6 +442,7 @@ internal class TerminalEmulatorImpl(
      * Write data to the terminal using ByteBuffer (more efficient for large data).
      */
     override fun writeInput(buffer: ByteBuffer, length: Int) {
+        conptyDetector.observe(buffer, length)
         terminalNative.writeInput(buffer, length)
     }
 
@@ -797,7 +803,17 @@ internal class TerminalEmulatorImpl(
         return 0
     }
 
+    /**
+     * Refills the top of a screen that grew taller with the newest scrollback line.
+     *
+     * Declined for a Windows ConPTY peer: it answers the window-size change by
+     * repainting its whole viewport from the home position, keeping the viewport
+     * top where it was, so restored rows would be overwritten and lost. Returning
+     * 0 makes libvterm keep its rows at the top and add blank rows below,
+     * matching the repaint that follows.
+     */
     override fun popScrollbackLine(cols: Int, cells: Array<ScreenCell>): Int {
+        if (conptyDetector.detected) return 0
         synchronized(damageLock) {
             if (scrollback.isEmpty()) return 0
 

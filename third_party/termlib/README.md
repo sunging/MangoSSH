@@ -29,6 +29,11 @@ upstream defaults so a future re-sync is a straightforward re-apply:
   `TerminalSnapshot` gains `isAltScreen` / `mouseTrackingActive` (both default
   `false`) and `TerminalEmulatorImpl` gains an internal `sendMouseWheel`.
   Inertia is suppressed for these forwarded swipes.
+- `TerminalEmulator.kt` plus new `ConptyDetector.kt`: once the output carries
+  Windows ConPTY's `ESC[?9001h` announcement, `popScrollbackLine` declines to
+  refill grown rows from scrollback. ConPTY repaints its whole viewport after
+  every window change with the viewport top fixed, so refilled lines would be
+  overwritten and lost; other hosts keep the upstream refill behaviour.
 
 JNI and libvterm sources are imported from that same commit under `src/main/cpp`
 and built by AGP/CMake with NDK r27d. The Maven AAR is no longer a native input.
