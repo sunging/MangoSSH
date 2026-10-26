@@ -40,6 +40,8 @@ class TerminalRemoteTextInstrumentedTest {
 
         emulator.close()
         emulator.close()
+        // close() releases the screen, publishing one empty snapshot; later calls change nothing.
+        val closed = emulator.snapshot.value
         emulator.writeInput("dropped".encodeToByteArray())
         emulator.resize(newRows = 6, newCols = 20)
         emulator.dispatchCharacter(0, 'x'.code)
@@ -47,9 +49,9 @@ class TerminalRemoteTextInstrumentedTest {
 
         SystemClock.sleep(SETTLE_MS)
         val snapshot = emulator.snapshot.value
-        assertEquals(4, snapshot.rows)
-        assertTrue(snapshot.lines.any { it.text.startsWith("kept") })
-        assertTrue(snapshot.lines.none { it.text.contains("dropped") })
+        assertEquals(closed.sequenceNumber, snapshot.sequenceNumber)
+        assertEquals(0, snapshot.rows)
+        assertTrue(snapshot.lines.isEmpty())
     }
 
     private fun createEmulator(): TerminalEmulatorImpl = TerminalEmulatorFactory.create(
