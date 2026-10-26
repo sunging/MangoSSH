@@ -19,7 +19,7 @@ export MANGOSSH_MOSH_DEPS_DIR="$PWD/.fdroid/sources"
 ```
 
 Set `JAVA_HOME` to JDK 17 and `ANDROID_HOME` to the SDK. Android Studio must use
-the same JDK. Go 1.26.10 and gomobile remain pinned by the existing Go contracts;
+the same JDK. Go 1.27.3 and gomobile remain pinned by the existing Go contracts;
 `go.mod`, `go.sum` and vendor are not replaced by a second dependency database.
 The historically named `tools/fdroid-sources.lock` is the single source lock for
 Mosh dependencies in **all** distributions. External F-Droid srclibs can provide

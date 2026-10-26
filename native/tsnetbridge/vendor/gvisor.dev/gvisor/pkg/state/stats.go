@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"gvisor.dev/gvisor/pkg/gohacks"
 )
 
 type statEntry struct {
@@ -48,13 +50,13 @@ type Stats struct {
 	// on the stats object.
 	names []string
 
-	// last is the last start time.
-	last time.Time
+	// last is the monotonic time of the last sample.
+	last int64
 }
 
 // init initializes statistics.
 func (s *Stats) init() {
-	s.last = time.Now()
+	s.last = gohacks.Nanotime()
 	s.stack = append(s.stack, 0)
 }
 
@@ -72,12 +74,12 @@ func (s *Stats) fini(resolve func(id typeID) string) {
 
 // sample adds the samples to the given object.
 func (s *Stats) sample(id typeID) {
-	now := time.Now()
+	now := gohacks.Nanotime()
 	if len(s.byType) <= int(id) {
 		// Allocate all the missing entries in one fell swoop.
 		s.byType = append(s.byType, make([]statEntry, 1+int(id)-len(s.byType))...)
 	}
-	s.byType[id].total += now.Sub(s.last)
+	s.byType[id].total += time.Duration(now - s.last)
 	s.last = now
 }
 
@@ -124,7 +126,7 @@ func (s *Stats) String() string {
 		total time.Duration
 	)
 	buf.WriteString("\n")
-	buf.WriteString(fmt.Sprintf("% 16s | % 8s | % 16s | %s\n", "total", "count", "per", "type"))
+	fmt.Fprintf(&buf, "% 16s | % 8s | % 16s | %s\n", "total", "count", "per", "type")
 	buf.WriteString("-----------------+----------+------------------+----------------\n")
 	for _, se := range ss {
 		if se.entry.count == 0 {
@@ -135,11 +137,11 @@ func (s *Stats) String() string {
 		count += se.entry.count
 		total += se.entry.total
 		per := se.entry.total / time.Duration(se.entry.count)
-		buf.WriteString(fmt.Sprintf("% 16s | %8d | % 16s | %s\n",
-			se.entry.total, se.entry.count, per, se.name))
+		fmt.Fprintf(&buf, "% 16s | %8d | % 16s | %s\n",
+			se.entry.total, se.entry.count, per, se.name)
 	}
 	buf.WriteString("-----------------+----------+------------------+----------------\n")
-	buf.WriteString(fmt.Sprintf("% 16s | % 8d | % 16s | [all]",
-		total, count, total/time.Duration(count)))
+	fmt.Fprintf(&buf, "% 16s | % 8d | % 16s | [all]",
+		total, count, total/time.Duration(count))
 	return buf.String()
 }

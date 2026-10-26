@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"time"
 
+	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 )
@@ -33,6 +34,7 @@ const (
 	NATID TableID = iota
 	MangleID
 	FilterID
+	RawID
 	NumTables
 )
 
@@ -111,6 +113,27 @@ func DefaultTables(clock tcpip.Clock, rand *rand.Rand) *IPTables {
 					Postrouting: HookUnset,
 				},
 			},
+			RawID: {
+				Rules: []Rule{
+					{Filter: EmptyFilter4(), Target: &AcceptTarget{NetworkProtocol: header.IPv4ProtocolNumber}},
+					{Filter: EmptyFilter4(), Target: &AcceptTarget{NetworkProtocol: header.IPv4ProtocolNumber}},
+					{Filter: EmptyFilter4(), Target: &ErrorTarget{NetworkProtocol: header.IPv4ProtocolNumber}},
+				},
+				BuiltinChains: [NumHooks]int{
+					Prerouting:  0,
+					Input:       HookUnset,
+					Forward:     HookUnset,
+					Output:      1,
+					Postrouting: HookUnset,
+				},
+				Underflows: [NumHooks]int{
+					Prerouting:  0,
+					Input:       HookUnset,
+					Forward:     HookUnset,
+					Output:      1,
+					Postrouting: HookUnset,
+				},
+			},
 		},
 		v6Tables: [NumTables]Table{
 			NATID: {
@@ -176,11 +199,32 @@ func DefaultTables(clock tcpip.Clock, rand *rand.Rand) *IPTables {
 					Postrouting: HookUnset,
 				},
 			},
+			RawID: {
+				Rules: []Rule{
+					{Filter: EmptyFilter6(), Target: &AcceptTarget{NetworkProtocol: header.IPv6ProtocolNumber}},
+					{Filter: EmptyFilter6(), Target: &AcceptTarget{NetworkProtocol: header.IPv6ProtocolNumber}},
+					{Filter: EmptyFilter6(), Target: &ErrorTarget{NetworkProtocol: header.IPv6ProtocolNumber}},
+				},
+				BuiltinChains: [NumHooks]int{
+					Prerouting:  0,
+					Input:       HookUnset,
+					Forward:     HookUnset,
+					Output:      1,
+					Postrouting: HookUnset,
+				},
+				Underflows: [NumHooks]int{
+					Prerouting:  0,
+					Input:       HookUnset,
+					Forward:     HookUnset,
+					Output:      1,
+					Postrouting: HookUnset,
+				},
+			},
 		},
 		connections: ConnTrack{
 			seed:  rand.Uint32(),
 			clock: clock,
-			rand:  rand,
+			rng:   rand,
 		},
 	}
 }
@@ -211,6 +255,24 @@ func EmptyNATTable() Table {
 		},
 		Underflows: [NumHooks]int{
 			Forward: HookUnset,
+		},
+	}
+}
+
+// EmptyRawTable returns a Table with no rules and only the Prerouting and
+// Output hooks set, matching the Linux raw table's valid hooks.
+func EmptyRawTable() Table {
+	return Table{
+		Rules: []Rule{},
+		BuiltinChains: [NumHooks]int{
+			Input:       HookUnset,
+			Forward:     HookUnset,
+			Postrouting: HookUnset,
+		},
+		Underflows: [NumHooks]int{
+			Input:       HookUnset,
+			Forward:     HookUnset,
+			Postrouting: HookUnset,
 		},
 	}
 }
@@ -340,6 +402,10 @@ func (it *IPTables) CheckPrerouting(pkt *PacketBuffer, addressEP AddressableEndp
 	tables := [...]checkTable{ // escapes: on arm this causes an allocation.
 		{
 			fn:      check,
+			tableID: RawID,
+		},
+		{
+			fn:      check,
 			tableID: MangleID,
 		},
 		{
@@ -450,6 +516,10 @@ func (it *IPTables) CheckOutput(pkt *PacketBuffer, r *Route, outNicName string) 
 	tables := [...]checkTable{ // escapes: on arm this causes an allocation.
 		{
 			fn:      check,
+			tableID: RawID,
+		},
+		{
+			fn:      check,
 			tableID: MangleID,
 		},
 		{
@@ -532,7 +602,7 @@ func checkNAT(it *IPTables, table Table, hook Hook, pkt *PacketBuffer, r *Route,
 // See check.
 func (it *IPTables) checkNAT(table Table, hook Hook, pkt *PacketBuffer, r *Route, addressEP AddressableEndpoint, inNicName, outNicName string) bool {
 	t := pkt.tuple
-	if t != nil && t.conn.handlePacket(pkt, hook, r) {
+	if t != nil && IPTHandlePacket(pkt, hook, r) {
 		return true
 	}
 
@@ -561,7 +631,7 @@ func (it *IPTables) checkNAT(table Table, hook Hook, pkt *PacketBuffer, r *Route
 	//
 	// If the packet was already NATed, the connection must be NATed.
 	if !natDone {
-		t.conn.maybePerformNoopNAT(pkt, hook, r, dnat)
+		IPTMaybePerformNoopNAT(pkt, hook, r, dnat)
 	}
 
 	return true
@@ -578,7 +648,7 @@ func check(it *IPTables, table Table, hook Hook, pkt *PacketBuffer, r *Route, ad
 // Precondition: The packet's network and transport header must be set.
 func (it *IPTables) check(table Table, hook Hook, pkt *PacketBuffer, r *Route, addressEP AddressableEndpoint, inNicName, outNicName string) bool {
 	ruleIdx := table.BuiltinChains[hook]
-	switch verdict := it.checkChain(hook, pkt, table, ruleIdx, r, addressEP, inNicName, outNicName); verdict {
+	switch verdict := it.checkChain(hook, pkt, table, ruleIdx, r, addressEP, inNicName, outNicName, 0 /* depth */); verdict {
 	// If the table returns Accept, move on to the next table.
 	case chainAccept:
 		return true
@@ -626,10 +696,19 @@ func (it *IPTables) startReaper(interval time.Duration) {
 	})
 }
 
+// maxJumps is the maximum allowed depth of recursion when jumping between
+// chains in iptables. This prevents stack overflows from jump loops or deep
+// recursion. Linux kernel uses XT_JUMP_STACK_MAX = 16.
+const maxJumps = 16
+
 // Preconditions:
 //   - pkt is a IPv4 packet of at least length header.IPv4MinimumSize.
 //   - pkt.NetworkHeader is not nil.
-func (it *IPTables) checkChain(hook Hook, pkt *PacketBuffer, table Table, ruleIdx int, r *Route, addressEP AddressableEndpoint, inNicName, outNicName string) chainVerdict {
+func (it *IPTables) checkChain(hook Hook, pkt *PacketBuffer, table Table, ruleIdx int, r *Route, addressEP AddressableEndpoint, inNicName, outNicName string, depth int) chainVerdict {
+	if depth >= maxJumps {
+		log.Warningf("iptables: jump depth exceeded max %d", maxJumps)
+		return chainDrop
+	}
 	// Start from ruleIdx and walk the list of rules until a rule gives us
 	// a verdict.
 	for ruleIdx < len(table.Rules) {
@@ -650,7 +729,7 @@ func (it *IPTables) checkChain(hook Hook, pkt *PacketBuffer, table Table, ruleId
 				ruleIdx++
 				continue
 			}
-			switch verdict := it.checkChain(hook, pkt, table, jumpTo, r, addressEP, inNicName, outNicName); verdict {
+			switch verdict := it.checkChain(hook, pkt, table, jumpTo, r, addressEP, inNicName, outNicName, depth+1); verdict {
 			case chainAccept:
 				return chainAccept
 			case chainDrop:

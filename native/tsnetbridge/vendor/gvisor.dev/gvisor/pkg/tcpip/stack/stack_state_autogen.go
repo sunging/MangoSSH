@@ -244,6 +244,7 @@ func (cn *conn) StateFields() []string {
 		"destinationManip",
 		"tcb",
 		"lastUsed",
+		"replySeen",
 	}
 }
 
@@ -260,6 +261,7 @@ func (cn *conn) StateSave(stateSinkObject state.Sink) {
 	stateSinkObject.Save(5, &cn.destinationManip)
 	stateSinkObject.Save(6, &cn.tcb)
 	stateSinkObject.Save(7, &cn.lastUsed)
+	stateSinkObject.Save(8, &cn.replySeen)
 }
 
 func (cn *conn) afterLoad(context.Context) {}
@@ -274,6 +276,7 @@ func (cn *conn) StateLoad(ctx context.Context, stateSourceObject state.Source) {
 	stateSourceObject.Load(5, &cn.destinationManip)
 	stateSourceObject.Load(6, &cn.tcb)
 	stateSourceObject.Load(7, &cn.lastUsed)
+	stateSourceObject.Load(8, &cn.replySeen)
 }
 
 func (ct *ConnTrack) StateTypeName() string {
@@ -283,6 +286,7 @@ func (ct *ConnTrack) StateTypeName() string {
 func (ct *ConnTrack) StateFields() []string {
 	return []string{
 		"seed",
+		"nftIDSeed",
 		"clock",
 		"buckets",
 	}
@@ -294,8 +298,9 @@ func (ct *ConnTrack) beforeSave() {}
 func (ct *ConnTrack) StateSave(stateSinkObject state.Sink) {
 	ct.beforeSave()
 	stateSinkObject.Save(0, &ct.seed)
-	stateSinkObject.Save(1, &ct.clock)
-	stateSinkObject.Save(2, &ct.buckets)
+	stateSinkObject.Save(1, &ct.nftIDSeed)
+	stateSinkObject.Save(2, &ct.clock)
+	stateSinkObject.Save(3, &ct.buckets)
 }
 
 func (ct *ConnTrack) afterLoad(context.Context) {}
@@ -303,8 +308,9 @@ func (ct *ConnTrack) afterLoad(context.Context) {}
 // +checklocksignore
 func (ct *ConnTrack) StateLoad(ctx context.Context, stateSourceObject state.Source) {
 	stateSourceObject.Load(0, &ct.seed)
-	stateSourceObject.Load(1, &ct.clock)
-	stateSourceObject.Load(2, &ct.buckets)
+	stateSourceObject.Load(1, &ct.nftIDSeed)
+	stateSourceObject.Load(2, &ct.clock)
+	stateSourceObject.Load(3, &ct.buckets)
 }
 
 func (bkt *bucket) StateTypeName() string {
@@ -339,6 +345,8 @@ func (l *ICMPRateLimiter) StateTypeName() string {
 func (l *ICMPRateLimiter) StateFields() []string {
 	return []string{
 		"clock",
+		"limit",
+		"burst",
 	}
 }
 
@@ -348,13 +356,16 @@ func (l *ICMPRateLimiter) beforeSave() {}
 func (l *ICMPRateLimiter) StateSave(stateSinkObject state.Sink) {
 	l.beforeSave()
 	stateSinkObject.Save(0, &l.clock)
+	stateSinkObject.Save(1, &l.limit)
+	stateSinkObject.Save(2, &l.burst)
 }
-
-func (l *ICMPRateLimiter) afterLoad(context.Context) {}
 
 // +checklocksignore
 func (l *ICMPRateLimiter) StateLoad(ctx context.Context, stateSourceObject state.Source) {
 	stateSourceObject.Load(0, &l.clock)
+	stateSourceObject.Load(1, &l.limit)
+	stateSourceObject.Load(2, &l.burst)
+	stateSourceObject.AfterLoad(func() { l.afterLoad(ctx) })
 }
 
 func (a *AcceptTarget) StateTypeName() string {
@@ -666,6 +677,34 @@ func (mt *MasqueradeTarget) afterLoad(context.Context) {}
 // +checklocksignore
 func (mt *MasqueradeTarget) StateLoad(ctx context.Context, stateSourceObject state.Source) {
 	stateSourceObject.Load(0, &mt.NetworkProtocol)
+}
+
+func (c *CTTarget) StateTypeName() string {
+	return "pkg/tcpip/stack.CTTarget"
+}
+
+func (c *CTTarget) StateFields() []string {
+	return []string{
+		"NetworkProtocol",
+		"Zone",
+	}
+}
+
+func (c *CTTarget) beforeSave() {}
+
+// +checklocksignore
+func (c *CTTarget) StateSave(stateSinkObject state.Sink) {
+	c.beforeSave()
+	stateSinkObject.Save(0, &c.NetworkProtocol)
+	stateSinkObject.Save(1, &c.Zone)
+}
+
+func (c *CTTarget) afterLoad(context.Context) {}
+
+// +checklocksignore
+func (c *CTTarget) StateLoad(ctx context.Context, stateSourceObject state.Source) {
+	stateSourceObject.Load(0, &c.NetworkProtocol)
+	stateSourceObject.Load(1, &c.Zone)
 }
 
 func (it *IPTables) StateTypeName() string {
@@ -1133,6 +1172,7 @@ func (n *nic) StateFields() []string {
 		"stack",
 		"id",
 		"name",
+		"kind",
 		"context",
 		"stats",
 		"networkEndpoints",
@@ -1159,20 +1199,21 @@ func (n *nic) StateSave(stateSinkObject state.Sink) {
 	stateSinkObject.Save(1, &n.stack)
 	stateSinkObject.Save(2, &n.id)
 	stateSinkObject.Save(3, &n.name)
-	stateSinkObject.Save(4, &n.context)
-	stateSinkObject.Save(5, &n.stats)
-	stateSinkObject.Save(6, &n.networkEndpoints)
-	stateSinkObject.Save(7, &n.linkAddrResolvers)
-	stateSinkObject.Save(8, &n.duplicateAddressDetectors)
-	stateSinkObject.Save(9, &n.enabled)
-	stateSinkObject.Save(10, &n.spoofing)
-	stateSinkObject.Save(11, &n.promiscuous)
-	stateSinkObject.Save(12, &n.linkResQueue)
-	stateSinkObject.Save(13, &n.packetEPs)
-	stateSinkObject.Save(14, &n.qDisc)
-	stateSinkObject.Save(15, &n.deliverLinkPackets)
-	stateSinkObject.Save(16, &n.Primary)
-	stateSinkObject.Save(17, &n.experimentIPOptionEnabled)
+	stateSinkObject.Save(4, &n.kind)
+	stateSinkObject.Save(5, &n.context)
+	stateSinkObject.Save(6, &n.stats)
+	stateSinkObject.Save(7, &n.networkEndpoints)
+	stateSinkObject.Save(8, &n.linkAddrResolvers)
+	stateSinkObject.Save(9, &n.duplicateAddressDetectors)
+	stateSinkObject.Save(10, &n.enabled)
+	stateSinkObject.Save(11, &n.spoofing)
+	stateSinkObject.Save(12, &n.promiscuous)
+	stateSinkObject.Save(13, &n.linkResQueue)
+	stateSinkObject.Save(14, &n.packetEPs)
+	stateSinkObject.Save(15, &n.qDisc)
+	stateSinkObject.Save(16, &n.deliverLinkPackets)
+	stateSinkObject.Save(17, &n.Primary)
+	stateSinkObject.Save(18, &n.experimentIPOptionEnabled)
 }
 
 func (n *nic) afterLoad(context.Context) {}
@@ -1183,20 +1224,21 @@ func (n *nic) StateLoad(ctx context.Context, stateSourceObject state.Source) {
 	stateSourceObject.Load(1, &n.stack)
 	stateSourceObject.Load(2, &n.id)
 	stateSourceObject.Load(3, &n.name)
-	stateSourceObject.Load(4, &n.context)
-	stateSourceObject.Load(5, &n.stats)
-	stateSourceObject.Load(6, &n.networkEndpoints)
-	stateSourceObject.Load(7, &n.linkAddrResolvers)
-	stateSourceObject.Load(8, &n.duplicateAddressDetectors)
-	stateSourceObject.Load(9, &n.enabled)
-	stateSourceObject.Load(10, &n.spoofing)
-	stateSourceObject.Load(11, &n.promiscuous)
-	stateSourceObject.Load(12, &n.linkResQueue)
-	stateSourceObject.Load(13, &n.packetEPs)
-	stateSourceObject.Load(14, &n.qDisc)
-	stateSourceObject.Load(15, &n.deliverLinkPackets)
-	stateSourceObject.Load(16, &n.Primary)
-	stateSourceObject.Load(17, &n.experimentIPOptionEnabled)
+	stateSourceObject.Load(4, &n.kind)
+	stateSourceObject.Load(5, &n.context)
+	stateSourceObject.Load(6, &n.stats)
+	stateSourceObject.Load(7, &n.networkEndpoints)
+	stateSourceObject.Load(8, &n.linkAddrResolvers)
+	stateSourceObject.Load(9, &n.duplicateAddressDetectors)
+	stateSourceObject.Load(10, &n.enabled)
+	stateSourceObject.Load(11, &n.spoofing)
+	stateSourceObject.Load(12, &n.promiscuous)
+	stateSourceObject.Load(13, &n.linkResQueue)
+	stateSourceObject.Load(14, &n.packetEPs)
+	stateSourceObject.Load(15, &n.qDisc)
+	stateSourceObject.Load(16, &n.deliverLinkPackets)
+	stateSourceObject.Load(17, &n.Primary)
+	stateSourceObject.Load(18, &n.experimentIPOptionEnabled)
 }
 
 func (p *packetEndpointList) StateTypeName() string {
@@ -1527,8 +1569,10 @@ func (pk *PacketBuffer) StateFields() []string {
 		"dnatDone",
 		"PktType",
 		"NICID",
+		"InputNICID",
 		"RXChecksumValidated",
 		"NetworkPacketInfo",
+		"Mark",
 		"tuple",
 	}
 }
@@ -1554,9 +1598,11 @@ func (pk *PacketBuffer) StateSave(stateSinkObject state.Sink) {
 	stateSinkObject.Save(13, &pk.dnatDone)
 	stateSinkObject.Save(14, &pk.PktType)
 	stateSinkObject.Save(15, &pk.NICID)
-	stateSinkObject.Save(16, &pk.RXChecksumValidated)
-	stateSinkObject.Save(17, &pk.NetworkPacketInfo)
-	stateSinkObject.Save(18, &pk.tuple)
+	stateSinkObject.Save(16, &pk.InputNICID)
+	stateSinkObject.Save(17, &pk.RXChecksumValidated)
+	stateSinkObject.Save(18, &pk.NetworkPacketInfo)
+	stateSinkObject.Save(19, &pk.Mark)
+	stateSinkObject.Save(20, &pk.tuple)
 }
 
 func (pk *PacketBuffer) afterLoad(context.Context) {}
@@ -1579,9 +1625,11 @@ func (pk *PacketBuffer) StateLoad(ctx context.Context, stateSourceObject state.S
 	stateSourceObject.Load(13, &pk.dnatDone)
 	stateSourceObject.Load(14, &pk.PktType)
 	stateSourceObject.Load(15, &pk.NICID)
-	stateSourceObject.Load(16, &pk.RXChecksumValidated)
-	stateSourceObject.Load(17, &pk.NetworkPacketInfo)
-	stateSourceObject.Load(18, &pk.tuple)
+	stateSourceObject.Load(16, &pk.InputNICID)
+	stateSourceObject.Load(17, &pk.RXChecksumValidated)
+	stateSourceObject.Load(18, &pk.NetworkPacketInfo)
+	stateSourceObject.Load(19, &pk.Mark)
+	stateSourceObject.Load(20, &pk.tuple)
 }
 
 func (h *headerInfo) StateTypeName() string {
@@ -2094,6 +2142,7 @@ func (s *Stack) StateFields() []string {
 		"cleanupEndpoints",
 		"PortManager",
 		"clock",
+		"clockResolution",
 		"handleLocal",
 		"nftablesConfigured",
 		"restoredEndpoints",
@@ -2106,8 +2155,8 @@ func (s *Stack) StateFields() []string {
 		"receiveBufferSize",
 		"tcpInvalidRateLimit",
 		"tsOffsetSecret",
-		"saveRestoreEnabled",
 		"externalNetworkingDisabled",
+		"allowConnectedOnSave",
 	}
 }
 
@@ -2124,20 +2173,21 @@ func (s *Stack) StateSave(stateSinkObject state.Sink) {
 	stateSinkObject.Save(7, &s.cleanupEndpoints)
 	stateSinkObject.Save(8, &s.PortManager)
 	stateSinkObject.Save(9, &s.clock)
-	stateSinkObject.Save(10, &s.handleLocal)
-	stateSinkObject.Save(11, &s.nftablesConfigured)
-	stateSinkObject.Save(12, &s.restoredEndpoints)
-	stateSinkObject.Save(13, &s.resumableEndpoints)
-	stateSinkObject.Save(14, &s.icmpRateLimiter)
-	stateSinkObject.Save(15, &s.seed)
-	stateSinkObject.Save(16, &s.nudConfigs)
-	stateSinkObject.Save(17, &s.nudDisp)
-	stateSinkObject.Save(18, &s.sendBufferSize)
-	stateSinkObject.Save(19, &s.receiveBufferSize)
-	stateSinkObject.Save(20, &s.tcpInvalidRateLimit)
-	stateSinkObject.Save(21, &s.tsOffsetSecret)
-	stateSinkObject.Save(22, &s.saveRestoreEnabled)
+	stateSinkObject.Save(10, &s.clockResolution)
+	stateSinkObject.Save(11, &s.handleLocal)
+	stateSinkObject.Save(12, &s.nftablesConfigured)
+	stateSinkObject.Save(13, &s.restoredEndpoints)
+	stateSinkObject.Save(14, &s.resumableEndpoints)
+	stateSinkObject.Save(15, &s.icmpRateLimiter)
+	stateSinkObject.Save(16, &s.seed)
+	stateSinkObject.Save(17, &s.nudConfigs)
+	stateSinkObject.Save(18, &s.nudDisp)
+	stateSinkObject.Save(19, &s.sendBufferSize)
+	stateSinkObject.Save(20, &s.receiveBufferSize)
+	stateSinkObject.Save(21, &s.tcpInvalidRateLimit)
+	stateSinkObject.Save(22, &s.tsOffsetSecret)
 	stateSinkObject.Save(23, &s.externalNetworkingDisabled)
+	stateSinkObject.Save(24, &s.allowConnectedOnSave)
 }
 
 // +checklocksignore
@@ -2152,20 +2202,21 @@ func (s *Stack) StateLoad(ctx context.Context, stateSourceObject state.Source) {
 	stateSourceObject.Load(7, &s.cleanupEndpoints)
 	stateSourceObject.Load(8, &s.PortManager)
 	stateSourceObject.Load(9, &s.clock)
-	stateSourceObject.Load(10, &s.handleLocal)
-	stateSourceObject.Load(11, &s.nftablesConfigured)
-	stateSourceObject.Load(12, &s.restoredEndpoints)
-	stateSourceObject.Load(13, &s.resumableEndpoints)
-	stateSourceObject.Load(14, &s.icmpRateLimiter)
-	stateSourceObject.Load(15, &s.seed)
-	stateSourceObject.Load(16, &s.nudConfigs)
-	stateSourceObject.Load(17, &s.nudDisp)
-	stateSourceObject.Load(18, &s.sendBufferSize)
-	stateSourceObject.Load(19, &s.receiveBufferSize)
-	stateSourceObject.Load(20, &s.tcpInvalidRateLimit)
-	stateSourceObject.Load(21, &s.tsOffsetSecret)
-	stateSourceObject.Load(22, &s.saveRestoreEnabled)
+	stateSourceObject.Load(10, &s.clockResolution)
+	stateSourceObject.Load(11, &s.handleLocal)
+	stateSourceObject.Load(12, &s.nftablesConfigured)
+	stateSourceObject.Load(13, &s.restoredEndpoints)
+	stateSourceObject.Load(14, &s.resumableEndpoints)
+	stateSourceObject.Load(15, &s.icmpRateLimiter)
+	stateSourceObject.Load(16, &s.seed)
+	stateSourceObject.Load(17, &s.nudConfigs)
+	stateSourceObject.Load(18, &s.nudDisp)
+	stateSourceObject.Load(19, &s.sendBufferSize)
+	stateSourceObject.Load(20, &s.receiveBufferSize)
+	stateSourceObject.Load(21, &s.tcpInvalidRateLimit)
+	stateSourceObject.Load(22, &s.tsOffsetSecret)
 	stateSourceObject.Load(23, &s.externalNetworkingDisabled)
+	stateSourceObject.Load(24, &s.allowConnectedOnSave)
 	stateSourceObject.AfterLoad(func() { s.afterLoad(ctx) })
 }
 
@@ -2440,6 +2491,7 @@ func init() {
 	state.Register((*RedirectTarget)(nil))
 	state.Register((*SNATTarget)(nil))
 	state.Register((*MasqueradeTarget)(nil))
+	state.Register((*CTTarget)(nil))
 	state.Register((*IPTables)(nil))
 	state.Register((*Table)(nil))
 	state.Register((*Rule)(nil))

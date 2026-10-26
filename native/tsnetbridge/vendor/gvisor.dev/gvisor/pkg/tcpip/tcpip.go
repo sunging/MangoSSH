@@ -850,7 +850,7 @@ type Endpoint interface {
 	// protocol-specific and is primarily used for diagnostics.
 	State() uint32
 
-	// ModerateRecvBuf should be called everytime data is copied to the user
+	// ModerateRecvBuf should be called every time data is copied to the user
 	// space. This allows for dynamic tuning of recv buffer space for a
 	// given socket.
 	//
@@ -955,9 +955,8 @@ const (
 
 	// MTUDiscoverOption is used to set/get the path MTU discovery setting.
 	//
-	// NOTE: Setting this option to any other value than PMTUDiscoveryDont
-	// is not supported and will fail as such, and getting this option will
-	// always return PMTUDiscoveryDont.
+	// The value controls whether the Don't Fragment (DF) bit is set on
+	// outgoing IPv4 packets.
 	MTUDiscoverOption
 
 	// MulticastTTLOption is used by SetSockOptInt/GetSockOptInt to control
@@ -2858,10 +2857,14 @@ type ProtocolAddress struct {
 }
 
 var (
-	// danglingEndpointsMu protects access to danglingEndpoints.
+	// Public dangling-endpoint helpers acquire this mutex themselves. Their
+	// caller exclusions cannot be exported reliably by checklocks because
+	// the guard is rooted in a private package global.
 	danglingEndpointsMu sync.Mutex
 
 	// danglingEndpoints tracks all dangling endpoints no longer owned by the app.
+	//
+	// +checklocks:danglingEndpointsMu
 	danglingEndpoints = make(map[Endpoint]struct{})
 )
 

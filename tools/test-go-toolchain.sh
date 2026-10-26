@@ -22,17 +22,17 @@ expect_failure() {
 cat > "$work_dir/archive/go/bin/go" <<'GO'
 #!/usr/bin/env bash
 [[ "${GOTOOLCHAIN:-}" == local ]] || exit 90
-printf 'go version go1.26.10 linux/amd64\n'
+printf 'go version go1.27.3 linux/amd64\n'
 GO
 chmod +x "$work_dir/archive/go/bin/go"
 export GOTOOLCHAIN=go99.0.0
 expect_failure mangossh_require_go "$work_dir/missing"
-sed -i 's/go1.26.10/go1.26.9/' "$work_dir/archive/go/bin/go"
+sed -i 's/go1.27.3/go1.27.2/' "$work_dir/archive/go/bin/go"
 expect_failure mangossh_require_go "$work_dir/archive/go"
-sed -i 's/go1.26.9/go1.26.10/' "$work_dir/archive/go/bin/go"
+sed -i 's/go1.27.2/go1.27.3/' "$work_dir/archive/go/bin/go"
 mangossh_require_go "$work_dir/archive/go"
 
-archive="$work_dir/.tools/downloads/go1.26.10.linux-amd64.tar.gz"
+archive="$work_dir/.tools/downloads/go1.27.3.linux-amd64.tar.gz"
 tar -czf "$archive" -C "$work_dir/archive" go
 # Networking is always forbidden in these tests; the fixture never fetches Go.
 cat > "$work_dir/bin/curl" <<'CURL'
@@ -50,30 +50,30 @@ mkdir -p "$work_dir/sdk"
 expect_failure env MANGOSSH_OFFLINE_BUILD=1 ANDROID_SDK_ROOT="$work_dir/sdk" \
     MANGOSSH_GO_ROOT="$work_dir/missing" bash "$work_dir/tools/build-tsnet-android.sh"
 grep -q 'must be preinstalled' "$work_dir/failure.log"
-sed -i 's/go1.26.10/go1.26.9/' "$work_dir/archive/go/bin/go"
+sed -i 's/go1.27.3/go1.27.2/' "$work_dir/archive/go/bin/go"
 expect_failure env MANGOSSH_OFFLINE_BUILD=1 ANDROID_SDK_ROOT="$work_dir/sdk" \
     MANGOSSH_GO_ROOT="$work_dir/archive/go" bash "$work_dir/tools/build-tsnet-android.sh"
 grep -q 'must be preinstalled' "$work_dir/failure.log"
-sed -i 's/go1.26.9/go1.26.10/' "$work_dir/archive/go/bin/go"
+sed -i 's/go1.27.2/go1.27.3/' "$work_dir/archive/go/bin/go"
 expect_failure bash "$work_dir/tools/fetch-go.sh"
 grep -q 'FAILED' "$work_dir/failure.log"
-[[ ! -e "$work_dir/.tools/go/1.26.10" ]]
+[[ ! -e "$work_dir/.tools/go/1.27.3" ]]
 
 # Substitute only the fixture hash; production's hash remains pinned.
 fixture_hash="$(sha256sum "$archive" | cut -d ' ' -f 1)"
 sed -i "s/$MANGOSSH_GO_SHA256/$fixture_hash/" "$work_dir/tools/lib/go-toolchain.sh"
 bash "$work_dir/tools/fetch-go.sh"
-[[ "$(cat "$work_dir/.tools/go/1.26.10/.mangossh-archive-sha256")" == "$fixture_hash" ]]
+[[ "$(cat "$work_dir/.tools/go/1.27.3/.mangossh-archive-sha256")" == "$fixture_hash" ]]
 rm "$archive"
 # No archive and no network: a verified installation must still be reusable.
 bash "$work_dir/tools/fetch-go.sh"
 
 # An invalid replacement archive must not destroy an existing installation.
-sed -i 's/go1.26.10/go1.26.9/' "$work_dir/archive/go/bin/go"
+sed -i 's/go1.27.3/go1.27.2/' "$work_dir/archive/go/bin/go"
 tar -czf "$archive" -C "$work_dir/archive" go
 replacement_hash="$(sha256sum "$archive" | cut -d ' ' -f 1)"
 sed -i "s/$fixture_hash/$replacement_hash/" "$work_dir/tools/lib/go-toolchain.sh"
 expect_failure bash "$work_dir/tools/fetch-go.sh"
 grep -q 'must be preinstalled' "$work_dir/failure.log"
-mangossh_require_go "$work_dir/.tools/go/1.26.10"
+mangossh_require_go "$work_dir/.tools/go/1.27.3"
 echo 'Go toolchain missing/version/hash failures and offline cache reuse passed.'

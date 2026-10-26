@@ -171,7 +171,7 @@ jobs:
 
       - name: Test, lint, and build both unsigned distributions
         env:
-          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.26.10
+          MANGOSSH_GO_ROOT: ${{ github.workspace }}/.tools/go/1.27.3
         run: |
           read -ra release_tasks <<< "$RELEASE_GRADLE_TASKS"
           ./gradlew --no-daemon --offline --no-build-cache --profile \
