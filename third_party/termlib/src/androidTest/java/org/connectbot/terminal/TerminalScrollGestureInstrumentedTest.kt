@@ -152,7 +152,7 @@ class TerminalScrollGestureInstrumentedTest {
                 "\u001B[?1000${if (mouse) 'h' else 'l'}"
             ).encodeToByteArray())
         composeRule.waitUntil(2_000) {
-            emulator.snapshot.value.let { it.isAltScreen == alternate && it.mouseTrackingActive == mouse }
+            emulator.snapshot.value.let { it.alternateScreen == alternate && it.mouseTrackingActive == mouse }
         }
         composeRule.waitForIdle()
         output.clear()

@@ -21,7 +21,7 @@ extern "C" {
 /* Any cell can contain at most one basic printing character and 5 combining
  * characters. This number could be changed but will be ABI-incompatible if
  * you do */
-#define VTERM_MAX_CHARS_PER_CELL 6
+#define VTERM_MAX_CHARS_PER_CELL 16
 
 typedef struct VTerm VTerm;
 typedef struct VTermState VTermState;
@@ -410,6 +410,7 @@ typedef struct {
   int (*pm)(VTermStringFragment frag, void *user);
   int (*sos)(VTermStringFragment frag, void *user);
   int (*resize)(int rows, int cols, void *user);
+  void (*cancel)(void *user);
 } VTermParserCallbacks;
 
 void  vterm_parser_set_callbacks(VTerm *vt, const VTermParserCallbacks *callbacks, void *user);
@@ -464,6 +465,7 @@ void *vterm_state_get_unrecognised_fbdata(VTermState *state);
 
 void vterm_state_reset(VTermState *state, int hard);
 void vterm_state_get_cursorpos(const VTermState *state, VTermPos *cursorpos);
+
 void vterm_state_get_default_colors(const VTermState *state, VTermColor *default_fg, VTermColor *default_bg);
 void vterm_state_get_palette_color(const VTermState *state, int index, VTermColor *col);
 void vterm_state_set_default_colors(VTermState *state, const VTermColor *default_fg, const VTermColor *default_bg);
@@ -541,7 +543,15 @@ typedef struct {
   int (*sb_pushline)(int cols, const VTermScreenCell *cells, void *user);
   int (*sb_popline)(int cols, VTermScreenCell *cells, void *user);
   int (*sb_clear)(void* user);
+  /* Exact mutations, independent of merged display damage. */
+  int (*edit)(VTermRect rect, void *user);
+  int (*scroll)(VTermRect rect, int downward, int rightward, void *user);
+  int (*clear_images)(void *user);
+  int (*image_resize)(int buffer, int delta, int rows, int cols, void *user);
 } VTermScreenCallbacks;
+
+/* Reserve inline image cells without recursively entering the input parser. */
+void vterm_state_place_image(VTermState *state, int rows, int cols, int reserve);
 
 VTermScreen *vterm_obtain_screen(VTerm *vt);
 

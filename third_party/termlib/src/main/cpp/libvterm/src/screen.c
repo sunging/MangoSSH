@@ -178,6 +178,20 @@ static int putglyph(VTermGlyphInfo *info, VTermPos pos, void *user)
   if(!cell)
     return 0;
 
+  /* Remove any wide glyph partially overwritten by this write. Damage the
+   * complete old footprint, including a leading cell just outside the write. */
+  int damage_start = pos.col;
+  int damage_end = pos.col + info->width;
+  if(cell->chars[0] == (uint32_t)-1 && pos.col > 0) {
+    clearcell(screen, getcell(screen, pos.row, pos.col - 1));
+    damage_start--;
+  }
+  ScreenCell *after = getcell(screen, pos.row, damage_end);
+  if(after && after->chars[0] == (uint32_t)-1) {
+    clearcell(screen, after);
+    damage_end++;
+  }
+
   int i;
   for(i = 0; i < VTERM_MAX_CHARS_PER_CELL && info->chars[i]; i++) {
     cell->chars[i] = info->chars[i];
@@ -185,20 +199,33 @@ static int putglyph(VTermGlyphInfo *info, VTermPos pos, void *user)
   }
   if(i < VTERM_MAX_CHARS_PER_CELL)
     cell->chars[i] = 0;
+  if(info->chars[0] == 0x10eeee) {
+    cell->pen.fg = screen->state->pen.fg;
+    const VTermColor *color = &screen->state->pen.underline_color;
+    cell->chars[4] = 0;
+    cell->chars[14] = VTERM_COLOR_IS_INDEXED(color) ? color->indexed.idx :
+      (color->rgb.red << 16) | (color->rgb.green << 8) | color->rgb.blue;
+  }
 
-  for(int col = 1; col < info->width; col++)
-    getcell(screen, pos.row, pos.col + col)->chars[0] = (uint32_t)-1;
+  for(int col = 1; col < info->width; col++) {
+    ScreenCell *continuation = getcell(screen, pos.row, pos.col + col);
+    continuation->chars[0] = (uint32_t)-1;
+    continuation->pen = screen->pen;
+  }
 
   VTermRect rect = {
     .start_row = pos.row,
     .end_row   = pos.row+1,
-    .start_col = pos.col,
-    .end_col   = pos.col+info->width,
+    .start_col = damage_start,
+    .end_col   = damage_end,
   };
 
   cell->pen.protected_cell = info->protected_cell;
   cell->pen.dwl            = info->dwl;
   cell->pen.dhl            = info->dhl;
+
+  if(screen->callbacks && screen->callbacks->edit)
+    screen->callbacks->edit(rect, screen->cbdata);
 
   damagerect(screen, rect);
 
@@ -274,11 +301,35 @@ static int erase_internal(VTermRect rect, int selective, void *user)
   for(int row = rect.start_row; row < screen->state->rows && row < rect.end_row; row++) {
     const VTermLineInfo *info = vterm_state_get_lineinfo(screen->state, row);
 
-    for(int col = rect.start_col; col < rect.end_col; col++) {
+    int start = rect.start_col, end = rect.end_col;
+    ScreenCell *first = getcell(screen, row, start);
+    if(first && first->chars[0] == (uint32_t)-1 && start > 0 &&
+        (!selective || !first->pen.protected_cell))
+      start--;
+    ScreenCell *after = getcell(screen, row, end);
+    if(after && after->chars[0] == (uint32_t)-1 &&
+        (!selective || !after->pen.protected_cell))
+      end++;
+    if(start != rect.start_col || end != rect.end_col) {
+      VTermRect damaged = {row, row + 1, start, end};
+      damagerect(screen, damaged);
+    }
+
+    if(!selective && screen->callbacks && screen->callbacks->edit) {
+      VTermRect changed = { row, row + 1, start, end };
+      screen->callbacks->edit(changed, screen->cbdata);
+    }
+
+    for(int col = start; col < end; col++) {
       ScreenCell *cell = getcell(screen, row, col);
 
       if(selective && cell->pen.protected_cell)
         continue;
+
+      if(selective && screen->callbacks && screen->callbacks->edit) {
+        VTermRect changed = { row, row + 1, col, col + 1 };
+        screen->callbacks->edit(changed, screen->cbdata);
+      }
 
       cell->chars[0] = 0;
       cell->pen = (ScreenPen){
@@ -305,6 +356,11 @@ static int erase_user(VTermRect rect, int selective, void *user)
 
 static int erase(VTermRect rect, int selective, void *user)
 {
+  VTermScreen *screen = user;
+  if(!selective && rect.start_row == 0 && rect.start_col == 0 &&
+      rect.end_row == screen->rows && rect.end_col == screen->cols &&
+      screen->callbacks && screen->callbacks->clear_images)
+    screen->callbacks->clear_images(screen->cbdata);
   erase_internal(rect, selective, user);
   return erase_user(rect, 0, user);
 }
@@ -312,6 +368,9 @@ static int erase(VTermRect rect, int selective, void *user)
 static int scrollrect(VTermRect rect, int downward, int rightward, void *user)
 {
   VTermScreen *screen = user;
+
+  if(screen->callbacks && screen->callbacks->scroll)
+    screen->callbacks->scroll(rect, downward, rightward, screen->cbdata);
 
   if(screen->damage_merge != VTERM_DAMAGE_SCROLL) {
     vterm_scroll_rect(rect, downward, rightward,
@@ -534,7 +593,8 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
   while(old_row >= 0) {
     int old_row_end = old_row;
     /* TODO: Stop if dwl or dhl */
-    while(REFLOW && old_lineinfo && old_row >= 0 && old_lineinfo[old_row].continuation)
+    /* The start of a wrapped line may already have scrolled off-screen. */
+    while(REFLOW && old_lineinfo && old_row > 0 && old_lineinfo[old_row].continuation)
       old_row--;
     int old_row_start = old_row;
 
@@ -704,6 +764,7 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
 
         dst->pen.fg = src->fg;
         dst->pen.bg = src->bg;
+        if(src->chars[0] == 0x10eeee) dst->chars[14] = src->chars[14];
 
         if(src->width == 2 && pos.col < (new_cols-1))
           (dst + 1)->chars[0] = (uint32_t) -1;
@@ -730,6 +791,9 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
       new_lineinfo[new_row] = (VTermLineInfo){ 0 };
     }
   }
+
+  if(screen->callbacks && screen->callbacks->image_resize)
+    screen->callbacks->image_resize(bufidx, new_cursor.row - old_cursor.row, new_rows, new_cols, screen->cbdata);
 
   vterm_allocator_free(screen->vt, old_buffer);
   screen->buffers[bufidx] = new_buffer;
@@ -996,6 +1060,7 @@ int vterm_screen_get_cell(const VTermScreen *screen, VTermPos pos, VTermScreenCe
 
   cell->fg = intcell->pen.fg;
   cell->bg = intcell->pen.bg;
+  if(intcell->chars[0] == 0x10eeee) cell->chars[14] = intcell->chars[14];
 
   if(pos.col < (screen->cols - 1) &&
      getcell(screen, pos.row, pos.col + 1)->chars[0] == (uint32_t)-1)

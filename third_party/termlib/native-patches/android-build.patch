@@ -1,6 +1,8 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 26f0cbd..a35b07e 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -38,7 +38,11 @@
+@@ -37,7 +37,11 @@ target_include_directories(jni_cb_term PRIVATE
  target_compile_features(jni_cb_term PRIVATE cxx_std_17)
  
  if(ANDROID)
@@ -13,7 +15,7 @@
  
      target_link_libraries(jni_cb_term
          vterm
-@@ -52,3 +56,13 @@
+@@ -51,3 +55,13 @@ else()
          vterm
      )
  endif()

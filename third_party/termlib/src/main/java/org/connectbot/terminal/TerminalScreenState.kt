@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by MangoSSH in 2026 to reuse URL detection across cursor-only updates and pause while stopped.
 package org.connectbot.terminal
 
 import androidx.compose.runtime.Composable
@@ -68,20 +69,14 @@ internal class TerminalScreenState(
     var snapshot by mutableStateOf(initialSnapshot)
         private set
 
+    /** Called before a new snapshot replaces the one used by selection anchors. */
+    internal var onSnapshotChanged: ((TerminalSnapshot, TerminalSnapshot) -> Unit)? = null
+
     /**
      * Current scroll position in the scrollback buffer.
      * 0 = bottom (current screen), >0 = scrolled back in history
      */
     var scrollbackPosition by mutableStateOf(0)
-        private set
-
-    /**
-     * Increments only when the visible screen lines or the scrollback buffer
-     * actually change, never for a cursor-only move. Renderers key their
-     * memoized per-frame work (URL hyperlink masks, row draws) on this instead
-     * of [TerminalSnapshot.sequenceNumber], which changes on every snapshot.
-     */
-    var contentVersion by mutableStateOf(0L)
         private set
 
     /**
@@ -137,6 +132,12 @@ internal class TerminalScreenState(
         }
     }
 
+    /** Absolute history index for a viewport row. */
+    internal fun visibleLineIndex(row: Int): Int {
+        val first = snapshot.scrollback.size - scrollbackPosition
+        return (first + row).coerceIn(0, totalLines - 1)
+    }
+
     /**
      * Get the hyperlink URL at a visible row/col.
      *
@@ -171,7 +172,7 @@ internal class TerminalScreenState(
 
     /**
      * True when every currently-visible row is the same [TerminalLine] instance
-     * used the last time the URL grid was built. `updateLine` only allocates a
+     * used the last time the URL grid was built. The emulator only allocates a
      * new instance for rows it actually changed, so this is a cheap `===` sweep
      * that skips the regex rebuild for the common cursor-only / single-row
      * updates.
@@ -391,32 +392,14 @@ internal class TerminalScreenState(
      * @param newSnapshot The new snapshot to use
      */
     internal fun updateSnapshot(newSnapshot: TerminalSnapshot) {
-        val previous = snapshot
-        val oldScrollbackSize = previous.scrollback.size
+        val oldScrollbackSize = snapshot.scrollback.size
         val newScrollbackSize = newSnapshot.scrollback.size
+        onSnapshotChanged?.invoke(snapshot, newSnapshot)
         snapshot = newSnapshot
         if (scrollbackPosition != 0) {
             val delta = newScrollbackSize - oldScrollbackSize
             scrollbackPosition = (scrollbackPosition + delta).coerceIn(0, newScrollbackSize)
         }
-        if (!sameVisibleContent(previous, newSnapshot)) {
-            contentVersion++
-        }
-    }
-
-    /**
-     * Whether two snapshots render the same screen and scrollback. `buildSnapshot`
-     * reuses the cached scrollback list unless it changed (one `===` check) and
-     * carries unchanged row instances forward, so this is a shallow sweep, not a
-     * deep per-cell comparison.
-     */
-    private fun sameVisibleContent(a: TerminalSnapshot, b: TerminalSnapshot): Boolean {
-        if (a.scrollback !== b.scrollback) return false
-        if (a.lines.size != b.lines.size) return false
-        for (i in a.lines.indices) {
-            if (a.lines[i] !== b.lines[i]) return false
-        }
-        return true
     }
 }
 
@@ -452,7 +435,10 @@ internal fun rememberTerminalScreenState(
     LaunchedEffect(terminalEmulator, lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             terminalEmulator.snapshot.collect { newSnapshot ->
-                state.updateSnapshot(newSnapshot)
+                if (newSnapshot === state.snapshot) return@collect
+                androidx.compose.runtime.withFrameNanos {
+                    state.updateSnapshot(terminalEmulator.snapshot.value)
+                }
             }
         }
     }

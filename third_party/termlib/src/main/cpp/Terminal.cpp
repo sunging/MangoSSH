@@ -15,166 +15,176 @@
  * limitations under the License.
  */
 #include "Terminal.h"
-#include "mutf8.h"
+
 #include <cstring>
 #include <algorithm>
-#include <vector>
+#include <limits>
+#include <new>
 
 #ifdef __ANDROID__
 #  include <android/log.h>
 #  define LOG_TAG "TermNative"
-#  define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #  define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #else
 #  include <cstdio>
 #  define LOG_TAG "TermNative"
-#  define LOGD(...) do { fprintf(stderr, "[D/" LOG_TAG "] " __VA_ARGS__); fputc('\n', stderr); } while(0)
 #  define LOGE(...) do { fprintf(stderr, "[E/" LOG_TAG "] " __VA_ARGS__); fputc('\n', stderr); } while(0)
 #endif
 
 #define JNI_CHECK_EXCEPTION_RETURN(env, retval) \
-    do { if ((env)->ExceptionCheck()) { (env)->ExceptionDescribe(); (env)->ExceptionClear(); return (retval); } } while (0)
-#define JNI_CHECK_EXCEPTION_RETURN_VOID(env) \
-    do { if ((env)->ExceptionCheck()) { (env)->ExceptionDescribe(); (env)->ExceptionClear(); return; } } while (0)
-#define JNI_CHECK_EXCEPTION(env) \
-    do { if ((env)->ExceptionCheck()) { (env)->ExceptionDescribe(); (env)->ExceptionClear(); } } while (0)
+    do { if ((env)->ExceptionCheck()) { return (retval); } } while (0)
 
-// Thread-local CharArray pool to eliminate per-frame allocations
-// Each thread gets one reusable CharArray, sized to handle typical cell runs
-static thread_local jcharArray tls_charArray = nullptr;
-static thread_local jsize tls_charArraySize = 0;
+// CellData.kt wire layout: sixteen code points, width, two RGB colors, packed flags.
+// Flags use the explicit shifts below, never the native bitfield representation.
+static constexpr int CELL_WIDTH = VTERM_MAX_CHARS_PER_CELL;
+static constexpr int CELL_FG = CELL_WIDTH + 1;
+static constexpr int CELL_BG = CELL_FG + 1;
+static constexpr int CELL_FLAGS = CELL_BG + 1;
+static constexpr int CELL_STRIDE = CELL_FLAGS + 1;
+static constexpr int CELL_BYTES = CELL_STRIDE * sizeof(jint);
+static constexpr int BUFFER_BYTES = 64 * 1024;
+static constexpr int HEADER_BYTES = 4096;
+
+// Immutable JNI metadata is shared by every terminal created from this library
+// load. The global class references remain valid until JNI_OnUnload.
+struct CallbackCache {
+    jclass termRectClass{};
+    jmethodID termRectConstructor{};
+    jclass cursorPositionClass{};
+    jmethodID cursorPositionConstructor{};
+    jclass terminalPropertyBoolClass{};
+    jmethodID terminalPropertyBoolConstructor{};
+    jclass terminalPropertyIntClass{};
+    jmethodID terminalPropertyIntConstructor{};
+    jclass terminalPropertyColorClass{};
+    jmethodID terminalPropertyColorConstructor{};
+    jmethodID damageMethod{};
+    jmethodID moverectMethod{};
+    jmethodID moveCursorMethod{};
+    jmethodID setTermPropMethod{};
+    jmethodID bellMethod{};
+    jmethodID pushScrollbackMethod{};
+    jmethodID popScrollbackMethod{};
+    jmethodID clearScrollbackMethod{};
+    jmethodID keyboardInputMethod{};
+    jmethodID textFragmentMethod{};
+    jmethodID imageFragmentMethod{};
+    jmethodID imageEditMethod{};
+    jmethodID imageQueryMethod{};
+    jmethodID cellBufferMethod{};
+};
+
+static CallbackCache gCallbackCache;
+
+static jclass globalClass(JNIEnv* env, const char* name) {
+    ScopedLocalRef<jclass> local(env, env->FindClass(name));
+    if (!local.get()) return nullptr;
+    return static_cast<jclass>(env->NewGlobalRef(local));
+}
+
+static void clearCallbackCache(JNIEnv* env) {
+    if (gCallbackCache.termRectClass) env->DeleteGlobalRef(gCallbackCache.termRectClass);
+    if (gCallbackCache.cursorPositionClass) env->DeleteGlobalRef(gCallbackCache.cursorPositionClass);
+    if (gCallbackCache.terminalPropertyBoolClass) env->DeleteGlobalRef(gCallbackCache.terminalPropertyBoolClass);
+    if (gCallbackCache.terminalPropertyIntClass) env->DeleteGlobalRef(gCallbackCache.terminalPropertyIntClass);
+    if (gCallbackCache.terminalPropertyColorClass) env->DeleteGlobalRef(gCallbackCache.terminalPropertyColorClass);
+    gCallbackCache = {};
+}
+
+static bool initializeCallbackCache(JNIEnv* env) {
+    ScopedLocalRef<jclass> callbacksClass(
+        env, env->FindClass("org/connectbot/terminal/TerminalCallbacks"));
+    if (!callbacksClass.get()) return false;
+
+    auto& cache = gCallbackCache;
+    cache.damageMethod = env->GetMethodID(callbacksClass, "damage", "(IIII)I");
+    cache.moverectMethod = env->GetMethodID(callbacksClass, "moverect",
+        "(Lorg/connectbot/terminal/TermRect;Lorg/connectbot/terminal/TermRect;)I");
+    cache.moveCursorMethod = env->GetMethodID(callbacksClass, "moveCursor", "(IIIIZ)I");
+    cache.setTermPropMethod = env->GetMethodID(callbacksClass, "setTermProp",
+        "(ILorg/connectbot/terminal/TerminalProperty;)I");
+    cache.bellMethod = env->GetMethodID(callbacksClass, "bell", "()I");
+    cache.pushScrollbackMethod = env->GetMethodID(callbacksClass, "pushScrollbackLine",
+        "(IIILjava/nio/ByteBuffer;Z)I");
+    cache.popScrollbackMethod = env->GetMethodID(callbacksClass, "popScrollbackLine",
+        "(IIILjava/nio/ByteBuffer;)I");
+    cache.clearScrollbackMethod = env->GetMethodID(callbacksClass, "clearScrollback", "()I");
+    cache.keyboardInputMethod = env->GetMethodID(callbacksClass, "onKeyboardInput", "([B)I");
+    cache.textFragmentMethod = env->GetMethodID(callbacksClass, "onTextFragment", "(II[BZZII)I");
+    cache.imageFragmentMethod = env->GetMethodID(callbacksClass, "onImageFragment", "(Z[BZZII)J");
+    cache.imageEditMethod = env->GetMethodID(callbacksClass, "onImageEdit", "(IIIIIII)V");
+    cache.imageQueryMethod = env->GetMethodID(callbacksClass, "onImageQuery", "(I)V");
+    cache.cellBufferMethod = env->GetMethodID(callbacksClass, "cellBuffer", "()Ljava/nio/ByteBuffer;");
+    if (env->ExceptionCheck()) return false;
+
+    cache.termRectClass = globalClass(env, "org/connectbot/terminal/TermRect");
+    cache.cursorPositionClass = globalClass(env, "org/connectbot/terminal/CursorPosition");
+    cache.terminalPropertyBoolClass = globalClass(env, "org/connectbot/terminal/TerminalProperty$BoolValue");
+    cache.terminalPropertyIntClass = globalClass(env, "org/connectbot/terminal/TerminalProperty$IntValue");
+    cache.terminalPropertyColorClass = globalClass(env, "org/connectbot/terminal/TerminalProperty$ColorValue");
+    if (env->ExceptionCheck() || !cache.termRectClass || !cache.cursorPositionClass ||
+        !cache.terminalPropertyBoolClass || !cache.terminalPropertyIntClass ||
+        !cache.terminalPropertyColorClass) return false;
+
+    cache.termRectConstructor = env->GetMethodID(cache.termRectClass, "<init>", "(IIII)V");
+    cache.cursorPositionConstructor = env->GetMethodID(cache.cursorPositionClass, "<init>", "(II)V");
+    cache.terminalPropertyBoolConstructor = env->GetMethodID(cache.terminalPropertyBoolClass, "<init>", "(Z)V");
+    cache.terminalPropertyIntConstructor = env->GetMethodID(cache.terminalPropertyIntClass, "<init>", "(I)V");
+    cache.terminalPropertyColorConstructor = env->GetMethodID(cache.terminalPropertyColorClass, "<init>", "(III)V");
+    return !env->ExceptionCheck();
+}
+
+// Never assume the address of a sliced direct buffer is naturally aligned.
+static uint8_t* writableBuffer(JNIEnv* env, jobject buffer, jlong minimum) {
+    if (!buffer) return nullptr;
+    auto* bytes = static_cast<uint8_t*>(env->GetDirectBufferAddress(buffer));
+    const jlong capacity = env->GetDirectBufferCapacity(buffer);
+    ScopedLocalRef<jclass> type(env, env->GetObjectClass(buffer));
+    if (!type.get()) return nullptr;
+    const auto method = env->GetMethodID(type, "isReadOnly", "()Z");
+    if (!method || env->ExceptionCheck()) return nullptr;
+    if (!bytes || capacity < minimum || env->CallBooleanMethod(buffer, method)) return nullptr;
+    return env->ExceptionCheck() ? nullptr : bytes;
+}
+static_assert(VTERM_MAX_CHARS_PER_CELL == 16);
+
+static void argumentError(JNIEnv* env, const char* message) {
+    if (env->ExceptionCheck()) return;
+    ScopedLocalRef<jclass> type(env, env->FindClass("java/lang/IllegalArgumentException"));
+    if (type.get()) env->ThrowNew(type, message);
+}
 
 // Terminal implementation
 Terminal::Terminal(JNIEnv* env, jobject callbacks, int rows, int cols)
     : mRows(rows), mCols(cols) {
 
-    LOGD("Terminal constructor: rows=%d, cols=%d", rows, cols);
+    CallbackScope scope(*this, env, callbacks);
 
-    // Get JavaVM for callback invocations from any thread
-    env->GetJavaVM(&mJavaVM);
-
-    // Store global reference to callbacks
-    mCallbacks = env->NewGlobalRef(callbacks);
-
-    // Cache method IDs
-    ScopedLocalRef<jclass> callbacksClass(env, env->GetObjectClass(callbacks));
-    mDamageMethod = env->GetMethodID(callbacksClass, "damage", "(IIII)I");
-    if (!mDamageMethod || env->ExceptionCheck()) {
-        LOGE("Failed to find damage method");
-        env->ExceptionClear();
-    }
-    mMoverectMethod = env->GetMethodID(callbacksClass, "moverect",
-        "(Lorg/connectbot/terminal/TermRect;Lorg/connectbot/terminal/TermRect;)I");
-    if (!mMoverectMethod) {
-        LOGE("Failed to find moverect method");
-    }
-    mMoveCursorMethod = env->GetMethodID(callbacksClass, "moveCursor",
-        "(Lorg/connectbot/terminal/CursorPosition;Lorg/connectbot/terminal/CursorPosition;Z)I");
-    if (!mMoveCursorMethod) {
-        LOGE("Failed to find moveCursor method");
-    }
-    mSetTermPropMethod = env->GetMethodID(callbacksClass, "setTermProp",
-        "(ILorg/connectbot/terminal/TerminalProperty;)I");
-    if (!mSetTermPropMethod) {
-        LOGE("Failed to find setTermProp method");
-    }
-    mBellMethod = env->GetMethodID(callbacksClass, "bell", "()I");
-    if (!mBellMethod) {
-        LOGE("Failed to find bell method");
-    }
-    mPushScrollbackMethod = env->GetMethodID(callbacksClass, "pushScrollbackLine",
-        "(I[Lorg/connectbot/terminal/ScreenCell;Z)I");
-    if (!mPushScrollbackMethod) {
-        LOGE("Failed to find pushScrollbackLine method");
-    }
-    mPopScrollbackMethod = env->GetMethodID(callbacksClass, "popScrollbackLine",
-        "(I[Lorg/connectbot/terminal/ScreenCell;)I");
-    if (!mPopScrollbackMethod) {
-        LOGE("Failed to find popScrollbackLine method");
-    }
-    mClearScrollbackMethod = env->GetMethodID(callbacksClass, "clearScrollback", "()I");
-    if (!mClearScrollbackMethod) {
-        LOGE("Failed to find clearScrollback method");
-    }
-    mKeyboardInputMethod = env->GetMethodID(callbacksClass, "onKeyboardInput", "([B)I");
-    if (!mKeyboardInputMethod) {
-        LOGE("Failed to find onKeyboardInput method");
-    }
-    mOscSequenceMethod = env->GetMethodID(callbacksClass, "onOscSequence", "(ILjava/lang/String;II)I");
-    if (!mOscSequenceMethod) {
-        LOGE("Failed to find onOscSequence method");
-    }
-
-    // Cache CellRun class and field IDs
-    ScopedLocalRef<jclass> cellRunLocal(env, env->FindClass("org/connectbot/terminal/CellRun"));
-    mCellRunClass = (jclass)env->NewGlobalRef(cellRunLocal);
-
-    mFgRedField = env->GetFieldID(mCellRunClass, "fgRed", "I");
-    mFgGreenField = env->GetFieldID(mCellRunClass, "fgGreen", "I");
-    mFgBlueField = env->GetFieldID(mCellRunClass, "fgBlue", "I");
-    mBgRedField = env->GetFieldID(mCellRunClass, "bgRed", "I");
-    mBgGreenField = env->GetFieldID(mCellRunClass, "bgGreen", "I");
-    mBgBlueField = env->GetFieldID(mCellRunClass, "bgBlue", "I");
-    mBoldField = env->GetFieldID(mCellRunClass, "bold", "Z");
-    mUnderlineField = env->GetFieldID(mCellRunClass, "underline", "I");
-    mItalicField = env->GetFieldID(mCellRunClass, "italic", "Z");
-    mBlinkField = env->GetFieldID(mCellRunClass, "blink", "Z");
-    mReverseField = env->GetFieldID(mCellRunClass, "reverse", "Z");
-    mStrikeField = env->GetFieldID(mCellRunClass, "strike", "Z");
-    mFontField = env->GetFieldID(mCellRunClass, "font", "I");
-    mDwlField = env->GetFieldID(mCellRunClass, "dwl", "Z");
-    mDhlField = env->GetFieldID(mCellRunClass, "dhl", "I");
-    mCharsField = env->GetFieldID(mCellRunClass, "chars", "[C");
-    mRunLengthField = env->GetFieldID(mCellRunClass, "runLength", "I");
-
-    // Cache all callback-related classes and methods to avoid repeated FindClass/GetMethodID
-    LOGD("Caching callback classes and methods...");
-
-    // TermRect
-    ScopedLocalRef<jclass> termRectLocal(env, env->FindClass("org/connectbot/terminal/TermRect"));
-    mTermRectClass = (jclass)env->NewGlobalRef(termRectLocal);
-    mTermRectConstructor = env->GetMethodID(mTermRectClass, "<init>", "(IIII)V");
-
-    // CursorPosition
-    ScopedLocalRef<jclass> cursorPosLocal(env, env->FindClass("org/connectbot/terminal/CursorPosition"));
-    mCursorPositionClass = (jclass)env->NewGlobalRef(cursorPosLocal);
-    mCursorPositionConstructor = env->GetMethodID(mCursorPositionClass, "<init>", "(II)V");
-
-    // ScreenCell
-    ScopedLocalRef<jclass> screenCellLocal(env, env->FindClass("org/connectbot/terminal/ScreenCell"));
-    mScreenCellClass = (jclass)env->NewGlobalRef(screenCellLocal);
-    mScreenCellConstructor = env->GetMethodID(mScreenCellClass, "<init>",
-        "(CLjava/util/List;IIIIIIZZIZZI)V");
-
-    // ArrayList
-    ScopedLocalRef<jclass> arrayListLocal(env, env->FindClass("java/util/ArrayList"));
-    mArrayListClass = (jclass)env->NewGlobalRef(arrayListLocal);
-    mArrayListConstructor = env->GetMethodID(mArrayListClass, "<init>", "()V");
-    mArrayListAdd = env->GetMethodID(mArrayListClass, "add", "(Ljava/lang/Object;)Z");
-
-    // Character
-    ScopedLocalRef<jclass> charLocal(env, env->FindClass("java/lang/Character"));
-    mCharacterClass = (jclass)env->NewGlobalRef(charLocal);
-    mCharacterValueOf = env->GetStaticMethodID(mCharacterClass, "valueOf", "(C)Ljava/lang/Character;");
-
-    // TerminalProperty classes
-    ScopedLocalRef<jclass> boolLocal(env, env->FindClass("org/connectbot/terminal/TerminalProperty$BoolValue"));
-    mTerminalPropertyBoolClass = (jclass)env->NewGlobalRef(boolLocal);
-    mTerminalPropertyBoolConstructor = env->GetMethodID(mTerminalPropertyBoolClass, "<init>", "(Z)V");
-
-    ScopedLocalRef<jclass> intLocal(env, env->FindClass("org/connectbot/terminal/TerminalProperty$IntValue"));
-    mTerminalPropertyIntClass = (jclass)env->NewGlobalRef(intLocal);
-    mTerminalPropertyIntConstructor = env->GetMethodID(mTerminalPropertyIntClass, "<init>", "(I)V");
-
-    ScopedLocalRef<jclass> stringLocal(env, env->FindClass("org/connectbot/terminal/TerminalProperty$StringValue"));
-    mTerminalPropertyStringClass = (jclass)env->NewGlobalRef(stringLocal);
-    mTerminalPropertyStringConstructor = env->GetMethodID(mTerminalPropertyStringClass, "<init>", "(Ljava/lang/String;)V");
-
-    ScopedLocalRef<jclass> colorLocal(env, env->FindClass("org/connectbot/terminal/TerminalProperty$ColorValue"));
-    mTerminalPropertyColorClass = (jclass)env->NewGlobalRef(colorLocal);
-    mTerminalPropertyColorConstructor = env->GetMethodID(mTerminalPropertyColorClass, "<init>", "(III)V");
-
-    LOGD("All callback classes and methods cached successfully");
+    const auto& cache = gCallbackCache;
+    mDamageMethod = cache.damageMethod;
+    mMoverectMethod = cache.moverectMethod;
+    mMoveCursorMethod = cache.moveCursorMethod;
+    mSetTermPropMethod = cache.setTermPropMethod;
+    mBellMethod = cache.bellMethod;
+    mPushScrollbackMethod = cache.pushScrollbackMethod;
+    mPopScrollbackMethod = cache.popScrollbackMethod;
+    mClearScrollbackMethod = cache.clearScrollbackMethod;
+    mKeyboardInputMethod = cache.keyboardInputMethod;
+    mTextFragmentMethod = cache.textFragmentMethod;
+    mImageFragmentMethod = cache.imageFragmentMethod;
+    mImageEditMethod = cache.imageEditMethod;
+    mImageQueryMethod = cache.imageQueryMethod;
+    mCellBufferMethod = cache.cellBufferMethod;
+    mTermRectClass = cache.termRectClass;
+    mTermRectConstructor = cache.termRectConstructor;
+    mCursorPositionClass = cache.cursorPositionClass;
+    mCursorPositionConstructor = cache.cursorPositionConstructor;
+    mTerminalPropertyBoolClass = cache.terminalPropertyBoolClass;
+    mTerminalPropertyBoolConstructor = cache.terminalPropertyBoolConstructor;
+    mTerminalPropertyIntClass = cache.terminalPropertyIntClass;
+    mTerminalPropertyIntConstructor = cache.terminalPropertyIntConstructor;
+    mTerminalPropertyColorClass = cache.terminalPropertyColorClass;
+    mTerminalPropertyColorConstructor = cache.terminalPropertyColorConstructor;
 
     // Create VTerm instance
     mVt = vterm_new(mRows, mCols);
@@ -190,7 +200,10 @@ Terminal::Terminal(JNIEnv* env, jobject callbacks, int rows, int cols)
 
     // Get screen and set up callbacks
     mVts = vterm_obtain_screen(mVt);
+    if (!mVts) return;
     vterm_screen_enable_altscreen(mVts, 1);
+    // Reflow is disabled until scrollback, wide cells and metadata survive resizing.
+    vterm_screen_enable_reflow(mVts, false);
 
     // Initialize callback structure as member variable so it doesn't go out of scope.
     // These callbacks run while mLock may be held by the native entrypoint that
@@ -205,7 +218,11 @@ Terminal::Terminal(JNIEnv* env, jobject callbacks, int rows, int cols)
         .resize = nullptr,  // We handle resize explicitly
         .sb_pushline = termSbPushline,
         .sb_popline = termSbPopline,
-        .sb_clear = termSbClear
+        .sb_clear = termSbClear,
+        .edit = termImageEdit,
+        .scroll = termImageScroll,
+        .clear_images = termImageClear,
+        .image_resize = termImageResize
     };
     vterm_screen_set_callbacks(mVts, &mScreenCallbacks, this);
 
@@ -213,11 +230,11 @@ Terminal::Terminal(JNIEnv* env, jobject callbacks, int rows, int cols)
     // no-synchronous-reentry rule as screen callbacks above.
     VTermState* state = vterm_obtain_state(mVt);
     VTermStateFallbacks fallbacks = {
-        .control = nullptr,
-        .csi = nullptr,
+        .control = termControlFallback,
+        .csi = termCsiFallback,
         .osc = termOscFallback,
         .dcs = nullptr,
-        .apc = nullptr,
+        .apc = termApcFallback,
         .pm = nullptr,
         .sos = nullptr
     };
@@ -233,47 +250,20 @@ Terminal::Terminal(JNIEnv* env, jobject callbacks, int rows, int cols)
     };
     vterm_state_set_selection_callbacks(state, &mSelectionCallbacks, this,
         mSelectionBuffer, SELECTION_BUFFER_SIZE);
-    LOGD("Selection callbacks registered for OSC 52 clipboard support");
 
     // Configure damage merging
     vterm_screen_set_damage_merge(mVts, VTERM_DAMAGE_SCROLL);
 
     vterm_screen_reset(mVts, 1);
 
-    LOGD("Terminal initialized successfully");
 }
 
 Terminal::~Terminal() {
-    LOGD("Terminal destructor");
-
     std::scoped_lock lock(mLock);
 
     if (mVt) {
         vterm_free(mVt);
         mVt = nullptr;
-    }
-
-    // Release global references
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) == JNI_OK) {
-        if (mCallbacks) {
-            env->DeleteGlobalRef(mCallbacks);
-            mCallbacks = nullptr;
-        }
-        if (mCellRunClass) {
-            env->DeleteGlobalRef(mCellRunClass);
-            mCellRunClass = nullptr;
-        }
-        // Clean up cached callback classes
-        if (mTermRectClass) env->DeleteGlobalRef(mTermRectClass);
-        if (mCursorPositionClass) env->DeleteGlobalRef(mCursorPositionClass);
-        if (mScreenCellClass) env->DeleteGlobalRef(mScreenCellClass);
-        if (mArrayListClass) env->DeleteGlobalRef(mArrayListClass);
-        if (mCharacterClass) env->DeleteGlobalRef(mCharacterClass);
-        if (mTerminalPropertyBoolClass) env->DeleteGlobalRef(mTerminalPropertyBoolClass);
-        if (mTerminalPropertyIntClass) env->DeleteGlobalRef(mTerminalPropertyIntClass);
-        if (mTerminalPropertyStringClass) env->DeleteGlobalRef(mTerminalPropertyStringClass);
-        if (mTerminalPropertyColorClass) env->DeleteGlobalRef(mTerminalPropertyColorClass);
     }
 }
 
@@ -286,11 +276,17 @@ int Terminal::writeInput(const uint8_t* data, size_t length) {
         return 0;
     }
 
+    // A single transport read can move the cursor thousands of times. Only
+    // publish the final rendering position for this input batch.
+    beginCursorBatch();
+
     // Feed data to libvterm for processing
     size_t written = vterm_input_write(mVt, (const char*)data, length);
 
     // Flush screen state to trigger callbacks
     vterm_screen_flush_damage(mVts);
+
+    finishCursorBatch();
 
     return static_cast<int>(written);
 }
@@ -299,11 +295,13 @@ int Terminal::writeInput(const uint8_t* data, size_t length) {
 int Terminal::resize(int rows, int cols) {
     std::scoped_lock lock(mLock);
 
-    mRows = rows;
-    mCols = cols;
-
+    // Scrollback callbacks during resize still inspect the old lineinfo array.
     if (mVt) {
         vterm_set_size(mVt, rows, cols);
+    }
+    mRows = rows;
+    mCols = cols;
+    if (mVt) {
         vterm_screen_flush_damage(mVts);
     }
 
@@ -395,6 +393,22 @@ int Terminal::setDefaultColors(uint32_t fgColor, uint32_t bgColor) {
 }
 
 // Keyboard input handlers
+void Terminal::paste(JNIEnv* env, jbyteArray data) {
+    std::scoped_lock lock(mLock);
+    if (!mVt) return;
+    vterm_keyboard_start_paste(mVt);
+    const jsize size = env->GetArrayLength(data);
+    char chunk[4096];
+    for (jsize offset = 0; offset < size;) {
+        const jsize count = std::min(jsize(sizeof(chunk)), size - offset);
+        env->GetByteArrayRegion(data, offset, count, reinterpret_cast<jbyte*>(chunk));
+        if (env->ExceptionCheck()) return;
+        invokeKeyboardOutput(chunk, count);
+        offset += count;
+    }
+    vterm_keyboard_end_paste(mVt);
+}
+
 bool Terminal::dispatchKey(int modifiers, int key) {
     std::scoped_lock lock(mLock);
 
@@ -428,106 +442,96 @@ bool Terminal::dispatchCharacter(int modifiers, int codepoint) {
 }
 
 // Cell run retrieval
-int Terminal::getCellRun(JNIEnv* env, int row, int col, jobject runObject) {
+void Terminal::packCell(const VTermScreenCell& cell, jint* out) {
+    std::fill_n(out, CELL_STRIDE, 0);
+    for (int i = 0; i < VTERM_MAX_CHARS_PER_CELL && cell.chars[i]; ++i)
+        out[i] = static_cast<jint>(cell.chars[i]);
+    out[CELL_WIDTH] = cell.width;
+    uint8_t r, g, b;
+    resolveColor(cell.fg, r, g, b);
+    out[CELL_FG] = (r << 16) | (g << 8) | b;
+    resolveColor(cell.bg, r, g, b);
+    out[CELL_BG] = (r << 16) | (g << 8) | b;
+    if (cell.chars[0] == 0x10eeee) {
+        auto colorId = [](const VTermColor& color) -> jint {
+            if (VTERM_COLOR_IS_DEFAULT_FG(&color)) return 0;
+            return VTERM_COLOR_IS_INDEXED(&color) ? color.indexed.idx :
+                (color.rgb.red << 16) | (color.rgb.green << 8) | color.rgb.blue;
+        };
+        out[CELL_FG] = colorId(cell.fg);
+        // Placeholder text needs at most four codepoints; reserve a tail slot
+        // for the placement colour without widening ordinary cell records.
+        out[4] = 0;
+        out[14] = cell.chars[14];
+    }
+    out[CELL_FLAGS] = cell.attrs.bold | (cell.attrs.underline << 1) | (cell.attrs.italic << 3)
+        | (cell.attrs.blink << 4) | (cell.attrs.reverse << 5) | (cell.attrs.conceal << 6)
+        | (cell.attrs.strike << 7) | (cell.attrs.font << 8) | (cell.attrs.dwl << 12)
+        | (cell.attrs.dhl << 13) | (cell.attrs.small << 15) | (cell.attrs.baseline << 16);
+    if (VTERM_COLOR_IS_DEFAULT_BG(&cell.bg)) out[CELL_FLAGS] |= 1 << 18;
+}
+
+static void unpackCell(const jint* in, VTermScreenCell& cell) {
+    cell = {};
+    for (int i = 0; i < VTERM_MAX_CHARS_PER_CELL; ++i) cell.chars[i] = in[i];
+    cell.width = in[CELL_WIDTH];
+    vterm_color_rgb(&cell.fg, (in[CELL_FG] >> 16) & 255, (in[CELL_FG] >> 8) & 255, in[CELL_FG] & 255);
+    vterm_color_rgb(&cell.bg, (in[CELL_BG] >> 16) & 255, (in[CELL_BG] >> 8) & 255, in[CELL_BG] & 255);
+    const unsigned flags = static_cast<unsigned>(in[CELL_FLAGS]);
+    if (flags & (1 << 18)) cell.bg.type |= VTERM_COLOR_DEFAULT_BG;
+    cell.attrs.bold = flags & 1;
+    cell.attrs.underline = (flags >> 1) & 3;
+    cell.attrs.italic = (flags >> 3) & 1;
+    cell.attrs.blink = (flags >> 4) & 1;
+    cell.attrs.reverse = (flags >> 5) & 1;
+    cell.attrs.conceal = (flags >> 6) & 1;
+    cell.attrs.strike = (flags >> 7) & 1;
+    cell.attrs.font = (flags >> 8) & 15;
+    cell.attrs.dwl = (flags >> 12) & 1;
+    cell.attrs.dhl = (flags >> 13) & 3;
+    cell.attrs.small = (flags >> 15) & 1;
+    cell.attrs.baseline = (flags >> 16) & 3;
+}
+
+// A header consists of 16-byte row/column/count/continuation descriptors.
+// Cell records follow the fixed header. All requests are validated before writes.
+int Terminal::getCells(JNIEnv* env, jobject output, int requests) {
     std::scoped_lock lock(mLock);
-
-    if (!mVts || row < 0 || row >= mRows || col < 0 || col >= mCols) {
-        return 0;
+    auto* bytes = writableBuffer(env, output, BUFFER_BYTES);
+    if (!bytes || requests < 0 || requests > HEADER_BYTES / 16) {
+        argumentError(env, "Invalid batch buffer or request count"); return 0;
     }
-
-    // Get first cell
-    VTermPos pos = { row, col };
-    VTermScreenCell cell;
-    vterm_screen_get_cell(mVts, pos, &cell);
-
-    // Collect cells with same attributes
-    int runLength = 0;
-    jchar chars[256];  // Max run length
-
-    for (int c = col; c < mCols && runLength < 256; c++) {
-        VTermPos currentPos = { row, c };
-        VTermScreenCell currentCell;
-        vterm_screen_get_cell(mVts, currentPos, &currentCell);
-
-        // Check if attributes match (skip for first cell)
-        if (c > col && !cellStyleEqual(cell, currentCell)) {
-            break;
+    int total = 0;
+    for (int i = 0; i < requests; ++i) {
+        jint request[4];
+        std::memcpy(request, bytes + i * 16, 16);
+        if (request[0] < 0 || request[0] >= mRows || request[1] < 0 ||
+            request[1] >= mCols || request[2] <= 0 || request[2] > mCols - request[1] ||
+            request[2] > (BUFFER_BYTES - HEADER_BYTES) / CELL_BYTES - total) {
+            argumentError(env, "Invalid cell range"); return 0;
         }
-
-        // Add character(s) to run
-        if (currentCell.chars[0] == 0) {
-            // Empty cell
-            chars[runLength++] = ' ';
-        } else {
-            // Convert UTF-32 to UTF-16 (handle surrogate pairs)
-            for (int i = 0; i < VTERM_MAX_CHARS_PER_CELL && currentCell.chars[i]; i++) {
-                uint32_t codepoint = currentCell.chars[i];
-
-                if (codepoint <= 0xFFFF) {
-                    chars[runLength++] = (jchar)codepoint;
-                } else {
-                    // Surrogate pair for codepoints > U+FFFF
-                    codepoint -= 0x10000;
-                    chars[runLength++] = (jchar)(0xD800 + (codepoint >> 10));
-                    chars[runLength++] = (jchar)(0xDC00 + (codepoint & 0x3FF));
-                }
+        total += request[2];
+    }
+    int offset = HEADER_BYTES;
+    for (int i = 0; i < requests; ++i) {
+        jint request[4];
+        std::memcpy(request, bytes + i * 16, 16);
+        const auto* info = request[0] + 1 < mRows ? vterm_state_get_lineinfo(vterm_obtain_state(mVt), request[0] + 1) : nullptr;
+        request[3] = info && info->continuation;
+        std::memcpy(bytes + i * 16, request, 16);
+        for (int col = request[1]; col < request[1] + request[2]; ++col) {
+            VTermScreenCell cell{};
+            jint record[CELL_STRIDE]{};
+            if (!vterm_screen_get_cell(mVts, {request[0], col}, &cell)) return 0;
+            if (cell.chars[0] != UINT32_MAX) {
+                if (cell.width == 2 && col + 1 >= mCols) { cell = {}; cell.width = 1; }
+                packCell(cell, record);
             }
-        }
-
-        // Skip next column if this is a wide character
-        if (currentCell.width == 2) {
-            c++;
+            std::memcpy(bytes + offset, record, CELL_BYTES);
+            offset += CELL_BYTES;
         }
     }
-
-    // Resolve colors
-    uint8_t fgRed, fgGreen, fgBlue;
-    uint8_t bgRed, bgGreen, bgBlue;
-    resolveColor(cell.fg, fgRed, fgGreen, fgBlue);
-    resolveColor(cell.bg, bgRed, bgGreen, bgBlue);
-
-    // Set fields
-    env->SetIntField(runObject, mFgRedField, fgRed);
-    env->SetIntField(runObject, mFgGreenField, fgGreen);
-    env->SetIntField(runObject, mFgBlueField, fgBlue);
-    env->SetIntField(runObject, mBgRedField, bgRed);
-    env->SetIntField(runObject, mBgGreenField, bgGreen);
-    env->SetIntField(runObject, mBgBlueField, bgBlue);
-
-    env->SetBooleanField(runObject, mBoldField, cell.attrs.bold);
-    env->SetIntField(runObject, mUnderlineField, cell.attrs.underline);
-    env->SetBooleanField(runObject, mItalicField, cell.attrs.italic);
-    env->SetBooleanField(runObject, mBlinkField, cell.attrs.blink);
-    env->SetBooleanField(runObject, mReverseField, cell.attrs.reverse);
-    env->SetBooleanField(runObject, mStrikeField, cell.attrs.strike);
-    env->SetIntField(runObject, mFontField, cell.attrs.font);
-    env->SetBooleanField(runObject, mDwlField, cell.attrs.dwl);
-    env->SetIntField(runObject, mDhlField, cell.attrs.dhl);
-
-    // Set character array using thread-local pool to eliminate allocations
-    // If this is the first call on this thread, or array is too small, allocate/resize
-    if (tls_charArray == nullptr || tls_charArraySize < runLength) {
-        // Clean up old array if it exists
-        if (tls_charArray != nullptr) {
-            env->DeleteGlobalRef(tls_charArray);
-        }
-
-        // Allocate new array with some headroom (round up to nearest 64)
-        jsize newSize = ((runLength + 63) / 64) * 64;
-        ScopedLocalRef<jcharArray> localArray(env, env->NewCharArray(newSize));
-        tls_charArray = (jcharArray)env->NewGlobalRef(localArray);
-        tls_charArraySize = newSize;
-
-        LOGD("Allocated thread-local CharArray: size=%d", newSize);
-    }
-
-    // Reuse the thread-local array
-    env->SetCharArrayRegion(tls_charArray, 0, runLength, chars);
-    env->SetObjectField(runObject, mCharsField, tls_charArray);
-
-    env->SetIntField(runObject, mRunLengthField, runLength);
-
-    return runLength;
+    return total;
 }
 
 // Callback implementations
@@ -544,12 +548,20 @@ int Terminal::termMoverect(VTermRect dest, VTermRect src, void* user) {
 
 int Terminal::termMovecursor(VTermPos pos, VTermPos oldpos, int visible, void* user) {
     auto* term = static_cast<Terminal*>(user);
-    term->invokeMoveCursor(pos.row, pos.col, oldpos.row, oldpos.col, visible != 0);
+    term->mCursorPosition = pos;
+    term->mCursorVisible = visible != 0;
+    if (term->mCursorBatchActive) {
+        if (!term->mCursorPending) term->mCursorOldPosition = oldpos;
+        term->mCursorPending = true;
+    } else {
+        term->invokeMoveCursor(pos.row, pos.col, oldpos.row, oldpos.col, visible != 0);
+    }
     return 1;
 }
 
 int Terminal::termSettermprop(VTermProp prop, VTermValue* val, void* user) {
     auto* term = static_cast<Terminal*>(user);
+    if (prop == VTERM_PROP_CURSORVISIBLE) term->mCursorVisible = val->boolean != 0;
     term->invokeSetTermProp(prop, val);
     return 1;
 }
@@ -599,83 +611,113 @@ void Terminal::termOutput(const char* s, size_t len, void* user) {
 // Handles fragmented OSC sequences by accumulating data across callbacks
 int Terminal::termOscFallback(int command, VTermStringFragment frag, void* user) {
     auto* term = static_cast<Terminal*>(user);
-
-    // Start of a new OSC sequence
-    if (frag.initial) {
-        term->mOscData.clear();
-        term->mOscCommand = command;
-        // For OSC 8 (hyperlinks), save cursor position at the START of the sequence
-        // because libvterm processes text before calling callbacks, causing the
-        // cursor position at frag.final to reflect the position AFTER the hyperlink text
-        if (command == 8) {
-            VTermState* state = vterm_obtain_state(term->mVt);
-            vterm_state_get_cursorpos(state, &term->mOscCursorPos);
+    if (command == 1337) {
+        if (frag.initial) {
+            // Keep ordinary OSC 1337 traffic on the original fast path. A short
+            // first fragment remains ambiguous and is safely accumulated by the
+            // image parser.
+            static constexpr const char* prefixes[] = {
+                "File=", "MultipartFile=", "FilePart=", "FileEnd", "Capabilities"
+            };
+            term->mOsc1337Image = frag.len == 0;
+            for (const char* prefix : prefixes) {
+                if (term->mOsc1337Image) break;
+                const size_t prefixLen = std::strlen(prefix);
+                if (std::memcmp(frag.str, prefix, std::min(frag.len, prefixLen)) == 0) {
+                    term->mOsc1337Image = true;
+                    break;
+                }
+            }
         }
+        if (term->mOsc1337Image && term->imageFragment(false, frag) >= 0) return 1;
     }
-
-    // Accumulate fragment data
-    if (frag.len > 0) {
-        term->mOscData.append(frag.str, frag.len);
-    }
-
-    // When we have the final fragment, send complete payload to Java
-    if (frag.final) {
-        int cursorRow, cursorCol;
-        if (term->mOscCommand == 8) {
-            // For OSC 8, use the position saved at frag.initial
-            cursorRow = term->mOscCursorPos.row;
-            cursorCol = term->mOscCursorPos.col;
-        } else {
-            // For other OSC commands, get current cursor position
-            VTermState* state = vterm_obtain_state(term->mVt);
-            VTermPos cursorPos;
-            vterm_state_get_cursorpos(state, &cursorPos);
-            cursorRow = cursorPos.row;
-            cursorCol = cursorPos.col;
-        }
-
-        int result = term->invokeOscSequence(term->mOscCommand, term->mOscData, cursorRow, cursorCol);
-        term->mOscData.clear();
-        term->mOscCommand = -1;
-        return result;
-    }
-
-    return 1;  // Indicate we're handling this (continue accumulating)
+    VTermPos cursor{};
+    vterm_state_get_cursorpos(vterm_obtain_state(term->mVt), &cursor);
+    if (frag.initial && command == 8) term->mOscCursorPos = cursor;
+    if (command == 8) cursor = term->mOscCursorPos;
+    return term->invokeTextFragment(0, command, frag, cursor.row, cursor.col);
 }
 
-// OSC 52 selection set callback - receives base64-decoded clipboard data from libvterm
-int Terminal::termSelectionSet(VTermSelectionMask mask, VTermStringFragment frag, void* user) {
-    auto* term = static_cast<Terminal*>(user);
-
-    LOGD("termSelectionSet: mask=%04X, len=%d, initial=%d, final=%d",
-         mask, static_cast<int>(frag.len), frag.initial, frag.final);
-
-    // Accumulate data across fragments
-    if (frag.initial) {
-        term->mSelectionData.clear();
+jlong Terminal::imageFragment(bool kitty, VTermStringFragment frag) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) return 0;
+    VTermPos pos{};
+    vterm_state_get_cursorpos(vterm_obtain_state(mVt), &pos);
+    jlong result = 0;
+    size_t offset = 0;
+    do {
+        const jsize count = static_cast<jsize>(std::min(size_t(4096), frag.len - offset));
+        ScopedLocalRef<jbyteArray> bytes(env, env->NewByteArray(count));
+        if (!bytes.get()) return 0;
+        if (count) env->SetByteArrayRegion(bytes, 0, count, (const jbyte*)frag.str + offset);
+        if (env->ExceptionCheck()) return 0;
+        result = env->CallLongMethod(mCallbacks, mImageFragmentMethod, kitty, bytes.get(),
+            frag.initial && offset == 0, frag.final && offset + count == frag.len, pos.row, pos.col);
+        if (env->ExceptionCheck()) return 0;
+        offset += count;
+    } while (offset < frag.len);
+    if (result >= 0) mImageTracking = true;
+    if (result > 0) {
+        int rows = (result >> 32) & 0xffff;
+        int cols = (result >> 1) & 0xffff;
+        mReservingImage = true;
+        vterm_state_place_image(vterm_obtain_state(mVt), rows, cols, result & 1);
+        mReservingImage = false;
     }
+    return result;
+}
 
-    if (frag.len > 0) {
-        term->mSelectionData.append(frag.str, frag.len);
-    }
-
-    // When we have the final fragment, send to Java via OSC sequence callback
-    if (frag.final && !term->mSelectionData.empty()) {
-        LOGD("termSelectionSet: final data length=%d", static_cast<int>(term->mSelectionData.size()));
-        // Use OSC 52 command number and pass the decoded data as payload
-        // Format: selection;data - but since libvterm already decoded base64, we pass raw data
-        std::string payload = "c;" + term->mSelectionData;  // 'c' for clipboard
-        // Cursor position not relevant for OSC 52, pass 0,0
-        term->invokeOscSequence(52, payload, 0, 0);
-        term->mSelectionData.clear();
-    }
-
+int Terminal::termApcFallback(VTermStringFragment frag, void* user) {
+    static_cast<Terminal*>(user)->imageFragment(true, frag);
     return 1;
+}
+
+int Terminal::termControlFallback(unsigned char control, void* user) {
+    if (control != 0x18) return 0;
+    return static_cast<Terminal*>(user)->imageEdit(4, {});
+}
+
+int Terminal::termCsiFallback(const char* leader, const long args[], int argcount, const char* intermed, char command, void* user) {
+    if (command != 't' || (leader && *leader) || (intermed && *intermed) || argcount != 1 ||
+        (args[0] != 14 && args[0] != 16 && args[0] != 18)) return 0;
+    auto* term = static_cast<Terminal*>(user);
+    JNIEnv* env = term->mEnv;
+    if (!env || env->ExceptionCheck()) return 0;
+    env->CallVoidMethod(term->mCallbacks, term->mImageQueryMethod, static_cast<jint>(args[0]));
+    return 1;
+}
+
+int Terminal::termImageResize(int buffer, int delta, int rows, int cols, void* user) {
+    return static_cast<Terminal*>(user)->imageEdit(3, {buffer, rows, cols, 0}, delta, 0);
+}
+
+int Terminal::imageEdit(int kind, VTermRect rect, int downward, int rightward) {
+    if (!mImageTracking) return 1;
+    if (mReservingImage && kind != 1) return 1;
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) return 0;
+    env->CallVoidMethod(mCallbacks, mImageEditMethod, kind, rect.start_row, rect.end_row,
+        rect.start_col, rect.end_col, downward, rightward);
+    return 1;
+}
+int Terminal::termImageEdit(VTermRect rect, void* user) {
+    return static_cast<Terminal*>(user)->imageEdit(0, rect);
+}
+int Terminal::termImageScroll(VTermRect rect, int downward, int rightward, void* user) {
+    return static_cast<Terminal*>(user)->imageEdit(1, rect, downward, rightward);
+}
+int Terminal::termImageClear(void* user) {
+    return static_cast<Terminal*>(user)->imageEdit(2, {});
+}
+
+// libvterm has already decoded the OSC 52 base64 transport envelope.
+int Terminal::termSelectionSet(VTermSelectionMask mask, VTermStringFragment frag, void* user) {
+    return static_cast<Terminal*>(user)->invokeTextFragment(2, 52, frag, 0, 0);
 }
 
 // OSC 52 selection query callback - we don't support clipboard read for security
 int Terminal::termSelectionQuery(VTermSelectionMask mask, void* user) {
-    LOGD("termSelectionQuery: mask=%04X (ignored for security)", mask);
+    (void)mask;
     // Return 0 to indicate we don't support clipboard read
     return 0;
 }
@@ -686,13 +728,13 @@ void Terminal::invokeDamage(int startRow, int endRow, int startCol, int endCol) 
         return;
     }
 
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) {
         return;
     }
 
     env->CallIntMethod(mCallbacks, mDamageMethod, startRow, endRow, startCol, endCol);
-    JNI_CHECK_EXCEPTION(env);
+    if (env->ExceptionCheck()) return;
 }
 
 int Terminal::invokeMoverect(VTermRect dest, VTermRect src) {
@@ -700,19 +742,39 @@ int Terminal::invokeMoverect(VTermRect dest, VTermRect src) {
         return 0;
     }
 
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) {
         return 0;
     }
 
     ScopedLocalRef<jobject> destObj(env, env->NewObject(mTermRectClass, mTermRectConstructor,
         dest.start_row, dest.end_row, dest.start_col, dest.end_col));
+    if (!destObj.get()) return 0;
     ScopedLocalRef<jobject> srcObj(env, env->NewObject(mTermRectClass, mTermRectConstructor,
         src.start_row, src.end_row, src.start_col, src.end_col));
 
+    if (!srcObj.get()) return 0;
     jint result = env->CallIntMethod(mCallbacks, mMoverectMethod, destObj.get(), srcObj.get());
     JNI_CHECK_EXCEPTION_RETURN(env, 0);
     return result;
+}
+
+void Terminal::beginCursorBatch() {
+    mCursorBatchActive = true;
+    mCursorPending = false;
+}
+
+void Terminal::finishCursorBatch() {
+    mCursorBatchActive = false;
+    if (!mCursorPending) return;
+
+    mCursorPending = false;
+    invokeMoveCursor(
+        mCursorPosition.row,
+        mCursorPosition.col,
+        mCursorOldPosition.row,
+        mCursorOldPosition.col,
+        mCursorVisible);
 }
 
 void Terminal::invokeMoveCursor(int row, int col, int oldRow, int oldCol, bool visible) {
@@ -720,16 +782,13 @@ void Terminal::invokeMoveCursor(int row, int col, int oldRow, int oldCol, bool v
         return;
     }
 
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) {
         return;
     }
 
-    ScopedLocalRef<jobject> posObj(env, env->NewObject(mCursorPositionClass, mCursorPositionConstructor, row, col));
-    ScopedLocalRef<jobject> oldPosObj(env, env->NewObject(mCursorPositionClass, mCursorPositionConstructor, oldRow, oldCol));
-
-    env->CallIntMethod(mCallbacks, mMoveCursorMethod, posObj.get(), oldPosObj.get(), visible);
-    JNI_CHECK_EXCEPTION(env);
+    env->CallIntMethod(mCallbacks, mMoveCursorMethod, row, col, oldRow, oldCol, visible);
+    if (env->ExceptionCheck()) return;
 }
 
 void Terminal::invokeSetTermProp(VTermProp prop, VTermValue* val) {
@@ -737,8 +796,8 @@ void Terminal::invokeSetTermProp(VTermProp prop, VTermValue* val) {
         return;
     }
 
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) {
         return;
     }
 
@@ -754,19 +813,8 @@ void Terminal::invokeSetTermProp(VTermProp prop, VTermValue* val) {
             break;
 
         case VTERM_VALUETYPE_STRING:
-            if (val->string.str) {
-                // Titles and icon names are remote bytes, like OSC payloads:
-                // decode them leniently instead of letting NewStringUTF abort.
-                const std::u16string utf16 = utf8_to_utf16_lossy(val->string.str, val->string.len);
-                ScopedLocalRef<jstring> str(
-                    env,
-                    env->NewString(reinterpret_cast<const jchar*>(utf16.data()),
-                                   static_cast<jsize>(utf16.size())));
-                if (str.get()) {
-                    propValue = ScopedLocalRef<jobject>(env, env->NewObject(mTerminalPropertyStringClass, mTerminalPropertyStringConstructor, str.get()));
-                }
-            }
-            break;
+            invokeTextFragment(1, prop, val->string, 0, 0);
+            return;
 
         case VTERM_VALUETYPE_COLOR: {
             uint8_t r, g, b;
@@ -780,8 +828,9 @@ void Terminal::invokeSetTermProp(VTermProp prop, VTermValue* val) {
     }
 
     if (propValue.get()) {
+        if (env->ExceptionCheck()) return;
         env->CallIntMethod(mCallbacks, mSetTermPropMethod, prop, propValue.get());
-        JNI_CHECK_EXCEPTION(env);
+        if (env->ExceptionCheck()) return;
     }
 }
 
@@ -790,253 +839,77 @@ void Terminal::invokeBell() {
         return;
     }
 
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) {
         return;
     }
 
     env->CallIntMethod(mCallbacks, mBellMethod);
-    JNI_CHECK_EXCEPTION(env);
+    if (env->ExceptionCheck()) return;
 }
 
 void Terminal::invokePushScrollbackLine(int cols, const VTermScreenCell* cells, bool softWrapped) {
-    if (!mPushScrollbackMethod) {
-        return;
-    }
-
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
-        return;
-    }
-
-    // Build a list to hold actual cells (excluding fullwidth placeholders)
-    std::vector<ScopedLocalRef<jobject>> screenCells;
-
-#define CELL_JNI_EXCEPTION_CONTINUE(env) \
-    do { if ((env)->ExceptionCheck()) { (env)->ExceptionDescribe(); (env)->ExceptionClear(); continue; } } while (0)
-#define CELL_JNI_EXCEPTION_BREAK(env) \
-    do { if ((env)->ExceptionCheck()) { (env)->ExceptionDescribe(); (env)->ExceptionClear(); break; } } while (0)
-
-    for (int i = 0; i < cols; i++) {
-        const VTermScreenCell& cell = cells[i];
-
-        // Get the primary character and handle surrogate pairs
-        jchar primaryChar = ' ';
-        ScopedLocalRef<jobject> combiningList(env, env->NewObject(mArrayListClass, mArrayListConstructor));
-
-        if (cell.chars[0] != 0) {
-            uint32_t codepoint = cell.chars[0];
-
-            if (codepoint <= 0xFFFF) {
-                // BMP character - fits in single jchar
-                primaryChar = (jchar)codepoint;
-            } else {
-                // Surrogate pair needed for codepoints > U+FFFF
-                codepoint -= 0x10000;
-                primaryChar = (jchar)(0xD800 + (codepoint >> 10));  // High surrogate
-                jchar lowSurrogate = (jchar)(0xDC00 + (codepoint & 0x3FF));  // Low surrogate
-
-                ScopedLocalRef<jobject> lowSurrogateObj(env, env->CallStaticObjectMethod(mCharacterClass, mCharacterValueOf, lowSurrogate));
-                CELL_JNI_EXCEPTION_CONTINUE(env);  // Orphaned high surrogate; skip cell
-                env->CallBooleanMethod(combiningList, mArrayListAdd, lowSurrogateObj.get());
-                CELL_JNI_EXCEPTION_CONTINUE(env);  // Inconsistent combining list; skip cell
-            }
-
-            // Add any actual combining characters (chars[1] onwards)
-            for (int j = 1; j < VTERM_MAX_CHARS_PER_CELL && cell.chars[j] != 0; j++) {
-                uint32_t combiningCodepoint = cell.chars[j];
-
-                if (combiningCodepoint <= 0xFFFF) {
-                    ScopedLocalRef<jobject> charObj(env, env->CallStaticObjectMethod(mCharacterClass, mCharacterValueOf, (jchar)combiningCodepoint));
-                    CELL_JNI_EXCEPTION_BREAK(env);
-                    env->CallBooleanMethod(combiningList, mArrayListAdd, charObj.get());
-                    CELL_JNI_EXCEPTION_BREAK(env);
-                } else {
-                    // Combining character is also a surrogate pair
-                    combiningCodepoint -= 0x10000;
-                    jchar highSurr = (jchar)(0xD800 + (combiningCodepoint >> 10));
-                    jchar lowSurr = (jchar)(0xDC00 + (combiningCodepoint & 0x3FF));
-
-                    ScopedLocalRef<jobject> highObj(env, env->CallStaticObjectMethod(mCharacterClass, mCharacterValueOf, highSurr));
-                    CELL_JNI_EXCEPTION_BREAK(env);
-                    env->CallBooleanMethod(combiningList, mArrayListAdd, highObj.get());
-                    CELL_JNI_EXCEPTION_BREAK(env);
-
-                    ScopedLocalRef<jobject> lowObj(env, env->CallStaticObjectMethod(mCharacterClass, mCharacterValueOf, lowSurr));
-                    CELL_JNI_EXCEPTION_BREAK(env);
-                    env->CallBooleanMethod(combiningList, mArrayListAdd, lowObj.get());
-                    CELL_JNI_EXCEPTION_BREAK(env);
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) return;
+    ScopedLocalRef<jobject> buffer(env, env->CallObjectMethod(mCallbacks, mCellBufferMethod));
+    if (env->ExceptionCheck()) return;
+    auto* bytes = writableBuffer(env, buffer, BUFFER_BYTES);
+    if (!bytes) { argumentError(env, "Invalid scrollback buffer"); return; }
+    constexpr int capacity = BUFFER_BYTES / CELL_BYTES;
+    bool continuation = false;
+    for (int start = 0; start < cols; start += capacity) {
+        const int count = std::min(capacity, cols - start);
+        for (int i = 0; i < count; ++i) {
+            jint record[CELL_STRIDE]{};
+            if (continuation) { continuation = false; }
+            else {
+                packCell(cells[start + i], record);
+                continuation = cells[start + i].width == 2;
+                if (continuation && start + i + 1 == cols) {
+                    std::fill_n(record, CELL_STRIDE, 0);
+                    record[CELL_WIDTH] = 1;
+                    continuation = false;
                 }
             }
+            std::memcpy(bytes + i * CELL_BYTES, record, CELL_BYTES);
         }
-
-        // Resolve colors
-        uint8_t fgRed, fgGreen, fgBlue;
-        uint8_t bgRed, bgGreen, bgBlue;
-        resolveColor(cell.fg, fgRed, fgGreen, fgBlue);
-        resolveColor(cell.bg, bgRed, bgGreen, bgBlue);
-
-        // Create ScreenCell object using cached class/constructor
-        // Signature: (CLjava/util/List;IIIIIIZZIZZI)V
-        // Parameters: char, combiningChars, fgRed, fgGreen, fgBlue, bgRed, bgGreen, bgBlue,
-        //             bold, italic, underline, reverse, strike, width
-        ScopedLocalRef<jobject> screenCell(env, env->NewObject(mScreenCellClass, mScreenCellConstructor,
-            primaryChar,                    // char
-            combiningList.get(),            // combiningChars: List<Char>
-            (jint)fgRed,                    // fgRed
-            (jint)fgGreen,                  // fgGreen
-            (jint)fgBlue,                   // fgBlue
-            (jint)bgRed,                    // bgRed
-            (jint)bgGreen,                  // bgGreen
-            (jint)bgBlue,                   // bgBlue
-            (jboolean)cell.attrs.bold,      // bold (Z)
-            (jboolean)cell.attrs.italic,    // italic (Z)
-            (jint)cell.attrs.underline,     // underline (I)
-            (jboolean)cell.attrs.reverse,   // reverse (Z)
-            (jboolean)cell.attrs.strike,    // strike (Z)
-            (jint)cell.width                // width (I)
-        ));
-
-        screenCells.push_back(std::move(screenCell));
-
-        // Skip next cell if this is a fullwidth character
-        if (cell.width == 2) {
-            i++;  // Skip the placeholder cell
-        }
+        env->CallIntMethod(mCallbacks, mPushScrollbackMethod, cols, start, count, buffer.get(), (jboolean)softWrapped);
+        if (env->ExceptionCheck()) return;
     }
-
-#undef CELL_JNI_EXCEPTION_CONTINUE
-#undef CELL_JNI_EXCEPTION_BREAK
-
-    // Create array with actual cell count
-    int actualCells = screenCells.size();
-    ScopedLocalRef<jobjectArray> actualCellArray(env, env->NewObjectArray(actualCells, mScreenCellClass, nullptr));
-    for (int i = 0; i < actualCells; i++) {
-        env->SetObjectArrayElement(actualCellArray, i, screenCells[i].get());
-    }
-
-    // Call the Java callback with actual cell count and soft wrap status
-    env->CallIntMethod(mCallbacks, mPushScrollbackMethod, actualCells, actualCellArray.get(), (jboolean)softWrapped);
-    JNI_CHECK_EXCEPTION(env);
 }
 
 int Terminal::invokePopScrollbackLine(int cols, VTermScreenCell* cells) {
-    if (!mPopScrollbackMethod) {
-        return 0;
-    }
-
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
-        return 0;
-    }
-
-    ScopedLocalRef<jclass> screenCellClass(env, env->FindClass("org/connectbot/terminal/ScreenCell"));
-    if (!screenCellClass.get()) {
-        LOGE("Failed to find ScreenCell class");
-        return 0;
-    }
-
-    ScopedLocalRef<jobjectArray> cellArray(env, env->NewObjectArray(cols, screenCellClass, nullptr));
-    if (!cellArray.get()) {
-        LOGE("Failed to create cell array");
-        return 0;
-    }
-
-    jint result = env->CallIntMethod(mCallbacks, mPopScrollbackMethod, cols, cellArray.get());
-    JNI_CHECK_EXCEPTION_RETURN(env, 0);
-
-    if (result == 0) {
-        return 0;
-    }
-
-    // Get field IDs for ScreenCell
-    jfieldID charField = env->GetFieldID(screenCellClass, "char", "C");
-    jfieldID combiningCharsField = env->GetFieldID(screenCellClass, "combiningChars", "Ljava/util/List;");
-    jfieldID fgRedField = env->GetFieldID(screenCellClass, "fgRed", "I");
-    jfieldID fgGreenField = env->GetFieldID(screenCellClass, "fgGreen", "I");
-    jfieldID fgBlueField = env->GetFieldID(screenCellClass, "fgBlue", "I");
-    jfieldID bgRedField = env->GetFieldID(screenCellClass, "bgRed", "I");
-    jfieldID bgGreenField = env->GetFieldID(screenCellClass, "bgGreen", "I");
-    jfieldID bgBlueField = env->GetFieldID(screenCellClass, "bgBlue", "I");
-    jfieldID boldField = env->GetFieldID(screenCellClass, "bold", "Z");
-    jfieldID italicField = env->GetFieldID(screenCellClass, "italic", "Z");
-    jfieldID underlineField = env->GetFieldID(screenCellClass, "underline", "I");
-    jfieldID reverseField = env->GetFieldID(screenCellClass, "reverse", "Z");
-    jfieldID strikeField = env->GetFieldID(screenCellClass, "strike", "Z");
-    jfieldID widthField = env->GetFieldID(screenCellClass, "width", "I");
-
-    ScopedLocalRef<jclass> listClass(env, env->FindClass("java/util/List"));
-    jmethodID listSize = env->GetMethodID(listClass, "size", "()I");
-    jmethodID listGet = env->GetMethodID(listClass, "get", "(I)Ljava/lang/Object;");
-    ScopedLocalRef<jclass> charClass(env, env->FindClass("java/lang/Character"));
-    jmethodID charValue = env->GetMethodID(charClass, "charValue", "()C");
-
-    // Convert Java ScreenCell array to VTermScreenCell
-    for (int i = 0; i < cols; i++) {
-        ScopedLocalRef<jobject> screenCell(env, env->GetObjectArrayElement(cellArray, i));
-        if (!screenCell.get()) {
-            // Initialize empty cell
-            VTermScreenCell& cell = cells[i];
-            cell.chars[0] = ' ';
-            for (int j = 1; j < VTERM_MAX_CHARS_PER_CELL; j++) {
-                cell.chars[j] = 0;
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) return 0;
+    ScopedLocalRef<jobject> buffer(env, env->CallObjectMethod(mCallbacks, mCellBufferMethod));
+    if (env->ExceptionCheck()) return 0;
+    auto* bytes = writableBuffer(env, buffer, BUFFER_BYTES);
+    if (!bytes) { argumentError(env, "Invalid scrollback buffer"); return 0; }
+    constexpr int capacity = BUFFER_BYTES / CELL_BYTES;
+    bool continuation = false;
+    for (int start = 0; start < cols; start += capacity) {
+        const int count = std::min(capacity, cols - start);
+        const auto result = env->CallIntMethod(mCallbacks, mPopScrollbackMethod, cols, start, count, buffer.get());
+        if (env->ExceptionCheck() || !result) return 0;
+        for (int i = 0; i < count; ++i) {
+            auto& cell = cells[start + i];
+            if (continuation) {
+                cell = {};
+                cell.chars[0] = UINT32_MAX;
+                cell.width = 1;
+                continuation = false;
+                continue;
             }
-            cell.width = 1;
-            cell.attrs.bold = 0;
-            cell.attrs.italic = 0;
-            cell.attrs.underline = 0;
-            cell.attrs.reverse = 0;
-            cell.attrs.strike = 0;
-            vterm_color_rgb(&cell.fg, 192, 192, 192);
-            vterm_color_rgb(&cell.bg, 0, 0, 0);
-            continue;
-        }
-
-        VTermScreenCell& cell = cells[i];
-
-        // Get primary character
-        jchar primaryChar = env->GetCharField(screenCell, charField);
-        cell.chars[0] = primaryChar;
-
-        // Get combining characters
-        ScopedLocalRef<jobject> combiningList(env, env->GetObjectField(screenCell, combiningCharsField));
-        int charIndex = 1;
-        if (combiningList.get()) {
-            jint listLen = env->CallIntMethod(combiningList, listSize);
-            JNI_CHECK_EXCEPTION_RETURN(env, 0);
-            for (int j = 0; j < listLen && charIndex < VTERM_MAX_CHARS_PER_CELL; j++) {
-                ScopedLocalRef<jobject> charObj(env, env->CallObjectMethod(combiningList, listGet, j));
-                JNI_CHECK_EXCEPTION_RETURN(env, 0);
-                if (charObj.get()) {
-                    cell.chars[charIndex++] = env->CallCharMethod(charObj, charValue);
-                    JNI_CHECK_EXCEPTION_RETURN(env, 0);
-                }
+            jint record[CELL_STRIDE];
+            std::memcpy(record, bytes + i * CELL_BYTES, CELL_BYTES);
+            if (record[CELL_WIDTH] < 1 || record[CELL_WIDTH] > 2 || record[CELL_WIDTH] > cols - start - i) {
+                argumentError(env, "Invalid cell width");
+                return 0;
             }
+            unpackCell(record, cell);
+            continuation = cell.width == 2;
         }
-        // Fill remaining with zeros
-        for (; charIndex < VTERM_MAX_CHARS_PER_CELL; charIndex++) {
-            cell.chars[charIndex] = 0;
-        }
-
-        // Get colors
-        uint8_t fgRed = env->GetIntField(screenCell, fgRedField);
-        uint8_t fgGreen = env->GetIntField(screenCell, fgGreenField);
-        uint8_t fgBlue = env->GetIntField(screenCell, fgBlueField);
-        uint8_t bgRed = env->GetIntField(screenCell, bgRedField);
-        uint8_t bgGreen = env->GetIntField(screenCell, bgGreenField);
-        uint8_t bgBlue = env->GetIntField(screenCell, bgBlueField);
-        vterm_color_rgb(&cell.fg, fgRed, fgGreen, fgBlue);
-        vterm_color_rgb(&cell.bg, bgRed, bgGreen, bgBlue);
-
-        // Get attributes
-        cell.attrs.bold = env->GetBooleanField(screenCell, boldField);
-        cell.attrs.italic = env->GetBooleanField(screenCell, italicField);
-        cell.attrs.underline = env->GetIntField(screenCell, underlineField);
-        cell.attrs.reverse = env->GetBooleanField(screenCell, reverseField);
-        cell.attrs.strike = env->GetBooleanField(screenCell, strikeField);
-        cell.width = env->GetIntField(screenCell, widthField);
     }
-
     return 1;
 }
 
@@ -1045,13 +918,13 @@ void Terminal::invokeClearScrollback() {
         return;
     }
 
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) {
         return;
     }
 
     env->CallIntMethod(mCallbacks, mClearScrollbackMethod);
-    JNI_CHECK_EXCEPTION(env);
+    if (env->ExceptionCheck()) return;
 }
 
 void Terminal::invokeKeyboardOutput(const char* data, size_t len) {
@@ -1059,101 +932,41 @@ void Terminal::invokeKeyboardOutput(const char* data, size_t len) {
         return;
     }
 
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) {
         return;
     }
 
-    ScopedLocalRef<jbyteArray> array(env, env->NewByteArray(len));
+    if (len > static_cast<size_t>(std::numeric_limits<jsize>::max())) { argumentError(env, "Output too large"); return; }
+    ScopedLocalRef<jbyteArray> array(env, env->NewByteArray(static_cast<jsize>(len)));
+    if (!array.get()) return;
     env->SetByteArrayRegion(array, 0, len, reinterpret_cast<const jbyte*>(data));
 
+    if (env->ExceptionCheck()) return;
     env->CallIntMethod(mCallbacks, mKeyboardInputMethod, array.get());
-    JNI_CHECK_EXCEPTION(env);
+    if (env->ExceptionCheck()) return;
 }
 
-int Terminal::invokeOscSequence(int command, const std::string& payload, int cursorRow, int cursorCol) {
-    // The payload is NEVER logged. It is arbitrary data from the remote end and
-    // routinely carries secrets: OSC 52 is the clipboard, so termSelectionSet
-    // hands the *decoded* copied text through here — a password out of a
-    // manager, a token, a private key — and OSC 3008 carries user, hostname and
-    // cwd. Logging it wrote all of that to logcat in plaintext, where adb
-    // logcat, a bug report, or a user pasting a log into an issue picks it up.
-    //
-    // Command and length are kept: they are what makes the log useful for
-    // sequencing and truncation bugs, and neither reveals content.
-    LOGD("invokeOscSequence: command=%d, payload len=%zu, cursor=(%d,%d)",
-         command, payload.length(), cursorRow, cursorCol);
-
-    if (!mOscSequenceMethod) {
-        LOGE("invokeOscSequence: mOscSequenceMethod is null");
-        return 0;
-    }
-
-    JNIEnv* env;
-    if (mJavaVM->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
-        LOGE("invokeOscSequence: Failed to get JNI env");
-        return 0;
-    }
-
-    // Decoded to UTF-16 rather than handed to NewStringUTF, which aborts the
-    // whole process on bytes that are not valid modified UTF-8. An OSC payload
-    // is whatever the remote program emitted — a window title from a non-UTF-8
-    // Windows console is not obliged to be valid UTF-8, and a terminal that
-    // dies on one is worse than a terminal that shows U+FFFD.
-    //
-    // Sized from the string rather than c_str(), so a payload containing an
-    // embedded NUL is passed through whole instead of being silently truncated.
-    const std::u16string payloadUtf16 = utf8_to_utf16_lossy(payload.data(), payload.size());
-    ScopedLocalRef<jstring> payloadStr(
-        env,
-        env->NewString(reinterpret_cast<const jchar*>(payloadUtf16.data()),
-                       static_cast<jsize>(payloadUtf16.size())));
-    if (!payloadStr.get()) {
-        LOGE("Failed to create jstring for OSC payload");
-        return 0;
-    }
-
-    jint result = env->CallIntMethod(mCallbacks, mOscSequenceMethod, command, payloadStr.get(), cursorRow, cursorCol);
-    JNI_CHECK_EXCEPTION_RETURN(env, 0);
-    LOGD("invokeOscSequence: Java callback returned %d", result);
-
+int Terminal::invokeTextFragment(int kind, int command, VTermStringFragment frag, int row, int col) {
+    JNIEnv* env = mEnv;
+    if (!env || env->ExceptionCheck()) return 0;
+    // Never expose libvterm-owned memory beyond this callback, nor allocate an
+    // array sized by an unbounded remote payload. Kotlin owns assembly and limits.
+    constexpr size_t CHUNK = 64 * 1024;
+    size_t offset = 0;
+    int result = 1;
+    do {
+        const jsize count = static_cast<jsize>(std::min(CHUNK, frag.len - offset));
+        ScopedLocalRef<jbyteArray> data(env, env->NewByteArray(count));
+        if (!data.get()) return 0;
+        if (count) env->SetByteArrayRegion(data, 0, count, reinterpret_cast<const jbyte*>(frag.str + offset));
+        if (env->ExceptionCheck()) return 0;
+        result = env->CallIntMethod(mCallbacks, mTextFragmentMethod, kind, command, data.get(),
+            (jboolean)(frag.initial && offset == 0), (jboolean)(frag.final && offset + count == frag.len), row, col);
+        if (env->ExceptionCheck()) return 0;
+        offset += count;
+    } while (offset < frag.len);
     return result;
-}
-
-// Line info retrieval
-bool Terminal::getLineContinuation(int row) {
-    std::scoped_lock lock(mLock);
-
-    if (!mVt || row < 0 || row >= mRows) {
-        return false;
-    }
-
-    VTermState* state = vterm_obtain_state(mVt);
-    if (!state) {
-        return false;
-    }
-
-    const VTermLineInfo* lineInfo = vterm_state_get_lineinfo(state, row);
-    if (!lineInfo) {
-        return false;
-    }
-
-    return lineInfo->continuation != 0;
-}
-
-// Helper functions
-bool Terminal::cellStyleEqual(const VTermScreenCell& a, const VTermScreenCell& b) {
-    return memcmp(&a.fg, &b.fg, sizeof(VTermColor)) == 0 &&
-           memcmp(&a.bg, &b.bg, sizeof(VTermColor)) == 0 &&
-           a.attrs.bold == b.attrs.bold &&
-           a.attrs.underline == b.attrs.underline &&
-           a.attrs.italic == b.attrs.italic &&
-           a.attrs.blink == b.attrs.blink &&
-           a.attrs.reverse == b.attrs.reverse &&
-           a.attrs.strike == b.attrs.strike &&
-           a.attrs.font == b.attrs.font &&
-           a.attrs.dwl == b.attrs.dwl &&
-           a.attrs.dhl == b.attrs.dhl;
 }
 
 void Terminal::resolveColor(const VTermColor& color, uint8_t& r, uint8_t& g, uint8_t& b) {
@@ -1194,9 +1007,32 @@ void Terminal::resolveColor(const VTermColor& color, uint8_t& r, uint8_t& g, uin
 // JNI function implementations
 extern "C" {
 
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /* reserved */) {
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        return JNI_ERR;
+    }
+    if (!initializeCallbackCache(env)) {
+        clearCallbackCache(env);
+        return JNI_ERR;
+    }
+    return JNI_VERSION_1_6;
+}
+
+JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void* /* reserved */) {
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
+        clearCallbackCache(env);
+    }
+}
+
 JNIEXPORT jlong JNICALL
 Java_org_connectbot_terminal_TerminalNative_nativeInit(JNIEnv* env, jobject /* thiz */, jobject callbacks) {
-    auto* term = new Terminal(env, callbacks);
+    auto* term = new (std::nothrow) Terminal(env, callbacks);
+    if (!term || env->ExceptionCheck() || !term->ready()) {
+        delete term;
+        return 0;
+    }
     return reinterpret_cast<jlong>(term);
 }
 
@@ -1209,8 +1045,14 @@ Java_org_connectbot_terminal_TerminalNative_nativeDestroy(JNIEnv* /* env */, job
 
 JNIEXPORT jint JNICALL
 Java_org_connectbot_terminal_TerminalNative_nativeWriteInputBuffer(JNIEnv* env, jobject /* thiz */,
-                                                                   jlong ptr, jobject buffer, jint length) {
+                                                                   jlong ptr, jobject callbacks, jobject buffer, jint length) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
+    const jlong capacity = env->GetDirectBufferCapacity(buffer);
+    if (length < 0 || capacity < 0 || length > capacity) {
+        argumentError(env, "Invalid direct buffer range");
+        return 0;
+    }
     const auto* data = static_cast<const uint8_t*>(
         env->GetDirectBufferAddress(buffer));
     if (!data) {
@@ -1221,82 +1063,104 @@ Java_org_connectbot_terminal_TerminalNative_nativeWriteInputBuffer(JNIEnv* env, 
 
 JNIEXPORT jint JNICALL
 Java_org_connectbot_terminal_TerminalNative_nativeWriteInputArray(JNIEnv* env, jobject /* thiz */,
-                                                                  jlong ptr, jbyteArray data, jint offset, jint length) {
+                                                                  jlong ptr, jobject callbacks, jbyteArray data, jint offset, jint length) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
+    const jsize size = env->GetArrayLength(data);
+    if (offset < 0 || offset > size || length < 0 || length > size - offset) {
+        argumentError(env, "Invalid input slice");
+        return 0;
+    }
+    if (length == 0) return 0;
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
+    if (!bytes) return 0;
+    struct Release {
+        JNIEnv* env;
+        jbyteArray array;
+        jbyte* bytes;
+        ~Release() { env->ReleaseByteArrayElements(array, bytes, JNI_ABORT); }
+    } release{env, data, bytes};
     int result = term->writeInput(
         reinterpret_cast<const uint8_t*>(bytes + offset), length);
-    env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
     return result;
 }
 
 JNIEXPORT jint JNICALL
-Java_org_connectbot_terminal_TerminalNative_nativeResize(JNIEnv* /* env */, jobject /* thiz */,
-                                                         jlong ptr, jint rows, jint cols) {
+Java_org_connectbot_terminal_TerminalNative_nativeResize(JNIEnv* env, jobject /* thiz */,
+                                                         jlong ptr, jobject callbacks, jint rows, jint cols) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
+    if (rows <= 0 || cols <= 0 || rows > std::numeric_limits<int>::max() / cols ||
+        cols > std::numeric_limits<int>::max() / CELL_STRIDE) {
+        argumentError(env, "Invalid terminal dimensions");
+        return -1;
+    }
     return term->resize(rows, cols);
 }
 
 JNIEXPORT jboolean JNICALL
-Java_org_connectbot_terminal_TerminalNative_nativeDispatchKey(JNIEnv* /* env */, jobject /* thiz */,
-                                                              jlong ptr, jint modifiers, jint key) {
+Java_org_connectbot_terminal_TerminalNative_nativeDispatchKey(JNIEnv* env, jobject /* thiz */,
+                                                              jlong ptr, jobject callbacks, jint modifiers, jint key) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
     return term->dispatchKey(modifiers, key);
 }
 
 JNIEXPORT jboolean JNICALL
-Java_org_connectbot_terminal_TerminalNative_nativeDispatchCharacter(JNIEnv* /* env */, jobject /* thiz */,
-                                                                    jlong ptr, jint modifiers, jint character) {
+Java_org_connectbot_terminal_TerminalNative_nativeDispatchCharacter(JNIEnv* env, jobject /* thiz */,
+                                                                    jlong ptr, jobject callbacks, jint modifiers, jint character) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
     return term->dispatchCharacter(modifiers, character);
 }
 
-JNIEXPORT jint JNICALL
-Java_org_connectbot_terminal_TerminalNative_nativeGetCellRun(JNIEnv* env, jobject /* thiz */,
-                                                             jlong ptr, jint row, jint col, jobject runObject) {
+JNIEXPORT void JNICALL
+Java_org_connectbot_terminal_TerminalNative_nativePaste(JNIEnv* env, jobject, jlong ptr, jobject callbacks, jbyteArray data) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
-    return term->getCellRun(env, row, col, runObject);
+    Terminal::CallbackScope scope(*term, env, callbacks);
+    term->paste(env, data);
+}
+
+JNIEXPORT jint JNICALL
+Java_org_connectbot_terminal_TerminalNative_nativeGetCells(JNIEnv* env, jobject, jlong ptr, jobject callbacks, jobject buffer, jint requests) {
+    auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
+    return term->getCells(env, buffer, requests);
 }
 
 JNIEXPORT jint JNICALL
 Java_org_connectbot_terminal_TerminalNative_nativeSetPaletteColors(JNIEnv* env, jobject /* thiz */,
-                                                                   jlong ptr, jintArray colors, jint count) {
+                                                                   jlong ptr, jobject callbacks, jintArray colors, jint count) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
 
-    // Get array elements
-    jint* colorData = env->GetIntArrayElements(colors, nullptr);
-    if (!colorData) {
-        LOGE("nativeSetPaletteColors: Failed to get array elements");
+    if (count < 0 || count > 16 || count > env->GetArrayLength(colors)) {
+        argumentError(env, "Invalid palette count");
         return -1;
     }
-
-    // Convert to uint32_t array and call native method
-    int result = term->setPaletteColors(reinterpret_cast<const uint32_t*>(colorData), count);
-
-    // Release array (JNI_ABORT = don't copy back, read-only)
-    env->ReleaseIntArrayElements(colors, colorData, JNI_ABORT);
-
-    return result;
+    jint colorData[16]{};
+    env->GetIntArrayRegion(colors, 0, count, colorData);
+    if (env->ExceptionCheck()) return -1;
+    uint32_t palette[16]{};
+    for (int i = 0; i < count; ++i) palette[i] = static_cast<uint32_t>(colorData[i]);
+    return term->setPaletteColors(palette, count);
 }
 
 JNIEXPORT jint JNICALL
-Java_org_connectbot_terminal_TerminalNative_nativeSetDefaultColors(JNIEnv* /* env */, jobject /* thiz */,
-                                                                   jlong ptr, jint fgColor, jint bgColor) {
+Java_org_connectbot_terminal_TerminalNative_nativeSetDefaultColors(JNIEnv* env, jobject /* thiz */,
+                                                                   jlong ptr, jobject callbacks, jint fgColor, jint bgColor) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
     return term->setDefaultColors(static_cast<uint32_t>(fgColor), static_cast<uint32_t>(bgColor));
 }
 
-JNIEXPORT jboolean JNICALL
-Java_org_connectbot_terminal_TerminalNative_nativeGetLineContinuation(JNIEnv* /* env */, jobject /* thiz */,
-                                                                       jlong ptr, jint row) {
-    auto* term = reinterpret_cast<Terminal*>(ptr);
-    return term->getLineContinuation(row);
-}
+
 
 JNIEXPORT jint JNICALL
-Java_org_connectbot_terminal_TerminalNative_nativeSetBoldHighbright(JNIEnv* /* env */, jobject /* thiz */,
-                                                                     jlong ptr, jboolean enabled) {
+Java_org_connectbot_terminal_TerminalNative_nativeSetBoldHighbright(JNIEnv* env, jobject /* thiz */,
+                                                                     jlong ptr, jobject callbacks, jboolean enabled) {
     auto* term = reinterpret_cast<Terminal*>(ptr);
+    Terminal::CallbackScope scope(*term, env, callbacks);
     return term->setBoldHighbright(enabled ? 1 : 0);
 }
 

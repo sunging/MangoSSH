@@ -1,8 +1,8 @@
 diff --git a/libvterm/src/keyboard.c b/libvterm/src/keyboard.c
-index e34e609..356000a 100644
+index b6a048c..356000a 100644
 --- a/libvterm/src/keyboard.c
 +++ b/libvterm/src/keyboard.c
-@@ -4,56 +4,113 @@
+@@ -4,58 +4,113 @@
  
  #include "utf8.h"
  
@@ -130,15 +130,17 @@ index e34e609..356000a 100644
 +    return;
 +  }
  
+-  /* Keep the Escape prefix and UTF-8 character in one output callback. */
+-  char str[7];
+-  int prefixlen = 0;
 -  if(mod & VTERM_MOD_ALT)
--    vterm_push_output_bytes(vt, ESC_S, sizeof(ESC_S) - 1);
+-    str[prefixlen++] = '\x1b';
 +  int upper = (c >= 'A' && c <= 'Z');
 +  if(upper)
 +    mod |= VTERM_MOD_SHIFT;
  
--  char str[6];
--  int seqlen = fill_utf8(c, str);
--  vterm_push_output_bytes(vt, str, seqlen);
+-  int seqlen = fill_utf8(c, str + prefixlen);
+-  vterm_push_output_bytes(vt, str, prefixlen + seqlen);
 +  int ctrl_code = legacy_ctrl_code(c);
 +  int ambiguous = (mod & VTERM_MOD_CTRL) && (ctrl_code < 0 || (mod & VTERM_MOD_SHIFT));
 +  /* kitty reports the unshifted key with Shift as a modifier; xterm reports the character. */
@@ -155,7 +157,7 @@ index e34e609..356000a 100644
  }
  
  typedef struct {
-@@ -126,7 +183,7 @@ static keycodes_s keycodes_kp[] = {
+@@ -128,7 +183,7 @@ static keycodes_s keycodes_kp[] = {
    { KEYCODE_KEYPAD, '-', 'm' }, // KP_MINUS
    { KEYCODE_KEYPAD, '.', 'n' }, // KP_PERIOD
    { KEYCODE_KEYPAD, '/', 'o' }, // KP_DIVIDE
@@ -164,7 +166,7 @@ index e34e609..356000a 100644
    { KEYCODE_KEYPAD, '=', 'X' }, // KP_EQUAL
  };
  
-@@ -157,9 +214,12 @@ void vterm_keyboard_key(VTerm *vt, VTermKey key, VTermModifier mod)
+@@ -159,9 +214,12 @@ void vterm_keyboard_key(VTerm *vt, VTermKey key, VTermModifier mod)
      break;
  
    case KEYCODE_TAB:
@@ -179,7 +181,7 @@ index e34e609..356000a 100644
      else if(mod & VTERM_MOD_SHIFT)
        vterm_push_output_sprintf_ctrl(vt, C1_CSI, "1;%dZ", mod+1);
      else
-@@ -167,18 +227,27 @@ void vterm_keyboard_key(VTerm *vt, VTermKey key, VTermModifier mod)
+@@ -169,18 +227,27 @@ void vterm_keyboard_key(VTerm *vt, VTermKey key, VTermModifier mod)
      break;
  
    case KEYCODE_ENTER:
@@ -215,10 +217,10 @@ index e34e609..356000a 100644
  
    case KEYCODE_SS3: case_SS3:
 diff --git a/libvterm/src/state.c b/libvterm/src/state.c
-index ce8e034..451e0da 100644
+index 88b6731..ee7b17a 100644
 --- a/libvterm/src/state.c
 +++ b/libvterm/src/state.c
-@@ -923,6 +923,61 @@ static void request_version_string(VTermState *state)
+@@ -898,6 +898,61 @@ static void request_version_string(VTermState *state)
        VTERM_VERSION_MAJOR, VTERM_VERSION_MINOR);
  }
  
@@ -280,7 +282,7 @@ index ce8e034..451e0da 100644
  static int on_csi(const char *leader, const long args[], int argcount, const char *intermed, char command, void *user)
  {
    VTermState *state = user;
-@@ -937,6 +992,8 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
+@@ -913,6 +968,8 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
      switch(leader[0]) {
      case '?':
      case '>':
@@ -289,7 +291,7 @@ index ce8e034..451e0da 100644
        leader_byte = leader[0];
        break;
      default:
-@@ -1370,6 +1427,22 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
+@@ -1346,6 +1403,22 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
      }
      break;
  
@@ -312,7 +314,7 @@ index ce8e034..451e0da 100644
    case 0x6e: // DSR - ECMA-48 8.3.35
    case LEADER('?', 0x6e): // DECDSR
      val = CSI_ARG_OR(args[0], 0);
-@@ -1391,6 +1464,21 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
+@@ -1367,6 +1440,21 @@ static int on_csi(const char *leader, const long args[], int argcount, const cha
      }
      break;
  
@@ -334,7 +336,7 @@ index ce8e034..451e0da 100644
  
    case INTERMED('!', 0x70): // DECSTR - DEC soft terminal reset
      vterm_state_reset(state, 0);
-@@ -2087,6 +2175,10 @@ void vterm_state_reset(VTermState *state, int hard)
+@@ -2078,6 +2166,10 @@ void vterm_state_reset(VTermState *state, int hard)
    state->mode.bracketpaste    = 0;
    state->mode.report_focus    = 0;
  
@@ -346,7 +348,7 @@ index ce8e034..451e0da 100644
  
    state->vt->mode.ctrl8bit   = 0;
 diff --git a/libvterm/src/vterm_internal.h b/libvterm/src/vterm_internal.h
-index e79d74b..a6aa8a5 100644
+index 0c3f0cb..c343786 100644
 --- a/libvterm/src/vterm_internal.h
 +++ b/libvterm/src/vterm_internal.h
 @@ -27,6 +27,9 @@
@@ -359,7 +361,7 @@ index e79d74b..a6aa8a5 100644
  typedef struct VTermEncoding VTermEncoding;
  
  typedef struct {
-@@ -122,6 +125,14 @@ struct VTermState
+@@ -124,6 +127,14 @@ struct VTermState
      unsigned int report_focus:1;
    } mode;
  
@@ -374,7 +376,7 @@ index e79d74b..a6aa8a5 100644
    VTermEncodingInstance encoding[4], encoding_utf8;
    int gl_set, gr_set, gsingle_set;
  
-@@ -277,6 +288,8 @@ void vterm_state_setpen(VTermState *state, const long args[], int argcount);
+@@ -279,6 +290,8 @@ void vterm_state_setpen(VTermState *state, const long args[], int argcount);
  int  vterm_state_getpen(VTermState *state, long args[], int argcount);
  void vterm_state_savepen(VTermState *state, int save);
  
@@ -384,7 +386,7 @@ index e79d74b..a6aa8a5 100644
    C1_SS3 = 0x8f,
    C1_DCS = 0x90,
 diff --git a/libvterm/t/25state_input.test b/libvterm/t/25state_input.test
-index 11013ed..4c82c5a 100644
+index a3f7b8a..76c8725 100644
 --- a/libvterm/t/25state_input.test
 +++ b/libvterm/t/25state_input.test
 @@ -9,9 +9,11 @@ INCHAR 0 61
@@ -400,7 +402,7 @@ index 11013ed..4c82c5a 100644
  
  !Alt modifier on ASCII letters
  INCHAR A 41
-@@ -21,45 +23,97 @@ INCHAR A 61
+@@ -21,7 +23,7 @@ INCHAR A 61
  
  !Ctrl-Alt modifier on ASCII letters
  INCHAR CA 41
@@ -408,6 +410,10 @@ index 11013ed..4c82c5a 100644
 +  output "\e\x01"
  INCHAR CA 61
    output "\e\x01"
+ 
+@@ -41,41 +43,93 @@ INCHAR A 20ac
+ INCHAR A 1f389
+   output "\e\xf0\x9f\x8e\x89"
  
 -!Special handling of Ctrl-I
 +!Ctrl-I, Ctrl-J, Ctrl-M and Ctrl-[ are their legacy control codes
@@ -508,7 +514,7 @@ index 11013ed..4c82c5a 100644
  
  !Cursor keys in reset (cursor) mode
  INKEY 0 Up
-@@ -96,16 +150,192 @@ INKEY 0 Tab
+@@ -112,16 +166,192 @@ INKEY 0 Tab
  INKEY S Tab
    output "\e[Z"
  INKEY C Tab

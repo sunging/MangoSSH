@@ -28,7 +28,8 @@ import androidx.compose.ui.graphics.Color
 @Immutable
 internal data class TerminalLine(
     val row: Int,
-    val cells: List<Cell>,
+    val cells: PackedCells,
+    val lastModified: Long = System.nanoTime(),
     val semanticSegments: List<SemanticSegment> = emptyList(),
     /**
      * True if this line ended with a soft wrap (visual line break due to terminal width),
@@ -39,25 +40,21 @@ internal data class TerminalLine(
      * multiple lines should be copied as a single line without embedded newlines.
      */
     val softWrapped: Boolean = false,
+    val images: List<ImageSlice> = emptyList(),
 ) {
-    /**
-     * Monotonic construction marker, used only as a stable list key for the
-     * accessibility overlay. Deliberately excluded from [equals]/[hashCode] (it
-     * is not a constructor component) so two lines with identical content and
-     * segments compare equal: that is what lets the renderer skip redrawing an
-     * unchanged row after `updateLine` rebuilds it.
-     */
-    val lastModified: Long = System.nanoTime()
+    constructor(
+        row: Int,
+        cells: List<Cell>,
+        lastModified: Long = System.nanoTime(),
+        semanticSegments: List<SemanticSegment> = emptyList(),
+        softWrapped: Boolean = false,
+    ) : this(row, PackedCells.from(cells), lastModified, semanticSegments, softWrapped)
+
     /**
      * Get the text content of this line as a string.
      */
     val text: String by lazy {
-        buildString {
-            cells.forEach { cell ->
-                append(cell.char)
-                cell.combiningChars.forEach { append(it) }
-            }
-        }
+        cells.text()
     }
 
     /**
@@ -68,11 +65,7 @@ internal data class TerminalLine(
      * because they do not occupy their own terminal cells.
      */
     internal val columnText: String by lazy {
-        buildString {
-            cells.forEach { cell ->
-                append(cell.char)
-            }
-        }
+        cells.columnText()
     }
 
     /**
@@ -152,7 +145,7 @@ internal data class TerminalLine(
         val blink: Boolean = false,
         val reverse: Boolean = false,
         val strike: Boolean = false,
-        // 1 for normal, 2 for fullwidth (CJK)
+        // 0 for a wide-cell continuation column, 1 normal, 2 fullwidth.
         val width: Int = 1,
     )
 
@@ -174,9 +167,17 @@ internal data class TerminalLine(
         internal val URL_REGEX = Regex(
             // Scheme URLs: http(s)://... or ftp://...
             """(?:https?://|ftp://)[^\s<>"{}|\\^`\[\]]+""" +
-                // Bare domains with common TLDs, optional :port and /path
+                // Bare domains with common TLDs, optional :port and /path.
+                // `in`, `cc` and `app` are deliberately absent: as file extensions
+                // and package suffixes (`Makefile.in`, `main.cc`, `sh.haven.app`)
+                // they turn up in terminal output far more often than as domains.
                 """|(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+""" +
-                """(?:com|org|net|edu|gov|io|dev|app|co|uk|de|fr|jp|ru|br|in|au|us|info|biz|me|tv|cc)""" +
+                """(?:com|org|net|edu|gov|io|dev|co|uk|de|fr|jp|ru|br|au|us|info|biz|me|tv)""" +
+                // The TLD has to end the token: no trailing letter/digit/hyphen (else
+                // `nginx.conf` matches `nginx.co`) and no further dotted segment (else
+                // `scipy.io.wavfile` matches `scipy.io`). A trailing `.` with nothing
+                // word-like after it is fine — trimDetectedUrl drops it.
+                """(?![a-zA-Z0-9-]|\.[a-zA-Z0-9])""" +
                 """(?::\d{1,5})?""" +
                 """(?:/[^\s<>"{}|\\^`\[\]]*)?""" +
                 // IP:port (e.g. 192.168.1.1:8080) — require port to avoid matching version numbers
@@ -188,13 +189,7 @@ internal data class TerminalLine(
          */
         fun empty(row: Int, cols: Int, defaultFg: Color = Color.White, defaultBg: Color = Color.Black): TerminalLine = TerminalLine(
             row = row,
-            cells = List(cols) {
-                Cell(
-                    char = '\u0000',
-                    fgColor = defaultFg,
-                    bgColor = defaultBg,
-                )
-            },
+            cells = PackedCells.empty(cols, defaultFg, defaultBg),
             softWrapped = false,
         )
     }

@@ -52,9 +52,9 @@ recipe provenance, GPL text and this notice.
 ## ConnectBot terminal library
 
 MangoSSH's terminal rendering is [ConnectBot termlib
-0.1.0](https://github.com/connectbot/termlib), vendored as Kotlin source at
+0.3.14](https://github.com/connectbot/termlib), vendored as Kotlin source at
 `third_party/termlib`, pinned to upstream commit
-`e3f4bdc3b3b5563fee54b0eca4b50d0e611bfd07`.
+`56934dd1369dc5d3e1f842b384df989c3c642a12`.
 
 - License: Apache License, Version 2.0.
 - License text: `third_party/termlib/LICENSE` and the copy included in every
@@ -65,9 +65,9 @@ MangoSSH's terminal rendering is [ConnectBot termlib
 - libvterm is MIT licensed; its license is preserved in the imported source and
   packaged as `assets/licenses/MIT-libvterm.txt`.
 - Local modifications are documented in `third_party/termlib/README.md` and
-  kept additive to the upstream defaults, currently a terminal-resize damage
-  fix, a configurable scrollback line limit, and a configurable pinch-to-zoom
-  magnification range.
+  kept additive to the upstream defaults, including a configurable scrollback
+  line limit, a configurable and persisted pinch-to-zoom range, mouse-wheel
+  forwarding for swipes and Windows ConPTY history handling.
 
 ## Tailscale tsnet
 

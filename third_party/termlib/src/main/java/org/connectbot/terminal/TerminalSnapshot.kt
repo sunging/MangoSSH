@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Modified by MangoSSH in 2026 to report mouse tracking to the gesture handler.
 package org.connectbot.terminal
 
 import androidx.compose.ui.graphics.Color
@@ -50,10 +51,6 @@ internal enum class CursorShape {
  * @property cols Number of columns in the visible terminal
  * @property timestamp Timestamp when this snapshot was created (System.currentTimeMillis())
  * @property sequenceNumber Monotonically increasing sequence number for ordering snapshots
- * @property isAltScreen Whether the alternate screen buffer is active (libvterm
- *   `VTERM_PROP_ALTSCREEN`). Full-screen programs such as tmux, vim, less, and man
- *   run here, and the alternate screen keeps no scrollback, so a swipe cannot pan
- *   local history. Without mouse tracking, swipes here do nothing.
  * @property mouseTrackingActive Whether the remote program has enabled any mouse
  *   tracking mode (libvterm `VTERM_PROP_MOUSE` is non-zero). When true, a swipe
  *   can be delivered as wheel events the program understands (tmux `mouse on`,
@@ -73,7 +70,7 @@ internal data class TerminalSnapshot(
     val cols: Int,
     val timestamp: Long,
     val sequenceNumber: Long,
-    val isAltScreen: Boolean = false,
+    val alternateScreen: Boolean = false,
     val mouseTrackingActive: Boolean = false,
 ) {
     companion object {

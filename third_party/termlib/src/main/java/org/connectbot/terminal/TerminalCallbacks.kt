@@ -22,11 +22,21 @@ package org.connectbot.terminal
  * IMPORTANT: These callbacks may be invoked while native Terminal state is guarded by
  * a non-reentrant mutex. Implementations MUST NOT synchronously call back into
  * TerminalNative or TerminalEmulator methods that enter native code, such as
- * writeInput(), resize(), dispatchKey(), dispatchCharacter(), getCellRun(), or
- * getLineContinuation(). Post or otherwise defer that work until after the callback
+ * writeInput(), resize(), dispatchKey(), dispatchCharacter(), or getCells().
+ * Post or otherwise defer that work until after the callback
  * returns.
  */
 internal interface TerminalCallbacks {
+    /** Binary image transport. Result packs cursor rows/columns and reservation policy. */
+    fun onImageFragment(kitty: Boolean, data: ByteArray, initial: Boolean, final: Boolean, row: Int, col: Int): Long = -1
+
+    /** Exact edits (0), scrolling (1), and full-screen image clearing (2). */
+    fun onImageEdit(kind: Int, top: Int, bottom: Int, left: Int, right: Int, downward: Int, rightward: Int) = Unit
+    fun onImageQuery(query: Int) = Unit
+
+    /** Fixed 64 KiB Kotlin-owned scratch, borrowed only during synchronous callbacks. */
+    fun cellBuffer(): java.nio.ByteBuffer
+
     /**
      * Called when a region of the screen needs to be redrawn.
      *
@@ -59,6 +69,9 @@ internal interface TerminalCallbacks {
      */
     fun moveCursor(pos: CursorPosition, oldPos: CursorPosition, visible: Boolean): Int
 
+    /** Primitive JNI fast path; the adapter preserves existing internal callbacks. */
+    fun moveCursor(row: Int, col: Int, oldRow: Int, oldCol: Int, visible: Boolean): Int = moveCursor(CursorPosition(row, col), CursorPosition(oldRow, oldCol), visible)
+
     /**
      * Called when a terminal property changes (title, cursor shape, etc.).
      *
@@ -86,7 +99,9 @@ internal interface TerminalCallbacks {
      *                    in wrapped long commands.
      * @return 0 on success
      */
-    fun pushScrollbackLine(cols: Int, cells: Array<ScreenCell>, softWrapped: Boolean): Int
+    // Chunks are sequential: start == 0 begins a row, start + count == cols completes it.
+    // The buffer contains count records at byte offset zero and is overwritten on return.
+    fun pushScrollbackLine(cols: Int, start: Int, count: Int, cells: java.nio.ByteBuffer, softWrapped: Boolean): Int
 
     /**
      * Called when a line should be popped from scrollback buffer.
@@ -95,7 +110,8 @@ internal interface TerminalCallbacks {
      * @param cells Array to fill with screen cells
      * @return 0 on success
      */
-    fun popScrollbackLine(cols: Int, cells: Array<ScreenCell>): Int
+    // Do not remove the stored row until its final chunk has been written.
+    fun popScrollbackLine(cols: Int, start: Int, count: Int, cells: java.nio.ByteBuffer): Int
 
     /**
      * Called when the entire scrollback buffer should be cleared.
@@ -123,7 +139,7 @@ internal interface TerminalCallbacks {
      * @param cursorCol Current cursor column from native terminal
      * @return 1 if handled, 0 otherwise
      */
-    fun onOscSequence(command: Int, payload: String, cursorRow: Int, cursorCol: Int): Int
+    fun onTextFragment(kind: Int, command: Int, data: ByteArray, initial: Boolean, final: Boolean, cursorRow: Int, cursorCol: Int): Int
 }
 
 /**
@@ -153,25 +169,3 @@ internal sealed class TerminalProperty {
     data class StringValue(val value: String) : TerminalProperty()
     data class ColorValue(val red: Int, val green: Int, val blue: Int) : TerminalProperty()
 }
-
-/**
- * A single screen cell with character and attributes.
- */
-internal data class ScreenCell(
-    val char: Char,
-    val combiningChars: List<Char> = emptyList(),
-    val fgRed: Int,
-    val fgGreen: Int,
-    val fgBlue: Int,
-    val bgRed: Int,
-    val bgGreen: Int,
-    val bgBlue: Int,
-    val bold: Boolean = false,
-    val italic: Boolean = false,
-    // 0=none, 1=single, 2=double
-    val underline: Int = 0,
-    val reverse: Boolean = false,
-    val strike: Boolean = false,
-    // 1 for normal, 2 for fullwidth (CJK)
-    val width: Int = 1,
-)

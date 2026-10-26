@@ -21,10 +21,10 @@ class TerminalRemoteScrollInstrumentedTest {
         val emulator = newEmulator()
 
         emulator.writeInput(csi("?1049h"))
-        awaitSnapshot(emulator) { it.isAltScreen }
+        awaitSnapshot(emulator) { it.alternateScreen }
 
         emulator.writeInput(csi("?1049l"))
-        awaitSnapshot(emulator) { !it.isAltScreen }
+        awaitSnapshot(emulator) { !it.alternateScreen }
     }
 
     @Test
