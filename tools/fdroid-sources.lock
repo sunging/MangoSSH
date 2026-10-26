@@ -1,6 +1,6 @@
 # name|repository|release ref|full commit
-zlib|https://github.com/madler/zlib.git|v1.3.1|51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf
+zlib|https://github.com/madler/zlib.git|v1.3.2|da607da739fa6047df13e66a2af6b8bec7c2a498
 protobuf|https://github.com/protocolbuffers/protobuf.git|v29.1|796e49f6ca82f763d1087d2ff7355d2f0d7b71b1
 ncurses|https://github.com/mirror/ncurses.git|v6.4|79b9071f2be20a24c7be031655a5638f6032f29f
-nettle|https://gitlab.com/gnutls/nettle.git|nettle_3.10_release_20240616|b8c841dc3278dec0812365f02370b41ea9d4ddee
-mosh4android|https://github.com/connectbot/mosh4android.git|android|2de58be90449bfee4041c5d798f921f84d10dc0b
+nettle|https://gitlab.com/gnutls/nettle.git|nettle_3.10.2_release_20250626|d9e983c664772f8cbacba9fa084bc079978e3c98
+mosh4android|https://github.com/connectbot/mosh4android.git|android|a1157181f0e406daed2dfe1714d839c65494780d

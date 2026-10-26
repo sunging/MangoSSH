@@ -29,7 +29,7 @@ Matching MockWebServer artifacts are used only in tests.
 MangoSSH packages the native `mosh-client` executable from the
 [ConnectBot mosh4android](https://github.com/connectbot/mosh4android) project.
 The source is present as the `third_party/mosh4android` Git submodule and is
-pinned to commit `2de58be90449bfee4041c5d798f921f84d10dc0b` on its `android`
+pinned to commit `a1157181f0e406daed2dfe1714d839c65494780d` on its `android`
 branch.
 
 - License: GNU General Public License, version 3 or later (GPL-3.0-or-later).

@@ -2,7 +2,12 @@
 
 These recipes are derived from ConnectBot mosh4android commit
 `2de58be90449bfee4041c5d798f921f84d10dc0b`, with MangoSSH's offline-source and
-no-GMP adaptations. The build rules are **the individual scripts in recipes/**;
+no-GMP adaptations. The pinned source is now
+`a1157181f0e406daed2dfe1714d839c65494780d` (`android-2026.09.22`), which changed
+only upstream's release script (`-Oz -flto`, section GC, strip, an
+xterm-256color-only terminfo archive) and CI; `src/` and
+`android/mosh-android.patch` are unchanged, and those size options are left
+for the compiler-options review below. The build rules are **the individual scripts in recipes/**;
 their Git history records every change from upstream. The former patch files
 for the upstream build script were removed because no build applied them.
 The Android source compatibility patch is still taken from the pinned Mosh
