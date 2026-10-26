@@ -119,7 +119,7 @@ Gradle configuration caching and task-output caching are enabled. Keep normal
 edit/build cycles incremental; `clean` is for explicitly testing reconstruction,
 not a prerequisite to building. The command-line examples can use `--no-daemon`
 when the Gradle JVM should exit at build completion. Kotlin stays in-process;
-the pinned Kotlin 2.4.20 plugin uses BTA and supports incremental compilation in
+the pinned Kotlin 2.4.21 plugin uses BTA and supports incremental compilation in
 that mode. See [build performance](build-performance.md) for profiling, measured
 baselines, cache boundaries and CI behavior.
 

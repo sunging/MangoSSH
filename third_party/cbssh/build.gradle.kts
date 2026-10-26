@@ -11,7 +11,7 @@ dependencies {
     implementation("io.github.nsk90:kstatemachine-jvm:0.38.1")
     implementation("io.ktor:ktor-network:3.6.0")
     implementation("org.slf4j:slf4j-api:2.0.20")
-    implementation("com.google.crypto.tink:tink:1.23.0") { isTransitive = false }
+    implementation("com.google.crypto.tink:tink:1.24.0") { isTransitive = false }
     implementation("asia.hombre:kyber:2.1.0")
     implementation("org.connectbot:jbcrypt:1.0.2")
     testImplementation(kotlin("test"))

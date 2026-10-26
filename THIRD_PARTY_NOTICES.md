@@ -14,8 +14,8 @@ provider because upstream protocol diagnostics may contain sensitive data.
 
 ## OkHttp and Okio
 
-WebDAV uses [OkHttp 5.5.0](https://github.com/square/okhttp) and its
-[Okio 3.16.2](https://github.com/square/okio) dependency, published by Square.
+WebDAV uses [OkHttp 5.5.1](https://github.com/square/okhttp) and its
+[Okio 3.18.1](https://github.com/square/okio) dependency, published by Square.
 Both use the Apache License, Version 2.0. The full license is shared with the
 existing APK asset `assets/licenses/Apache-2.0-ConnectBot-Terminal.txt`.
 Matching MockWebServer artifacts are used only in tests.
