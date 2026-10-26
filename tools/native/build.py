@@ -225,7 +225,7 @@ def javac_version(java: Path) -> str:
 
 def build_tsnet(args):
     ndk = ndk_home()
-    go_root = Path(os.environ.get("MANGOSSH_GO_ROOT", ROOT / ".tools/go/1.26.7")).resolve()
+    go_root = Path(os.environ.get("MANGOSSH_GO_ROOT", ROOT / ".tools/go/1.26.10")).resolve()
     java = Path(os.environ.get("JAVA_HOME", ""))
     if not java.is_absolute() or not (java / "bin/javac").is_file():
         raise ValueError("JAVA_HOME must provide a Linux JDK 17")

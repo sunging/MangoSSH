@@ -37,7 +37,7 @@ Settings → Embedded Tailscale. The bridge passes that URL to
 
 The reproducible bridge build pins:
 
-- Go `1.26.7`;
+- Go `1.26.10`;
 - JDK 17 supplied by the build environment (`tools/fetch-jdk17.sh` can prepare
   checksum-pinned Eclipse Temurin `17.0.19+10` before compilation);
 - Android NDK `27.3.13750724` (r27d);
@@ -113,7 +113,7 @@ downloaded local-development toolchains, and intermediate build trees are
 ignored build artifacts; the vendored Go source is versioned input.
 
 For the network-isolated F-Droid path, export the externally provided JDK 17,
-Android SDK/NDK r27d, Go 1.26.7, and pinned Mosh dependency source roots, then
+Android SDK/NDK r27d, Go 1.26.10, and pinned Mosh dependency source roots, then
 run `tools/build-fdroid-release.sh`. The entry point rejects signing variables,
 sets the Go proxy and checksum database offline, and creates only the unsigned
 release APK.
