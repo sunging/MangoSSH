@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** One FIFO writer; admission is synchronous and the budget includes the in-flight write. */
 internal class TerminalTransport(
@@ -85,10 +86,34 @@ internal class TerminalTransport(
     }
 }
 
-/** Coalesces size requests while preserving the most recent dimensions across slow resizes. */
-internal class TerminalResizeQueue(scope: CoroutineScope, private val resize: suspend (Int, Int) -> Unit) {
+/**
+ * Coalesces size requests and sends only a size the layout has settled on.
+ *
+ * The emulator follows every layout pass (each frame of the soft-keyboard animation),
+ * but the remote needs only the final size. A remote that repaints its whole viewport
+ * line by line on every window change, as Windows ConPTY does, would otherwise answer an
+ * intermediate taller size after the emulator has already shrunk; that repaint scrolls
+ * its top lines into scrollback and the next repaint draws them a second time.
+ */
+internal class TerminalResizeQueue(
+    scope: CoroutineScope,
+    private val settleMillis: Long = RESIZE_SETTLE_MILLIS,
+    private val resize: suspend (Int, Int) -> Unit,
+) {
     private val sizes = Channel<Pair<Int, Int>>(Channel.CONFLATED)
-    private val job = scope.launch { for ((columns, rows) in sizes) runCatching { resize(columns, rows) } }
+    private val job = scope.launch {
+        for (first in sizes) {
+            var latest = first
+            while (true) {
+                val newer = withTimeoutOrNull(settleMillis) { sizes.receiveCatching() } ?: break
+                latest = newer.getOrNull() ?: return@launch
+            }
+            runCatching { resize(latest.first, latest.second) }
+        }
+    }
     fun offer(columns: Int, rows: Int) { if (columns > 0 && rows > 0) sizes.trySend(columns to rows) }
     fun close() { sizes.close(); job.cancel() }
 }
+
+/** Longer than the gap between soft-keyboard animation frames, short enough to feel immediate. */
+private const val RESIZE_SETTLE_MILLIS = 150L
