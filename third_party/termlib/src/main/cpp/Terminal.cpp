@@ -755,10 +755,16 @@ void Terminal::invokeSetTermProp(VTermProp prop, VTermValue* val) {
 
         case VTERM_VALUETYPE_STRING:
             if (val->string.str) {
-                char* utf8_str = mutf8_to_utf8(val->string.str, val->string.len, nullptr);
-                ScopedLocalRef<jstring> str(env, env->NewStringUTF(utf8_str));
-                propValue = ScopedLocalRef<jobject>(env, env->NewObject(mTerminalPropertyStringClass, mTerminalPropertyStringConstructor, str.get()));
-                free(utf8_str);
+                // Titles and icon names are remote bytes, like OSC payloads:
+                // decode them leniently instead of letting NewStringUTF abort.
+                const std::u16string utf16 = utf8_to_utf16_lossy(val->string.str, val->string.len);
+                ScopedLocalRef<jstring> str(
+                    env,
+                    env->NewString(reinterpret_cast<const jchar*>(utf16.data()),
+                                   static_cast<jsize>(utf16.size())));
+                if (str.get()) {
+                    propValue = ScopedLocalRef<jobject>(env, env->NewObject(mTerminalPropertyStringClass, mTerminalPropertyStringConstructor, str.get()));
+                }
             }
             break;
 
@@ -1066,8 +1072,17 @@ void Terminal::invokeKeyboardOutput(const char* data, size_t len) {
 }
 
 int Terminal::invokeOscSequence(int command, const std::string& payload, int cursorRow, int cursorCol) {
-    LOGD("invokeOscSequence: command=%d, payload='%s' (len=%zu), cursor=(%d,%d)",
-         command, payload.c_str(), payload.length(), cursorRow, cursorCol);
+    // The payload is NEVER logged. It is arbitrary data from the remote end and
+    // routinely carries secrets: OSC 52 is the clipboard, so termSelectionSet
+    // hands the *decoded* copied text through here — a password out of a
+    // manager, a token, a private key — and OSC 3008 carries user, hostname and
+    // cwd. Logging it wrote all of that to logcat in plaintext, where adb
+    // logcat, a bug report, or a user pasting a log into an issue picks it up.
+    //
+    // Command and length are kept: they are what makes the log useful for
+    // sequencing and truncation bugs, and neither reveals content.
+    LOGD("invokeOscSequence: command=%d, payload len=%zu, cursor=(%d,%d)",
+         command, payload.length(), cursorRow, cursorCol);
 
     if (!mOscSequenceMethod) {
         LOGE("invokeOscSequence: mOscSequenceMethod is null");
@@ -1080,7 +1095,19 @@ int Terminal::invokeOscSequence(int command, const std::string& payload, int cur
         return 0;
     }
 
-    ScopedLocalRef<jstring> payloadStr(env, env->NewStringUTF(payload.c_str()));
+    // Decoded to UTF-16 rather than handed to NewStringUTF, which aborts the
+    // whole process on bytes that are not valid modified UTF-8. An OSC payload
+    // is whatever the remote program emitted — a window title from a non-UTF-8
+    // Windows console is not obliged to be valid UTF-8, and a terminal that
+    // dies on one is worse than a terminal that shows U+FFFD.
+    //
+    // Sized from the string rather than c_str(), so a payload containing an
+    // embedded NUL is passed through whole instead of being silently truncated.
+    const std::u16string payloadUtf16 = utf8_to_utf16_lossy(payload.data(), payload.size());
+    ScopedLocalRef<jstring> payloadStr(
+        env,
+        env->NewString(reinterpret_cast<const jchar*>(payloadUtf16.data()),
+                       static_cast<jsize>(payloadUtf16.size())));
     if (!payloadStr.get()) {
         LOGE("Failed to create jstring for OSC payload");
         return 0;

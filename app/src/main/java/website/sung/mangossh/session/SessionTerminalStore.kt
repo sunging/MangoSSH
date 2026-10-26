@@ -114,9 +114,13 @@ internal class SessionTerminalStore(
         emulators[sessionId]?.writeInput(bytes)
     }
 
-    /** Releases the app's reference once a transport has fully ended. */
+    /**
+     * Releases the emulator once a transport has fully ended. Closing it frees
+     * the native terminal, which otherwise pins the emulator and its scrollback
+     * for the life of the process.
+     */
     fun remove(sessionId: String) {
-        emulators.remove(sessionId)
+        emulators.remove(sessionId)?.close()
     }
 
     private companion object {

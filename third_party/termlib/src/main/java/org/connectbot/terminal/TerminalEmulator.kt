@@ -31,6 +31,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.nio.ByteBuffer
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * URL discovered in terminal output.
@@ -76,7 +79,18 @@ sealed class UrlScanScope {
  * so it may be run in a Service on Android. It handles the management of
  * the terminal emulation state.
  */
-sealed interface TerminalEmulator {
+sealed interface TerminalEmulator : AutoCloseable {
+    /**
+     * Permanently releases the native terminal once its session has ended.
+     *
+     * The native side holds a global reference to this emulator, so without an
+     * explicit close neither is ever garbage collected. Closing is idempotent
+     * and waits for in-flight native calls; later input, key, color and resize
+     * calls are ignored, and the last snapshot stays readable. It must not be
+     * called from one of this emulator's own callbacks.
+     */
+    override fun close()
+
     /**
      * Write data to the terminal (from PTY/transport).
      */
@@ -414,13 +428,27 @@ internal class TerminalEmulatorImpl(
     }
 
     // Native terminal instance - MUST be initialized AFTER damageLock and other state
-    private val terminalNative by lazy {
+    private val terminalNativeDelegate = lazy {
         TerminalNative(this).apply {
             resize(initialRows, initialCols)
             if (setBoldHighbright(boldAsBright) != 0) {
                 Log.e(TAG, "Failed to set boldAsBright=$boldAsBright")
             }
         }
+    }
+    private val terminalNative by terminalNativeDelegate
+
+    // Native calls come from the transport, UI and snapshot threads at once, so
+    // they share the read lock; close() takes the write lock to destroy the
+    // native terminal only when none is in flight. Never acquired under damageLock.
+    private val nativeLock = ReentrantReadWriteLock()
+
+    @Volatile
+    private var closed = false
+
+    /** Runs [block] on the native terminal, or returns null once it is closed. */
+    private inline fun <T> withNative(block: (TerminalNative) -> T): T? = nativeLock.read {
+        if (closed) null else block(terminalNative)
     }
 
     // Parser for OSC sequences
@@ -435,7 +463,7 @@ internal class TerminalEmulatorImpl(
      */
     override fun writeInput(data: ByteArray, offset: Int, length: Int) {
         conptyDetector.observe(data, offset, length)
-        terminalNative.writeInput(data, offset, length)
+        withNative { it.writeInput(data, offset, length) }
     }
 
     /**
@@ -443,16 +471,18 @@ internal class TerminalEmulatorImpl(
      */
     override fun writeInput(buffer: ByteBuffer, length: Int) {
         conptyDetector.observe(buffer, length)
-        terminalNative.writeInput(buffer, length)
+        withNative { it.writeInput(buffer, length) }
     }
 
     /**
      * Resize the terminal.
      */
     override fun resize(newRows: Int, newCols: Int) {
-        rows = newRows
-        cols = newCols
-        terminalNative.resize(newRows, newCols)
+        withNative {
+            rows = newRows
+            cols = newCols
+            it.resize(newRows, newCols)
+        } ?: return
 
         synchronized(damageLock) {
             val currentDefaultFg = currentDefaultForeground
@@ -489,14 +519,26 @@ internal class TerminalEmulatorImpl(
      * Dispatch a key event to the terminal.
      */
     override fun dispatchKey(modifiers: Int, key: Int) {
-        terminalNative.dispatchKey(modifiers, key)
+        withNative { it.dispatchKey(modifiers, key) }
     }
 
     /**
      * Dispatch a character to the terminal.
      */
     override fun dispatchCharacter(modifiers: Int, codepoint: Int) {
-        terminalNative.dispatchCharacter(modifiers, codepoint)
+        withNative { it.dispatchCharacter(modifiers, codepoint) }
+    }
+
+    override fun close() {
+        check(nativeLock.readHoldCount == 0) { "A terminal cannot be closed from its own callbacks" }
+        nativeLock.write {
+            if (closed) return
+            closed = true
+            if (terminalNativeDelegate.isInitialized()) terminalNative.close()
+        }
+        // Drops queued keyboard, resize, clipboard and snapshot work; a frame
+        // callback already handed to Choreographer stops at the closed check.
+        handler.removeCallbacksAndMessages(null)
     }
 
     /**
@@ -511,6 +553,7 @@ internal class TerminalEmulatorImpl(
      * @param col zero-based terminal column under the pointer
      */
     internal fun sendMouseWheel(scrollUp: Boolean, row: Int, col: Int) {
+        if (closed) return
         val bytes = MouseReport.wheel(scrollUp, row, col)
         handler.post {
             onKeyboardInput.invoke(bytes)
@@ -552,7 +595,7 @@ internal class TerminalEmulatorImpl(
         require(ansiColors.size >= 16) {
             "ANSI palette must contain 16 colors"
         }
-        val result = terminalNative.setPaletteColors(ansiColors, 16)
+        val result = withNative { it.setPaletteColors(ansiColors, 16) } ?: return -1
         invalidateDisplay()
         return result
     }
@@ -573,7 +616,7 @@ internal class TerminalEmulatorImpl(
             currentDefaultForeground = Color(foreground)
             currentDefaultBackground = Color(background)
         }
-        val result = terminalNative.setDefaultColors(foreground, background)
+        val result = withNative { it.setDefaultColors(foreground, background) } ?: return -1
         invalidateDisplay()
         return result
     }
@@ -987,12 +1030,15 @@ internal class TerminalEmulatorImpl(
         if (!needsUpdate) return
 
         // Update damaged lines (safe to call getCellRun now - not in callback)
-        for (region in damageRegions) {
-            // Ensure row is within bounds [0, rows)
-            val startRow = region.startRow.coerceIn(0, rows - 1)
-            val endRow = region.endRow.coerceIn(startRow, rows) // endRow is exclusive
-            for (row in startRow until endRow) {
-                updateLine(row, region, preserveMovedSegments = row in movedRows)
+        nativeLock.read {
+            if (closed) return
+            for (region in damageRegions) {
+                // Ensure row is within bounds [0, rows)
+                val startRow = region.startRow.coerceIn(0, rows - 1)
+                val endRow = region.endRow.coerceIn(startRow, rows) // endRow is exclusive
+                for (row in startRow until endRow) {
+                    updateLine(row, region, preserveMovedSegments = row in movedRows)
+                }
             }
         }
 

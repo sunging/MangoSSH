@@ -6,6 +6,7 @@
   "destination": "third_party/termlib/src/main/cpp",
   "patches": [
     "third_party/termlib/native-patches/android-build.patch",
-    "third_party/termlib/native-patches/keyboard-protocols.patch"
+    "third_party/termlib/native-patches/keyboard-protocols.patch",
+    "third_party/termlib/native-patches/osc-utf8-lossy.patch"
   ]
 }

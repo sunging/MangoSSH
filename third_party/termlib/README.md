@@ -34,11 +34,22 @@ upstream defaults so a future re-sync is a straightforward re-apply:
   refill grown rows from scrollback. ConPTY repaints its whole viewport after
   every window change with the viewport top fixed, so refilled lines would be
   overwritten and lost; other hosts keep the upstream refill behaviour.
+- `TerminalEmulator.kt`: `TerminalEmulator` is `AutoCloseable`. `close()` waits
+  for in-flight native calls behind a read/write lock, destroys the native
+  terminal and drops queued callbacks; later calls are ignored. The native side
+  holds a global reference to the emulator, so without it an ended session was
+  never collected. Upstream 0.3.14 (`93a4e04`) adds a similar `close()` on top
+  of later refactors.
 
 JNI and libvterm sources are imported from that same commit under `src/main/cpp`
 and built by AGP/CMake with NDK r27d. The Maven AAR is no longer a native input.
 `native-import.json` records the mapping and `native-patches/android-build.patch`
-adds the r27 16 KiB linker options and path normalization. Verify the import with
+adds the r27 16 KiB linker options and path normalization.
+`native-patches/osc-utf8-lossy.patch` backports upstream `db6edfe` and `08013a0`:
+OSC payloads are decoded to UTF-16 with U+FFFD for malformed bytes instead of
+going through `NewStringUTF`, which aborts the process on invalid input, and
+their contents (OSC 52 clipboard text included) are no longer logged. The same
+decoding is applied to title and icon-name properties. Verify the import with
 `python3 tools/native/termlib.py /path/to/pinned-upstream`; `--update` is an explicit
 source maintenance operation that replaces the imported native tree.
 
