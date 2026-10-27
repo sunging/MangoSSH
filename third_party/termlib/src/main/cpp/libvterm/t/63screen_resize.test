@@ -130,3 +130,15 @@ WANTSCREEN -b
 PUSH "\e[?1049l"
   ?screen_row 0 = "L3"
   ?screen_row 2 = "L5"
+
+!Resize fills exposed main screen cells with the default pen
+RESET
+WANTSCREEN a
+RESIZE 5,20
+PUSH "Main\e[?1049h\e[1;44mAlt screen"
+RESIZE 5,30
+PUSH "\e[?1049l"
+  ?screen_cell 0,3  = {0x6e} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,4  = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,25 = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 4,0  = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)

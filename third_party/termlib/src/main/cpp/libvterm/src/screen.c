@@ -79,6 +79,16 @@ static inline void clearcell(const VTermScreen *screen, ScreenCell *cell)
   cell->pen = screen->pen;
 }
 
+/* Clears a cell that a resize exposes. The current pen belongs to whatever
+ * the application last drew, possibly on the other buffer, so these cells
+ * take the default pen instead */
+static inline void clearcell_default(const VTermScreen *screen, ScreenCell *cell)
+{
+  cell->chars[0] = 0;
+  cell->pen = (ScreenPen){ 0 };
+  vterm_state_get_default_colors(screen->state, &cell->pen.fg, &cell->pen.bg);
+}
+
 static inline ScreenCell *getcell(const VTermScreen *screen, int row, int col)
 {
   if(row < 0 || row >= screen->rows)
@@ -739,7 +749,7 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
       }
 
       while(new_col < new_cols) {
-        clearcell(screen, &new_buffer[new_row * new_cols + new_col]);
+        clearcell_default(screen, &new_buffer[new_row * new_cols + new_col]);
         new_col++;
       }
 
@@ -809,7 +819,7 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
           (dst + 1)->chars[0] = (uint32_t) -1;
       }
       for( ; pos.col < new_cols; pos.col++)
-        clearcell(screen, &new_buffer[pos.row * new_cols + pos.col]);
+        clearcell_default(screen, &new_buffer[pos.row * new_cols + pos.col]);
       new_row--;
 
       if(active)
@@ -826,7 +836,7 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
 
     for(new_row = moverows; new_row < new_rows; new_row++) {
       for(int col = 0; col < new_cols; col++)
-        clearcell(screen, &new_buffer[new_row * new_cols + col]);
+        clearcell_default(screen, &new_buffer[new_row * new_cols + col]);
       new_lineinfo[new_row] = (VTermLineInfo){ 0 };
     }
   }
