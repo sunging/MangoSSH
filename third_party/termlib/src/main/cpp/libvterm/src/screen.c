@@ -232,11 +232,50 @@ static int putglyph(VTermGlyphInfo *info, VTermPos pos, void *user)
   return 1;
 }
 
-static void sb_pushline_from_row(VTermScreen *screen, int row)
+/* Copy internal to external representation of a cell in the given buffer,
+ * which may be the inactive one but still has the screen's dimensions */
+static void get_buffer_cell(const VTermScreen *screen, const ScreenCell *buffer, VTermPos pos, VTermScreenCell *cell)
+{
+  const ScreenCell *intcell = buffer + (screen->cols * pos.row) + pos.col;
+
+  for(int i = 0; i < VTERM_MAX_CHARS_PER_CELL; i++) {
+    cell->chars[i] = intcell->chars[i];
+    if(!intcell->chars[i])
+      break;
+  }
+
+  cell->attrs.bold      = intcell->pen.bold;
+  cell->attrs.underline = intcell->pen.underline;
+  cell->attrs.italic    = intcell->pen.italic;
+  cell->attrs.blink     = intcell->pen.blink;
+  cell->attrs.reverse   = intcell->pen.reverse ^ screen->global_reverse;
+  cell->attrs.conceal   = intcell->pen.conceal;
+  cell->attrs.strike    = intcell->pen.strike;
+  cell->attrs.font      = intcell->pen.font;
+  cell->attrs.small     = intcell->pen.small;
+  cell->attrs.baseline  = intcell->pen.baseline;
+
+  cell->attrs.dwl = intcell->pen.dwl;
+  cell->attrs.dhl = intcell->pen.dhl;
+
+  cell->fg = intcell->pen.fg;
+  cell->bg = intcell->pen.bg;
+  if(intcell->chars[0] == 0x10eeee) cell->chars[14] = intcell->chars[14];
+
+  if(pos.col < (screen->cols - 1) &&
+     (intcell + 1)->chars[0] == (uint32_t)-1)
+    cell->width = 2;
+  else
+    cell->width = 1;
+}
+
+/* Pushes a row of the given buffer to scrollback. A resize passes the buffer
+ * it is reflowing, because the active one may be the altscreen */
+static void sb_pushline_from_row(VTermScreen *screen, const ScreenCell *buffer, int row)
 {
   VTermPos pos = { .row = row };
   for(pos.col = 0; pos.col < screen->cols; pos.col++)
-    vterm_screen_get_cell(screen, pos, screen->sb_buffer + pos.col);
+    get_buffer_cell(screen, buffer, pos, screen->sb_buffer + pos.col);
 
   (screen->callbacks->sb_pushline)(screen->cols, screen->sb_buffer, screen->cbdata);
 }
@@ -250,7 +289,7 @@ static int moverect_internal(VTermRect dest, VTermRect src, void *user)
      dest.end_col == screen->cols &&                      // full width
      screen->buffer == screen->buffers[BUFIDX_PRIMARY]) { // not altscreen
     for(int row = 0; row < src.start_row; row++)
-      sb_pushline_from_row(screen, row);
+      sb_pushline_from_row(screen, screen->buffer, row);
   }
 
   int cols = src.end_col - src.start_col;
@@ -729,7 +768,7 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
     /* Push spare lines to scrollback buffer */
     if(screen->callbacks && screen->callbacks->sb_pushline)
       for(int row = 0; row <= old_row; row++)
-        sb_pushline_from_row(screen, row);
+        sb_pushline_from_row(screen, old_buffer, row);
     if(active)
       statefields->pos.row -= (old_row + 1);
   }
@@ -1034,40 +1073,10 @@ size_t vterm_screen_get_text(const VTermScreen *screen, char *str, size_t len, c
 /* Copy internal to external representation of a screen cell */
 int vterm_screen_get_cell(const VTermScreen *screen, VTermPos pos, VTermScreenCell *cell)
 {
-  ScreenCell *intcell = getcell(screen, pos.row, pos.col);
-  if(!intcell)
+  if(!getcell(screen, pos.row, pos.col))
     return 0;
 
-  for(int i = 0; i < VTERM_MAX_CHARS_PER_CELL; i++) {
-    cell->chars[i] = intcell->chars[i];
-    if(!intcell->chars[i])
-      break;
-  }
-
-  cell->attrs.bold      = intcell->pen.bold;
-  cell->attrs.underline = intcell->pen.underline;
-  cell->attrs.italic    = intcell->pen.italic;
-  cell->attrs.blink     = intcell->pen.blink;
-  cell->attrs.reverse   = intcell->pen.reverse ^ screen->global_reverse;
-  cell->attrs.conceal   = intcell->pen.conceal;
-  cell->attrs.strike    = intcell->pen.strike;
-  cell->attrs.font      = intcell->pen.font;
-  cell->attrs.small     = intcell->pen.small;
-  cell->attrs.baseline  = intcell->pen.baseline;
-
-  cell->attrs.dwl = intcell->pen.dwl;
-  cell->attrs.dhl = intcell->pen.dhl;
-
-  cell->fg = intcell->pen.fg;
-  cell->bg = intcell->pen.bg;
-  if(intcell->chars[0] == 0x10eeee) cell->chars[14] = intcell->chars[14];
-
-  if(pos.col < (screen->cols - 1) &&
-     getcell(screen, pos.row, pos.col + 1)->chars[0] == (uint32_t)-1)
-    cell->width = 2;
-  else
-    cell->width = 1;
-
+  get_buffer_cell(screen, screen->buffer, pos, cell);
   return 1;
 }
 
