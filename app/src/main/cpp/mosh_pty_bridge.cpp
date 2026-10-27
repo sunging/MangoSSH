@@ -318,13 +318,15 @@ Java_website_sung_mangossh_session_MoshPtyNative_requestStop(
     logInfo("mosh.pty.stop_requested");
 }
 
-extern "C" JNIEXPORT void JNICALL
+// Returns the child's exit status, or -1 when a signal ended it or it was
+// already reaped elsewhere and the status is no longer known.
+extern "C" JNIEXPORT jint JNICALL
 Java_website_sung_mangossh_session_MoshPtyNative_waitForExit(
     JNIEnv* env,
     jobject /* thiz */,
     jint pid) {
     if (pid <= 0) {
-        return;
+        return -1;
     }
     int status = 0;
     while (waitpid(static_cast<pid_t>(pid), &status, 0) == -1) {
@@ -332,10 +334,11 @@ Java_website_sung_mangossh_session_MoshPtyNative_waitForExit(
             continue;
         }
         if (errno == ECHILD) {
-            return;
+            return -1;
         }
         throwIOException(env, "waitpid");
-        return;
+        return -1;
     }
     logInfo("mosh.pty.stopped");
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }

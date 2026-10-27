@@ -1776,9 +1776,10 @@ class SshSessionController internal constructor(
     }
 
     /**
-     * Reads the single PTY stream used by Mosh and reaps the native child after
-     * EOF. A process that exits on its own is represented as a closed terminal
-     * rather than leaving a stale foreground notification behind.
+     * Reads the single PTY stream used by Mosh and reaps the native child once
+     * the stream ends. A process that exits on its own is represented as a
+     * closed terminal rather than leaving a stale foreground notification
+     * behind; [moshSessionEndReason] tells a clean exit from a lost session.
      */
     private fun startMoshReader(
         sessionId: String,
@@ -1789,16 +1790,13 @@ class SshSessionController internal constructor(
             try {
                 val streamEnd = readStream(sessionId, process.input)
                 if (sessionsById[sessionId] !== managed || managed.kind != SessionKind.TERMINAL) return@launchOwned
-                val childExited = runCatching { process.awaitExit() }
-                val reason = if (streamEnd is StreamEnd.EOF && childExited.isSuccess) {
-                    SessionEndReason.REMOTE_EXIT
-                } else {
-                    SessionEndReason.CONNECTION_LOST
-                }
+                val exitStatus = runCatching { process.awaitExit() }
+                val reason = moshSessionEndReason(exitStatus)
                 if (reason == SessionEndReason.REMOTE_EXIT) {
                     MangoLog.info(MangoLogEvent.MOSH_PROCESS_STOPPED)
                 }
-                finishSession(sessionId, managed, reason, childExited.exceptionOrNull())
+                val failure = exitStatus.exceptionOrNull() ?: (streamEnd as? StreamEnd.Failed)?.error
+                finishSession(sessionId, managed, reason, failure.takeIf { reason != SessionEndReason.REMOTE_EXIT })
             } catch (cancelled: CancellationException) {
                 throw cancelled
             }

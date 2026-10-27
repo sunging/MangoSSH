@@ -38,12 +38,13 @@ internal class MoshPtyProcess private constructor(
     }
 
     /**
-     * Waits for the child after its PTY stream reaches EOF. Call this only on
-     * a background dispatcher; it reaps the direct child to avoid zombies.
+     * Waits for the child after its PTY stream ends. Call this only on a
+     * background dispatcher; it reaps the direct child to avoid zombies.
+     *
+     * @return the child's exit status, or null when a signal ended it or
+     * another caller already reaped it.
      */
-    fun awaitExit() {
-        MoshPtyNative.waitForExit(pid)
-    }
+    fun awaitExit(): Int? = MoshPtyNative.waitForExit(pid).takeIf { it >= 0 }
 
     /**
      * Sends Mosh's authenticated quit sequence before force-stopping the local
@@ -165,6 +166,20 @@ internal class MoshPtyProcess private constructor(
 }
 
 /**
+ * Chooses the end reason for a Mosh session whose PTY reader has stopped.
+ *
+ * The read outcome cannot decide this: once the child exits and the slave side
+ * closes, reading the PTY master fails with EIO rather than returning EOF. The
+ * child's exit status can, because `mosh-client` exits with 0 after the remote
+ * shell ends or a shutdown is acknowledged, and with a nonzero status or a
+ * signal when the session breaks.
+ *
+ * @param exitStatus the result of [MoshPtyProcess.awaitExit].
+ */
+internal fun moshSessionEndReason(exitStatus: Result<Int?>): SessionEndReason =
+    if (exitStatus.getOrNull() == 0) SessionEndReason.REMOTE_EXIT else SessionEndReason.CONNECTION_LOST
+
+/**
  * Runs every Mosh cleanup step even when an earlier native or descriptor operation fails.
  *
  * Cleanup is intentionally exhaustive: once teardown starts, preserving later
@@ -204,7 +219,7 @@ private object MoshPtyNative {
 
     external fun requestStop(pid: Int)
 
-    external fun waitForExit(pid: Int)
+    external fun waitForExit(pid: Int): Int
 }
 
 /**
