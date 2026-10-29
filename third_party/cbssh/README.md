@@ -60,6 +60,8 @@ is relative to v0.6.4.
   owned sockets on cancellation, and aborts local forwarding resources even when
   sending remote cancellation is blocked. Remote forwarding keeps upstream's
   protocol-executor ordering for confirmations and failure replies.
+  SOCKS5 CONNECT replies wait for remote channel acceptance; refused destinations
+  receive a failure reply, and failed replies release the already-open SSH channel.
 - Cipher registry and PEM writer: remove 3DES transport and DES/3DES private-key
   encryption implementations; no `SshCryptoPolicy` preset or override can
   enable them.

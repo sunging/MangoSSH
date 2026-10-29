@@ -21,8 +21,11 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readFully
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
 import org.connectbot.sshlib.Socks5Authenticator
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -329,7 +332,8 @@ class Socks5HandlerTest {
     }
 
     @Test
-    fun `reply contains success byte for valid connect`() = runTest {
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `valid request waits for channel acceptance before replying success`() = runTest {
         val handler = Socks5Handler()
         val input = buildSocks5Connect("example.com", 80)
         val readChannel = ByteReadChannel(input)
@@ -343,11 +347,31 @@ class Socks5HandlerTest {
         assertEquals(0x05.toByte(), methodResponse[0])
         assertEquals(0x00.toByte(), methodResponse[1]) // NO_AUTH selected
 
-        // Read connect reply
-        val reply = ByteArray(10) // ver + rep + rsv + atyp + 4 addr + 2 port
-        writeChannel.readFully(reply, 0, 10)
+        val pending = async { ByteArray(10).also { writeChannel.readFully(it, 0, it.size) } }
+        runCurrent()
+        assertFalse(pending.isCompleted)
+        handler.replyToConnect(writeChannel, connected = true)
+        // Read connect reply only after the forwarding owner confirms the SSH channel.
+        val reply = pending.await()
         assertEquals(0x05.toByte(), reply[0]) // version
         assertEquals(0x00.toByte(), reply[1]) // success
+    }
+
+    @Test
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    fun `rejected destination replies failure instead of provisional success`() = runTest {
+        val handler = Socks5Handler()
+        val writeChannel = ByteChannel(true)
+        assertNotNull(handler.handleHandshake(ByteReadChannel(buildSocks5Connect("localhost", 1)), writeChannel))
+        val method = ByteArray(2)
+        writeChannel.readFully(method, 0, method.size)
+        val pending = async { ByteArray(10).also { writeChannel.readFully(it, 0, it.size) } }
+        runCurrent()
+        assertFalse(pending.isCompleted)
+        handler.replyToConnect(writeChannel, connected = false)
+        val reply = pending.await()
+        assertEquals(0x05.toByte(), reply[0])
+        assertEquals(Socks5Handler.REPLY_GENERAL_FAILURE, reply[1])
     }
 
     @Test

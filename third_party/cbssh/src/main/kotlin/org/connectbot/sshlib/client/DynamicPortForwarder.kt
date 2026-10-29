@@ -133,24 +133,29 @@ internal class DynamicPortForwarder(
 
         logger.debug("SOCKS5 CONNECT to ${request.host}:${request.port}")
 
-        val sshChannel = connection.openDirectTcpipChannel(
-            request.host,
-            request.port,
-            originAddr,
-            originPort,
-        )
+        val sshChannel = try {
+            connection.openDirectTcpipChannel(request.host, request.port, originAddr, originPort)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { null }
 
         if (sshChannel == null) {
             logger.warn("Failed to open direct-tcpip channel for ${request.host}:${request.port}")
-            socket.close()
+            socks5Handler.replyToConnect(writeChannel, connected = false)
             return
         }
 
         val forwarder = DataForwarder(scope, sshChannel, readChannel, writeChannel, { socket.close() },
             onActivity = connections::touch, onFinished = connections::remove)
         if (!connections.add(forwarder) { _isActive }) { forwarder.abort(); return }
-        forwarder.start()
-        transferred = true
+        try {
+            socks5Handler.replyToConnect(writeChannel, connected = true)
+            forwarder.start()
+            transferred = true
+        } finally {
+            // A failed SOCKS reply still owns a live SSH channel until the forwarder aborts it.
+            if (!transferred) forwarder.abort()
+        }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) {
