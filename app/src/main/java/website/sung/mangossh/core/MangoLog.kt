@@ -83,6 +83,9 @@ enum class MangoLogEvent(val code: String) {
     VAULT_OPEN_FAILED("vault.open.failed"),
     VAULT_WRITE_SUCCEEDED("vault.write.succeeded"),
     VAULT_WRITE_FAILED("vault.write.failed"),
+
+    /** A backup operation failed; only exception classes may cross this logging boundary. */
+    BACKUP_OPERATION_FAILED("backup.operation.failed"),
     SSH_CONNECT_STARTED("ssh.connect.started"),
     SSH_HOST_KEY_PROMPTED("ssh.host_key.prompted"),
     SSH_AUTH_SUCCEEDED("ssh.auth.succeeded"),

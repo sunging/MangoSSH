@@ -182,6 +182,17 @@ class DownloadDocumentContractInstrumentedTest {
         }
     }
 
+    @Test fun backupAndKeyExportsUseWritableStorageAndShowAlternativeLocations() {
+        for ((type, name) in listOf("application/octet-stream" to "mangossh-vault.mssh",
+            "*/*" to "ssh_key.pub", "application/x-pem-file" to "ssh_key.pem")) {
+            val intent = SystemDocumentContract(type).createIntent(context, name)
+            assertIntent(intent, name, type)
+            assertTrue(intent.getBooleanExtra("android.content.extra.SHOW_ADVANCED", false))
+        }
+        assertTrue(DownloadDocumentContract().createIntent(context, "report.pdf")
+            .getBooleanExtra("android.content.extra.SHOW_ADVANCED", false))
+    }
+
     @Test fun browserCancellationAndRestorationKeepTheCorrectNameAndSession() {
         val picker = PickerRegistry()
         val first = RemoteFileEntry("report.PDF", "/fixture/report.PDF", RemoteFileKind.FILE)

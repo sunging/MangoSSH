@@ -30,6 +30,9 @@ class AppLockPickerInstrumentedTest {
     private val model get() = fixture
     private var flags = 0
     private var ownsDirectory = false
+    private var ownsDocumentsDirectory = false
+    private var ownsDocumentsParent = false
+    private var defaultExportName: String? = null
     private var directory = ""
     private fun text(id: Int) = instrumentation.targetContext.getString(id)
 
@@ -51,6 +54,17 @@ class AppLockPickerInstrumentedTest {
             cancelPicker()
         }
         automation.serviceInfo = automation.serviceInfo.apply { flags = this@AppLockPickerInstrumentedTest.flags }
+        defaultExportName?.let { name ->
+            model.lastUri?.let { uri ->
+                assertEquals(name, LocalDocumentTree.displayName(model.context.contentResolver, uri))
+                assertTrue(DocumentsContract.deleteDocument(model.context.contentResolver, uri))
+            }
+        }
+        if (ownsDocumentsDirectory) {
+            shell("rm -f /sdcard/Documents/$directory/mangossh-vault.mssh")
+            assertEquals("", shell("rmdir /sdcard/Documents/$directory"))
+        }
+        if (ownsDocumentsParent) assertEquals("", shell("rmdir /sdcard/Documents"))
         if (ownsDirectory) {
             // Every path is a fixed basename under the UUID directory created in prepare().
             listOf("mangossh-vault.mssh", "second-vault.mssh", "ssh_key.pub", "ssh_key.pem").forEach {
@@ -94,6 +108,44 @@ class AppLockPickerInstrumentedTest {
             compose.runOnUiThread { model.backup.cancel() }
             compose.waitForIdle()
         }
+    }
+
+    @Test fun defaultBackupSaveLocationUsesWritableStorageWithPinEnabled() {
+        // Keep the real contract's location: the fixture must not hide a broken default provider.
+        compose.runOnUiThread { model.pickerInitialDirectory = null }
+        val name = "$directory.mssh"
+        defaultExportName = name
+        export()
+        rename(name)
+        save()
+        compose.waitUntil(30_000) { model.backup.state.value.phase == BackupPhase.IDLE }
+        val uri = checkNotNull(model.lastUri)
+        assertEquals("com.android.externalstorage.documents", uri.authority)
+        assertNull(model.backup.state.value.failure)
+        assertTrue(model.backup.state.value.completed)
+        val bytes = model.context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+        assertTrue(bytes.isNotEmpty())
+        assertTrue(PortableVaultCodec.decrypt(bytes, model.password.toCharArray()).profiles.isEmpty())
+        assertFalse(model.lock.locked.value)
+    }
+
+    @Test fun backupCanBeSavedOutsideDownloadWithPinEnabled() {
+        ownsDocumentsParent = shell("ls -d /sdcard/Documents") != "/sdcard/Documents"
+        assertEquals("", shell("mkdir -p /sdcard/Documents/$directory"))
+        ownsDocumentsDirectory = true
+        compose.runOnUiThread { model.pickerInitialDirectory = "Documents/$directory" }
+        export()
+        save()
+        compose.waitUntil(30_000) { model.backup.state.value.completed || model.backup.state.value.failure != null }
+        assertNull(model.backup.state.value.failure)
+        val uri = checkNotNull(model.lastUri)
+        val bytes = model.context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+        // Providers may use the home: alias for Documents; verify the actual file's bytes.
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
+        assertEquals(digest, shell("sha256sum /sdcard/Documents/$directory/mangossh-vault.mssh").substringBefore(' '))
+        assertTrue(PortableVaultCodec.decrypt(bytes, model.password.toCharArray()).profiles.isEmpty())
+        assertFalse(model.lock.locked.value)
     }
 
     @Test fun cancellingPickerDiscardsExportAndOrdinaryBackgroundStillLocks() {
@@ -169,6 +221,14 @@ class AppLockPickerInstrumentedTest {
         } }
         assertTrue(clicked)
         awaitHost()
+    }
+
+    private fun rename(name: String) {
+        awaitPicker { root -> visit(root) { node ->
+            node.isEditable && node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, name)
+            })
+        } }
     }
 
     /** Results can arrive before the host window and its Compose root have resumed. */

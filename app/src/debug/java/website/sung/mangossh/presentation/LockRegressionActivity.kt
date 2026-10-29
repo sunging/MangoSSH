@@ -61,6 +61,7 @@ internal class LockRegressionModel(private val base: Context) : ViewModel() {
     }
     val prefix = "lock-regression-${UUID.randomUUID()}"
     val directoryName = prefix
+    var pickerInitialDirectory: String? = "Download/$directoryName"
     private val root = File(base.cacheDir, prefix).apply { mkdirs() }
     private val preferences = mutableSetOf<String>()
     val context = object : ContextWrapper(base) {
@@ -150,8 +151,10 @@ class LockRegressionActivity : AppCompatActivity() {
             override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {
                 model.pendingRequestCode = requestCode
                 picker.launch(contract.createIntent(this@LockRegressionActivity, input).apply {
-                    putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri(
-                        "com.android.externalstorage.documents", "primary:Download/${model.directoryName}"))
+                    model.pickerInitialDirectory?.let { directory ->
+                        putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri(
+                            "com.android.externalstorage.documents", "primary:$directory"))
+                    }
                 })
             }
         }

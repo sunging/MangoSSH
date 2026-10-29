@@ -46,6 +46,9 @@ returns. This covers backups, key import/export, uploads, downloads, Save as, an
 Ordinary backgrounding resumes the configured lock policy. Explicit locking, screen-off during
 a picker, and process restart revoke pending grants; unlock and start the operation again.
 Public-key file export preserves the suggested `ssh_key.pub` filename.
+Save dialogs initially show the storage provider's Download folder and expose internal storage
+so another folder or available document provider can be selected. This also avoids OEM Downloads
+providers that advertise newly created documents but refuse writing their contents.
 
 PIN drafts are not saved in Activity state. Biometric unlock requires the original per-request
 Keystore cipher and a current authorization generation, and does not replace any additional
