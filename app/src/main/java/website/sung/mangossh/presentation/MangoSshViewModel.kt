@@ -60,8 +60,6 @@ import website.sung.mangossh.domain.SshTerminalType
 import website.sung.mangossh.domain.TerminalShortcutConfig
 import website.sung.mangossh.domain.TerminalThemeId
 import website.sung.mangossh.domain.AppLockDelay
-import website.sung.mangossh.domain.shouldLockWhenBackgrounded
-import website.sung.mangossh.domain.shouldLockOnResume
 import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.security.AppLockStore
 import website.sung.mangossh.session.RemoteFileEntry
@@ -335,82 +333,30 @@ class MangoSshViewModel @JvmOverloads constructor(
     val sessionFontSizeOverrides = _sessionFontSizeOverrides.asStateFlow()
 
 
-    private val _appLockConfiguration = MutableStateFlow(appLockStore.configuration())
-    val appLockConfiguration = _appLockConfiguration.asStateFlow()
+    internal val appLockCoordinator = AppLockCoordinator(appLockStore, runtime.accessState, viewModelScope,
+        onLocked = { backupCoordinator.cancel() }, message = { _userMessage.value = it }, cryptoDispatcher = cryptoDispatcher)
+    val appLockConfiguration = appLockCoordinator.configuration
     private val _appLocked = runtime.accessState.locked
-    private val reauthenticationWindow = website.sung.mangossh.security.ReauthenticationWindow(runtime.accessState)
-    private val _reauthenticationPending = MutableStateFlow(false)
-    val reauthenticationPending = _reauthenticationPending.asStateFlow()
-    private var pendingSensitiveAction: (() -> Unit)? = null
-    private var approvedSensitiveAction = false
-    private var pendingSensitiveCancel: (() -> Unit)? = null
+    val reauthenticationPending = appLockCoordinator.reauthenticationPending
 
-    private fun authorizeSensitive(override: Boolean? = null, onCancelled: (() -> Unit)? = null, action: () -> Unit): Boolean {
-        if (_appLocked.value) { onCancelled?.invoke(); return false }
-        val mode = _appLockConfiguration.value.reauthentication
-        val required = override ?: (mode != website.sung.mangossh.security.ReauthenticationMode.DISABLED)
-        if (!required || approvedSensitiveAction ||
-            (mode == website.sung.mangossh.security.ReauthenticationMode.FIVE_MINUTES && reauthenticationWindow.isValid())) return true
-        if (!_appLockConfiguration.value.pinConfigured) {
-            _userMessage.value = uiText(R.string.message_app_pin_required)
-            onCancelled?.invoke()
-            return false
-        }
-        if (pendingSensitiveAction == null) {
-            pendingSensitiveAction = action
-            pendingSensitiveCancel = onCancelled
-            _reauthenticationPending.value = true
-        } else onCancelled?.invoke()
-        return false
-    }
+    private fun authorizeSensitive(override: Boolean? = null, onCancelled: (() -> Unit)? = null, action: () -> Unit): Boolean =
+        appLockCoordinator.authorizeSensitive(override, onCancelled, action)
 
-    fun cancelReauthentication() { pendingSensitiveAction = null; pendingSensitiveCancel?.invoke(); pendingSensitiveCancel = null; _reauthenticationPending.value = false }
+    /** Cancels the pending action without retaining its PIN or its completion callback. */
+    fun cancelReauthentication() = appLockCoordinator.cancelReauthentication()
 
-    /** The pending operation resumes only after the existing PBKDF2 verifier accepts the PIN. */
-    fun verifySensitiveAction(pin: String) {
-        if (_appLockBusy.value || pendingSensitiveAction == null) return
-        _appLockBusy.value = true
-        val generation = runtime.accessState.generation
-        val requestedAction = pendingSensitiveAction
-        val chars = pin.toCharArray()
-        viewModelScope.launch {
-            try {
-                val accepted = withContext(cryptoDispatcher) { appLockStore.verifyPin(chars) }
-                // A cancelled prompt cannot authorize a different action queued during slow derivation.
-                if (pendingSensitiveAction !== requestedAction) return@launch
-                if (accepted && generation == runtime.accessState.generation && !_appLocked.value) {
-                    reauthenticationWindow.grant()
-                    val action = pendingSensitiveAction
-                    pendingSensitiveCancel = null
-                    cancelReauthentication()
-                    approvedSensitiveAction = true
-                    try { action?.invoke() } finally { approvedSensitiveAction = false }
-                } else {
-                    val remaining = appLockStore.cooldownRemainingMillis()
-                    _userMessage.value = if (remaining > 0) ((remaining + 999) / 1000).toInt().let { uiPluralText(R.plurals.message_pin_cooldown, it, it) }
-                        else uiText(R.string.message_pin_incorrect)
-                }
-            } finally { chars.fill('\u0000'); _appLockBusy.value = false }
-        }
-    }
+    /** Only a current PIN verification may approve the pending sensitive operation. */
+    fun verifySensitiveAction(pin: String) = appLockCoordinator.verifySensitiveAction(pin)
 
-    fun setReauthentication(mode: website.sung.mangossh.security.ReauthenticationMode) {
-        if (!authorizeSensitive { setReauthentication(mode) }) return
-        appLockStore.setReauthentication(mode)
-        _appLockConfiguration.value = appLockStore.configuration()
-    }
+    fun setReauthentication(mode: website.sung.mangossh.security.ReauthenticationMode) = appLockCoordinator.setReauthentication(mode)
 
     fun prepareBackupExport(password: String?, remember: Boolean, includeConfig: Boolean) {
         if (!authorizeSensitive { prepareBackupExport(password, remember, includeConfig) }) return
         backupCoordinator.prepareExport(password, remember, includeConfig)
     }
 
-    private val _appLockBusy = MutableStateFlow(false)
-    val appLockBusy = _appLockBusy.asStateFlow()
-    val appLocked = _appLocked.asStateFlow()
-
-    /** Elapsed-realtime timestamp set by [noteBackgrounded] and consumed by [evaluateAutoLock]. */
-    private var backgroundedAtElapsedMillis: Long? = null
+    val appLockBusy = appLockCoordinator.busy
+    val appLocked = appLockCoordinator.locked
 
     private val _selectedSection = kotlinx.coroutines.flow.MutableStateFlow(AppSection.HOSTS)
     val selectedSection = _selectedSection.asStateFlow()
@@ -1689,126 +1635,27 @@ class MangoSshViewModel @JvmOverloads constructor(
         }
     }
 
-    /** Converts the PIN briefly to a mutable array so it can be cleared after the verifier is stored. */
-    fun configureAppPin(pin: String) {
-        if (!authorizeSensitive { configureAppPin(pin) }) return
-        if (_appLockBusy.value) return
-        _appLockBusy.value = true
-        val generation = runtime.accessState.generation
-        val chars = pin.toCharArray()
-        viewModelScope.launch {
-            try {
-                withContext(cryptoDispatcher) { appLockStore.setPin(chars) }
-                _appLockConfiguration.value = appLockStore.configuration()
-                if (generation == runtime.accessState.generation) runtime.accessState.setLocked(false)
-                _userMessage.value = uiText(R.string.message_app_lock_enabled)
-            } catch (_: IllegalArgumentException) {
-                _userMessage.value = uiText(R.string.message_pin_invalid, AppLockStore.MIN_PIN_LENGTH, AppLockStore.MAX_PIN_LENGTH)
-            } finally {
-                chars.fill('\u0000')
-                _appLockBusy.value = false
-            }
-        }
-    }
+    /** PIN derivation and grant ownership are shared with isolated security regression fixtures. */
+    fun configureAppPin(pin: String) = appLockCoordinator.configurePin(pin)
+    /** Disables protection after any required sensitive-action confirmation. */
+    fun clearAppLock() = appLockCoordinator.clear()
+    /** Changes biometric availability without granting an unlock or a sensitive-action approval. */
+    fun setBiometricUnlockEnabled(enabled: Boolean) = appLockCoordinator.setBiometricEnabled(enabled)
+    /** Changes the grace period without unlocking the app. */
+    fun setAutoLockDelay(delay: AppLockDelay) = appLockCoordinator.setAutoLockDelay(delay)
 
-    fun clearAppLock() {
-        if (!authorizeSensitive { clearAppLock() }) return
-        appLockStore.clear()
-        _appLockConfiguration.value = appLockStore.configuration()
-        runtime.accessState.setLocked(false)
-        _userMessage.value = uiText(R.string.message_app_lock_disabled)
-    }
+    /** Explicit locking revokes outstanding document and biometric requests. */
+    fun lockForBackground() = appLockCoordinator.lock()
 
-    fun setBiometricUnlockEnabled(enabled: Boolean) {
-        runCatching { appLockStore.setBiometricEnabled(enabled) }
-            .onSuccess { _appLockConfiguration.value = appLockStore.configuration() }
-            .onFailure { _userMessage.value = uiText(R.string.message_app_pin_required) }
-    }
+    /** Records ordinary backgrounding, excluding app-owned document activities. */
+    fun noteBackgrounded(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) = appLockCoordinator.noteBackgrounded(nowElapsedMillis)
 
-    fun setAutoLockDelay(delay: AppLockDelay) {
-        runCatching { appLockStore.setAutoLockDelay(delay) }
-            .onSuccess { _appLockConfiguration.value = appLockStore.configuration() }
-            .onFailure { _userMessage.value = uiText(R.string.message_app_pin_required) }
-    }
-
-    /** Locks immediately, regardless of the configured auto-lock delay. Used by the explicit "Lock now" action. */
-    fun lockForBackground() {
-        if (_appLockConfiguration.value.pinConfigured) {
-            runtime.accessState.setLocked(true)
-            cancelReauthentication()
-            backupCoordinator.cancel()
-        }
-    }
-
-    /**
-     * Records the moment the app left the foreground; call from `Activity.onStop()`.
-     *
-     * Uses [SystemClock.elapsedRealtime] by default so a wall-clock change
-     * between backgrounding and resuming cannot extend the grace window (see
-     * [shouldLockOnResume]).
-     */
-    fun noteBackgrounded(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) {
-        backgroundedAtElapsedMillis = nowElapsedMillis
-        val configuration = _appLockConfiguration.value
-        if (configuration.pinConfigured && shouldLockWhenBackgrounded(configuration.autoLockDelay)) {
-            runtime.accessState.setLocked(true)
-            cancelReauthentication()
-            backupCoordinator.cancel()
-        }
-    }
-
-    /**
-     * Locks if the configured auto-lock delay has elapsed since [noteBackgrounded]; call from
-     * `Activity.onStart()`.
-     *
-     * A missing timestamp means no real backgrounding was recorded since the
-     * last evaluation — either a cold start (where [_appLocked]'s initial
-     * value already reflects [AppLockConfiguration.pinConfigured]) or a
-     * resume from a configuration change, which `MainActivity.onStop()`
-     * deliberately does not report to [noteBackgrounded]. Either way there is
-     * nothing to evaluate, so this is a no-op rather than a lock.
-     */
-    fun evaluateAutoLock(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) {
-        val backgroundedAt = backgroundedAtElapsedMillis ?: return
-        val configuration = _appLockConfiguration.value
-        if (configuration.pinConfigured &&
-            shouldLockOnResume(configuration.autoLockDelay, backgroundedAt, nowElapsedMillis)
-        ) {
-            runtime.accessState.setLocked(true)
-            cancelReauthentication()
-            backupCoordinator.cancel()
-        }
-        backgroundedAtElapsedMillis = null
-    }
+    /** Evaluates the monotonic grace period after ordinary backgrounding. */
+    fun evaluateAutoLock(nowElapsedMillis: Long = SystemClock.elapsedRealtime()) = appLockCoordinator.evaluateAutoLock(nowElapsedMillis)
 
     /** Mirrors actual screen visibility without pausing protocol processing. */
     fun setVisibleTerminal(sessionId: String?) = sessionController.setVisibleTerminal(sessionId)
-
-    fun unlockWithPin(pin: String) {
-        if (_appLockBusy.value) return
-        _appLockBusy.value = true
-        val generation = runtime.accessState.generation
-        val chars = pin.toCharArray()
-        viewModelScope.launch {
-            try {
-                val accepted = withContext(cryptoDispatcher) { appLockStore.verifyPin(chars) }
-                if (accepted && generation == runtime.accessState.generation) {
-                    runtime.accessState.setLocked(false)
-                } else {
-                    val remaining = appLockStore.cooldownRemainingMillis()
-                    _userMessage.value = if (remaining > 0) ((remaining + 999) / 1000).toInt().let { uiPluralText(R.plurals.message_pin_cooldown, it, it) }
-                        else uiText(R.string.message_pin_incorrect)
-                }
-            } finally {
-                chars.fill('\u0000')
-                _appLockBusy.value = false
-            }
-        }
-    }
-
-    fun unlockWithBiometrics() {
-        if (_appLockConfiguration.value.biometricEnabled) runtime.accessState.setLocked(false)
-    }
+    fun unlockWithPin(pin: String) = appLockCoordinator.unlockWithPin(pin)
 
     fun checkForUpdates() = updateManager.checkNow()
 

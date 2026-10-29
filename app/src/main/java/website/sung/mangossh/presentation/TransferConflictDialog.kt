@@ -1,6 +1,6 @@
 package website.sung.mangossh.presentation
 
-import androidx.activity.compose.rememberLauncherForActivityResult
+import website.sung.mangossh.presentation.rememberAppDocumentLauncher
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -38,7 +38,7 @@ internal fun TransferConflictDialog(
     fun choose(action: TransferConflictAction, alternate: String? = null, uri: String? = null, createdDocument: Boolean = false) {
         resolve(TransferConflictDecision(action, alternate, uri, applyAll, verify, localDocumentCreated = createdDocument))
     }
-    val picker = rememberLauncherForActivityResult(DownloadDocumentContract()) { uri ->
+    val picker = rememberAppDocumentLauncher(DownloadDocumentContract()) { uri ->
         if (uri != null) choose(TransferConflictAction.SAVE_AS, uri = uri.toString(), createdDocument = true)
     }
     BasicAlertDialog(onDismissRequest = {}) {

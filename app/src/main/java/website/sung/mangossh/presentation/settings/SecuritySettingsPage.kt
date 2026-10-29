@@ -15,6 +15,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -168,8 +169,8 @@ private fun AppPinDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
-    var pin by rememberSaveable { mutableStateOf("") }
-    var confirmation by rememberSaveable { mutableStateOf("") }
+    var pin by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
     val valid = pin.length in 4..12 && pin.all(Char::isDigit) && pin == confirmation
     AlertDialog(
         onDismissRequest = onDismiss,

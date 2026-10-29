@@ -1,6 +1,6 @@
 package website.sung.mangossh.presentation
 
-import androidx.activity.compose.rememberLauncherForActivityResult
+import website.sung.mangossh.presentation.rememberAppDocumentLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -63,11 +63,11 @@ internal fun AuthenticationScreen(vaultStatus: VaultStatus, authentications: Lis
     var adding by rememberSaveable { mutableStateOf(false) }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var exportingId by remember { mutableStateOf<String?>(null) }
-    var exportFileId by remember { mutableStateOf<String?>(null) }
-    val publicFile = rememberLauncherForActivityResult(SystemDocumentContract("text/plain")) { uri ->
+    var exportFileId by rememberSaveable { mutableStateOf<String?>(null) }
+    val publicFile = rememberAppDocumentLauncher(SystemDocumentContract("*/*")) { uri ->
         exportFileId?.let { if (uri != null) onExport(it, KeyExportPart.PUBLIC, KeyExportTarget.File(uri)) }; exportFileId = null
     }
-    val privateFile = rememberLauncherForActivityResult(SystemDocumentContract("application/x-pem-file")) { uri ->
+    val privateFile = rememberAppDocumentLauncher(SystemDocumentContract("application/x-pem-file")) { uri ->
         exportFileId?.let { if (uri != null) onExport(it, KeyExportPart.PRIVATE, KeyExportTarget.File(uri)) }; exportFileId = null
     }
     LazyColumn(Modifier.fillMaxSize().testTag("authentication_list"), contentPadding = PaddingValues(16.dp),
@@ -145,7 +145,7 @@ internal fun AuthenticationEditorDialog(authentication: AuthenticationSummary?, 
             if (key != null) { staged = key; keyId = key.id }
         }
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    val picker = rememberAppDocumentLauncher(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             preparing = true
             try { importContents = withContext(Dispatchers.IO) { context.contentResolver.openInputStream(uri)?.use {
