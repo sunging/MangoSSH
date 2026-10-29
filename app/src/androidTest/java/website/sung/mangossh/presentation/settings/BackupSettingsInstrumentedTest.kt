@@ -292,9 +292,16 @@ class BackupSettingsInstrumentedTest {
     }
 
     private fun captureDialog(name: String) {
-        java.io.File(context.externalCacheDir, "$name.png").outputStream().use {
-            compose.onNode(isDialog()).captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
+        // Compose's dialog capture requires API 28. All semantic/layout assertions still run
+        // on API 26/27; capture the foreground synthetic fixture through UiAutomation there.
+        val legacy = android.os.Build.VERSION.SDK_INT < 28
+        val bitmap = if (legacy) checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            else compose.onNode(isDialog()).captureToImage().asAndroidBitmap()
+        try {
+            java.io.File(context.externalCacheDir, "$name.png").outputStream().use {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+            }
+        } finally { if (legacy) bitmap.recycle() }
     }
 
     @Test fun busyStateDisablesManagementAndShowsStatusAboveActions() {
@@ -408,9 +415,7 @@ class BackupSettingsInstrumentedTest {
             assertTrue("Actions must not overlap or leave large gaps", gap.value in 0f..16f)
         }
         // This synthetic dialog contains no vault data; keep an artifact for visual regression review.
-        java.io.File(context.externalCacheDir, "remote-conflict-dialog.png").outputStream().use {
-            compose.onNode(isDialog()).captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
+        captureDialog("remote-conflict-dialog")
         actions.forEach { it.performClick() }
         compose.runOnIdle { assertEquals(listOf("download", "overwrite", "cancel"), calls) }
     }

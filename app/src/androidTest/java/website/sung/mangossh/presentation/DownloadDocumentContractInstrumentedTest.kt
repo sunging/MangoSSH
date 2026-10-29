@@ -18,6 +18,9 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.performClick
 import androidx.core.app.ActivityOptionsCompat
 import androidx.core.content.IntentCompat
@@ -32,6 +35,11 @@ import website.sung.mangossh.session.ScpTransferDirection
 import website.sung.mangossh.session.TransferConflict
 import website.sung.mangossh.session.TransferConflictAction
 import website.sung.mangossh.session.TransferConflictDecision
+import website.sung.mangossh.data.vault.AuthenticationSummary
+import website.sung.mangossh.data.vault.SshKeySummary
+import website.sung.mangossh.data.vault.VaultStatus
+import website.sung.mangossh.security.AppAccessState
+import website.sung.mangossh.security.DocumentPickerRequests
 
 /** Synthetic names and picker grants only; never touches saved connections or real documents. */
 class DownloadDocumentContractInstrumentedTest {
@@ -65,6 +73,66 @@ class DownloadDocumentContractInstrumentedTest {
         assertEquals(type, intent.type)
         assertEquals(DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download"),
             IntentCompat.getParcelableExtra(intent, DocumentsContract.EXTRA_INITIAL_URI, Uri::class.java))
+    }
+
+    @Test fun authenticationExportPreservesThePublicSuffixAndRequestAcrossRestoration() {
+        val picker = PickerRegistry()
+        val key = SshKeySummary("synthetic-key", "Disposable key", "Synthetic", "")
+        val authentication = AuthenticationSummary("synthetic-auth", "Disposable credential", key.id)
+        val results = mutableListOf<Pair<String, KeyExportPart>>()
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            CompositionLocalProvider(LocalActivityResultRegistryOwner provides picker) { MaterialTheme {
+                AuthenticationScreen(VaultStatus.Ready, listOf(authentication), listOf(key), emptyList(),
+                    AuthenticationEditorActions(), {}, { id, part, _ -> results += id to part }, false)
+            } }
+        }
+        compose.onNodeWithText(context.getString(R.string.ui_export)).performClick()
+        compose.onNodeWithText(context.getString(R.string.ui_export_to_file)).performClick()
+        compose.runOnIdle {
+            assertEquals("*/*", picker.launched?.type)
+            assertEquals("ssh_key.pub", picker.launched?.getStringExtra(Intent.EXTRA_TITLE))
+        }
+        restoration.emulateSavedInstanceStateRestore()
+        compose.runOnIdle { picker.reply(selected) }
+        compose.runOnIdle { assertEquals(listOf(key.id to KeyExportPart.PUBLIC), results) }
+        compose.onNodeWithText(context.getString(R.string.ui_export)).performClick()
+        compose.onNode(hasText(context.getString(R.string.ui_private_key)) and hasAnyAncestor(isDialog())).performClick()
+        compose.onNodeWithText(context.getString(R.string.ui_export_to_file)).performClick()
+        compose.runOnIdle {
+            assertEquals("application/x-pem-file", picker.launched?.type)
+            assertEquals("ssh_key.pem", picker.launched?.getStringExtra(Intent.EXTRA_TITLE))
+            picker.reply(selected)
+            assertEquals(key.id to KeyExportPart.PRIVATE, results.last())
+        }
+    }
+
+    @Test fun launchFailureAndRemovalOfThePickerOwnerReleaseTheLockExemption() {
+        val requests = DocumentPickerRequests(AppAccessState(false))
+        val shown = mutableStateOf(true)
+        var fail = true
+        var failed = false
+        val registry = object : ActivityResultRegistry(), ActivityResultRegistryOwner {
+            override val activityResultRegistry get() = this
+            override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {
+                if (fail) throw android.content.ActivityNotFoundException()
+            }
+        }
+        compose.setContent {
+            CompositionLocalProvider(LocalActivityResultRegistryOwner provides registry, LocalDocumentPickerRequests provides requests) {
+                if (shown.value) {
+                    val picker = rememberAppDocumentLauncher(SystemDocumentContract("*/*")) {}
+                    androidx.compose.material3.Button(onClick = {
+                        try { picker.launch("synthetic") } catch (_: android.content.ActivityNotFoundException) { failed = true }
+                    }) { androidx.compose.material3.Text("Launch isolated picker") }
+                }
+            }
+        }
+        compose.onNodeWithText("Launch isolated picker").performClick()
+        compose.runOnIdle { assertTrue(failed); assertFalse(requests.active); fail = false }
+        compose.onNodeWithText("Launch isolated picker").performClick()
+        compose.runOnIdle { assertTrue(requests.active); shown.value = false }
+        compose.runOnIdle { assertFalse(requests.active) }
     }
 
     @Test fun oneContractResolvesEachFilenameWithoutChangingItsSpelling() {

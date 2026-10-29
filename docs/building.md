@@ -251,6 +251,16 @@ The authoritative fdroiddata recipe remains external. Update its SDK CMake/Pytho
 prerequisites for this revision; previously published versions keep their original
 build recipes. Source and compiler setup must finish before network isolation.
 
+### Optional biometric sensor regressions
+
+`BiometricEnrollmentInstrumentedTest` and `BiometricSensorInstrumentedTest` are skipped by
+default, before creating an Activity or changing credentials. They require
+`-e runBiometricSensor true` and a dedicated AVD named `mangossh-lock-regression`.
+Enrollment also requires a fresh device without a system credential; its PIN is generated at
+runtime and never logged. The host supplies virtual finger 1 for enrollment and successful
+matches, and finger 2 for rejection, following the `biometricPhase` instrumentation statuses.
+Never provision a developer's existing emulator or a physical phone for these tests.
+
 ### Disposable emulator regression diagnostics
 
 The CI workflow runs two parallel jobs, GitHub and F-Droid plus termlib, each

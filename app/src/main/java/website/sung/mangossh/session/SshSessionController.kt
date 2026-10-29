@@ -1586,7 +1586,7 @@ class SshSessionController internal constructor(
         for (id in profile.jumpProfileIds) {
             val hop = snapshot.profiles.single { it.id == id }
             require(hop.protocol == ConnectionProtocol.SSH && hop.jumpProfileIds.isEmpty())
-            val connection = SshConnection(hop.hostname, hop.port, hop.legacySshAlgorithms)
+            val connection = connectionFactory(hop)
             if (!install(managed, connection, { it.close(); it.close() }) { managed.jumpConnections += it }) throw CancellationException()
             connection.monitor { error -> cleanupScope.launch {
                 finishSession(sessionId, managed, SessionEndReason.CONNECTION_LOST, error)
