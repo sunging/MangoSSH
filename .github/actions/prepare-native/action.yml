@@ -30,7 +30,7 @@ runs:
       with:
         path: |
           .tools/android-ndk-linux/27.3.13750724
-          .tools/go/1.26.7
+          .tools/go/1.27.3
         # The fetch scripts verify archive hashes; this key only avoids downloads.
         key: native-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/toolchains.json', 'tools/fetch-android-ndk.sh', 'tools/fetch-go.sh', 'tools/lib/go-toolchain.sh') }}
     # Every restored entry is independently checked against actual inputs and
@@ -60,7 +60,7 @@ runs:
         "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
           'cmake;3.22.1' 'platforms;android-26' 'platforms;android-37.0' 'build-tools;36.0.0'
         echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/.tools/android-ndk-linux/27.3.13750724" >> "$GITHUB_ENV"
-        echo "MANGOSSH_GO_ROOT=$GITHUB_WORKSPACE/.tools/go/1.26.7" >> "$GITHUB_ENV"
+        echo "MANGOSSH_GO_ROOT=$GITHUB_WORKSPACE/.tools/go/1.27.3" >> "$GITHUB_ENV"
         echo "MANGOSSH_MOSH_DEPS_DIR=$GITHUB_WORKSPACE/.fdroid/sources" >> "$GITHUB_ENV"
         echo "MANGOSSH_OFFLINE_BUILD=1" >> "$GITHUB_ENV"
     - name: Verify native source and cache contracts

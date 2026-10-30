@@ -5,12 +5,29 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.Environment
+import android.provider.DocumentsContract
 import androidx.activity.result.contract.ActivityResultContracts
 
 /** Creates documents with the available platform picker to keep suggested filenames intact. */
 internal class SystemDocumentContract(mimeType: String) : ActivityResultContracts.CreateDocument(mimeType) {
     override fun createIntent(context: Context, input: String): Intent =
-        super.createIntent(context, input).preferPlatformDocumentPicker(context)
+        super.createIntent(context, input).withDocumentSaveLocation().preferPlatformDocumentPicker(context)
+}
+
+/**
+ * Starts save dialogs in the writable storage provider instead of an OEM Downloads provider
+ * that may create a document entry but reject opening its output stream. SHOW_ADVANCED exposes
+ * internal storage on older DocumentsUI builds. Both are hints: other user-selected locations
+ * remain available, and only the returned URI grants access to the chosen document.
+ */
+internal fun Intent.withDocumentSaveLocation(): Intent = apply {
+    putExtra("android.content.extra.SHOW_ADVANCED", true)
+    if (!hasExtra(DocumentsContract.EXTRA_INITIAL_URI)) {
+        putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents", "primary:${Environment.DIRECTORY_DOWNLOADS}",
+        ))
+    }
 }
 
 /** Prefers an eligible platform picker, retaining an already selected platform package. */

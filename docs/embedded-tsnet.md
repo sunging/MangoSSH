@@ -37,11 +37,11 @@ Settings → Embedded Tailscale. The bridge passes that URL to
 
 The reproducible bridge build pins:
 
-- Go `1.26.7`;
+- Go `1.27.3`;
 - JDK 17 supplied by the build environment (`tools/fetch-jdk17.sh` can prepare
   checksum-pinned Eclipse Temurin `17.0.19+10` before compilation);
 - Android NDK `27.3.13750724` (r27d);
-- `tailscale.com v1.102.4`;
+- `tailscale.com v1.104.2`;
 - `golang.org/x/mobile v0.0.0-20260709172247-6129f5bee9d5`.
 
 Local and GitHub release preparation use `tools/fetch-go.sh` to install the
@@ -53,7 +53,7 @@ download is attempted. The complete Go module source graph is committed under
 `native/tsnetbridge/vendor`. In addition to `go.sum`, both patched Tailscale
 source files have pinned pre-patch and post-patch SHA-256 values.
 The vendor tree already includes
-`tools/patches/tailscale-v1.102.4-tsnet-no-logtail.patch`, so ordinary `go test`
+`tools/patches/tailscale-v1.104.2-tsnet-no-logtail.patch`, so ordinary `go test`
 and source analysis see the same network-refresh API as Android builds.
 The production build verifies the patched hashes, reverses the patch in its
 disposable copy to verify the upstream hashes, then reapplies it with
@@ -63,7 +63,7 @@ A source mismatch, skipped hunk, or unexpected result stops the build.
 
 `tools/lib/tsnet-version.sh` pins the upstream tag and commit and provides the
 linker stamps consumed by Tailscale's `version.Long()` and `version.Short()`.
-Both report `1.102.4`, including in the GOPATH gomobile build where Go module
+Both report `1.104.2`, including in the GOPATH gomobile build where Go module
 build information is absent. The upstream commit is stamped separately;
 the MangoSSH source and patch retain the local changes' provenance. Stamped
 version tests run with the same flags before binding the Android libraries.
@@ -113,7 +113,7 @@ downloaded local-development toolchains, and intermediate build trees are
 ignored build artifacts; the vendored Go source is versioned input.
 
 For the network-isolated F-Droid path, export the externally provided JDK 17,
-Android SDK/NDK r27d, Go 1.26.7, and pinned Mosh dependency source roots, then
+Android SDK/NDK r27d, Go 1.27.3, and pinned Mosh dependency source roots, then
 run `tools/build-fdroid-release.sh`. The entry point rejects signing variables,
 sets the Go proxy and checksum database offline, and creates only the unsigned
 release APK.

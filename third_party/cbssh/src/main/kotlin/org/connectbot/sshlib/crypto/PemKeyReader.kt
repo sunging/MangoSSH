@@ -68,7 +68,7 @@ internal object PemKeyReader {
 
             PemType.EC -> readSec1Ec(ps.data)
 
-            PemType.PKCS8 -> readPkcs8(ps.data)
+            PemType.PKCS8 -> readPkcs8(ps.data, companionPublicKey(text))
 
             PemType.ENCRYPTED_PKCS8 -> throw SshException("Encrypted PKCS#8 is unsupported; convert to OpenSSH externally")
         }
@@ -217,7 +217,18 @@ internal object PemKeyReader {
         }
     }
 
-    private fun readPkcs8(data: ByteArray): SshPrivateKey {
+    private fun companionPublicKey(text: String): ByteArray? {
+        val begin = "-----BEGIN PUBLIC KEY-----"
+        val end = "-----END PUBLIC KEY-----"
+        val start = text.indexOf(begin)
+        if (start < 0) return null
+        val finish = text.indexOf(end, start + begin.length)
+        if (finish < 0) throw SshException("Unterminated PUBLIC KEY PEM block")
+        return Base64Compat.decode(text.substring(start + begin.length, finish).filterNot(Char::isWhitespace))
+    }
+
+    private fun readPkcs8(data: ByteArray, companionPublicKey: ByteArray? = null): SshPrivateKey {
+        MldsaPrivateKeys.readPem(data, companionPublicKey)?.let { return it }
         // Use JCA's built-in PKCS#8 parsing — try each algorithm
         try {
             val keySpec = PKCS8EncodedKeySpec(data)

@@ -50,11 +50,25 @@ class SshConnectionCloseTest {
             override suspend fun close() { released.complete(Unit) }
         }
         val connection = connection(transport, StandardTestDispatcher(testScheduler))
-        val writer = async { connection.sendChannelClose(0) }
+        val writer = async { runCatching { connection.sendChannelClose(0) } }
         writing.await()
         kotlinx.coroutines.withTimeout(1_000) { connection.close() }
-        writer.await()
+        // The interrupted packet is abandoned with the transport, never reported as written.
+        assertIs<TransportException>(writer.await().exceptionOrNull())
         assertEquals(true, released.isCompleted)
+    }
+
+    @Test
+    fun `failing nested transport close still completes shutdown exactly once`() = runTest {
+        val transport = RecordingTransport(failClose = true)
+        val connection = connection(transport, StandardTestDispatcher(testScheduler))
+
+        connection.close()
+        connection.close()
+
+        assertEquals(1, transport.closeCalls)
+        assertFailsWith<TransportException> { connection.sendChannelClose(recipientChannel = 0) }
+        assertEquals(0, transport.writeCalls)
     }
 
     @Test
@@ -194,6 +208,7 @@ class SshConnectionCloseTest {
 
     private class RecordingTransport(
         private val suspendClose: Boolean = false,
+        private val failClose: Boolean = false,
     ) : Transport {
         val closeStarted = CompletableDeferred<Unit>()
         val allowClose = CompletableDeferred<Unit>()
@@ -213,6 +228,7 @@ class SshConnectionCloseTest {
             closeCalls++
             closeStarted.complete(Unit)
             if (suspendClose) allowClose.await()
+            if (failClose) throw TransportException("Upstream packet writer stopped")
         }
     }
 }

@@ -19,22 +19,23 @@ package org.connectbot.sshlib
 
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.connectbot.sshlib.PingResult
 import org.connectbot.sshlib.client.DynamicPortForwarder
 import org.connectbot.sshlib.client.LocalPortForwarder
 import org.connectbot.sshlib.client.RemotePortForwarder
+import org.connectbot.sshlib.client.SessionChannel
 import org.connectbot.sshlib.client.SshConnection
 import org.connectbot.sshlib.client.sftp.SftpClientImpl
 import org.connectbot.sshlib.crypto.PrivateKeyReader
@@ -147,6 +148,11 @@ class SshClient private constructor(
 
     private var transport: Transport? = initialTransport
     private var connection: SshConnection? = initialConnection
+    private val algorithmWarnings = java.util.concurrent.CopyOnWriteArrayList<AlgorithmPolicyWarning>()
+
+    /** Policy diagnostics retained after disconnect. */
+    val policyWarnings: List<AlgorithmPolicyWarning> get() = algorithmWarnings.toList()
+
     private var authenticated = initialAuthenticated
     private val forwardingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var disconnectForwardJob: Job? = null
@@ -180,6 +186,12 @@ class SshClient private constructor(
             hostKeyVerifier = config.hostKeyVerifier,
             kexAlgorithms = config.kexAlgorithms,
             hostKeyAlgorithms = config.hostKeyAlgorithms,
+            pubkeyAlgorithms = config.pubkeyAlgorithms,
+            cryptoPolicy = config.cryptoPolicy,
+            onAlgorithmWarning = { warning ->
+                algorithmWarnings.add(warning)
+                config.algorithmWarningHandler?.invoke(warning)
+            },
             encryptionAlgorithms = config.encryptionAlgorithms,
             macAlgorithms = config.macAlgorithms,
             compressionAlgorithms = config.compressionAlgorithms,
@@ -189,6 +201,12 @@ class SshClient private constructor(
             obscureKeystrokeTimingIntervalMs = config.obscureKeystrokeTimingIntervalMs,
         )
         sshConnection.autoDisconnectOnLastChannelClose = config.autoDisconnectOnLastChannelClose
+        sshConnection.sessionWindowSize = config.sessionWindowSize
+        sshConnection.keepAliveIntervalMs = config.keepAliveIntervalMs
+        sshConnection.handshakeTimeoutMs = config.handshakeTimeoutMs
+        sshConnection.hostKeyUpdateTimeoutMs = config.hostKeyUpdateTimeoutMs
+        sshConnection.disconnectTimeoutMs = config.disconnectTimeoutMs
+        // MangoSSH: publish the connection before the handshake so disconnect() owns it.
         connection = sshConnection
         val result = sshConnection.connect()
 
@@ -344,6 +362,32 @@ class SshClient private constructor(
         }
     }
 
+    /** Authenticate with a local private key and its OpenSSH user certificate. */
+    suspend fun authenticatePublicKey(
+        username: String,
+        privateKeyData: String,
+        certificate: SshCertificate,
+        passphrase: String? = null,
+    ): AuthResult {
+        val conn = connection ?: return AuthResult.Error(ERROR_NOT_CONNECTED)
+        return try {
+            val key = PrivateKeyReader.read(privateKeyData, passphrase)
+            conn.authenticatePublicKey(username, key, certificate).also {
+                if (it is AuthResult.Success) authenticated = true
+            }
+        } catch (e: Exception) {
+            AuthResult.Error(e.message ?: "Certificate authentication error", e)
+        }
+    }
+
+    /** Authenticate with a local private key and its OpenSSH user certificate. */
+    suspend fun authenticatePublicKey(
+        username: String,
+        privateKeyData: ByteArray,
+        certificate: SshCertificate,
+        passphrase: String? = null,
+    ): AuthResult = authenticatePublicKey(username, String(privateKeyData, Charsets.UTF_8), certificate, passphrase)
+
     /**
      * Authenticate using the strategy-based [AuthHandler] flow.
      *
@@ -430,6 +474,10 @@ class SshClient private constructor(
     val connectionInfo: ConnectionInfo?
         get() = connection?.connectionInfo
 
+    /** Actual connected network peer; null for jump-host channels and disconnected clients. */
+    val remoteAddress: java.net.InetSocketAddress?
+        get() = transport?.remoteAddress
+
     /**
      * Open a session channel (RFC 4254 section 6.1).
      *
@@ -444,12 +492,25 @@ class SshClient private constructor(
 
         return try {
             logger.info("Opening session channel")
-            conn.openSessionChannel()
+            conn.openSessionChannel()?.also { configureEnvironment(it) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             logger.error("Failed to open session channel", e)
             null
+        }
+    }
+
+    private suspend fun configureEnvironment(session: SessionChannel) {
+        try {
+            for ((name, value) in config.environment) {
+                if (!session.sendEnv(name, value, wantReply = false)) {
+                    throw SshException("Session closed while sending environment defaults")
+                }
+            }
+        } catch (failure: Throwable) {
+            session.close()
+            throw failure
         }
     }
 
@@ -472,14 +533,15 @@ class SshClient private constructor(
         var handedOff = false
         return try {
             logger.info("Opening SFTP session")
-            val session = conn.openSessionChannel()
+            val session = conn.openBufferedSessionChannel(config.sftpWindowSize)
                 ?: return SftpResult.ProtocolError("Failed to open session channel for SFTP")
             ownedSession = session
+            configureEnvironment(session)
             if (!session.requestSubsystem("sftp")) {
                 session.close()
                 return SftpResult.ProtocolError("Server rejected SFTP subsystem request")
             }
-            SftpClientImpl.create(session).also { handedOff = it is SftpResult.Success }
+            SftpClientImpl.create(session, config.sftpRequestTimeoutMs).also { handedOff = it is SftpResult.Success }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -735,6 +797,11 @@ class SshClient private constructor(
 
     /**
      * Disconnect from the SSH server.
+     *
+     * Aborts outstanding writes, discards unread channel output, and closes
+     * the transport. Await [SshSession.write] before disconnecting when local
+     * write completion matters. To confirm remote processing, wait for the
+     * corresponding application or protocol response before disconnecting.
      */
     suspend fun disconnect() {
         logger.info("Disconnecting")

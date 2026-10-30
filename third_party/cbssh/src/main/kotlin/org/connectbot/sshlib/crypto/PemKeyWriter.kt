@@ -33,8 +33,21 @@ internal object PemKeyWriter {
         val keyType = inferKeyType(keyPair)
         return when {
             keyType == "ssh-rsa" -> writeRsa(keyPair, password)
+
             keyType.startsWith("ecdsa-sha2-") -> writeEc(keyPair, password)
+
             keyType == "ssh-ed25519" -> writeEd25519(keyPair, password)
+
+            MldsaAlgorithm.fromSshName(keyType) != null -> {
+                val der = MldsaPrivateKeys.writePem(keyPair)
+                if (password == null) {
+                    wrapPem("PRIVATE KEY", der, null)
+                } else {
+                    // MangoSSH carries no encrypted PKCS#8 implementation.
+                    throw SshException("Encrypted PKCS#8 is unsupported; use the OpenSSH format")
+                }
+            }
+
             else -> throw SshException("Unsupported key type for PEM encoding: $keyType")
         }
     }

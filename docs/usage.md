@@ -39,6 +39,22 @@ original authentication and private key have not been changed or deleted during
 the attempt. If saving fails, a notice is shown and the successful connection
 continues.
 
+## App lock and document activities
+
+App-initiated document pickers temporarily pause auto-lock until their result or cancellation
+returns. This covers backups, key import/export, uploads, downloads, Save as, and folder browsing.
+Ordinary backgrounding resumes the configured lock policy. Explicit locking, screen-off during
+a picker, and process restart revoke pending grants; unlock and start the operation again.
+Public-key file export preserves the suggested `ssh_key.pub` filename.
+Save dialogs initially show the storage provider's Download folder and expose internal storage
+so another folder or available document provider can be selected. This also avoids OEM Downloads
+providers that advertise newly created documents but refuse writing their contents.
+
+PIN drafts are not saved in Activity state. Biometric unlock requires the original per-request
+Keystore cipher and a current authorization generation, and does not replace any additional
+PIN confirmation required by the sensitive-action policy. Existing sessions and forwards keep
+running while the UI is locked; recovery still obeys unlock and reauthentication checks.
+
 ## Port forwarding
 
 Local, remote, and SOCKS5 rules live on the **Forwarding** page. Starting a rule

@@ -115,3 +115,30 @@ RESIZE 30,80
   ?screen_row 0 = "Alt screen"
 PUSH "\e[?1049l"
   ?screen_row 0 = "Main screen"
+
+!Resize shorter on altscreen pushes main screen lines to scrollback
+RESET
+WANTSCREEN a
+RESIZE 5,80
+PUSH "L1\r\nL2\r\nL3\r\nL4\r\nL5\e[?1049h\e[HAlt screen"
+WANTSCREEN b
+RESIZE 3,80
+  sb_pushline 80 = 4C 31
+  sb_pushline 80 = 4C 32
+  ?screen_row 0 = "Alt screen"
+WANTSCREEN -b
+PUSH "\e[?1049l"
+  ?screen_row 0 = "L3"
+  ?screen_row 2 = "L5"
+
+!Resize fills exposed main screen cells with the default pen
+RESET
+WANTSCREEN a
+RESIZE 5,20
+PUSH "Main\e[?1049h\e[1;44mAlt screen"
+RESIZE 5,30
+PUSH "\e[?1049l"
+  ?screen_cell 0,3  = {0x6e} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,4  = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 0,25 = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)
+  ?screen_cell 4,0  = {} width=1 attrs={} fg=rgb(240,240,240) bg=rgb(0,0,0)

@@ -9,7 +9,6 @@ import android.content.res.Configuration
 import android.os.Build
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -1071,7 +1070,7 @@ internal fun DestructiveConfirmationDialog(
 }
 
 @Composable
-private fun AppLockScreen(
+internal fun AppLockScreen(
     busy: Boolean,
     configuration: AppLockConfiguration,
     message: UiText?,
@@ -1079,7 +1078,7 @@ private fun AppLockScreen(
     onRequestBiometric: (() -> Unit)?,
     onDismissMessage: () -> Unit,
 ) {
-    var pin by rememberSaveable { mutableStateOf("") }
+    var pin by remember { mutableStateOf("") }
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier

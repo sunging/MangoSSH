@@ -17,6 +17,10 @@
 
 package org.connectbot.sshlib.crypto
 
+import org.connectbot.sshlib.SshException
+import java.security.Provider
+import java.security.Security
+
 private const val HASH_SHA256 = "SHA-256"
 private const val HASH_SHA512 = "SHA-512"
 private const val KEY_TYPE_SSH_RSA = "ssh-rsa"
@@ -179,6 +183,7 @@ internal enum class KexEntry(
     val type: KexType,
     val isPostQuantum: Boolean,
     private val factory: () -> KexAlgorithm,
+    val isHybrid: Boolean = false,
 ) {
     MLKEM768X25519_SHA256(
         "mlkem768x25519-sha256",
@@ -186,6 +191,41 @@ internal enum class KexEntry(
         KexType.ECDH,
         true,
         { MlKemHybridKeyExchange() },
+        true,
+    ),
+    MLKEM768NISTP256_SHA256(
+        "mlkem768nistp256-sha256",
+        HASH_SHA256,
+        KexType.ECDH,
+        true,
+        { MlKemNistHybridKeyExchange(MlKemNistParameters.NISTP256) },
+        true,
+    ),
+    MLKEM1024NISTP384_SHA384(
+        "mlkem1024nistp384-sha384",
+        "SHA-384",
+        KexType.ECDH,
+        true,
+        { MlKemNistHybridKeyExchange(MlKemNistParameters.NISTP384) },
+        true,
+    ),
+    MLKEM768_SHA256("mlkem768-sha256", HASH_SHA256, KexType.ECDH, true, { MlKemKeyExchange(MlKemParameterSet.ML_KEM_768) }),
+    MLKEM1024_SHA384("mlkem1024-sha384", "SHA-384", KexType.ECDH, true, { MlKemKeyExchange(MlKemParameterSet.ML_KEM_1024) }),
+    SNTRUP761X25519_SHA512(
+        "sntrup761x25519-sha512",
+        HASH_SHA512,
+        KexType.ECDH,
+        true,
+        { SntrupHybridKeyExchange() },
+        true,
+    ),
+    SNTRUP761X25519_SHA512_OPENSSH(
+        "sntrup761x25519-sha512@openssh.com",
+        HASH_SHA512,
+        KexType.ECDH,
+        true,
+        { SntrupHybridKeyExchange() },
+        true,
     ),
     CURVE25519_SHA256(
         "curve25519-sha256",
@@ -270,7 +310,7 @@ internal enum class KexEntry(
 
     companion object {
         val defaults: List<KexEntry> = entries.filter {
-            it !in setOf(DH_GROUP14_SHA1, DH_GROUP_EXCHANGE_SHA1, DH_GROUP1_SHA1)
+            it !in setOf(MLKEM768_SHA256, MLKEM1024_SHA384, DH_GROUP14_SHA1, DH_GROUP_EXCHANGE_SHA1, DH_GROUP1_SHA1)
         }
 
         val defaultString: String =
@@ -284,6 +324,11 @@ internal enum class SignatureEntry(
     val sshName: String,
     internal val algorithm: SshSignatureAlgorithm,
 ) {
+    SSH_MLDSA44_ED25519("ssh-mldsa44-ed25519", MldsaSignatureAlgorithm(MldsaAlgorithm.MLDSA44_ED25519)),
+    SSH_MLDSA87_P384("ssh-mldsa87-p384", MldsaSignatureAlgorithm(MldsaAlgorithm.MLDSA87_P384)),
+    SSH_MLDSA44("ssh-mldsa-44", MldsaSignatureAlgorithm(MldsaAlgorithm.MLDSA44)),
+    SSH_MLDSA65("ssh-mldsa-65", MldsaSignatureAlgorithm(MldsaAlgorithm.MLDSA65)),
+    SSH_MLDSA87("ssh-mldsa-87", MldsaSignatureAlgorithm(MldsaAlgorithm.MLDSA87)),
     SSH_ED25519("ssh-ed25519", Ed25519SignatureAlgorithm),
     SSH_ED448("ssh-ed448", Ed448SignatureAlgorithm),
     ECDSA_SHA2_NISTP256("ecdsa-sha2-nistp256", EcdsaSignatureAlgorithm),
@@ -295,7 +340,7 @@ internal enum class SignatureEntry(
     ;
 
     companion object {
-        /** Ed448 has no fallback implementation and Android ships no platform provider for it. */
+        /** MangoSSH: Ed448 has no fallback implementation and Android ships no platform provider for it. */
         private val ed448Available: Boolean by lazy {
             try {
                 java.security.Signature.getInstance("Ed448")
@@ -305,9 +350,25 @@ internal enum class SignatureEntry(
             }
         }
 
-        val defaults: List<SignatureEntry> = entries.filter { it != SSH_RSA && (it != SSH_ED448 || ed448Available) }
+        // Resolve providers when constructing configuration, rather than freezing availability at class load.
+        val defaults: List<SignatureEntry>
+            get() = entries.filter {
+                when (it) {
+                    SSH_RSA, SSH_MLDSA44, SSH_MLDSA65, SSH_MLDSA87 -> false
+                    SSH_MLDSA87_P384 -> MldsaAlgorithm.MLDSA87_P384.isAvailable()
+                    SSH_MLDSA44_ED25519 -> MldsaAlgorithm.MLDSA44_ED25519.isAvailable()
+                    SSH_ED448 -> ed448Available
+                    else -> true
+                }
+            }
 
-        val defaultString: String = defaults.joinToString(",") { it.sshName }
+        val defaultString: String get() = defaults.joinToString(",") { it.sshName }
+
+        fun validateHostAlgorithms(names: String, providers: List<Provider> = Security.getProviders().toList()) {
+            names.split(',').mapNotNull(MldsaAlgorithm::fromSshName).forEach {
+                if (!it.isAvailable(providers)) throw SshException("Host key algorithm ${it.sshName} is unavailable on this platform")
+            }
+        }
 
         fun fromSshName(name: String): SignatureEntry? = entries.firstOrNull { it.sshName == name }
 

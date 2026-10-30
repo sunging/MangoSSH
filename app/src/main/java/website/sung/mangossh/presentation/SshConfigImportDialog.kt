@@ -1,6 +1,6 @@
 package website.sung.mangossh.presentation
 
-import androidx.activity.compose.rememberLauncherForActivityResult
+import website.sung.mangossh.presentation.rememberAppDocumentLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -34,7 +34,7 @@ internal fun SshConfigImportDialog(authentications: List<AuthenticationSummary>,
     val authenticationIds = remember(preview) { mutableStateMapOf<String, String>() }
     val jumpMappings = remember(preview) { mutableStateMapOf<String, String>() }
     val ids = remember(preview) { preview?.candidates.orEmpty().associate { it.alias to UUID.randomUUID().toString() } }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    val picker = rememberAppDocumentLauncher(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             busy = true
             runCatching { withContext(Dispatchers.IO) {

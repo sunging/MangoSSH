@@ -26,6 +26,7 @@ import (
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/sync"
 	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/checksum"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/header/parse"
 	"gvisor.dev/gvisor/pkg/tcpip/network/hash"
@@ -519,6 +520,54 @@ func (e *endpoint) handleFragments(_ *stack.Route, networkMTU uint32, pkt *stack
 	}
 }
 
+// recalculateChecksum recalculates the checksum of a TCP packet.
+func recalculateChecksum(pkt *stack.PacketBuffer, r *stack.Route) tcpip.Error {
+	// RXChecksumValidated indicates that checksum verification may be
+	// safely skipped.
+	if pkt.RXChecksumValidated {
+		return nil
+	}
+	// NeedsCsum is set if the checksum offload is enabled, so no need to
+	// calculate the checksum.
+	if pkt.GSOOptions.Type != stack.GSONone && pkt.GSOOptions.NeedsCsum {
+		return nil
+	}
+	transportHeader := pkt.TransportHeader().Slice()
+	netHdr := header.IPv4(pkt.NetworkHeader().Slice())
+	switch pkt.TransportProtocolNumber {
+	case header.TCPProtocolNumber:
+		if len(transportHeader) < header.TCPMinimumSize {
+			return &tcpip.ErrMalformedHeader{}
+		}
+		tcp := header.TCP(transportHeader)
+		xsum := r.PseudoHeaderChecksum(header.TCPProtocolNumber, netHdr.PayloadLength())
+		xsum = checksum.Combine(xsum, pkt.Data().Checksum())
+		tcp.SetChecksum(0)
+		tcp.SetChecksum(^tcp.CalculateChecksum(xsum))
+	case header.UDPProtocolNumber:
+		if len(transportHeader) < header.UDPMinimumSize {
+			return &tcpip.ErrMalformedHeader{}
+		}
+		udp := header.UDP(transportHeader)
+		xsum := r.PseudoHeaderChecksum(header.UDPProtocolNumber, netHdr.PayloadLength())
+		xsum = checksum.Combine(xsum, pkt.Data().Checksum())
+		udp.SetChecksum(0)
+		csum := ^udp.CalculateChecksum(xsum)
+		// RFC 768: If the computed checksum is zero, it is transmitted as all ones.
+		if csum == 0 {
+			csum = 0xFFFF
+		}
+		udp.SetChecksum(csum)
+	case header.ICMPv4ProtocolNumber:
+		if len(transportHeader) < header.ICMPv4MinimumSize {
+			return &tcpip.ErrMalformedHeader{}
+		}
+		icmp := header.ICMPv4(transportHeader)
+		icmp.SetChecksum(header.ICMPv4Checksum(icmp, pkt.Data().Checksum()))
+	}
+	return nil
+}
+
 // WritePacket writes a packet to the given destination address and protocol.
 func (e *endpoint) WritePacket(r *stack.Route, params stack.NetworkHeaderParams, pkt *stack.PacketBuffer) tcpip.Error {
 	if err := e.addIPHeader(r.LocalAddress(), r.RemoteAddress(), pkt, params, nil /* options */); err != nil {
@@ -542,11 +591,7 @@ func (e *endpoint) writePacket(r *stack.Route, pkt *stack.PacketBuffer) tcpip.Er
 	}
 
 	if nft := stk.NFTables(); nft != nil && stk.IsNFTablesConfigured() {
-		ipCheck := nft.CheckOutput(pkt, stack.IP)
-		// nftables allows us to use the inet family to apply rules to both IPv4
-		// and IPv6 packets.
-		inetCheck := nft.CheckOutput(pkt, stack.Inet)
-		if !ipCheck || !inetCheck {
+		if !nft.CheckOutput(pkt, r, stack.IP) {
 			// nftables is telling us to drop the packet.
 			return nil
 		}
@@ -566,6 +611,39 @@ func (e *endpoint) writePacket(r *stack.Route, pkt *stack.PacketBuffer) tcpip.Er
 			ep.handleLocalPacket(pkt, true /* canSkipRXChecksum */)
 			return nil
 		}
+
+		// Similar to the `ip_route_me_harder` in the kernel,
+		// we need to find a new route for the packet.
+		// Implementation is similar to the func forwardUnicastPacket.
+		newRoute, err := stk.FindRoute(0 /* nic id */, netHeader.SourceAddress(), newDstAddr, header.IPv4ProtocolNumber, false /* multicastLoop */)
+		if err != nil {
+			e.stats.ip.OutgoingPacketErrors.Increment()
+			return err // Drop the packet
+		}
+		// Release the new route on exit.
+		defer newRoute.Release()
+
+		// Check if we need to recalculate the checksum.
+		// If the original route did not require a checksum but the new one does,
+		// we must calculate the full checksum; otherwise, NAT should have already
+		// done it.
+		if !r.RequiresTXTransportChecksum() && newRoute.RequiresTXTransportChecksum() {
+			if err := recalculateChecksum(pkt, newRoute); err != nil {
+				e.stats.ip.OutgoingPacketErrors.Increment()
+				return err // Drop the packet
+			}
+		}
+
+		// Update the route to the new route.
+		r = newRoute
+
+		// Use the new endpoint to write the packet.
+		forwardToEp, ok := e.protocol.getEndpointForNIC(r.NICID())
+		if !ok {
+			e.stats.ip.OutgoingPacketErrors.Increment()
+			return &tcpip.ErrUnknownNICID{}
+		}
+		return forwardToEp.writePacketPostRouting(r, pkt, true /* headerIncluded */)
 	}
 
 	return e.writePacketPostRouting(r, pkt, false /* headerIncluded */)
@@ -593,9 +671,7 @@ func (e *endpoint) writePacketPostRouting(r *stack.Route, pkt *stack.PacketBuffe
 	}
 
 	if nft := stk.NFTables(); nft != nil && stk.IsNFTablesConfigured() {
-		ipCheck := nft.CheckOutput(pkt, stack.IP)
-		inetCheck := nft.CheckOutput(pkt, stack.Inet)
-		if !ipCheck || !inetCheck {
+		if !nft.CheckPostrouting(pkt, r, stack.IP) {
 			// nftables is telling us to drop the packet.
 			return nil
 		}
@@ -712,9 +788,7 @@ func (e *endpoint) forwardPacketWithRoute(route *stack.Route, pkt *stack.PacketB
 	}
 
 	if nft := stk.NFTables(); nft != nil && stk.IsNFTablesConfigured() {
-		ipCheck := nft.CheckForward(pkt, stack.IP)
-		inetCheck := nft.CheckForward(pkt, stack.Inet)
-		if !ipCheck || !inetCheck {
+		if !nft.CheckForward(pkt, route, stack.IP) {
 			// nftables is telling us to drop the packet.
 			return nil
 		}
@@ -755,6 +829,10 @@ func (e *endpoint) forwardPacketWithRoute(route *stack.Route, pkt *stack.PacketB
 	newHdr.SetChecksum(0)
 	newHdr.SetChecksum(^newHdr.CalculateChecksum())
 
+	if route.RequiresTXTransportChecksum() {
+		newPkt.CalculateTransportChecksum()
+	}
+
 	switch err := forwardToEp.writePacketPostRouting(route, newPkt, true /* headerIncluded */); err.(type) {
 	case nil:
 		return nil
@@ -768,7 +846,9 @@ func (e *endpoint) forwardPacketWithRoute(route *stack.Route, pkt *stack.PacketB
 		// WriteHeaderIncludedPacket checks for the presence of the Don't Fragment bit
 		// while sending the packet and returns this error iff fragmentation is
 		// necessary and the bit is also set.
-		_ = e.protocol.returnError(&icmpReasonFragmentationNeeded{}, pkt, false /* deliveredLocally */)
+		_ = e.protocol.returnError(&icmpReasonFragmentationNeeded{
+			mtu: forwardToEp.nic.MTU(),
+		}, pkt, false /* deliveredLocally */)
 		return &ip.ErrMessageTooLong{}
 	case *tcpip.ErrNoBufferSpace:
 		return &ip.ErrOutgoingDeviceNoBufferSpace{}
@@ -821,9 +901,7 @@ func (e *endpoint) forwardUnicastPacket(pkt *stack.PacketBuffer) ip.ForwardingEr
 		}
 
 		if nft := stk.NFTables(); nft != nil && stk.IsNFTablesConfigured() {
-			ipCheck := nft.CheckForward(pkt, stack.IP)
-			inetCheck := nft.CheckForward(pkt, stack.Inet)
-			if !ipCheck || !inetCheck {
+			if !nft.CheckForward(pkt, nil /* route */, stack.IP) {
 				// nftables is telling us to drop the packet.
 				return nil
 			}
@@ -908,8 +986,10 @@ func (e *endpoint) HandlePacket(pkt *stack.PacketBuffer) {
 			}
 		}
 
+		nicID := e.nic.ID()
 		// Loopback traffic skips the prerouting chain.
-		inNicName := stk.FindNICNameFromID(e.nic.ID())
+		inNicName := stk.FindNICNameFromID(nicID)
+		pkt.InputNICID = nicID
 		if ok := stk.IPTables().CheckPrerouting(pkt, e, inNicName); !ok {
 			// iptables is telling us to drop the packet.
 			stats.IPTablesPreroutingDropped.Increment()
@@ -917,9 +997,7 @@ func (e *endpoint) HandlePacket(pkt *stack.PacketBuffer) {
 		}
 
 		if nft := stk.NFTables(); nft != nil && stk.IsNFTablesConfigured() {
-			ipCheck := nft.CheckPrerouting(pkt, stack.IP)
-			inetCheck := nft.CheckPrerouting(pkt, stack.Inet)
-			if !ipCheck || !inetCheck {
+			if !nft.CheckPrerouting(pkt, nil /* route */, stack.IP) {
 				// nftables is telling us to drop the packet.
 				return
 			}
@@ -1267,9 +1345,7 @@ func (e *endpoint) deliverPacketLocally(h header.IPv4, pkt *stack.PacketBuffer, 
 	}
 
 	if nft := stk.NFTables(); nft != nil && stk.IsNFTablesConfigured() {
-		ipCheck := nft.CheckInput(pkt, stack.IP)
-		inetCheck := nft.CheckInput(pkt, stack.Inet)
-		if !ipCheck || !inetCheck {
+		if !nft.CheckInput(pkt, nil /* route */, stack.IP) {
 			// nftables is telling us to drop the packet.
 			return
 		}
@@ -1914,6 +1990,8 @@ func (p *protocol) SendRejectionError(pkt *stack.PacketBuffer, rejectWith stack.
 		return p.returnError(&icmpReasonHostProhibited{}, pkt, inputHook)
 	case stack.RejectIPv4WithICMPAdminProhibited:
 		return p.returnError(&icmpReasonAdministrativelyProhibited{}, pkt, inputHook)
+	case stack.RejectIPv4WithTCPReset:
+		return ip.RejectWithTCPReset(pkt, ProtocolNumber, p.stack, inputHook)
 	default:
 		panic(fmt.Sprintf("unhandled %[1]T = %[1]d", rejectWith))
 	}

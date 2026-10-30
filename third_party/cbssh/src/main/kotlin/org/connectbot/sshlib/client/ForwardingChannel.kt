@@ -17,11 +17,10 @@
 
 package org.connectbot.sshlib.client
 
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
-import kotlinx.coroutines.launch
 import org.connectbot.sshlib.SshException
 import org.connectbot.sshlib.protocol.SshChannelEffect
 import org.connectbot.sshlib.protocol.SshChannelState
@@ -53,33 +52,51 @@ internal class ForwardingChannel(
 
     @Volatile private var inboundDeliveryOpen = true
     val incomingData: ReceiveChannel<ByteArray> get() = _incomingData
-    private val incomingDeliveryJob = connectionScope.launch {
-        try {
-            for (data in incomingIngress) {
-                _incomingData.send(data)
-                val adjust = window.releaseLocal(data.size)
-                if (inboundDeliveryOpen) {
-                    try {
-                        connection.sendWindowAdjust(remoteChannelNumber, adjust)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (failure: Exception) {
-                        // A concurrent channel/connection close must not escape this
-                        // forwarding worker and affect the shared SSH session.
-                        inboundDeliveryOpen = false
-                        logger.debug("Unable to return forwarding window credit", failure)
+    internal val delivery = ChannelDelivery(connectionScope.coroutineContext)
+    init {
+        delivery.launch {
+            try {
+                for (data in incomingIngress) {
+                    _incomingData.send(data)
+                    val adjust = window.releaseLocal(data.size)
+                    if (inboundDeliveryOpen) {
+                        try {
+                            lifecycle.sendWindowAdjust { connection.sendWindowAdjust(remoteChannelNumber, adjust) }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            if (lifecycle.state != SshChannelState.CLOSED || delivery.isAborted) throw failure
+                        }
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                // Writes admitted before cancellation may fail with a transport error instead of
+                // CancellationException. Surface it to readers and the connection, never globally.
+                _incomingData.close(failure)
+                connection.transportFailed(failure)
+            } finally {
+                _incomingData.close()
             }
-        } finally {
-            _incomingData.close()
         }
+        delivery.initialize(
+            abortStreams = {
+                inboundDeliveryOpen = false
+                incomingIngress.cancel()
+                _incomingData.close()
+            },
+            resources = connection.deliveryResources,
+        )
     }
 
     val isOpen: Boolean get() = lifecycle.isOpen
 
     internal suspend fun onData(data: ByteArray) {
-        if (!lifecycle.receiveData {
+        if (!lifecycle.receiveData { transition ->
+                // After a local CLOSE the peer may still send data until its own CLOSE arrives
+                // (RFC 4254 5.3). The lifecycle accepts it without DELIVER_DATA: nobody reads it.
+                if (SshChannelEffect.DELIVER_DATA !in transition.effects) return@receiveData
                 window.consumeLocal(data.size)
                 if (incomingIngress.trySend(data).isFailure) {
                     throw org.connectbot.sshlib.SshException("Received data for a closed forwarding stream")
@@ -147,12 +164,11 @@ internal class ForwardingChannel(
     private fun finishInboundDelivery() {
         inboundDeliveryOpen = false
         incomingIngress.close()
+        delivery.finish()
     }
 
     private fun abortInboundDelivery() {
-        finishInboundDelivery()
-        incomingDeliveryJob.cancel()
-        _incomingData.close()
+        delivery.abort()
     }
 
     suspend fun sendData(data: ByteArray) {
@@ -161,9 +177,11 @@ internal class ForwardingChannel(
             while (window.remoteRemaining <= 0) {
                 windowAvailable.receive()
             }
-            val chunkSize = window.sendChunkSize(data.size - offset, maxPacketSize)
-            val chunk = data.copyOfRange(offset, offset + chunkSize)
+            var chunkSize = 0
             if (!lifecycle.sendData {
+                    chunkSize = window.sendChunkSize(data.size - offset, maxPacketSize)
+                    if (chunkSize == 0) return@sendData
+                    val chunk = data.copyOfRange(offset, offset + chunkSize)
                     connection.sendChannelData(remoteChannelNumber, chunk)
                     window.consumeRemote(chunkSize)
                 }
@@ -179,17 +197,20 @@ internal class ForwardingChannel(
     }
 
     suspend fun close() {
-        lifecycle.sendClose { transition ->
+        try {
+            if (lifecycle.state == SshChannelState.CLOSED) return
+            lifecycle.sendClose { transition ->
+                abortInboundDelivery()
+                windowAvailable.close()
+                connection.sendChannelClose(remoteChannelNumber)
+                if (SshChannelEffect.CLOSE_CHANNEL in transition.effects) {
+                    connection.notifyChannelClosed(localChannelNumber)
+                }
+            }
+        } finally {
+            // Also release unread delivery after remote CLOSE or protocol-owner shutdown.
             abortInboundDelivery()
             windowAvailable.close()
-            connection.sendChannelClose(remoteChannelNumber)
-            if (SshChannelEffect.CLOSE_CHANNEL in transition.effects) {
-                connection.notifyChannelClosed(localChannelNumber)
-            }
         }
-        // A remote CLOSE makes sendClose a no-op, but close() still owns
-        // releasing any unread delivery job retained for graceful draining.
-        abortInboundDelivery()
-        windowAvailable.close()
     }
 }

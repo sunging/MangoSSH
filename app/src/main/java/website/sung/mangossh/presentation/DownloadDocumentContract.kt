@@ -2,8 +2,6 @@ package website.sung.mangossh.presentation
 
 import android.content.Context
 import android.content.Intent
-import android.os.Environment
-import android.provider.DocumentsContract
 import androidx.activity.result.contract.ActivityResultContracts
 import website.sung.mangossh.session.DownloadMimeTypes
 import website.sung.mangossh.session.downloadDocumentMimeType
@@ -20,8 +18,5 @@ internal class DownloadDocumentContract :
         super.createIntent(context, input).apply {
             // Resolve each launch separately: one launcher can save different file types.
             type = downloadDocumentMimeType(input)
-            putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri(
-                "com.android.externalstorage.documents", "primary:${Environment.DIRECTORY_DOWNLOADS}",
-            ))
-        }.preferPlatformDocumentPicker(context)
+        }.withDocumentSaveLocation().preferPlatformDocumentPicker(context)
 }

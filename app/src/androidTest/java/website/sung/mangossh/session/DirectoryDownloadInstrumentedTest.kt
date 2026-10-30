@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material3.Button
@@ -19,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -204,10 +206,12 @@ class DirectoryDownloadInstrumentedTest {
                 assertTrue(LocalDocumentTree.listChildren(context.contentResolver, tree,
                     children.single { it.name == "empty-folder" }.documentUri).isEmpty())
                 withContext(Dispatchers.Main) { completed.value = finished }
-                compose.onNodeWithContentDescription(context.getString(R.string.common_open)).performClick()
+                val open = compose.onNodeWithContentDescription(context.getString(R.string.common_open))
+                val transferWindow = (open.fetchSemanticsNode().root as ViewRootForTest).view
+                open.performClick()
                 awaitOpenedDirectory(downloaded.name)
                 if (args.getString("captureDirectoryDownloadResult") == "true") capturePicker("$location-result.png")
-                returnToTest()
+                returnToTest(transferWindow)
                 assertNull("Cancelling browsing must not launch a file viewer", launched.get())
                 compose.onNodeWithContentDescription(context.getString(R.string.common_open)).performClick()
                 awaitOpenedDirectory(downloaded.name)
@@ -264,14 +268,27 @@ class DirectoryDownloadInstrumentedTest {
         }
     }
 
-    /** Back only navigates the system viewer; it never selects another tree or edits documents. */
-    private fun returnToTest() {
+    /** Returns after the originating sheet regains input focus and the system viewer settles. */
+    private fun returnToTest(transferWindow: View) {
         repeat(12) {
+            var focused = false
+            instrumentation.runOnMainSync { focused = transferWindow.hasWindowFocus() }
+            if (focused) {
+                instrumentation.waitForIdleSync()
+                automation.waitForIdle(500, 5_000)
+                compose.waitForIdle()
+                return
+            }
             val root = automation.rootInActiveWindow
-            val inTest = root?.let { try { it.packageName == context.packageName } finally { it.recycle() } } ?: false
-            if (inTest) { compose.waitForIdle(); return }
-            automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-            SystemClock.sleep(200)
+            val inBrowser = root?.let {
+                try { it.packageName?.toString()?.endsWith(".documentsui") == true } finally { it.recycle() }
+            } ?: false
+            if (inBrowser) {
+                // A package snapshot can lag the focus transfer. Settle each Back
+                // before another input so it cannot dismiss the underlying sheet.
+                automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                automation.waitForIdle(500, 5_000)
+            } else SystemClock.sleep(150)
         }
         fail("The system directory viewer did not return to the test")
     }

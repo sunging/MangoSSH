@@ -19,9 +19,8 @@
 
 #include <jni.h>
 #include <vterm.h>
-#include <memory>
+#include <cassert>
 #include <mutex>
-#include <string>
 
 template<typename T>
 class ScopedLocalRef {
@@ -50,6 +49,27 @@ class Terminal {
 public:
     Terminal(JNIEnv* env, jobject callbacks, int rows = 24, int cols = 80);
     ~Terminal();
+    bool ready() const { return mVt && mVts; }
+
+    // TerminalNative's lifetime lock serializes these scopes and destruction.
+    // JNI arguments keep the callback alive until return; neither pointer escapes
+    // this call. No native worker issues callbacks outside an active scope.
+    class CallbackScope {
+    public:
+        CallbackScope(Terminal& terminal, JNIEnv* env, jobject callbacks) : mTerminal(terminal) {
+            assert(!terminal.mEnv && !terminal.mCallbacks);
+            terminal.mEnv = env;
+            terminal.mCallbacks = callbacks;
+        }
+        ~CallbackScope() {
+            mTerminal.mCallbacks = nullptr;
+            mTerminal.mEnv = nullptr;
+        }
+        CallbackScope(const CallbackScope&) = delete;
+        CallbackScope& operator=(const CallbackScope&) = delete;
+    private:
+        Terminal& mTerminal;
+    };
 
     // Input handling - receives data from PTY/transport
     int writeInput(const uint8_t* data, size_t length);
@@ -59,13 +79,11 @@ public:
 
     // Keyboard input - generates escape sequences
     bool dispatchKey(int modifiers, int key);
+    void paste(JNIEnv* env, jbyteArray data);
     bool dispatchCharacter(int modifiers, int codepoint);
 
     // Cell data retrieval for rendering
-    int getCellRun(JNIEnv* env, int row, int col, jobject runObject);
-
-    // Line info retrieval (for continuation/soft-wrap detection)
-    bool getLineContinuation(int row);
+    int getCells(JNIEnv* env, jobject buffer, int requests);
 
     // Color configuration
     int setPaletteColors(const uint32_t* colors, int count);
@@ -92,6 +110,21 @@ private:
     // libvterm state fallback for OSC sequences. Same no-synchronous-reentry
     // rule as screen callbacks.
     static int termOscFallback(int command, VTermStringFragment frag, void* user);
+    static int termApcFallback(VTermStringFragment frag, void* user);
+    static int termCsiFallback(const char* leader, const long args[], int argcount, const char* intermed, char command, void* user);
+    static int termControlFallback(unsigned char control, void* user);
+    static int termImageResize(int buffer, int delta, int rows, int cols, void* user);
+    static int termImageEdit(VTermRect rect, void* user);
+    static int termImageScroll(VTermRect rect, int downward, int rightward, void* user);
+    static int termImageClear(void* user);
+    int imageEdit(int kind, VTermRect rect, int downward = 0, int rightward = 0);
+    jlong imageFragment(bool kitty, VTermStringFragment frag);
+    bool mReservingImage = false;
+    bool mImageTracking = false;
+    bool mOsc1337Image = false;
+    jmethodID mImageFragmentMethod{};
+    jmethodID mImageEditMethod{};
+    jmethodID mImageQueryMethod{};
 
     // libvterm selection callbacks for OSC 52 clipboard. Same no-synchronous-
     // reentry rule as screen callbacks.
@@ -102,21 +135,23 @@ private:
     void invokeDamage(int startRow, int endRow, int startCol, int endCol);
     int invokeMoverect(VTermRect dest, VTermRect src);
     void invokeMoveCursor(int row, int col, int oldRow, int oldCol, bool visible);
+    void beginCursorBatch();
+    void finishCursorBatch();
     void invokeSetTermProp(VTermProp prop, VTermValue* val);
     void invokeBell();
     void invokePushScrollbackLine(int cols, const VTermScreenCell* cells, bool softWrapped);
     int invokePopScrollbackLine(int cols, VTermScreenCell* cells);
     void invokeClearScrollback();
     void invokeKeyboardOutput(const char* data, size_t len);
-    int invokeOscSequence(int command, const std::string& payload, int cursorRow, int cursorCol);
+    int invokeTextFragment(int kind, int command, VTermStringFragment frag, int row, int col);
+    void packCell(const VTermScreenCell& cell, jint* out);
 
     // Helper functions
-    static bool cellStyleEqual(const VTermScreenCell& a, const VTermScreenCell& b);
     void resolveColor(const VTermColor& color, uint8_t& r, uint8_t& g, uint8_t& b);
 
     // libvterm state
-    VTerm* mVt;
-    VTermScreen* mVts;
+    VTerm* mVt{};
+    VTermScreen* mVts{};
     VTermScreenCallbacks mScreenCallbacks{};
     VTermStateFallbacks mStateFallbacks{};
     VTermSelectionCallbacks mSelectionCallbacks{};
@@ -124,71 +159,47 @@ private:
     // Selection buffer for OSC 52 clipboard (libvterm uses this for base64 decoding)
     static constexpr size_t SELECTION_BUFFER_SIZE = 8192;
     char mSelectionBuffer[SELECTION_BUFFER_SIZE]{};
-    std::string mSelectionData;  // Accumulates decoded clipboard data across fragments
 
-    // OSC fallback buffer for accumulating fragmented OSC sequences (e.g., OSC 8 hyperlinks)
-    std::string mOscData;  // Accumulates OSC payload across fragments
-    int mOscCommand{-1};   // Current OSC command being accumulated
     VTermPos mOscCursorPos{0, 0};  // Cursor position when OSC sequence started
 
     // Terminal dimensions
     int mRows;
     int mCols;
 
-    // Java callback object and method IDs
-    JavaVM* mJavaVM{};
-    jobject mCallbacks;  // Global reference
-    jmethodID mDamageMethod;
-    jmethodID mMoverectMethod;
-    jmethodID mMoveCursorMethod;
-    jmethodID mSetTermPropMethod;
-    jmethodID mBellMethod;
-    jmethodID mPushScrollbackMethod;
-    jmethodID mPopScrollbackMethod;
-    jmethodID mClearScrollbackMethod;
-    jmethodID mKeyboardInputMethod;
-    jmethodID mOscSequenceMethod;
+    // libvterm may move the cursor once per glyph. Rendering only needs the
+    // position after an input write, so retain one notification per batch.
+    bool mCursorBatchActive = false;
+    bool mCursorPending = false;
+    bool mCursorVisible = true;
+    VTermPos mCursorPosition{0, 0};
+    VTermPos mCursorOldPosition{0, 0};
 
-    // Cached Java class and field IDs for CellRun
-    jclass mCellRunClass;
-    jfieldID mFgRedField;
-    jfieldID mFgGreenField;
-    jfieldID mFgBlueField;
-    jfieldID mBgRedField;
-    jfieldID mBgGreenField;
-    jfieldID mBgBlueField;
-    jfieldID mBoldField;
-    jfieldID mUnderlineField;
-    jfieldID mItalicField;
-    jfieldID mBlinkField;
-    jfieldID mReverseField;
-    jfieldID mStrikeField;
-    jfieldID mFontField;
-    jfieldID mDwlField;
-    jfieldID mDhlField;
-    jfieldID mCharsField;
-    jfieldID mRunLengthField;
+    // Java callback object and method IDs
+    JNIEnv* mEnv{};
+    jobject mCallbacks{};  // Borrowed only during CallbackScope
+    jmethodID mDamageMethod{};
+    jmethodID mMoverectMethod{};
+    jmethodID mMoveCursorMethod{};
+    jmethodID mSetTermPropMethod{};
+    jmethodID mBellMethod{};
+    jmethodID mPushScrollbackMethod{};
+    jmethodID mPopScrollbackMethod{};
+    jmethodID mClearScrollbackMethod{};
+    jmethodID mKeyboardInputMethod{};
+    jmethodID mTextFragmentMethod{};
+    jmethodID mCellBufferMethod{};
 
     // Cached Java classes and methods for callbacks (avoid FindClass/GetMethodID overhead)
-    jclass mTermRectClass;
-    jmethodID mTermRectConstructor;
-    jclass mCursorPositionClass;
-    jmethodID mCursorPositionConstructor;
-    jclass mScreenCellClass;
-    jmethodID mScreenCellConstructor;
-    jclass mArrayListClass;
-    jmethodID mArrayListConstructor;
-    jmethodID mArrayListAdd;
-    jclass mCharacterClass;
-    jmethodID mCharacterValueOf;
-    jclass mTerminalPropertyBoolClass;
-    jmethodID mTerminalPropertyBoolConstructor;
-    jclass mTerminalPropertyIntClass;
-    jmethodID mTerminalPropertyIntConstructor;
-    jclass mTerminalPropertyStringClass;
-    jmethodID mTerminalPropertyStringConstructor;
-    jclass mTerminalPropertyColorClass;
-    jmethodID mTerminalPropertyColorConstructor;
+    jclass mTermRectClass{};
+    jmethodID mTermRectConstructor{};
+    jclass mCursorPositionClass{};
+    jmethodID mCursorPositionConstructor{};
+    jclass mTerminalPropertyBoolClass{};
+    jmethodID mTerminalPropertyBoolConstructor{};
+    jclass mTerminalPropertyIntClass{};
+    jmethodID mTerminalPropertyIntConstructor{};
+    jclass mTerminalPropertyColorClass{};
+    jmethodID mTerminalPropertyColorConstructor{};
 
     // Thread safety. Native entrypoints are serialized by this non-recursive
     // mutex. Java callbacks invoked from libvterm must not synchronously call

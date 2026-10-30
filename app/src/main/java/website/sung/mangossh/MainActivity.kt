@@ -7,23 +7,21 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Bundle
 import android.os.Build
-import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.view.KeyEvent
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.runtime.CompositionLocalProvider
+import website.sung.mangossh.presentation.LocalDocumentPickerRequests
+import website.sung.mangossh.presentation.AppLockActivityObserver
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import website.sung.mangossh.core.MangoLog
-import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.presentation.AppLanguage
 import website.sung.mangossh.presentation.MangoSshApp
 import website.sung.mangossh.presentation.MangoSshViewModel
@@ -34,6 +32,7 @@ import website.sung.mangossh.ui.theme.resolveAppDarkTheme
 /** Hosts the Compose UI and delegates biometric verification without retaining biometric data. */
 class MainActivity : AppCompatActivity() {
     private val mangoViewModel: MangoSshViewModel by viewModels()
+    private lateinit var biometricUnlockPrompt: BiometricUnlockPrompt
     private var pendingNotificationPermissionAction: (() -> Unit)? = null
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -48,6 +47,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        biometricUnlockPrompt = BiometricUnlockPrompt(this, mangoViewModel.appLockCoordinator,
+            unavailable = { mangoViewModel.reportUserMessage(R.string.biometric_unavailable) })
+        lifecycle.addObserver(AppLockActivityObserver(this, mangoViewModel.appLockCoordinator, biometricUnlockPrompt::cancel))
         handleSessionIntent(intent)
         enableEdgeToEdge()
         setContent {
@@ -64,13 +66,15 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             MangoSshTheme(preferences = themePreferences) {
-                MangoSshApp(
-                    viewModel = mangoViewModel,
-                    onRequestBiometricUnlock = ::requestBiometricUnlock,
-                    onRequestNotificationPermission = ::requestNotificationPermission,
-                    selectedAppLanguage = AppLanguage.current(),
-                    onSetAppLanguage = ::setAppLanguage,
-                )
+                CompositionLocalProvider(LocalDocumentPickerRequests provides mangoViewModel.appLockCoordinator.documents) {
+                    MangoSshApp(
+                        viewModel = mangoViewModel,
+                        onRequestBiometricUnlock = ::requestBiometricUnlock,
+                        onRequestNotificationPermission = ::requestNotificationPermission,
+                        selectedAppLanguage = AppLanguage.current(),
+                        onSetAppLanguage = ::setAppLanguage,
+                    )
+                }
             }
         }
     }
@@ -106,66 +110,7 @@ class MainActivity : AppCompatActivity() {
         handleSessionIntent(intent)
     }
 
-    override fun onStart() {
-        super.onStart()
-        mangoViewModel.evaluateAutoLock()
-    }
-
-    override fun onStop() {
-        if (!isChangingConfigurations) mangoViewModel.noteBackgrounded()
-        super.onStop()
-    }
-
-    /**
-     * Requests a strong biometric only after the user explicitly chooses biometric app unlock.
-     *
-     * The prompt is bound to [BiometricGateKey], a Keystore key that Android will only let the
-     * app use immediately after a fresh biometric match. [onAuthenticationSucceeded] only calls
-     * [MangoSshViewModel.unlockWithBiometrics] once that key is actually exercised, so the
-     * callback cannot be forged by instrumentation tooling without a genuine sensor match.
-     */
-    private fun requestBiometricUnlock() {
-        val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
-        val availability = BiometricManager.from(this).canAuthenticate(authenticators)
-        if (availability != BiometricManager.BIOMETRIC_SUCCESS) {
-            mangoViewModel.reportUserMessage(R.string.biometric_unavailable)
-            return
-        }
-        val cipher = try {
-            BiometricGateKey.encryptCipher()
-        } catch (error: KeyPermanentlyInvalidatedException) {
-            BiometricGateKey.reset()
-            MangoLog.warn(MangoLogEvent.BIOMETRIC_UNLOCK_KEY_INVALIDATED, error)
-            mangoViewModel.reportUserMessage(R.string.biometric_unavailable)
-            return
-        }
-        val prompt = BiometricPrompt(
-            this,
-            ContextCompat.getMainExecutor(this),
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    val authenticatedCipher = result.cryptoObject?.cipher
-                    val verified = authenticatedCipher != null && runCatching { authenticatedCipher.doFinal() }.isSuccess
-                    if (verified) {
-                        mangoViewModel.unlockWithBiometrics()
-                    } else {
-                        MangoLog.warn(MangoLogEvent.BIOMETRIC_UNLOCK_FAILED)
-                        mangoViewModel.reportUserMessage(R.string.biometric_unavailable)
-                    }
-                }
-            },
-        )
-        prompt.authenticate(
-            BiometricPrompt.PromptInfo.Builder()
-                .setTitle(getString(R.string.app_name))
-                .setSubtitle(getString(R.string.biometric_prompt_subtitle))
-                .setNegativeButtonText(getString(R.string.biometric_prompt_use_pin))
-                .setAllowedAuthenticators(authenticators)
-                .build(),
-            BiometricPrompt.CryptoObject(cipher),
-        )
-    }
+    private fun requestBiometricUnlock() = biometricUnlockPrompt.authenticate()
 
     /**
      * Requests notification access before starting a foreground session.

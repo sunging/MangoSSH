@@ -14,22 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// Modified by MangoSSH in 2026 to rebuild visible rows after terminal resize.
 // Modified by MangoSSH in 2026 to make the scrollback line limit configurable.
+// Modified by MangoSSH in 2026 to keep Windows ConPTY history intact across resizes.
+// Modified by MangoSSH in 2026 to report mouse tracking and coalesce background snapshots.
+// Modified by MangoSSH in 2026 to ignore, rather than reject, calls after close.
 package org.connectbot.terminal
 
 import android.icu.lang.UCharacter
 import android.icu.lang.UProperty
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
-import android.view.Choreographer
+import android.os.SystemClock
 import androidx.annotation.VisibleForTesting
 import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.slf4j.LoggerFactory
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
+
+private val logger = LoggerFactory.getLogger("org.connectbot.terminal.TerminalEmulator")
 
 /**
  * URL discovered in terminal output.
@@ -75,11 +83,45 @@ sealed class UrlScanScope {
  * so it may be run in a Service on Android. It handles the management of
  * the terminal emulation state.
  */
-sealed interface TerminalEmulator {
+sealed interface TerminalEmulator : AutoCloseable {
+    /**
+     * Permanently dispose this session and release its native, screen, and image state.
+     * Closing is synchronous and idempotent, and does not initialize an unused terminal.
+     * Stop session I/O and detach its UI before closing. A temporary UI detachment does
+     * not end a session. After close, input, key, paste, color, resize and image calls
+     * are ignored and content queries return nothing, so a transport or UI that races
+     * the close cannot crash; scalar configuration and dimensions remain readable.
+     */
+    override fun close()
+
+    /**
+     * Declares whether a UI is currently displaying this emulator.
+     *
+     * The emulator is deliberately retained while its terminal screen is off
+     * composition (the app is backgrounded). While inactive, snapshot rebuilds
+     * are coalesced to a slow timer instead of running at frame cadence:
+     * transport bytes are still applied and scrollback still grows, but the
+     * emulator stops rebuilding snapshots for output nobody is watching.
+     * Passing `true` forces one full repaint from current terminal state.
+     */
+    fun setDisplayActive(active: Boolean)
+
+    /** Queue pasted text in the same FIFO as keyboard/IME input, honoring bracketed paste. */
+    fun pasteText(text: String)
+
+    /** Policy controlling whether incoming inline image commands are accepted. */
+    val inlineImages: InlineImages
+
+    /** Changing policy cancels in-progress and pending image uploads. */
+    fun setInlineImages(inlineImages: InlineImages)
+
+    /** Physical cell dimensions used by image placement; defaults to 8 by 16 pixels. */
+    fun setCellPixelSize(width: Int, height: Int)
+
     /**
      * Write data to the terminal (from PTY/transport).
      */
-    fun writeInput(data: ByteArray, offset: Int = 0, length: Int = data.size)
+    fun writeInput(data: ByteArray, offset: Int = 0, length: Int = data.size - offset)
 
     /**
      * Write data to the terminal using ByteBuffer (more efficient for large data).
@@ -195,19 +237,6 @@ sealed interface TerminalEmulator {
      * While the alternate screen is active, primary scrollback is not scanned.
      */
     fun getUrls(scope: UrlScanScope = UrlScanScope.CurrentView): List<TerminalUrl>
-
-    /**
-     * Declares whether a UI is currently displaying this emulator.
-     *
-     * The emulator is deliberately retained while its terminal screen is off
-     * composition (the app is backgrounded). While inactive, snapshot rebuilds
-     * are coalesced to a slow timer instead of running at frame cadence:
-     * transport bytes are still applied and scrollback still grows, but the
-     * emulator stops doing per-frame main-thread work for output nobody is
-     * watching. Passing `true` forces one full repaint from current terminal
-     * state.
-     */
-    fun setDisplayActive(active: Boolean)
 }
 
 class TerminalEmulatorFactory {
@@ -235,6 +264,7 @@ class TerminalEmulatorFactory {
          * @param boldAsBright Whether bold text using low-intensity ANSI colors (0–7) promotes to
          *                     the corresponding bright palette color (8–15), matching xterm's
          *                     default boldColors behavior. Defaults to true.
+         * @param inlineImages Policy for accepting iTerm2 and Kitty inline images. Defaults to off.
          * @param maxScrollbackLines Maximum number of off-screen lines retained per session. Defaults to 1000.
          */
         fun create(
@@ -250,6 +280,7 @@ class TerminalEmulatorFactory {
             onProgressChange: ((ProgressState, Int) -> Unit)? = null,
             autoDetectUrls: Boolean = false,
             boldAsBright: Boolean = true,
+            inlineImages: InlineImages = InlineImages.Off,
             maxScrollbackLines: Int = 1000,
         ): TerminalEmulator = TerminalEmulatorImpl(
             looper = looper,
@@ -264,6 +295,7 @@ class TerminalEmulatorFactory {
             onProgressChange = onProgressChange,
             autoDetectUrls = autoDetectUrls,
             boldAsBright = boldAsBright,
+            inlineImages = inlineImages,
             maxScrollbackLines = maxScrollbackLines,
         )
     }
@@ -285,7 +317,9 @@ class TerminalEmulatorFactory {
  * Threading model:
  * - JNI callbacks run on native thread and accumulate damage
  * - Handler posts to specified Looper to escape native mutex
- * - Snapshot building happens on Handler thread
+ * - Snapshot building runs on a background dispatcher, coalescing pending damage
+ * - Compose applies the latest snapshot on its frame clock and never takes backend locks
+ * - Compose keyboard/IME and pasteText share a per-terminal FIFO; callbacks use the Handler
  * - StateFlow emission is thread-safe
  *
  * @param looper The Looper to use for callback handling (typically main looper)
@@ -306,13 +340,14 @@ internal class TerminalEmulatorImpl(
     initialCols: Int = 80,
     defaultForeground: Color = Color.White,
     defaultBackground: Color = Color.Black,
-    private val onKeyboardInput: (ByteArray) -> Unit = {},
-    private val onBell: (() -> Unit)? = null,
-    private val onResize: ((TerminalDimensions) -> Unit)? = null,
-    private val onClipboardCopy: ((String) -> Unit)? = null,
-    private val onProgressChange: ((ProgressState, Int) -> Unit)? = null,
+    private var onKeyboardInput: (ByteArray) -> Unit = {},
+    private var onBell: (() -> Unit)? = null,
+    private var onResize: ((TerminalDimensions) -> Unit)? = null,
+    private var onClipboardCopy: ((String) -> Unit)? = null,
+    private var onProgressChange: ((ProgressState, Int) -> Unit)? = null,
     override val autoDetectUrls: Boolean = false,
     override val boldAsBright: Boolean = true,
+    inlineImages: InlineImages = InlineImages.Off,
     private val maxScrollbackLines: Int = 1000,
 ) : TerminalEmulator,
     TerminalCallbacks {
@@ -323,23 +358,157 @@ internal class TerminalEmulatorImpl(
 
     // Handler for escaping native mutex
     private val handler = Handler(looper)
+    private val callbackToken = Any()
+
+    @Volatile private var closed = false
+
+    private fun checkNotClosed() = check(!closed) { "Terminal has been closed" }
+
+    // Token cancellation excludes image drawable teardown on the same Handler.
+    private inline fun postCallback(crossinline action: () -> Unit) {
+        synchronized(damageLock) {
+            if (closed) return
+            handler.postAtTime({ if (!closed) action() }, callbackToken, SystemClock.uptimeMillis())
+        }
+    }
+
+    internal fun enqueueCommand(action: () -> Unit) {
+        if (closed) return
+        commands.execute {
+            synchronized(damageLock) {
+                if (!closed) action()
+            }
+        }
+    }
+    internal val commands = TerminalDispatcher()
+    private val snapshots = TerminalDispatcher()
+    private var outputBatch: ByteArrayOutputStream? = null
+
+    internal fun batchOutput(action: () -> Unit) = synchronized(damageLock) {
+        checkNotClosed()
+        check(outputBatch == null)
+        val batch = ByteArrayOutputStream(4096)
+        outputBatch = batch
+        try {
+            action()
+        } finally {
+            outputBatch = null
+            if (batch.size() > 0) {
+                val data = batch.toByteArray()
+                postCallback { onKeyboardInput.invoke(data) }
+            }
+        }
+    }
+
+    private fun limits(policy: InlineImages): InlineImageLimits = when (policy) {
+        InlineImages.Off -> InlineImageLimits()
+        is InlineImages.On -> policy.limits
+        is InlineImages.Ask -> policy.limits
+    }
+
+    internal val imageStore = InlineImageStore(limits(inlineImages), handler).apply {
+        rows = initialRows
+        cols = initialCols
+    }
+    private val imageProtocol = InlineImageProtocol(imageStore, { onKeyboardInput(it) }, { payload, row, col -> onOscSequence(1337, payload, row, col) }).apply {
+        enabled = inlineImages !is InlineImages.Off
+        consentGate = createConsentGate(inlineImages)
+    }
+
+    @Volatile private var imagePolicy: InlineImages = inlineImages
+
+    override val inlineImages: InlineImages get() = imagePolicy
+
+    override fun setInlineImages(inlineImages: InlineImages): Unit = synchronized(damageLock) {
+        if (closed) return@synchronized
+        val oldLimits = imageStore.limits
+        imageProtocol.consentGate?.reset()
+        imageProtocol.reset()
+        imagePolicy = inlineImages
+        imageProtocol.enabled = inlineImages !is InlineImages.Off
+        imageStore.limits = limits(inlineImages)
+        imageProtocol.consentGate = createConsentGate(inlineImages)
+        if (inlineImages is InlineImages.Off || oldLimits != imageStore.limits) imageStore.clear()
+        propertyChanged = true
+        requestProcessPendingUpdatesLocked()
+    }
+
+    private fun createConsentGate(policy: InlineImages): InlineImageConsentGate? {
+        if (policy !is InlineImages.Ask) return null
+        return InlineImageConsentGate(policy.limits.maxImages) { request, completion ->
+            postCallback {
+                policy.confirm.startCoroutine(
+                    request,
+                    object : Continuation<Boolean> {
+                        override val context = EmptyCoroutineContext
+                        override fun resumeWith(result: Result<Boolean>) {
+                            commands.execute {
+                                synchronized(damageLock) {
+                                    if (closed) return@synchronized
+                                    synchronized(imageStore) { completion(result.getOrDefault(false)) }
+                                    propertyChanged = true
+                                    requestProcessPendingUpdatesLocked()
+                                }
+                            }
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    override fun setCellPixelSize(width: Int, height: Int): Unit = synchronized(damageLock) {
+        if (closed) return@synchronized
+        require(width > 0 && height > 0)
+        imageStore.updateCellSize(width, height)
+        propertyChanged = true
+        requestProcessPendingUpdatesLocked()
+    }
+
+    override fun onImageFragment(kitty: Boolean, data: ByteArray, initial: Boolean, final: Boolean, row: Int, col: Int): Long = synchronized(damageLock) {
+        val result = synchronized(imageStore) {
+            imageProtocol.accept(kitty, data, initial, final, row, col)
+        }
+        propertyChanged = true
+        requestProcessPendingUpdatesLocked()
+        result
+    }
+
+    override fun onImageEdit(kind: Int, top: Int, bottom: Int, left: Int, right: Int, downward: Int, rightward: Int) {
+        synchronized(damageLock) {
+            when (kind) {
+                0 -> imageStore.edit(TermRect(top, bottom, left, right))
+                1 -> imageStore.scroll(TermRect(top, bottom, left, right), downward, rightward)
+                2 -> imageStore.clearScreen()
+                3 -> imageStore.resizeImages(top != 0, downward, bottom, left)
+                4 -> imageProtocol.reset()
+            }
+        }
+    }
+
+    override fun onImageQuery(query: Int) {
+        val response = when (query) {
+            14 -> "\u001b[4;${imageStore.rows.toLong() * imageStore.cellHeight};${imageStore.cols.toLong() * imageStore.cellWidth}t"
+            16 -> "\u001b[6;${imageStore.cellHeight};${imageStore.cellWidth}t"
+            18 -> "\u001b[8;${imageStore.rows};${imageStore.cols}t"
+            else -> return
+        }
+        onKeyboardInput(response.toByteArray(Charsets.US_ASCII))
+    }
 
     // Default colors (can be updated via setDefaultColors)
     private var currentDefaultForeground: Color = defaultForeground
     private var currentDefaultBackground: Color = defaultBackground
 
-    // Damage accumulation (thread-safe) - MUST be initialized before terminalNative
+    // Session lock: emulator operations -> native lifetime lock -> native mutex.
+    // Synchronous JNI callbacks may reenter this monitor, never native methods.
+    // MUST be initialized before terminalNative.
     private val damageLock = Any()
     private val pendingDamageRegions = mutableListOf<DamageRegion>()
     private var damagePosted = false
+    private var nextSnapshotNanos = System.nanoTime()
     private var cursorMoved = false
     private var propertyChanged = false
-
-    // False while no UI is displaying this emulator (app backgrounded). Guarded
-    // by damageLock. Snapshot rebuilds are coalesced to BACKGROUND_COALESCE_MILLIS
-    // instead of frame cadence so a chatty background command stops driving
-    // per-frame main-thread work.
-    private var displayActive = true
 
     // Pending semantic segments to apply during processPendingUpdates
     private val pendingSemanticSegments = mutableListOf<PendingSemanticSegment>()
@@ -357,10 +526,13 @@ internal class TerminalEmulatorImpl(
 
     // Terminal dimensions
     override val dimensions: TerminalDimensions
-        get() = TerminalDimensions(rows = rows, columns = cols)
+        get() = publishedDimensions
 
-    private var rows = initialRows
-    private var cols = initialCols
+    @Volatile private var rows = initialRows
+
+    @Volatile private var cols = initialCols
+
+    @Volatile private var publishedDimensions = TerminalDimensions(initialRows, initialCols)
 
     // Cursor state
     private var cursorRow = 0
@@ -371,52 +543,95 @@ internal class TerminalEmulatorImpl(
 
     // Terminal properties
     private var terminalTitle = ""
-    private var isAltScreenActive = false
+
+    @Volatile private var isAltScreenActive = false
 
     // True while the remote program has any mouse tracking mode enabled
     // (libvterm VTERM_PROP_MOUSE is non-zero). Read into every snapshot so the UI
     // can forward swipes as wheel reports instead of panning local scrollback.
     private var mouseTrackingActive = false
 
+    // Set once the remote turns out to be Windows ConPTY; see popScrollbackLine.
+    private val conptyDetector = ConptyDetector()
+
+    // False while no UI is displaying this emulator (app backgrounded). Guarded
+    // by damageLock. Snapshot rebuilds are coalesced to BACKGROUND_COALESCE_MILLIS
+    // instead of frame cadence so a chatty background command stops driving
+    // snapshot work nobody sees. A bumped generation retires an already
+    // scheduled slow rebuild when the display becomes active again.
+    private var displayActive = true
+    private var scheduleGeneration = 0L
+
     // Scrollback buffer
-    private val scrollback = mutableListOf<TerminalLine>()
+    private val scrollback = ArrayDeque<TerminalLine>()
 
     // Cached immutable copy of scrollback - only recreate when scrollback changes
     private var scrollbackSnapshot: List<TerminalLine> = emptyList()
     private var scrollbackDirty = false
 
-    // Reusable CellRun for fetching cell data
-    private val cellRun = CellRun()
+    // Fixed-capacity direct scratch, independent of screen dimensions.
+    private val screenTransfer = ScreenTransfer()
+    private var transferRanges = IntArray(initialRows * 2)
+    internal val transferCalls: Long get() = screenTransfer.calls
+    internal val transferBytes: Long get() = screenTransfer.bytes
 
-    // Flyweight for the blank cell used to pad a row out to the terminal width.
-    // Cells are immutable and compared structurally, so every padding cell across
-    // every row can share one instance; on a typical mostly-empty screen this is
-    // the bulk of per-repaint Cell allocation. updateLine only runs on the main
-    // thread, so a plain field with a single-slot cache is enough.
-    private var paddingCell: TerminalLine.Cell? = null
-
-    private fun paddingCell(fg: Color, bg: Color): TerminalLine.Cell {
-        val cached = paddingCell
-        if (cached != null && cached.fgColor == fg && cached.bgColor == bg) return cached
-        return TerminalLine.Cell(char = ' ', fgColor = fg, bgColor = bg).also { paddingCell = it }
-    }
-
-    // Current screen lines cache. An Array (not a List) so updateLine can replace
-    // one damaged row in place under damageLock instead of copying the whole
-    // row list per damaged row (that was O(rows^2) for a full-screen repaint).
-    // buildSnapshot still takes an immutable .toList() copy for each snapshot.
-    private var currentLines: Array<TerminalLine> = Array(initialRows) { row ->
+    // Current screen lines cache
+    private var currentLines = MutableList(initialRows) { row ->
         TerminalLine.empty(row, initialCols, currentDefaultForeground, currentDefaultBackground)
     }
 
     // Native terminal instance - MUST be initialized AFTER damageLock and other state
-    private val terminalNative by lazy {
-        TerminalNative(this).apply {
-            resize(initialRows, initialCols)
-            if (setBoldHighbright(boldAsBright) != 0) {
-                Log.e(TAG, "Failed to set boldAsBright=$boldAsBright")
+    private val terminalNativeDelegate = lazy {
+        checkNotClosed()
+        val native = TerminalNative(this)
+        try {
+            native.apply {
+                resize(initialRows, initialCols)
+                if (setBoldHighbright(boldAsBright) != 0) {
+                    logger.error("Failed to set boldAsBright=$boldAsBright")
+                }
             }
+        } catch (failure: Throwable) {
+            native.close()
+            throw failure
         }
+    }
+    private val terminalNative by terminalNativeDelegate
+
+    override fun close(): Unit = synchronized(damageLock) {
+        if (closed) return@synchronized
+        // TerminalNative rejects synchronous close from a JNI callback before
+        // we mark the emulator closed or discard any of its state.
+        if (terminalNativeDelegate.isInitialized()) terminalNative.close()
+        closed = true
+        handler.removeCallbacksAndMessages(callbackToken)
+        imageProtocol.enabled = false
+        imageProtocol.consentGate?.reset()
+        imageProtocol.consentGate = null
+        imageProtocol.reset()
+        imagePolicy = InlineImages.Off
+        imageStore.close()
+        scrollback.clear()
+        scrollbackSnapshot = emptyList()
+        currentLines.clear()
+        pendingScrollback = null
+        scrollbackCellBuffer = null
+        screenTransfer.close()
+        pendingDamageRegions.clear()
+        pendingSemanticSegments.clear()
+        movedSegmentRows.clear()
+        semanticSegmentTexts.clear()
+        transferRanges = IntArray(0)
+        textDecoder.reset()
+        oscParser.reset()
+        terminalTitle = ""
+        outputBatch = null
+        onKeyboardInput = {}
+        onBell = null
+        onResize = null
+        onClipboardCopy = null
+        onProgressChange = null
+        _snapshot.value = TerminalSnapshot.empty(0, 0).copy(cursorVisible = false, cursorBlink = false, sequenceNumber = ++sequenceNumber)
     }
 
     // Parser for OSC sequences
@@ -429,14 +644,18 @@ internal class TerminalEmulatorImpl(
     /**
      * Write data to the terminal (from PTY/transport).
      */
-    override fun writeInput(data: ByteArray, offset: Int, length: Int) {
+    override fun writeInput(data: ByteArray, offset: Int, length: Int): Unit = synchronized(damageLock) {
+        if (closed) return@synchronized
+        conptyDetector.observe(data, offset, length)
         terminalNative.writeInput(data, offset, length)
     }
 
     /**
      * Write data to the terminal using ByteBuffer (more efficient for large data).
      */
-    override fun writeInput(buffer: ByteBuffer, length: Int) {
+    override fun writeInput(buffer: ByteBuffer, length: Int): Unit = synchronized(damageLock) {
+        if (closed) return@synchronized
+        conptyDetector.observe(buffer, length)
         terminalNative.writeInput(buffer, length)
     }
 
@@ -444,61 +663,77 @@ internal class TerminalEmulatorImpl(
      * Resize the terminal.
      */
     override fun resize(newRows: Int, newCols: Int) {
-        rows = newRows
-        cols = newCols
-        terminalNative.resize(newRows, newCols)
+        resize(
+            newRows = newRows,
+            newCols = newCols,
+            widthPixels = newCols * imageStore.cellWidth,
+            heightPixels = newRows * imageStore.cellHeight,
+        )
+    }
 
-        synchronized(damageLock) {
-            val currentDefaultFg = currentDefaultForeground
-            val currentDefaultBg = currentDefaultBackground
+    /** Resize using the physical viewport measured by the Compose terminal. */
+    internal fun resize(newRows: Int, newCols: Int, widthPixels: Int, heightPixels: Int): Unit = synchronized(damageLock) {
+        if (closed) return@synchronized
+        require(newRows > 0 && newCols > 0) { "Terminal dimensions must be positive" }
+        require(widthPixels > 0 && heightPixels > 0) { "Terminal pixel dimensions must be positive" }
+        imageStore.rows = newRows
+        imageStore.cols = newCols
+        val resized = TerminalDimensions(newRows, newCols, widthPixels, heightPixels)
+        val charactersChanged = newRows != rows || newCols != cols
+        if (!charactersChanged && resized == publishedDimensions) return@synchronized
 
-            // Native resize can report damage before this Kotlin-side cache has
-            // the new row count. Reset it atomically so every scheduled row
-            // lookup remains valid, then rebuild from libvterm on the normal
-            // serialized snapshot-update path.
-            currentLines = Array(newRows) { row ->
-                TerminalLine.empty(row, newCols, currentDefaultFg, currentDefaultBg)
+        if (charactersChanged) {
+            terminalNative.resize(newRows, newCols)
+            rows = newRows
+            cols = newCols
+
+            // Retain existing immutable rows until the first complete resized snapshot.
+            // New rows have no content yet; retrieval fills them without an empty screen.
+            currentLines = MutableList(newRows) { row ->
+                currentLines.getOrNull(row) ?: TerminalLine.empty(row, 0)
             }
+            transferRanges = IntArray(newRows * 2)
+            semanticSegmentTexts.keys.removeAll { it.row >= newRows }
 
-            pendingDamageRegions.clear()
-            pendingDamageRegions.add(
-                DamageRegion(
-                    startRow = 0,
-                    endRow = newRows,
-                    startCol = 0,
-                    endCol = newCols,
-                    preserveSegments = false,
-                ),
-            )
-            requestProcessPendingUpdatesLocked()
+            // Rebuild all lines after resize
+            invalidateDisplay()
         }
+        publishedDimensions = resized
 
         // Resize callback - post to handler to avoid blocking native thread
-        handler.post {
-            onResize?.invoke(TerminalDimensions(rows = rows, columns = cols))
-        }
+        postCallback { onResize?.invoke(resized) }
     }
 
     /**
      * Dispatch a key event to the terminal.
      */
     override fun dispatchKey(modifiers: Int, key: Int) {
-        terminalNative.dispatchKey(modifiers, key)
+        if (closed) return
+        commands.call {
+            synchronized(damageLock) {
+                if (!closed) terminalNative.dispatchKey(modifiers, key)
+            }
+        }
     }
 
     /**
      * Dispatch a character to the terminal.
      */
     override fun dispatchCharacter(modifiers: Int, codepoint: Int) {
-        terminalNative.dispatchCharacter(modifiers, codepoint)
+        if (closed) return
+        commands.call {
+            synchronized(damageLock) {
+                if (!closed) terminalNative.dispatchCharacter(modifiers, codepoint)
+            }
+        }
     }
 
     /**
      * Forward one mouse-wheel tick to the remote program.
      *
      * Only meaningful while [TerminalSnapshot.mouseTrackingActive] is true. The
-     * bytes go through the same handler queue as [onKeyboardInput] so they stay
-     * ordered relative to typed input.
+     * bytes go through the same command FIFO as keyboard and IME input so they
+     * stay ordered relative to typed input.
      *
      * @param scrollUp true for a wheel-up tick
      * @param row zero-based terminal row under the pointer
@@ -506,8 +741,14 @@ internal class TerminalEmulatorImpl(
      */
     internal fun sendMouseWheel(scrollUp: Boolean, row: Int, col: Int) {
         val bytes = MouseReport.wheel(scrollUp, row, col)
-        handler.post {
-            onKeyboardInput.invoke(bytes)
+        enqueueCommand { onKeyboardInput(bytes) }
+    }
+
+    override fun pasteText(text: String) {
+        enqueueCommand {
+            batchOutput {
+                terminalNative.pasteText(text.toByteArray(Charsets.UTF_8))
+            }
         }
     }
 
@@ -520,16 +761,16 @@ internal class TerminalEmulatorImpl(
      * Get the text output of the last completed command.
      */
     override fun getLastCommandOutput(): String? {
+        if (closed) return null
         val currentSnapshot = _snapshot.value
         val allLines = currentSnapshot.scrollback + currentSnapshot.lines
         return getLastCommandOutput(allLines)
     }
 
     override fun getUrls(scope: UrlScanScope): List<TerminalUrl> {
+        if (closed) return emptyList()
         val currentSnapshot = _snapshot.value
-        val altScreenActive = synchronized(damageLock) {
-            isAltScreenActive
-        }
+        val altScreenActive = currentSnapshot.alternateScreen
         return extractUrls(currentSnapshot.linesForUrlScan(scope, altScreenActive))
     }
 
@@ -542,13 +783,14 @@ internal class TerminalEmulatorImpl(
      * @param ansiColors IntArray of ARGB colors (size 16 for all ANSI colors)
      * @return Number of colors set, or -1 on error
      */
-    override fun setAnsiPalette(ansiColors: IntArray): Int {
+    override fun setAnsiPalette(ansiColors: IntArray): Int = synchronized(damageLock) {
+        if (closed) return@synchronized -1
         require(ansiColors.size >= 16) {
             "ANSI palette must contain 16 colors"
         }
         val result = terminalNative.setPaletteColors(ansiColors, 16)
         invalidateDisplay()
-        return result
+        result
     }
 
     /**
@@ -562,14 +804,15 @@ internal class TerminalEmulatorImpl(
      * @param background ARGB background color
      * @return 0 on success, -1 on error
      */
-    override fun setDefaultColors(foreground: Int, background: Int): Int {
+    override fun setDefaultColors(foreground: Int, background: Int): Int = synchronized(damageLock) {
+        if (closed) return@synchronized -1
         synchronized(damageLock) {
             currentDefaultForeground = Color(foreground)
             currentDefaultBackground = Color(background)
         }
         val result = terminalNative.setDefaultColors(foreground, background)
         invalidateDisplay()
-        return result
+        result
     }
 
     /**
@@ -607,17 +850,36 @@ internal class TerminalEmulatorImpl(
         return 0
     }
 
-    // Track the last moverect source region so pushScrollbackLine knows
-    // whether it was a full-screen or partial scroll region scroll.
-    private var lastMoveRectSrc: TermRect? = null
-
     override fun moverect(dest: TermRect, src: TermRect): Int {
-        // Save source rect — pushScrollbackLine uses it to limit segment shifting
-        // to lines within the scroll region (avoiding corruption of tmux status bars etc.)
-        lastMoveRectSrc = src
         // Treat moverect as display damage on the destination. Semantic segments
-        // are shifted alongside the moved text elsewhere, so preserve them here.
+        // and the cached cells move with the native screen. libvterm invokes
+        // sb_pushline before moverect, so the scrollback callback cannot infer
+        // this region without using stale information from the previous scroll.
         synchronized(damageLock) {
+            if (
+                dest.startCol == 0 && src.startCol == 0 &&
+                dest.endCol == cols && src.endCol == cols &&
+                dest.endRow - dest.startRow == src.endRow - src.startRow
+            ) {
+                val previous = currentLines
+                val updated = previous.toMutableList()
+                for (offset in 0 until dest.endRow - dest.startRow) {
+                    val destRow = dest.startRow + offset
+                    val srcRow = src.startRow + offset
+                    if (destRow in updated.indices && srcRow in previous.indices) {
+                        updated[destRow] = previous[srcRow].copy(row = destRow)
+                    }
+                }
+                currentLines = updated
+
+                val movedTexts = semanticSegmentTexts.entries.mapNotNull { (key, value) ->
+                    if (key.row !in src.startRow until src.endRow) return@mapNotNull null
+                    val destRow = dest.startRow + key.row - src.startRow
+                    if (destRow !in dest.startRow until dest.endRow) null else key.copy(row = destRow) to value
+                }
+                semanticSegmentTexts.keys.removeAll { it.row in dest.startRow until dest.endRow }
+                semanticSegmentTexts.putAll(movedTexts)
+            }
             for (row in dest.startRow until dest.endRow) {
                 movedSegmentRows.add(row)
             }
@@ -627,10 +889,12 @@ internal class TerminalEmulatorImpl(
         return 0
     }
 
-    override fun moveCursor(pos: CursorPosition, oldPos: CursorPosition, visible: Boolean): Int {
+    override fun moveCursor(pos: CursorPosition, oldPos: CursorPosition, visible: Boolean): Int = moveCursor(pos.row, pos.col, oldPos.row, oldPos.col, visible)
+
+    override fun moveCursor(row: Int, col: Int, oldRow: Int, oldCol: Int, visible: Boolean): Int {
         synchronized(damageLock) {
-            cursorRow = pos.row
-            cursorCol = pos.col
+            cursorRow = row
+            cursorCol = col
             cursorVisible = visible
             cursorMoved = true
             requestProcessPendingUpdatesLocked()
@@ -642,8 +906,8 @@ internal class TerminalEmulatorImpl(
         synchronized(damageLock) {
             when (value) {
                 is TerminalProperty.StringValue -> {
-                    // Property 7 is VTERM_PROP_TITLE (from vterm.h line 257)
-                    if (prop == 7) {
+                    // Property 4 is VTERM_PROP_TITLE.
+                    if (prop == 4) {
                         terminalTitle = value.value
                         propertyChanged = true
                     }
@@ -665,6 +929,7 @@ internal class TerminalEmulatorImpl(
 
                         // Property 3 is VTERM_PROP_ALTSCREEN (from vterm.h line 256)
                         3 -> {
+                            imageStore.switchScreen(value.value)
                             isAltScreenActive = value.value
                             propertyChanged = true
                         }
@@ -683,8 +948,8 @@ internal class TerminalEmulatorImpl(
                         }
                     }
 
-                    // Property 6 is VTERM_PROP_CURSORSHAPE (from vterm.h line 260)
-                    if (prop == 6) {
+                    // Property 7 is VTERM_PROP_CURSORSHAPE.
+                    if (prop == 7) {
                         cursorShape = when (value.value) {
                             1 -> CursorShape.BLOCK
 
@@ -714,28 +979,24 @@ internal class TerminalEmulatorImpl(
 
     override fun bell(): Int {
         // Bell callback - post to handler to avoid blocking native thread
-        handler.post {
+        postCallback {
             onBell?.invoke()
         }
         return 0
     }
 
-    override fun pushScrollbackLine(cols: Int, cells: Array<ScreenCell>, softWrapped: Boolean): Int {
-        // Convert ScreenCell array to TerminalLine
-        val cellList = cells.take(cols).map { screenCell ->
-            TerminalLine.Cell(
-                char = screenCell.char,
-                combiningChars = screenCell.combiningChars.filter { it != '\u0000' },
-                fgColor = Color(screenCell.fgRed, screenCell.fgGreen, screenCell.fgBlue),
-                bgColor = Color(screenCell.bgRed, screenCell.bgGreen, screenCell.bgBlue),
-                bold = screenCell.bold,
-                italic = screenCell.italic,
-                underline = screenCell.underline,
-                reverse = screenCell.reverse,
-                strike = screenCell.strike,
-                width = screenCell.width,
-            )
-        }
+    private var scrollbackCellBuffer: ByteBuffer? = CellData.buffer()
+    private var pendingScrollback: PackedCells.Builder? = null
+
+    override fun cellBuffer(): ByteBuffer = checkNotNull(scrollbackCellBuffer)
+
+    override fun pushScrollbackLine(cols: Int, start: Int, count: Int, cells: ByteBuffer, softWrapped: Boolean): Int {
+        if (start == 0) pendingScrollback = PackedCells.Builder(cols)
+        val builder = checkNotNull(pendingScrollback)
+        builder.read(cells, 0, count)
+        if (start + count < cols) return 0
+        val cellList = builder.build()
+        pendingScrollback = null
 
         synchronized(damageLock) {
             // FIRST: Preserve semantic segments from line 0 (the line being scrolled out)
@@ -750,36 +1011,9 @@ internal class TerminalEmulatorImpl(
 
             scrollback.add(line)
             if (scrollback.size > maxScrollbackLines) {
-                scrollback.removeAt(0)
+                scrollback.removeFirst()
             }
             scrollbackDirty = true
-
-            // Shift semantic segments up within the scroll region only.
-            // Lines outside the region (e.g. tmux status bar) keep their segments.
-            val moveRect = lastMoveRectSrc
-            lastMoveRectSrc = null
-            if (currentLines.size > 1) {
-                val shiftEnd = if (moveRect != null) {
-                    // Partial scroll region: only shift within the region
-                    moveRect.endRow.coerceAtMost(currentLines.size)
-                } else {
-                    // Full-screen scroll
-                    currentLines.size
-                }
-                val newLines = currentLines.copyOf()
-                for (row in 0 until shiftEnd - 1) {
-                    shiftStoredSegmentTexts(fromRow = row + 1, toRow = row)
-                    newLines[row] = currentLines[row + 1].copy(row = row)
-                }
-                // Clear segments for the last line in the scroll region
-                if (shiftEnd > 0 && shiftEnd <= currentLines.size) {
-                    removeStoredSegmentTexts(shiftEnd - 1)
-                    newLines[shiftEnd - 1] = currentLines[shiftEnd - 1].copy(
-                        semanticSegments = emptyList(),
-                    )
-                }
-                currentLines = newLines
-            }
 
             propertyChanged = true
             requestProcessPendingUpdatesLocked()
@@ -789,6 +1023,7 @@ internal class TerminalEmulatorImpl(
 
     override fun clearScrollback(): Int {
         synchronized(damageLock) {
+            imageStore.trimHistory(0)
             scrollback.clear()
             scrollbackDirty = true
             propertyChanged = true
@@ -797,46 +1032,31 @@ internal class TerminalEmulatorImpl(
         return 0
     }
 
-    override fun popScrollbackLine(cols: Int, cells: Array<ScreenCell>): Int {
+    /**
+     * Refills the top of a screen that grew taller with the newest scrollback line.
+     *
+     * Declined for a Windows ConPTY peer: it answers the window-size change by
+     * repainting its whole viewport from the home position, keeping the viewport
+     * top where it was, so restored rows would be overwritten and lost. Returning
+     * 0 makes libvterm keep its rows at the top and add blank rows below,
+     * matching the repaint that follows.
+     */
+    override fun popScrollbackLine(cols: Int, start: Int, count: Int, cells: ByteBuffer): Int {
+        if (conptyDetector.detected) return 0
         synchronized(damageLock) {
             if (scrollback.isEmpty()) return 0
 
-            val line = scrollback.removeAt(scrollback.size - 1)
-            scrollbackDirty = true
-
-            // Convert TerminalLine.Cell back to ScreenCell (reverse of pushScrollbackLine)
-            for (i in 0 until minOf(cols, cells.size)) {
-                val cell = line.cells.getOrNull(i)
-                if (cell != null) {
-                    cells[i] = ScreenCell(
-                        char = cell.char,
-                        combiningChars = cell.combiningChars,
-                        fgRed = (cell.fgColor.red * 255).toInt(),
-                        fgGreen = (cell.fgColor.green * 255).toInt(),
-                        fgBlue = (cell.fgColor.blue * 255).toInt(),
-                        bgRed = (cell.bgColor.red * 255).toInt(),
-                        bgGreen = (cell.bgColor.green * 255).toInt(),
-                        bgBlue = (cell.bgColor.blue * 255).toInt(),
-                        bold = cell.bold,
-                        italic = cell.italic,
-                        underline = cell.underline,
-                        reverse = cell.reverse,
-                        strike = cell.strike,
-                        width = cell.width,
-                    )
-                } else {
-                    // Fill remaining columns with empty cells using current defaults
-                    cells[i] = ScreenCell(
-                        char = ' ',
-                        fgRed = (currentDefaultForeground.red * 255).toInt(),
-                        fgGreen = (currentDefaultForeground.green * 255).toInt(),
-                        fgBlue = (currentDefaultForeground.blue * 255).toInt(),
-                        bgRed = (currentDefaultBackground.red * 255).toInt(),
-                        bgGreen = (currentDefaultBackground.green * 255).toInt(),
-                        bgBlue = (currentDefaultBackground.blue * 255).toInt(),
-                    )
-                }
+            val line = scrollback.last()
+            CellData.writeRange(cells, start, count, line.cells, currentDefaultForeground, currentDefaultBackground)
+            // A narrower restore must not leave a dangling wide cell at the edge.
+            if (start + count == cols && cols <= line.cells.size && cols > 0 && line.cells.width(cols - 1) == 2) {
+                for (slot in 0 until CellData.CODE_POINTS) cells.putInt((count - 1) * CellData.BYTES + slot * 4, 0)
+                cells.putInt((count - 1) * CellData.BYTES, 32)
+                cells.putInt((count - 1) * CellData.BYTES + 24, 1)
             }
+            if (start + count < cols) return 1
+            scrollback.removeLast()
+            scrollbackDirty = true
 
             propertyChanged = true
             requestProcessPendingUpdatesLocked()
@@ -845,14 +1065,42 @@ internal class TerminalEmulatorImpl(
     }
 
     override fun onKeyboardInput(data: ByteArray): Int {
+        outputBatch?.let { batch ->
+            batch.write(data)
+            if (batch.size() >= 16 * 1024) {
+                val chunk = batch.toByteArray()
+                batch.reset()
+                postCallback { onKeyboardInput.invoke(chunk) }
+            }
+            return 0
+        }
         // Keyboard output callback - post to handler
-        handler.post {
+        postCallback {
             onKeyboardInput.invoke(data)
         }
         return 0
     }
 
-    override fun onOscSequence(command: Int, payload: String, cursorRow: Int, cursorCol: Int): Int {
+    private val textDecoder = TerminalTextDecoder()
+
+    override fun onTextFragment(
+        kind: Int,
+        command: Int,
+        data: ByteArray,
+        initial: Boolean,
+        final: Boolean,
+        cursorRow: Int,
+        cursorCol: Int,
+    ): Int {
+        val payload = textDecoder.accept(kind, command, data, initial, final) ?: return 1
+        return when (kind) {
+            TerminalTextDecoder.PROPERTY -> setTermProp(command, TerminalProperty.StringValue(payload))
+            TerminalTextDecoder.CLIPBOARD -> if (payload.isEmpty()) 1 else onOscSequence(52, "c;$payload", 0, 0)
+            else -> onOscSequence(command, payload, cursorRow, cursorCol)
+        }
+    }
+
+    private fun onOscSequence(command: Int, payload: String, cursorRow: Int, cursorCol: Int): Int {
         // Use the native cursor position from libvterm for OSC sequence processing
         val actions = synchronized(damageLock) {
             oscParser.parse(command, payload, cursorRow, cursorCol, cols)
@@ -880,14 +1128,14 @@ internal class TerminalEmulatorImpl(
 
                     is OscParser.Action.ClipboardCopy -> {
                         // Post clipboard copy to handler thread to avoid blocking native callback
-                        handler.post {
+                        postCallback {
                             onClipboardCopy?.invoke(action.data)
                         }
                     }
 
                     is OscParser.Action.SetProgress -> {
                         // Post progress change to handler thread to avoid blocking native callback
-                        handler.post {
+                        postCallback {
                             onProgressChange?.invoke(action.state, action.progress)
                         }
                     }
@@ -925,7 +1173,9 @@ internal class TerminalEmulatorImpl(
             )
 
             val updatedSegments = (line.semanticSegments + newSegment).sortedBy { it.startCol }
-            currentLines[row] = line.copy(semanticSegments = updatedSegments)
+            currentLines = currentLines.toMutableList().apply {
+                this[row] = line.copy(semanticSegments = updatedSegments)
+            }
             pendingSemanticSegments.add(
                 PendingSemanticSegment(
                     row = row,
@@ -949,10 +1199,11 @@ internal class TerminalEmulatorImpl(
 
     /**
      * Process pending updates and emit new snapshot.
-     * This runs on the Handler thread, NOT in the JNI callback.
+     * This runs on the snapshot dispatcher, NOT in the JNI callback or on the UI thread.
      */
     @VisibleForTesting
-    fun processPendingUpdates() {
+    fun processPendingUpdates(): Unit = synchronized(damageLock) {
+        if (closed) return@synchronized
         // Collect pending changes
         val damageRegions: List<DamageRegion>
         val needsUpdate: Boolean
@@ -962,21 +1213,48 @@ internal class TerminalEmulatorImpl(
             pendingDamageRegions.clear()
             movedRows = movedSegmentRows.toSet()
             movedSegmentRows.clear()
-            damagePosted = false
             needsUpdate = damageRegions.isNotEmpty() || cursorMoved || propertyChanged
             cursorMoved = false
             propertyChanged = false
         }
 
-        if (!needsUpdate) return
+        if (!needsUpdate) return@synchronized
 
-        // Update damaged lines (safe to call getCellRun now - not in callback)
+        // One range per row and one immutable replacement per changed row.
+        for (row in 0 until rows) {
+            transferRanges[row * 2] = cols
+            transferRanges[row * 2 + 1] = 0
+        }
         for (region in damageRegions) {
-            // Ensure row is within bounds [0, rows)
-            val startRow = region.startRow.coerceIn(0, rows - 1)
-            val endRow = region.endRow.coerceIn(startRow, rows) // endRow is exclusive
-            for (row in startRow until endRow) {
-                updateLine(row, region, preserveMovedSegments = row in movedRows)
+            for (row in region.startRow.coerceIn(0, rows) until region.endRow.coerceIn(0, rows)) {
+                val previous = currentLines[row].cells
+                var start = (region.startCol - 1).coerceIn(0, cols)
+                var end = (region.endCol + 1).coerceIn(start, cols)
+                if (previous.size != cols) {
+                    start = 0
+                    end = cols
+                } else {
+                    if (start > 0 && start < cols && previous.width(start) == 0) start--
+                    if (end < cols && previous.width(end) == 0) end++
+                }
+                transferRanges[row * 2] = minOf(transferRanges[row * 2], start)
+                transferRanges[row * 2 + 1] = maxOf(transferRanges[row * 2 + 1], end)
+            }
+        }
+        var builder: PackedCells.Builder? = null
+        screenTransfer.fetch(terminalNative, transferRanges) { row, start, count, buffer, offset, softWrapped ->
+            val previous = currentLines[row].cells
+            if (builder == null && (previous.size != cols || !previous.matches(buffer, offset, start, count))) {
+                builder = PackedCells.Builder(cols).apply { copy(previous, 0, start) }
+            }
+            builder?.read(buffer, offset, count)
+            if (start + count == transferRanges[row * 2 + 1]) {
+                val cells = builder?.let {
+                    if (start + count < cols) it.copy(previous, start + count, cols)
+                    it.build()
+                } ?: previous
+                updateLine(row, cells, softWrapped, damageRegions, row in movedRows)
+                builder = null
             }
         }
 
@@ -1041,142 +1319,44 @@ internal class TerminalEmulatorImpl(
     /**
      * Update a single line by fetching cell data from the terminal.
      */
-    private fun updateLine(row: Int, damageRegion: DamageRegion, preserveMovedSegments: Boolean) {
-        // Safety check: ensure row is within bounds
-        if (row !in 0..<rows) {
-            return
-        }
-
-        // Capture current default colors (thread-safe)
-        val currentDefaultFg: Color
-        val currentDefaultBg: Color
-        synchronized(damageLock) {
-            currentDefaultFg = currentDefaultForeground
-            currentDefaultBg = currentDefaultBackground
-        }
-
-        val cells = ArrayList<TerminalLine.Cell>(cols)
-        var col = 0
-
-        while (col < cols) {
-            cellRun.reset()
-            val runLength = terminalNative.getCellRun(row, col, cellRun)
-
-            if (runLength <= 0) {
-                // Fill remaining with shared blank padding cells
-                val pad = paddingCell(currentDefaultFg, currentDefaultBg)
-                while (col < cols) {
-                    cells.add(pad)
-                    col++
-                }
-                break
-            }
-
-            // Convert CellRun colors to Compose Color
-            val fgColor = Color(cellRun.fgRed, cellRun.fgGreen, cellRun.fgBlue)
-            val bgColor = Color(cellRun.bgRed, cellRun.bgGreen, cellRun.bgBlue)
-
-            // Process characters in the run
-            var charIndex = 0
-            var cellsInRun = 0
-
-            while (charIndex < cellRun.chars.size && cellsInRun < runLength) {
-                val char = cellRun.chars[charIndex]
-                if (char == 0.toChar()) break
-
-                var combiningChars: MutableList<Char>? = null
-                charIndex++
-
-                // Handle surrogate pairs (characters > U+FFFF like emoji)
-                if (char.isHighSurrogate() && charIndex < cellRun.chars.size) {
-                    val nextChar = cellRun.chars[charIndex]
-                    if (nextChar.isLowSurrogate()) {
-                        combiningChars = mutableListOf(nextChar)
-                        charIndex++
-                    }
-                }
-
-                // Collect combining characters
-                while (charIndex < cellRun.chars.size && isCombiningCharacter(cellRun.chars[charIndex])) {
-                    if (combiningChars == null) {
-                        combiningChars = mutableListOf()
-                    }
-                    combiningChars.add(cellRun.chars[charIndex])
-                    charIndex++
-                }
-
-                // Determine cell width
-                val extraChars = combiningChars ?: TerminalLine.EMPTY_COMBINING_CHARS
-                val width = if (extraChars.isNotEmpty() && extraChars[0].isLowSurrogate()) {
-                    val codepoint = Character.toCodePoint(char, extraChars[0])
-                    if (isFullwidthCodepoint(codepoint)) 2 else 1
-                } else {
-                    if (isFullwidthCharacter(char)) 2 else 1
-                }
-
-                cells.add(
-                    TerminalLine.Cell(
-                        char = char,
-                        combiningChars = extraChars,
-                        fgColor = fgColor,
-                        bgColor = bgColor,
-                        bold = cellRun.bold,
-                        italic = cellRun.italic,
-                        underline = cellRun.underline,
-                        blink = cellRun.blink,
-                        reverse = cellRun.reverse,
-                        strike = cellRun.strike,
-                        width = width,
-                    ),
-                )
-
-                cellsInRun++
-                if (width == 2) {
-                    cellsInRun++
-                }
-            }
-
-            col += cellsInRun
-        }
-
-        // Check if this line is soft-wrapped (the next line is a continuation).
-        // A line is soft-wrapped if the next row has continuation=true.
-        val softWrapped = if (row + 1 < rows) {
-            terminalNative.getLineContinuation(row + 1)
-        } else {
-            // Last visible row - we can't know if it's wrapped until it scrolls
-            false
-        }
-
+    private fun updateLine(row: Int, cells: PackedCells, softWrapped: Boolean, damageRegions: List<DamageRegion>, preserveMovedSegments: Boolean) {
         // Update cached line, preserving existing semantic segments only when they
         // were not touched by terminal text damage. This prevents stale OSC 8
         // links from surviving line redraws while allowing display-only
         // invalidations, such as palette changes, to keep semantic metadata.
         // Must synchronize to ensure visibility of segments added by addSemanticSegment
         synchronized(damageLock) {
-            if (row >= currentLines.size) return
-            val previousLine = currentLines[row]
-            val existingSegments = previousLine.semanticSegments
-            val preservedSegments = if (damageRegion.preserveSegments || preserveMovedSegments) {
-                existingSegments.filter { segment ->
-                    segment.endCol <= cells.size &&
-                        (!preserveMovedSegments || segmentTextStillMatches(row, segment, cells))
+            run {
+                val previousLine = currentLines[row]
+                val existingSegments = previousLine.semanticSegments
+                val preservedSegments = if (existingSegments.isEmpty()) {
+                    existingSegments
+                } else if (preserveMovedSegments) {
+                    existingSegments.filter { segment ->
+                        segment.endCol <= cells.size &&
+                            (!preserveMovedSegments || segmentTextStillMatches(row, segment, cells))
+                    }
+                } else {
+                    existingSegments.filter { segment ->
+                        segment.endCol <= cells.size &&
+                            damageRegions.none { region ->
+                                !region.preserveSegments && row >= region.startRow && row < region.endRow &&
+                                    segment.overlaps(region.startCol, region.endCol)
+                            }
+                    }
                 }
-            } else {
-                existingSegments.filter { segment ->
-                    segment.endCol <= cells.size &&
-                        !segment.overlaps(damageRegion.startCol, damageRegion.endCol)
+                replaceStoredSegmentTexts(row, preservedSegments)
+                if (cells !== previousLine.cells || softWrapped != previousLine.softWrapped || preservedSegments != existingSegments) {
+                    currentLines[row] = TerminalLine(row, cells, softWrapped = softWrapped, semanticSegments = preservedSegments)
                 }
             }
-            replaceStoredSegmentTexts(row, preservedSegments)
-            currentLines[row] = TerminalLine(row, cells, softWrapped = softWrapped, semanticSegments = preservedSegments)
         }
     }
 
     /**
      * Build a complete snapshot of terminal state.
      */
-    private fun buildSnapshot(): TerminalSnapshot {
+    private fun buildSnapshot(): TerminalSnapshot = synchronized(damageLock) {
         // Read all mutable state under damageLock to ensure cross-thread visibility.
         // addSemanticSegment writes currentLines on the JNI callback thread; without
         // the lock here, the snapshot-building thread might see a stale reference.
@@ -1187,13 +1367,34 @@ internal class TerminalEmulatorImpl(
                 scrollbackSnapshot = scrollback.toList()
                 scrollbackDirty = false
             }
-            lines = currentLines.toList() // Immutable copy (24 references)
+            val previous = _snapshot.value.lines
+            lines = if (previous.size == currentLines.size && currentLines.indices.all { currentLines[it] === previous[it] }) {
+                previous
+            } else {
+                currentLines.toList()
+            }
             scrollbackCopy = scrollbackSnapshot // Reuse cached immutable copy
         }
 
-        return TerminalSnapshot(
-            lines = lines,
-            scrollback = scrollbackCopy,
+        val hasImages = imageStore.assets.isNotEmpty()
+        if (hasImages) imageStore.preparePlaceholders(lines, scrollbackCopy)
+        TerminalSnapshot(
+            lines = if (!hasImages) {
+                lines
+            } else {
+                lines.mapIndexed { row, line ->
+                    val images = (imageStore.slices(row) + imageStore.placeholders(line.cells)).sortedWith(compareBy<ImageSlice> { it.z }.thenBy { it.asset.id })
+                    if (images.isEmpty()) line else line.copy(images = images)
+                }
+            },
+            scrollback = if (!hasImages) {
+                scrollbackCopy
+            } else {
+                scrollbackCopy.mapIndexed { row, line ->
+                    val images = imageStore.slices(row - scrollbackCopy.size, false) + imageStore.placeholders(line.cells)
+                    if (images.isEmpty()) line else line.copy(images = images)
+                }
+            },
             cursorRow = cursorRow,
             cursorCol = cursorCol,
             cursorVisible = cursorVisible,
@@ -1204,7 +1405,7 @@ internal class TerminalEmulatorImpl(
             cols = cols,
             timestamp = System.currentTimeMillis(),
             sequenceNumber = sequenceNumber++,
-            isAltScreen = isAltScreenActive,
+            alternateScreen = isAltScreenActive,
             mouseTrackingActive = mouseTrackingActive,
         )
     }
@@ -1393,43 +1594,42 @@ internal class TerminalEmulatorImpl(
      * MUST be called with damageLock held.
      */
     private fun requestProcessPendingUpdatesLocked() {
-        if (damagePosted) return
+        if (closed || damagePosted) return
         damagePosted = true
+        val generation = scheduleGeneration
         if (!displayActive) {
             // Backgrounded: no UI is watching. Drain on a slow timer so damage
             // and scrollback still get applied (nothing accumulates unbounded)
-            // without doing updateLine/buildSnapshot at frame cadence.
-            handler.postDelayed(backgroundFlushRunnable, BACKGROUND_COALESCE_MILLIS)
+            // without rebuilding snapshots at frame cadence.
+            snapshots.executeAfter(BACKGROUND_COALESCE_MILLIS) { processScheduledUpdates(generation) }
             return
         }
-        if (looper == Looper.getMainLooper()) {
-            handler.post {
-                Choreographer.getInstance().postFrameCallback {
-                    processPendingUpdates()
-                }
-            }
+        val waitNanos = nextSnapshotNanos - System.nanoTime()
+        if (waitNanos <= 0) {
+            snapshots.execute { processScheduledUpdates(generation) }
         } else {
-            handler.post {
-                processPendingUpdates()
-            }
+            snapshots.executeAfter((waitNanos + 999_999) / 1_000_000) { processScheduledUpdates(generation) }
         }
     }
 
-    private val backgroundFlushRunnable = Runnable { processPendingUpdates() }
+    override fun setDisplayActive(active: Boolean): Unit = synchronized(damageLock) {
+        if (closed || active == displayActive) return@synchronized
+        displayActive = active
+        if (!active) return@synchronized
+        // Returning to the foreground: retire any slow rebuild still pending,
+        // repaint from authoritative libvterm state and flush right away.
+        scheduleGeneration++
+        damagePosted = false
+        invalidateDisplay()
+    }
 
-    override fun setDisplayActive(active: Boolean) {
-        synchronized(damageLock) {
-            if (active == displayActive) return
-            displayActive = active
-            if (!active) return
-            // Returning to the foreground: repaint from authoritative libvterm
-            // state and flush at frame cadence right away.
-            handler.removeCallbacks(backgroundFlushRunnable)
-            pendingDamageRegions.clear()
-            pendingDamageRegions.add(DamageRegion(0, rows, 0, cols, preserveSegments = true))
-            damagePosted = false
-            requestProcessPendingUpdatesLocked()
-        }
+    private fun processScheduledUpdates(generation: Long): Unit = synchronized(damageLock) {
+        if (generation != scheduleGeneration) return@synchronized
+        damagePosted = false
+        // Limit sustained work to roughly one snapshot per refresh interval,
+        // without adding a full interval to every newly arriving input burst.
+        nextSnapshotNanos = System.nanoTime() + 16_000_000L
+        processPendingUpdates()
     }
 
     /**
@@ -1508,7 +1708,7 @@ internal class TerminalEmulatorImpl(
         }
     }
 
-    private fun segmentTextStillMatches(row: Int, segment: SemanticSegment, cells: List<TerminalLine.Cell>): Boolean {
+    private fun segmentTextStillMatches(row: Int, segment: SemanticSegment, cells: PackedCells): Boolean {
         return synchronized(damageLock) {
             val expected = semanticSegmentTexts[SemanticSegmentKey(row, segment)] ?: return@synchronized true
             if (!isValidCellRange(segment.startCol, segment.endCol, cells.size)) return@synchronized false
@@ -1519,15 +1719,11 @@ internal class TerminalEmulatorImpl(
 
     private fun isValidCellRange(startCol: Int, endCol: Int, cellCount: Int): Boolean = startCol >= 0 && endCol >= startCol && endCol <= cellCount
 
-    private fun cellText(cells: List<TerminalLine.Cell>, startCol: Int, endCol: Int): String = buildString {
-        for (col in startCol until endCol) {
-            append(cells[col].char)
-            cells[col].combiningChars.forEach { append(it) }
-        }
-    }
+    private fun cellText(cells: PackedCells, startCol: Int, endCol: Int): String = cells.text(startCol, endCol)
 
     private fun replaceStoredSegmentTexts(row: Int, segments: List<SemanticSegment>) {
         synchronized(damageLock) {
+            if (semanticSegmentTexts.isEmpty()) return
             val keep = segments.mapTo(mutableSetOf()) { SemanticSegmentKey(row, it) }
             semanticSegmentTexts.keys.removeAll { it.row == row && it !in keep }
         }
@@ -1539,19 +1735,7 @@ internal class TerminalEmulatorImpl(
         }
     }
 
-    private fun shiftStoredSegmentTexts(fromRow: Int, toRow: Int) {
-        synchronized(damageLock) {
-            removeStoredSegmentTexts(toRow)
-            val moved = semanticSegmentTexts.entries
-                .filter { it.key.row == fromRow }
-                .map { (key, value) -> key.copy(row = toRow) to value }
-            removeStoredSegmentTexts(fromRow)
-            semanticSegmentTexts.putAll(moved)
-        }
-    }
-
     companion object {
-        private const val TAG = "TerminalEmulatorImpl"
         private const val MAX_URL_SCAN_CONTINUATION_ROWS = 6
 
         /** Snapshot coalescing period while no UI is attached (app backgrounded). */
@@ -1603,9 +1787,20 @@ private data class SemanticSegmentKey(
 }
 
 /**
- * Represents the size of the terminal in characters.
+ * Represents the terminal's character grid and physical viewport.
+ *
+ * Pixel dimensions are populated by the Compose [Terminal]. Headless users get dimensions based
+ * on the cell size supplied to [TerminalEmulator.setCellPixelSize].
  */
 data class TerminalDimensions(
     val rows: Int,
     val columns: Int,
-)
+    val widthPixels: Int,
+    val heightPixels: Int,
+) {
+    /** Retained for source and binary compatibility with character-only callers. */
+    constructor(rows: Int, columns: Int) : this(rows, columns, 0, 0)
+
+    /** Retained for binary compatibility with the original two-field data class. */
+    fun copy(rows: Int, columns: Int): TerminalDimensions = TerminalDimensions(rows, columns, widthPixels, heightPixels)
+}

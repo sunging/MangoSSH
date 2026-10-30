@@ -2,7 +2,7 @@ package website.sung.mangossh.presentation.settings
 
 import android.net.Uri
 import androidx.activity.compose.LocalActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
+import website.sung.mangossh.presentation.rememberAppDocumentLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import website.sung.mangossh.presentation.SystemDocumentContract
 import androidx.compose.foundation.layout.*
@@ -49,10 +49,10 @@ internal fun BackupSettingsPage(state: BackupSettingsState, callbacks: BackupSet
     var launchedExport by rememberSaveable { mutableStateOf(false) }
     val activity = LocalActivity.current
     var remoteHistory by remember { mutableStateOf(false) }
-    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    val importPicker = rememberAppDocumentLauncher(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) { importUri = uri; action = BackupAction.IMPORT }
     }
-    val exportPicker = rememberLauncherForActivityResult(SystemDocumentContract("application/octet-stream")) { uri ->
+    val exportPicker = rememberAppDocumentLauncher(SystemDocumentContract("application/octet-stream")) { uri ->
         callbacks.onWriteExport(uri)
     }
     LaunchedEffect(Unit) { callbacks.onRefresh() }

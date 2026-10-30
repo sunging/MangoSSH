@@ -26,6 +26,8 @@ from paramiko.sftp import CMD_INIT, CMD_VERSION
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=22349)
 parser.add_argument("--echo-port", type=int, default=0, help="Optional loopback echo target for persistent forwarding tests")
+parser.add_argument("--allow-forward-port", type=int, action="append", default=[],
+                    help="Additional disposable loopback SSH peers for jump-chain regressions")
 tool_mode = parser.add_mutually_exclusive_group()
 tool_mode.add_argument("--wsl-tmux", action="store_true")
 tool_mode.add_argument("--native-tools", action="store_true", help="Run isolated tmux and Mosh fixtures directly on Linux")
@@ -354,7 +356,10 @@ class Server(paramiko.ServerInterface):
     def check_channel_request(self, kind, chanid):
         return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
     def check_channel_direct_tcpip_request(self, chanid, origin, destination):
-        if destination == ("127.0.0.1", args.port) or args.echo_port and destination == ("127.0.0.1", args.echo_port):
+        allowed_ports = {args.port, *args.allow_forward_port}
+        if args.echo_port:
+            allowed_ports.add(args.echo_port)
+        if destination[0] in ("127.0.0.1", "localhost") and destination[1] in allowed_ports:
             self.forward[chanid] = destination
             return paramiko.OPEN_SUCCEEDED
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED

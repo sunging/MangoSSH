@@ -2,8 +2,8 @@
 
 ## cbssh
 
-[cbssh 0.4.2](https://github.com/connectbot/cbssh/tree/v0.4.2), commit
-`9811f5a321c1afd88721498cdd7a5201c0c4abc0`, is vendored as source under
+[cbssh 0.6.4](https://github.com/connectbot/cbssh/tree/v0.6.4), commit
+`1a84dc6db2167827defc56f3cadad31f87564acc`, is vendored as source under
 `third_party/cbssh`. Its protocol codecs are generated from the pinned Kaitai
 definitions during the JDK 17 build. Source archive SHA-256, import mapping and
 local patches are recorded in `third_party/cbssh/README.md`.
@@ -12,10 +12,14 @@ The Apache License, Version 2.0 is retained in `third_party/cbssh/LICENSE` and
 packaged as `assets/licenses/Apache-2.0-cbssh.txt`. SLF4J uses its no-output
 provider because upstream protocol diagnostics may contain sensitive data.
 
+cbssh's Poly1305 and SNTRUP761 implementations are extracted from Bouncy
+Castle 1.86 (`bcprov-jdk18on`), © The Legion of the Bouncy Castle Inc., under
+the MIT License, packaged as `assets/licenses/MIT-BouncyCastle.txt`.
+
 ## OkHttp and Okio
 
-WebDAV uses [OkHttp 5.5.0](https://github.com/square/okhttp) and its
-[Okio 3.16.2](https://github.com/square/okio) dependency, published by Square.
+WebDAV uses [OkHttp 5.5.1](https://github.com/square/okhttp) and its
+[Okio 3.18.1](https://github.com/square/okio) dependency, published by Square.
 Both use the Apache License, Version 2.0. The full license is shared with the
 existing APK asset `assets/licenses/Apache-2.0-ConnectBot-Terminal.txt`.
 Matching MockWebServer artifacts are used only in tests.
@@ -25,7 +29,7 @@ Matching MockWebServer artifacts are used only in tests.
 MangoSSH packages the native `mosh-client` executable from the
 [ConnectBot mosh4android](https://github.com/connectbot/mosh4android) project.
 The source is present as the `third_party/mosh4android` Git submodule and is
-pinned to commit `2de58be90449bfee4041c5d798f921f84d10dc0b` on its `android`
+pinned to commit `a1157181f0e406daed2dfe1714d839c65494780d` on its `android`
 branch.
 
 - License: GNU General Public License, version 3 or later (GPL-3.0-or-later).
@@ -48,9 +52,9 @@ recipe provenance, GPL text and this notice.
 ## ConnectBot terminal library
 
 MangoSSH's terminal rendering is [ConnectBot termlib
-0.1.0](https://github.com/connectbot/termlib), vendored as Kotlin source at
+0.3.14](https://github.com/connectbot/termlib), vendored as Kotlin source at
 `third_party/termlib`, pinned to upstream commit
-`e3f4bdc3b3b5563fee54b0eca4b50d0e611bfd07`.
+`56934dd1369dc5d3e1f842b384df989c3c642a12`.
 
 - License: Apache License, Version 2.0.
 - License text: `third_party/termlib/LICENSE` and the copy included in every
@@ -61,21 +65,21 @@ MangoSSH's terminal rendering is [ConnectBot termlib
 - libvterm is MIT licensed; its license is preserved in the imported source and
   packaged as `assets/licenses/MIT-libvterm.txt`.
 - Local modifications are documented in `third_party/termlib/README.md` and
-  kept additive to the upstream defaults, currently a terminal-resize damage
-  fix, a configurable scrollback line limit, and a configurable pinch-to-zoom
-  magnification range.
+  kept additive to the upstream defaults, including a configurable scrollback
+  line limit, a configurable and persisted pinch-to-zoom range, mouse-wheel
+  forwarding for swipes and Windows ConPTY history handling.
 
 ## Tailscale tsnet
 
 MangoSSH builds an outbound-only gomobile bridge against
-[`tailscale.com` v1.102.4](https://github.com/tailscale/tailscale/tree/v1.102.4).
+[`tailscale.com` v1.104.2](https://github.com/tailscale/tailscale/tree/v1.104.2).
 Tailscale is distributed under the BSD 3-Clause license. The packages linked
 into the bridge are committed as vendored Go source so F-Droid can rebuild the
 AAR without network access.
 
 - Exact module checksums are recorded in `native/tsnetbridge/go.sum`, and the
   matching source is under `native/tsnetbridge/vendor`.
-- `tools/patches/tailscale-v1.102.4-tsnet-no-logtail.patch` disables creation
+- `tools/patches/tailscale-v1.104.2-tsnet-no-logtail.patch` disables creation
   and upload of tsnet's raw logtail buffer; the build fails if the patch no
   longer applies exactly.
 - The bridge is built with `ts_omit_netlog`, so upstream's logtail-backed

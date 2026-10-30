@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared contract for the preinstalled, pinned Linux Go toolchain.
-MANGOSSH_GO_VERSION="1.26.7"
-MANGOSSH_GO_SHA256="ffb5f8de10c62550dfddab66b36b57030721e0a44a3218e9e1181d7b59f121ca"
+MANGOSSH_GO_VERSION="1.27.3"
+MANGOSSH_GO_SHA256="65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
 
 ## Validates without downloading or allowing Go's automatic toolchain selection.
 mangossh_require_go() {

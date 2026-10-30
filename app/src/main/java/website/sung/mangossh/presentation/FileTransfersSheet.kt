@@ -1,7 +1,7 @@
 package website.sung.mangossh.presentation
 
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
+import website.sung.mangossh.presentation.rememberAppDocumentLauncher
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -148,7 +148,7 @@ internal fun FileTransfersSheet(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val directoryBrowser = rememberLauncherForActivityResult(BrowseDownloadedDirectoryContract()) { document ->
+    val directoryBrowser = rememberAppDocumentLauncher(BrowseDownloadedDirectoryContract()) { document ->
         if (document != null) scope.launch { launchDocumentViewIntent(context, document) }
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {

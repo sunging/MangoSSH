@@ -53,7 +53,13 @@ interface SshSession : AutoCloseable {
     val remoteChannelNumber: Int
     val isOpen: Boolean
 
+    /**
+     * Standard output. Data received before remote channel close remains readable through
+     * automatic connection teardown. Explicit session close or client disconnect discards it.
+     */
     val stdout: ReceiveChannel<ByteArray>
+
+    /** Standard error, with the same drain and explicit-close contract as [stdout]. */
     val stderr: ReceiveChannel<ByteArray>
 
     suspend fun requestPty(
@@ -71,6 +77,15 @@ interface SshSession : AutoCloseable {
         widthPixels: Int,
         heightPixels: Int,
     ): Boolean
+
+    /**
+     * Request an environment variable for this session (RFC 4254 section 6.4).
+     * Call before requesting a shell, command, or subsystem. Servers may restrict names
+     * (OpenSSH uses AcceptEnv) and reject requests after process startup.
+     * Names and values are encoded as UTF-8. Returns false for NUL-containing input,
+     * a closed channel, or server rejection; rejection does not close the session.
+     */
+    suspend fun requestEnv(name: String, value: String): Boolean
 
     suspend fun requestShell(): Boolean
     /** Request OpenSSH agent forwarding on this session before starting a shell. */
@@ -99,6 +114,13 @@ interface SshSession : AutoCloseable {
      */
     suspend fun requestSubsystem(name: String): Boolean
 
+    /**
+     * Write data, suspending for channel window credit and transport backpressure.
+     *
+     * Successful completion means the transport writes completed, not that the remote
+     * application processed the data. Await an application response when that confirmation
+     * is required. Disconnecting the client can abort a suspended write.
+     */
     suspend fun write(data: ByteArray)
 
     suspend fun read(): ByteArray?
@@ -122,5 +144,6 @@ interface SshSession : AutoCloseable {
      */
     val exitInfo: Deferred<SessionExit?>
 
+    /** Discard unread output and release delivery resources, including after remote close. */
     override fun close()
 }

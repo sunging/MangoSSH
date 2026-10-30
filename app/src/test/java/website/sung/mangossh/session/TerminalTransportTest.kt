@@ -2,6 +2,7 @@ package website.sung.mangossh.session
 
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -88,4 +89,40 @@ class TerminalTransportTest {
         } finally { resume.countDown(); writer.close(); scope.cancel() }
     }
 
+    @Test fun resizeBurstSendsOnlyTheSettledSize() {
+        val sent = CopyOnWriteArrayList<Pair<Int, Int>>()
+        val delivered = CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val queue = TerminalResizeQueue(scope, settleMillis = 100) { columns, rows -> sent += columns to rows; delivered.countDown() }
+        try {
+            // A keyboard animation reports a new height every frame.
+            for (rows in listOf(39, 34, 27, 23, 21)) { queue.offer(51, rows); Thread.sleep(16) }
+            assertTrue(delivered.await(2, TimeUnit.SECONDS))
+            Thread.sleep(300)
+            assertEquals(listOf(51 to 21), sent.toList())
+        } finally { queue.close(); scope.cancel() }
+    }
+    @Test fun settledSizesAreEachSentAndSlowResizesKeepTheLatest() {
+        val sent = CopyOnWriteArrayList<Pair<Int, Int>>()
+        val entered = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        val finished = CountDownLatch(3)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val queue = TerminalResizeQueue(scope, settleMillis = 20) { columns, rows ->
+            if (sent.isEmpty()) { entered.countDown(); assertTrue(resume.await(2, TimeUnit.SECONDS)) }
+            sent += columns to rows
+            finished.countDown()
+        }
+        try {
+            queue.offer(80, 24)
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            queue.offer(51, 39)
+            queue.offer(51, 21)
+            resume.countDown()
+            Thread.sleep(200)
+            queue.offer(51, 39)
+            assertTrue(finished.await(2, TimeUnit.SECONDS))
+            assertEquals(listOf(80 to 24, 51 to 21, 51 to 39), sent.toList())
+        } finally { resume.countDown(); queue.close(); scope.cancel() }
+    }
 }

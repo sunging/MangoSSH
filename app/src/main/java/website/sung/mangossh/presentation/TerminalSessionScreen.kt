@@ -2,11 +2,12 @@ package website.sung.mangossh.presentation
 
 import androidx.compose.ui.res.stringResource
 
-import android.app.Activity
 import android.content.ClipData
+import android.content.res.Configuration
 import android.graphics.Typeface
 import android.os.Build
 import android.view.WindowManager
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -71,6 +72,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -133,7 +135,9 @@ fun TerminalSessionScreen(
 ) {
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
-    val activity = context as? Activity
+    // Configuration/theme contexts can wrap the Activity. Window effects must still reach
+    // that host after rotation so resize mode and IME insets stay enabled.
+    val activity = LocalActivity.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val terminalFocusRequester = remember(session.id) { FocusRequester() }
@@ -158,11 +162,11 @@ fun TerminalSessionScreen(
     var topBarVisible by rememberSaveable(session.id) { mutableStateOf(true) }
     var shortcutBarVisible by rememberSaveable(session.id) { mutableStateOf(true) }
     var chromeMenuExpanded by remember(session.id) { mutableStateOf(false) }
-    // A phone in landscape has too little height above the keyboard for the title bar, a
-    // multi-row shortcut bar and any terminal rows at once. While the keyboard is (or is
-    // becoming) open there, the title bar steps aside and the shortcut rows merge into one
-    // scrollable row; both come back as soon as the keyboard starts to close.
+    // A short window above the opening keyboard hides the title bar and merges shortcut
+    // rows until the keyboard starts to close. Landscape always uses a single shortcut
+    // row to leave more height for the terminal, regardless of keyboard visibility.
     val density = LocalDensity.current
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val keyboardHeight = with(density) { WindowInsets.imeAnimationTarget.getBottom(density).toDp() }
     val compactForKeyboard = keyboardHeight > 0.dp &&
         LocalWindowInfo.current.containerDpSize.height - keyboardHeight < COMPACT_KEYBOARD_MIN_HEIGHT
@@ -579,7 +583,7 @@ fun TerminalSessionScreen(
                             enabled = isOpen,
                             config = shortcutConfig,
                             activeModifiers = terminalModifierState.activeModifiers,
-                            singleRow = compactForKeyboard,
+                            singleRow = isLandscape || compactForKeyboard,
                             onAction = { item ->
                                 dispatchTerminalShortcut(item.action, terminalModifierState, terminalEmulator, pasteFromClipboard)
                             },

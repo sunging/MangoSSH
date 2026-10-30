@@ -14,6 +14,7 @@ for component, pattern in (("okhttp", r"OkHttp\s+([\d.]+)"), ("termlib", r"terml
 for source, packaged in (
     ("third_party/mosh4android/COPYING", "GPL-3.0-or-later.txt"),
     ("third_party/termlib/src/main/cpp/libvterm/LICENSE", "MIT-libvterm.txt"),
+    ("third_party/cbssh/src/main/resources/META-INF/LICENSE-bouncycastle.md", "MIT-BouncyCastle.txt"),
 ):
     if (ROOT / source).read_bytes() != (ROOT / "app/src/main/assets/licenses" / packaged).read_bytes():
         raise SystemExit(f"Packaged license differs from {source}")

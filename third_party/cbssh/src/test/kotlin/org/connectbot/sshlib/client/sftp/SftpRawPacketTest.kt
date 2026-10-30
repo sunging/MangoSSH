@@ -1,6 +1,6 @@
 /*
  * ConnectBot SSH Library
- * Copyright 2025 Kenny Root
+ * Copyright 2025-2026 Kenny Root
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,13 +19,15 @@ package org.connectbot.sshlib.client.sftp
 
 import nl.jqno.equalsverifier.EqualsVerifier
 import org.junit.jupiter.api.Test
+import java.nio.ByteBuffer
 
 class SftpRawPacketTest {
 
     @Test
     fun `SftpRawPacket equals and hashCode`() {
         EqualsVerifier.forClass(SftpRawPacket::class.java)
-            .withPrefabValues(ByteArray::class.java, byteArrayOf(1, 2, 3), byteArrayOf(4, 5, 6))
+            .withNonnullFields("bytes")
+            .withPrefabValues(ByteBuffer::class.java, ByteBuffer.wrap(byteArrayOf(1, 2, 3)), ByteBuffer.wrap(byteArrayOf(4, 5, 6)))
             .verify()
     }
 }

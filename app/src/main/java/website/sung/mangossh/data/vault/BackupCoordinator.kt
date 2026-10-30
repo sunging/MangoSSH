@@ -10,6 +10,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import website.sung.mangossh.core.MangoLog
+import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.data.sync.RemoteBackup
 import website.sung.mangossh.data.sync.WebDavClient
 import website.sung.mangossh.data.sync.BackupRemoteTransport
@@ -273,6 +275,7 @@ internal class BackupCoordinator(
             try { action() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
+                MangoLog.warn(MangoLogEvent.BACKUP_OPERATION_FAILED, error)
                 if (epoch == generation) mutable.value = mutable.value.copy(failure = when (error) {
                     is BackupException -> error.reason
                     is website.sung.mangossh.data.sync.WebDavTransportException -> BackupFailure.NETWORK

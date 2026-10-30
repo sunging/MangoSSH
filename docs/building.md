@@ -19,7 +19,7 @@ export MANGOSSH_MOSH_DEPS_DIR="$PWD/.fdroid/sources"
 ```
 
 Set `JAVA_HOME` to JDK 17 and `ANDROID_HOME` to the SDK. Android Studio must use
-the same JDK. Go 1.26.7 and gomobile remain pinned by the existing Go contracts;
+the same JDK. Go 1.27.3 and gomobile remain pinned by the existing Go contracts;
 `go.mod`, `go.sum` and vendor are not replaced by a second dependency database.
 The historically named `tools/fdroid-sources.lock` is the single source lock for
 Mosh dependencies in **all** distributions. External F-Droid srclibs can provide
@@ -119,7 +119,7 @@ Gradle configuration caching and task-output caching are enabled. Keep normal
 edit/build cycles incremental; `clean` is for explicitly testing reconstruction,
 not a prerequisite to building. The command-line examples can use `--no-daemon`
 when the Gradle JVM should exit at build completion. Kotlin stays in-process;
-the pinned Kotlin 2.4.20 plugin uses BTA and supports incremental compilation in
+the pinned Kotlin 2.4.21 plugin uses BTA and supports incremental compilation in
 that mode. See [build performance](build-performance.md) for profiling, measured
 baselines, cache boundaries and CI behavior.
 
@@ -250,6 +250,18 @@ ordinary developer builds can use the cache independently of that entry point.
 The authoritative fdroiddata recipe remains external. Update its SDK CMake/Python
 prerequisites for this revision; previously published versions keep their original
 build recipes. Source and compiler setup must finish before network isolation.
+
+### Optional biometric sensor regressions
+
+`BiometricEnrollmentInstrumentedTest` and `BiometricSensorInstrumentedTest` are skipped by
+default, before creating an Activity or changing credentials. They require
+`-e runBiometricSensor true` and a dedicated AVD named `mangossh-lock-regression`.
+Ordinary CI excludes these two classes from its required test plan; every selected
+regression must execute without failures or skips.
+Enrollment also requires a fresh device without a system credential; its PIN is generated at
+runtime and never logged. The host supplies virtual finger 1 for enrollment and successful
+matches, and finger 2 for rejection, following the `biometricPhase` instrumentation statuses.
+Never provision a developer's existing emulator or a physical phone for these tests.
 
 ### Disposable emulator regression diagnostics
 

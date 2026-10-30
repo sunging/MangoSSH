@@ -3,7 +3,7 @@ package website.sung.mangossh.presentation
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
+import website.sung.mangossh.presentation.rememberAppDocumentLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -138,7 +138,7 @@ fun RemoteFileBrowserScreen(
     var pendingDownloadSession by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingDirectoryPath by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingDirectorySession by rememberSaveable { mutableStateOf<String?>(null) }
-    val downloadLauncher = rememberLauncherForActivityResult(
+    val downloadLauncher = rememberAppDocumentLauncher(
         DownloadDocumentContract(),
     ) { uri ->
         val remotePath = pendingDownloadPath
@@ -149,7 +149,7 @@ fun RemoteFileBrowserScreen(
     }
     // A directory download needs a folder to build its tree in, which only the
     // tree contract can grant.
-    val directoryDownloadLauncher = rememberLauncherForActivityResult(
+    val directoryDownloadLauncher = rememberAppDocumentLauncher(
         DownloadDirectoryContract(),
     ) { uri ->
         val remotePath = pendingDirectoryPath
@@ -158,10 +158,10 @@ fun RemoteFileBrowserScreen(
         pendingDirectorySession = null
         if (uri != null && remotePath != null && sessionId != null) onDownloadDirectory(sessionId, remotePath, uri)
     }
-    val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    val uploadLauncher = rememberAppDocumentLauncher(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onUpload(uri, uri.displayName(context))
     }
-    val directoryUploadLauncher = rememberLauncherForActivityResult(
+    val directoryUploadLauncher = rememberAppDocumentLauncher(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         if (uri != null) onUploadDirectory(uri, uri.treeDisplayName(context))

@@ -4,7 +4,7 @@ set -euo pipefail
 [[ "${CI:-}" == "true" ]] || { echo "Use audited explicit instrumentation on developer devices" >&2; exit 1; }
 python="${RUNNER_TEMP:?}/ssh-fixture-venv/bin/python"
 pids=()
-ports=(22349 22350 22351 22352 22353 22354 22355 22356 22357 22358 22359)
+ports=(22349 22350 22351 22352 22353 22354 22355 22356 22357 22358 22359 22360 22361)
 diagnostics="$PWD/build/device-diagnostics"
 mkdir -p "$diagnostics"
 phase=setup
@@ -56,7 +56,7 @@ for attempt in range(300):
  except OSError: time.sleep(.1)
 else: raise SystemExit("Fixture failed to start")' "$1"
 }
-for mode in normal fallback metadata cancel legacy stalled-write windows-stat; do
+for mode in normal fallback metadata cancel legacy stalled-write windows-stat jump jump2; do
   options=()
   case "$mode" in
     normal) port=22349; options=(--native-tools --echo-port 22357) ;;
@@ -66,6 +66,8 @@ for mode in normal fallback metadata cancel legacy stalled-write windows-stat; d
     legacy) port=22353; options=(--legacy-algorithms) ;;
     stalled-write) port=22355; options=(--stall-sftp-writes) ;;
     windows-stat) port=22356; options=(--windows-stat-projection) ;;
+    jump) port=22360; options=(--allow-forward-port 22349 --allow-forward-port 22361) ;;
+    jump2) port=22361; options=(--allow-forward-port 22349) ;;
   esac
   # Root is confined to the disposable runner fixture's TemporaryDirectory. It enables real chown assertions.
   sudo "$python" tools/ssh-test-fixture.py --port "$port" "${options[@]}" >"$RUNNER_TEMP/fixture-$mode.log" 2>&1 &
@@ -93,6 +95,8 @@ arguments=(
   -Pandroid.testInstrumentationRunnerArguments.fixtureTmux=true
   -Pandroid.testInstrumentationRunnerArguments.fixtureMosh=true
   -Pandroid.testInstrumentationRunnerArguments.fixtureEchoPort=22357
+  -Pandroid.testInstrumentationRunnerArguments.fixtureJumpPort=22360
+  -Pandroid.testInstrumentationRunnerArguments.fixtureJump2Port=22361
   -Pandroid.testInstrumentationRunnerArguments.fixtureResourcesPort=22358
   -Pandroid.testInstrumentationRunnerArguments.fixtureResourceStallPort=22359
   -Pandroid.testInstrumentationRunnerArguments.fixtureResourcePlatform=LINUX
@@ -113,7 +117,10 @@ for phase in "${suites[@]}"; do
   adb logcat -c
   suite_arguments=("${arguments[@]}")
   if [[ "$phase" != termlib ]]; then
+    # Sensor provisioning requires the separately enrolled, task-owned AVD.
+    # Every regression selected for this ordinary CI test plan must execute.
     suite_arguments+=(
+      -Pandroid.testInstrumentationRunnerArguments.notClass=website.sung.mangossh.BiometricEnrollmentInstrumentedTest,website.sung.mangossh.BiometricSensorInstrumentedTest
       -Pandroid.testInstrumentationRunnerArguments.listener=website.sung.mangossh.diagnostics.CiRegressionListener
       -Pandroid.testInstrumentationRunnerArguments.newRunListenerMode=true
     )

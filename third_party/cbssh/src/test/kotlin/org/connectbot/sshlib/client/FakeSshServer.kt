@@ -28,13 +28,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.bouncycastle.pqc.crypto.ntruprime.SNTRUPrimeKEMGenerator
+import org.bouncycastle.pqc.crypto.ntruprime.SNTRUPrimeParameters
+import org.bouncycastle.pqc.crypto.ntruprime.SNTRUPrimePublicKeyParameters
+import org.connectbot.sshlib.SshSigning
 import org.connectbot.sshlib.crypto.CipherEntry
 import org.connectbot.sshlib.crypto.EncryptionInstance
 import org.connectbot.sshlib.crypto.KeyDerivation
+import org.connectbot.sshlib.crypto.KyberKotlinMlKemProvider
 import org.connectbot.sshlib.crypto.MacEntry
+import org.connectbot.sshlib.crypto.MlKemTestServer
 import org.connectbot.sshlib.crypto.SshPublicKeyEncoder
 import org.connectbot.sshlib.crypto.X25519ProviderFactory
 import org.connectbot.sshlib.crypto.encodeMpint
+import org.connectbot.sshlib.crypto.encodeSshString
 import org.connectbot.sshlib.protocol.ChannelRequestExitSignal
 import org.connectbot.sshlib.protocol.ChannelRequestExitStatus
 import org.connectbot.sshlib.protocol.SshEnums
@@ -48,6 +55,7 @@ import org.connectbot.sshlib.protocol.SshMsgChannelSuccess
 import org.connectbot.sshlib.protocol.SshMsgChannelWindowAdjust
 import org.connectbot.sshlib.protocol.SshMsgDisconnect
 import org.connectbot.sshlib.protocol.SshMsgExtInfo
+import org.connectbot.sshlib.protocol.SshMsgGlobalRequest
 import org.connectbot.sshlib.protocol.SshMsgIgnore
 import org.connectbot.sshlib.protocol.SshMsgKexEcdhInit
 import org.connectbot.sshlib.protocol.SshMsgKexEcdhReply
@@ -108,8 +116,21 @@ class FakeSshServer(
     var advertisePing: Boolean = false
     var advertiseExtInfo: Boolean = false
     var kexAlgorithms: String? = null
+    var encryptionAlgorithm: String = "aes128-ctr"
+
+    private val kexHashAlgorithm: String
+        get() = when (kexAlgorithms?.split(',')?.first()) {
+            "mlkem1024nistp384-sha384", "mlkem1024-sha384" -> "SHA-384"
+            "sntrup761x25519-sha512", "sntrup761x25519-sha512@openssh.com" -> "SHA-512"
+            else -> "SHA-256"
+        }
     var corruptKexSignature: Boolean = false
+    var transformKexServerPublic: (ByteArray) -> ByteArray = { it }
+    var truncateKexReply: Boolean = false
+    private val receivedDisconnects = Channel<SshMsgDisconnect>(Channel.UNLIMITED)
+    suspend fun awaitDisconnect(): SshMsgDisconnect = receivedDisconnects.receive()
     var sendDuplicateKexInitDuringRekey: Boolean = false
+    val receivedIgnores = mutableListOf<SshMsgIgnore>()
     private val receivedPongs = Channel<ByteArray>(Channel.UNLIMITED)
     private val receivedExtInfo = Channel<SshMsgExtInfo>(Channel.UNLIMITED)
     private val receivedUserauthInfoResponses = Channel<org.connectbot.sshlib.protocol.SshMsgUserauthInfoResponse>(Channel.UNLIMITED)
@@ -122,6 +143,14 @@ class FakeSshServer(
     private val receivedChannelData = Channel<SshMsgChannelData>(Channel.UNLIMITED)
     private val receivedChannelWindowAdjusts = Channel<SshMsgChannelWindowAdjust>(Channel.UNLIMITED)
     private val receivedUnimplemented = Channel<SshMsgUnimplemented>(Channel.UNLIMITED)
+    private val receivedGlobalRequests = Channel<SshMsgGlobalRequest>(Channel.UNLIMITED)
+    suspend fun awaitGlobalRequest(): SshMsgGlobalRequest = receivedGlobalRequests.receive()
+    fun signHostKeyData(data: ByteArray): ByteArray = SshSigning.signWithKeyPair("ssh-ed25519", hostKeyPair, data)
+    val sessionIdentifier: ByteArray get() = requireNotNull(sessionId).copyOf()
+
+    private val receivedClosingPackets = Channel<SshEnums.MessageType>(Channel.UNLIMITED)
+
+    suspend fun awaitClosingPacket(): SshEnums.MessageType = receivedClosingPackets.receive()
 
     fun start(ignoreTransportErrors: Boolean = false) {
         scope.launch(coroutineContext) {
@@ -219,11 +248,15 @@ class FakeSshServer(
                 incomingPackets.onReceiveCatching { result ->
                     val (msgType, rawBytes) = result.getOrNull() ?: return@onReceiveCatching true
                     when (msgType) {
-                        SshEnums.MessageType.SSH_MSG_GLOBAL_REQUEST -> sendRequestFailure()
                         SshEnums.MessageType.SSH_MSG_KEXINIT ->
                             doClientInitiatedKex(serverIo, rawBytes, incomingPackets)
 
-                        SshEnums.MessageType.SSH_MSG_DISCONNECT -> return@onReceiveCatching true
+                        SshEnums.MessageType.SSH_MSG_DISCONNECT -> {
+                            receivedClosingPackets.trySend(msgType)
+                            return@onReceiveCatching true
+                        }
+
+                        SshEnums.MessageType.SSH_MSG_CHANNEL_CLOSE -> receivedClosingPackets.trySend(msgType)
 
                         SshEnums.MessageType.SSH_MSG_EXT_INFO -> {
                             val bodyBytes = rawBytes.copyOfRange(1, rawBytes.size)
@@ -245,6 +278,13 @@ class FakeSshServer(
                             )
                             response._read()
                             receivedUserauthInfoResponses.trySend(response)
+                        }
+
+                        SshEnums.MessageType.SSH_MSG_GLOBAL_REQUEST -> {
+                            val request = SshMsgGlobalRequest(ByteBufferKaitaiStream(rawBytes.copyOfRange(1, rawBytes.size))).apply { _read() }
+                            receivedGlobalRequests.trySend(request)
+                            // MangoSSH keepalive fallback: OpenSSH answers unknown requests with failure.
+                            if (request.requestName().value() == "keepalive@openssh.com") sendRequestFailure()
                         }
 
                         SshEnums.MessageType.SSH_MSG_CHANNEL_OPEN -> {
@@ -313,6 +353,12 @@ class FakeSshServer(
                             val unimplemented = SshMsgUnimplemented(ByteBufferKaitaiStream(bodyBytes))
                             unimplemented._read()
                             receivedUnimplemented.trySend(unimplemented)
+                        }
+
+                        SshEnums.MessageType.SSH_MSG_IGNORE -> {
+                            val msg = SshMsgIgnore(ByteBufferKaitaiStream(rawBytes.copyOfRange(1, rawBytes.size)))
+                            msg._read()
+                            receivedIgnores += msg
                         }
 
                         else -> { /* ignore */ }
@@ -399,8 +445,8 @@ class FakeSshServer(
             setCookie(cookie)
             setKexAlgorithms(createNameList(kexAlgs))
             setServerHostKeyAlgorithms(createNameList("ssh-ed25519"))
-            setEncryptionAlgorithmsClientToServer(createNameList("aes128-ctr"))
-            setEncryptionAlgorithmsServerToClient(createNameList("aes128-ctr"))
+            setEncryptionAlgorithmsClientToServer(createNameList(encryptionAlgorithm))
+            setEncryptionAlgorithmsServerToClient(createNameList(encryptionAlgorithm))
             setMacAlgorithmsClientToServer(createNameList("hmac-sha2-256-etm@openssh.com"))
             setMacAlgorithmsServerToClient(createNameList("hmac-sha2-256-etm@openssh.com"))
             setCompressionAlgorithmsClientToServer(createNameList("none"))
@@ -426,10 +472,42 @@ class FakeSshServer(
     ) {
         val x25519 = X25519ProviderFactory.provider
         val serverPrivate = x25519.generatePrivateKey()
-        val serverPublic = x25519.publicFromPrivate(serverPrivate)
+        val serverX25519Public = x25519.publicFromPrivate(serverPrivate)
 
-        val sharedSecretRaw = x25519.computeSharedSecret(serverPrivate, clientPublic)
-        val sharedSecret = encodeMpint(BigInteger(1, sharedSecretRaw).toByteArray())
+        val algorithm = kexAlgorithms?.split(',')?.first()
+        val isMlKemX25519 = algorithm == "mlkem768x25519-sha256"
+        val serverPublic: ByteArray
+        val sharedSecret: ByteArray
+        if (algorithm == "sntrup761x25519-sha512" || algorithm == "sntrup761x25519-sha512@openssh.com") {
+            check(clientPublic.size == 1190)
+            val publicKey = SNTRUPrimePublicKeyParameters(SNTRUPrimeParameters.sntrup761, clientPublic.copyOfRange(0, 1158))
+            val encapsulation = SNTRUPrimeKEMGenerator(SecureRandom()).generateEncapsulated(publicKey)
+            try {
+                val classicalSecret = x25519.computeSharedSecret(serverPrivate, clientPublic.copyOfRange(1158, 1190))
+                serverPublic = transformKexServerPublic(encapsulation.encapsulation + serverX25519Public)
+                sharedSecret = encodeSshString(MessageDigest.getInstance("SHA-512").digest(encapsulation.secret + classicalSecret))
+            } finally {
+                encapsulation.destroy()
+            }
+        } else if (algorithm == "mlkem768-sha256" || algorithm == "mlkem1024-sha384") {
+            val (reply, secret) = MlKemTestServer.pureReply(clientPublic, algorithm == "mlkem1024-sha384")
+            serverPublic = transformKexServerPublic(reply)
+            sharedSecret = secret
+        } else if (algorithm == "mlkem768nistp256-sha256" || algorithm == "mlkem1024nistp384-sha384") {
+            val (reply, secret) = MlKemTestServer.reply(clientPublic, algorithm == "mlkem1024nistp384-sha384")
+            serverPublic = transformKexServerPublic(reply)
+            sharedSecret = secret
+        } else if (isMlKemX25519) {
+            check(clientPublic.size == 1216)
+            val encapsulation = KyberKotlinMlKemProvider().encapsulate(clientPublic.copyOfRange(0, 1184))
+            val classicalSecret = x25519.computeSharedSecret(serverPrivate, clientPublic.copyOfRange(1184, 1216))
+            serverPublic = transformKexServerPublic(encapsulation.ciphertext + serverX25519Public)
+            sharedSecret = encodeSshString(MessageDigest.getInstance("SHA-256").digest(encapsulation.sharedSecret + classicalSecret))
+        } else {
+            serverPublic = transformKexServerPublic(serverX25519Public)
+            val sharedSecretRaw = x25519.computeSharedSecret(serverPrivate, clientPublic)
+            sharedSecret = encodeMpint(BigInteger(1, sharedSecretRaw).toByteArray())
+        }
 
         val exchangeHash = computeExchangeHash(
             clientVersion = clientVersionStr.toByteArray(Charsets.US_ASCII),
@@ -460,7 +538,8 @@ class FakeSshServer(
             _check()
         }
 
-        writeMutex.withLock { io.writePacket(SshEnums.KexEcdh.SSH_MSG_KEX_ECDH_REPLY.id().toInt(), reply.toByteArray()) }
+        val payload = reply.toByteArray().let { if (truncateKexReply) it.copyOf(it.size - 1) else it }
+        writeMutex.withLock { io.writePacket(SshEnums.KexEcdh.SSH_MSG_KEX_ECDH_REPLY.id().toInt(), payload) }
     }
 
     private fun activateEncryption(io: PacketIO) {
@@ -468,8 +547,8 @@ class FakeSshServer(
         val exchangeHash = latestExchangeHash ?: return
         val sid = sessionId ?: return
 
-        val keyDerivation = KeyDerivation(sharedSecret, exchangeHash, sid, "SHA-256")
-        val cipherEntry = CipherEntry.fromSshName("aes128-ctr") ?: return
+        val keyDerivation = KeyDerivation(sharedSecret, exchangeHash, sid, kexHashAlgorithm)
+        val cipherEntry = CipherEntry.fromSshName(encryptionAlgorithm) ?: return
         val macEntry = MacEntry.fromSshName("hmac-sha2-256-etm@openssh.com") ?: return
 
         val keys = keyDerivation.deriveKeys(
@@ -515,7 +594,7 @@ class FakeSshServer(
         serverPublicKey: ByteArray,
         sharedSecret: ByteArray,
     ): ByteArray {
-        val md = MessageDigest.getInstance("SHA-256")
+        val md = MessageDigest.getInstance(kexHashAlgorithm)
         val buf = ByteArrayOutputStream()
 
         fun writeString(data: ByteArray) {
@@ -604,9 +683,7 @@ class FakeSshServer(
 
     private suspend fun readPacketFiltering(io: PacketIO): Pair<SshEnums.MessageType, ByteArray> {
         while (true) {
-            val packet = io.readPacket()
-            val msgType = packet.messageType()
-            val rawBytes = byteArrayOf(msgType.id().toByte()) + packet._raw_body()
+            val (msgType, rawBytes) = readPacketWithType(io)
             when (msgType) {
                 SshEnums.MessageType.SSH_MSG_EXT_INFO -> {
                     val bodyBytes = rawBytes.copyOfRange(1, rawBytes.size)
@@ -628,6 +705,11 @@ class FakeSshServer(
         val packet = io.readPacket()
         val msgType = packet.messageType()
         val rawBytes = byteArrayOf(msgType.id().toByte()) + packet._raw_body()
+        if (msgType == SshEnums.MessageType.SSH_MSG_DISCONNECT) {
+            val disconnect = SshMsgDisconnect(ByteBufferKaitaiStream(packet._raw_body()))
+            disconnect._read()
+            receivedDisconnects.trySend(disconnect)
+        }
         return msgType to rawBytes
     }
 
@@ -909,10 +991,11 @@ class FakeSshServer(
         }
     }
 
-    suspend fun sendGlobalRequest(requestName: String, wantReply: Boolean) {
+    suspend fun sendGlobalRequest(requestName: String, wantReply: Boolean, data: ByteArray = byteArrayOf()) {
         val payload = ByteArrayOutputStream()
         payload.writeString(requestName.toByteArray(Charsets.US_ASCII))
         payload.write(if (wantReply) 1 else 0)
+        payload.write(data)
         writeMutex.withLock {
             serverIo.writePacket(SshEnums.MessageType.SSH_MSG_GLOBAL_REQUEST.id().toInt(), payload.toByteArray())
         }

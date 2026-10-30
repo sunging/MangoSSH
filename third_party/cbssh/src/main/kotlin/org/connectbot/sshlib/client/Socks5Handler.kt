@@ -194,8 +194,12 @@ internal class Socks5Handler(
         val portLo = read.readByte().toInt() and 0xFF
         val port = (portHi shl 8) or portLo
 
-        sendReply(write, REPLY_SUCCESS)
         return ConnectRequest(host, port)
+    }
+
+    /** CONNECT succeeds only after the SSH peer accepts the destination channel, not after parsing. */
+    suspend fun replyToConnect(write: ByteWriteChannel, connected: Boolean) {
+        sendReply(write, if (connected) REPLY_SUCCESS else REPLY_GENERAL_FAILURE)
     }
 
     private suspend fun sendReply(write: ByteWriteChannel, reply: Byte) {

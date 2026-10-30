@@ -18,12 +18,17 @@
 package org.connectbot.sshlib.client
 
 import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.connectbot.sshlib.PortForwarder
+import org.connectbot.sshlib.protocol.SshChannelState
 import org.slf4j.LoggerFactory
 
 internal class RemotePortForwarder(
@@ -94,16 +99,15 @@ internal class RemotePortForwarder(
         val openingFinished = connections.opening()
         var registeredChannel: ForwardingChannel? = null
         var confirmationSent = false
-        var ownedSocket: io.ktor.network.sockets.Socket? = null
-        var ownedSelector: SelectorManager? = null
+        val selectorManager = SelectorManager(Dispatchers.IO)
+        var socket: Socket? = null
+        // Once started (or aborted), the DataForwarder owns the socket and selector.
+        var handedOff = false
         try {
             val localChannelNumber = connection.allocateChannelNumber()
 
-            val selectorManager = SelectorManager(Dispatchers.IO)
-            ownedSelector = selectorManager
-            val socket = try { aSocket(selectorManager).tcp().connect(localHost, localPort) }
-            catch (error: Exception) { selectorManager.close(); throw error }
-            ownedSocket = socket
+            val connectedSocket = aSocket(selectorManager).tcp().connect(localHost, localPort)
+            socket = connectedSocket
 
             val fwdChannel = ForwardingChannel(
                 connection,
@@ -113,45 +117,73 @@ internal class RemotePortForwarder(
                 maxPacketSize,
                 remoteWindowSizeInitial = initialWindow,
                 initialWindowSize = 256 * 1024,
+                lifecycle = connection.newChannelStateMachine(SshChannelState.OPEN),
             )
             connection.registerForwardingChannel(fwdChannel)
             registeredChannel = fwdChannel
 
-            connection.sendChannelOpenConfirmationPublic(
-                recipientChannel = senderChannel,
-                senderChannel = localChannelNumber,
-                initialWindowSize = 256 * 1024,
-                maximumPacketSize = 32 * 1024,
+            connection.protocolExecutor.run {
+                connection.sendChannelOpenConfirmationPublic(
+                    recipientChannel = senderChannel,
+                    senderChannel = localChannelNumber,
+                    initialWindowSize = 256 * 1024,
+                    maximumPacketSize = 32 * 1024,
+                )
+                confirmationSent = true
+            }
+
+            val readChannel = connectedSocket.openReadChannel()
+            val writeChannel = connectedSocket.openWriteChannel(autoFlush = false)
+
+            val forwarder = DataForwarder(
+                scope,
+                fwdChannel,
+                readChannel,
+                writeChannel,
+                releaseSocket = {
+                    connectedSocket.close()
+                    selectorManager.close()
+                },
+                onActivity = connections::touch,
+                onFinished = connections::remove,
             )
-            confirmationSent = true
-
-            val readChannel = socket.openReadChannel()
-            val writeChannel = socket.openWriteChannel(autoFlush = false)
-
-            val forwarder = DataForwarder(scope, fwdChannel, readChannel, writeChannel, { socket.close(); selectorManager.close() },
-                onActivity = connections::touch, onFinished = connections::remove)
-            if (!connections.add(forwarder) { _isActive }) { forwarder.abort(); return }
+            handedOff = true
+            if (!connections.add(forwarder) { _isActive }) {
+                forwarder.abort()
+                return
+            }
             forwarder.start()
-            ownedSocket = null
-            ownedSelector = null
         } catch (e: Exception) {
-            registeredChannel?.let { channel ->
-                connection.unregisterForwardingChannel(channel)
-                if (confirmationSent) channel.close() else channel.onDisconnected()
+            if (!handedOff) {
+                socket?.close()
+                selectorManager.close()
             }
             logger.warn("Failed to handle incoming forwarded-tcpip: ${e.message}")
-            if (!confirmationSent) {
-                connection.sendChannelOpenFailurePublic(
-                    recipientChannel = senderChannel,
-                    reasonCode = 2, // SSH_OPEN_CONNECT_FAILED
-                    description = "Failed to connect to local target: ${e.message}",
-                    languageTag = "",
-                )
+            withContext(NonCancellable) {
+                if (!connection.protocolExecutor.isClosed) {
+                    connection.protocolExecutor.run(awaitWrites = false) {
+                        registeredChannel?.let { channel ->
+                            if (confirmationSent) {
+                                channel.close()
+                            } else {
+                                connection.unregisterForwardingChannel(channel)
+                                channel.onDisconnected()
+                            }
+                        }
+                        if (!confirmationSent) {
+                            connection.sendChannelOpenFailurePublic(
+                                recipientChannel = senderChannel,
+                                reasonCode = 2, // SSH_OPEN_CONNECT_FAILED
+                                description = "Failed to connect to local target: ${e.message}",
+                                languageTag = "",
+                            )
+                        }
+                    }
+                }
             }
+            if (e is CancellationException) throw e
         } finally {
             openingFinished()
-            ownedSocket?.close()
-            ownedSelector?.close()
         }
     }
 
