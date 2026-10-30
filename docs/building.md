@@ -256,6 +256,8 @@ build recipes. Source and compiler setup must finish before network isolation.
 `BiometricEnrollmentInstrumentedTest` and `BiometricSensorInstrumentedTest` are skipped by
 default, before creating an Activity or changing credentials. They require
 `-e runBiometricSensor true` and a dedicated AVD named `mangossh-lock-regression`.
+Ordinary CI excludes these two classes from its required test plan; every selected
+regression must execute without failures or skips.
 Enrollment also requires a fresh device without a system credential; its PIN is generated at
 runtime and never logged. The host supplies virtual finger 1 for enrollment and successful
 matches, and finger 2 for rejection, following the `biometricPhase` instrumentation statuses.
