@@ -1,27 +1,21 @@
 # Changelog
 
-## [0.8.1](https://github.com/sunging/MangoSSH/compare/v0.8.0...v0.8.1) (2026-10-30)
+## [0.8.1](https://github.com/sunging/MangoSSH/compare/v0.8.0...v0.8.1) (2026-10-31)
 
+### Features and improvements
 
-### Features
+- Support additional hybrid SSH key exchanges and improve authentication, SFTP, and connection cleanup.
+- Update the terminal renderer, embedded Tailscale to 1.104.2, and native dependencies.
 
-* **ssh:** support additional hybrid key exchanges ([57abe5c](https://github.com/sunging/MangoSSH/commit/57abe5ccea105254cb3b8a6f85bea8ab255cc006))
+### Fixes since v0.8.0
 
-
-### Bug Fixes
-
-* **backup:** use writable document save locations on OEM devices ([3fceef3](https://github.com/sunging/MangoSSH/commit/3fceef3f4991bee8d022b619c1c89075f8ab9529))
-* keep Windows ConPTY history intact across terminal resizes ([f05cee8](https://github.com/sunging/MangoSSH/commit/f05cee816e312994679ff73782a2251312f13f58))
-* **mosh:** treat a clean client exit as a remote exit ([08a46f8](https://github.com/sunging/MangoSSH/commit/08a46f821c318231bdd4a5d642a83df03284e5b5))
-* **native:** build embedded Tailscale with Go 1.26.10 ([b76c305](https://github.com/sunging/MangoSSH/commit/b76c305657e3bfddc9e85186518c550b30b1a459))
-* **security:** preserve document operations and validate unlock requests ([d1fc4ad](https://github.com/sunging/MangoSSH/commit/d1fc4aded69c2ae563aa60352746de3ffcfc87e2))
-* send remote window size only after the layout settles ([740dbab](https://github.com/sunging/MangoSSH/commit/740dbab15849eae0092ea544e8d884a32ec9bb74))
-* **socks:** wait for destination acceptance before replying ([ffcb184](https://github.com/sunging/MangoSSH/commit/ffcb18431512d4fc57ec6a94b81a86c8ee847e19))
-* **ssh:** backport cbssh Poly1305, banner and ML-KEM fixes ([dc687bb](https://github.com/sunging/MangoSSH/commit/dc687bb3469e8864d4cc96559c30705b3d189ed8))
-* **terminal:** clear cells exposed by a resize with the default pen ([b5391a8](https://github.com/sunging/MangoSSH/commit/b5391a83d6fe456a83315b3b4e1e24a80aa55e8d))
-* **terminal:** handle shortcut rows and keyboard insets on rotation ([10217ad](https://github.com/sunging/MangoSSH/commit/10217add6021496b6520417048fd01f521ffb0b6))
-* **terminal:** keep altscreen rows out of scrollback on resize ([903aa18](https://github.com/sunging/MangoSSH/commit/903aa18deea59c7e44a4bf46b2137e951a11b4f7))
-* **terminal:** stop malformed OSC text crashing and release ended emulators ([9ad2364](https://github.com/sunging/MangoSSH/commit/9ad2364555eccd3c25a7a62bf23f06aff60fd95a))
+- Preserve Windows ConPTY history when the keyboard changes the terminal size, and keep full-screen app output and colors out of the shell after resizing.
+- Keep terminal shortcuts visible during rotation and keyboard transitions, with a scrollable shortcut row in landscape.
+- Handle malformed terminal text safely and release native terminal resources when sessions end.
+- Return to the host list after a normal Mosh exit.
+- Report SOCKS5 connection success only after the destination accepts the connection.
+- Preserve document operations through rotation and app-lock confirmation, validate biometric unlock requests, and retain public-key export filenames.
+- Start save dialogs in writable storage locations to improve backup and export compatibility on OEM devices.
 
 ## [0.8.0](https://github.com/sunging/MangoSSH/compare/v0.7.0...v0.8.0) (2026-10-25)
 
