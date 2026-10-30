@@ -135,7 +135,9 @@ class HostEditorInstrumentedTest {
                 HostEditorScreen(controller, emptyList(), ConnectionPreferences(), keys, snippets, {}, {})
             }
         } } }
-        compose.onNodeWithTag("host_editor_label").performTextReplacement("Updated")
+        // Seed the unsaved draft without requesting text-input focus. IME-driven
+        // bring-into-view can otherwise move the scroll after it has been recorded.
+        compose.runOnIdle { controller.draft = controller.draft.copy(label = "Updated") }
         compose.onNodeWithTag("host_editor_open_ADVANCED").performScrollTo()
         val scroll = compose.onNodeWithTag("host_editor_scroll_MAIN").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
         // Exercise saved navigation state independently of a moving IME's
