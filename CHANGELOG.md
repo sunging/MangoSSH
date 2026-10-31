@@ -5,13 +5,14 @@
 ### Features and improvements
 
 - Support additional hybrid SSH key exchanges and improve authentication, SFTP, and connection cleanup.
-- Update the terminal renderer, embedded Tailscale to 1.104.2, and native dependencies.
+- Update the terminal renderer, embedded Tailscale to 1.104.4, and native dependencies.
 
 ### Fixes since v0.8.0
 
 - Preserve Windows ConPTY history when the keyboard changes the terminal size, and keep full-screen app output and colors out of the shell after resizing.
 - Keep terminal shortcuts visible during rotation and keyboard transitions, with a scrollable shortcut row in landscape.
 - Handle malformed terminal text safely and release native terminal resources when sessions end.
+- Prevent integer overflow in native terminal resize operations.
 - Return to the host list after a normal Mosh exit.
 - Report SOCKS5 connection success only after the destination accepts the connection.
 - Preserve document operations through rotation and app-lock confirmation, validate biometric unlock requests, and retain public-key export filenames.
