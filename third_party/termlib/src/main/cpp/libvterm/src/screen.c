@@ -620,7 +620,10 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
   ScreenCell *old_buffer = screen->buffers[bufidx];
   VTermLineInfo *old_lineinfo = statefields->lineinfos[bufidx];
 
-  ScreenCell *new_buffer = vterm_allocator_malloc(screen->vt, sizeof(ScreenCell) * new_rows * new_cols);
+  /* Form the row stride as size_t before multiplying row and column counts.
+   * Allocation and moves must use the same byte arithmetic on every ABI. */
+  size_t new_row_bytes = sizeof(ScreenCell) * new_cols;
+  ScreenCell *new_buffer = vterm_allocator_malloc(screen->vt, new_row_bytes * new_rows);
   VTermLineInfo *new_lineinfo = vterm_allocator_malloc(screen->vt, sizeof(new_lineinfo[0]) * new_rows);
 
   int old_row = old_rows - 1;
@@ -686,7 +689,7 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
       fprintf(stderr, "  scroll %d rows +%d downwards\n", rowcount, downwards);
 #endif
 
-      memmove(&new_buffer[downwards * new_cols], &new_buffer[0],   rowcount * new_cols * sizeof(ScreenCell));
+      memmove(&new_buffer[(size_t)downwards * new_cols], &new_buffer[0], new_row_bytes * rowcount);
       memmove(&new_lineinfo[downwards],          &new_lineinfo[0], rowcount            * sizeof(new_lineinfo[0]));
 
       new_row += downwards;
@@ -829,7 +832,7 @@ static void resize_buffer(VTermScreen *screen, int bufidx, int new_rows, int new
   if(new_row >= 0) {
     /* Scroll new rows back up to the top and fill in blanks at the bottom */
     int moverows = new_rows - new_row - 1;
-    memmove(&new_buffer[0], &new_buffer[(new_row + 1) * new_cols], moverows * new_cols * sizeof(ScreenCell));
+    memmove(&new_buffer[0], &new_buffer[(size_t)(new_row + 1) * new_cols], new_row_bytes * moverows);
     memmove(&new_lineinfo[0], &new_lineinfo[new_row + 1], moverows * sizeof(new_lineinfo[0]));
 
     new_cursor.row -= (new_row + 1);

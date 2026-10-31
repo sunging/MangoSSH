@@ -8,6 +8,7 @@
     "third_party/termlib/native-patches/android-build.patch",
     "third_party/termlib/native-patches/keyboard-protocols.patch",
     "third_party/termlib/native-patches/altscreen-resize-scrollback.patch",
-    "third_party/termlib/native-patches/altscreen-resize-default-pen.patch"
+    "third_party/termlib/native-patches/altscreen-resize-default-pen.patch",
+    "third_party/termlib/native-patches/screen-resize-size-arithmetic.patch"
   ]
 }
