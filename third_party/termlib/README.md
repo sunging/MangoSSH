@@ -75,7 +75,8 @@ and built by AGP/CMake with NDK r27d. The Maven AAR is no longer a native input.
 `native-patches/android-build.patch` adds the r27 16 KiB linker options and
 path normalization; `native-patches/keyboard-protocols.patch` adds the legacy,
 xterm modifyOtherKeys and kitty "disambiguate" key encodings and their libvterm
-tests. Verify the import with
+tests. `native-patches/screen-resize-size-arithmetic.patch` keeps screen resize
+allocation, row offsets and move lengths in `size_t` arithmetic. Verify with
 `python3 tools/native/termlib.py /path/to/pinned-upstream`; `--update` is an explicit
 source maintenance operation that replaces the imported native tree.
 

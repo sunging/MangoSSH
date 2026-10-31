@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.1](https://github.com/sunging/MangoSSH/compare/v0.8.0...v0.8.1) (2026-10-31)
+
+### Features and improvements
+
+- Support additional hybrid SSH key exchanges and improve authentication, SFTP, and connection cleanup.
+- Update the terminal renderer, embedded Tailscale to 1.104.4, and native dependencies.
+
+### Fixes since v0.8.0
+
+- Preserve Windows ConPTY history when the keyboard changes the terminal size, and keep full-screen app output and colors out of the shell after resizing.
+- Keep terminal shortcuts visible during rotation and keyboard transitions, with a scrollable shortcut row in landscape.
+- Handle malformed terminal text safely and release native terminal resources when sessions end.
+- Prevent integer overflow in native terminal resize operations.
+- Return to the host list after a normal Mosh exit.
+- Report SOCKS5 connection success only after the destination accepts the connection.
+- Preserve document operations through rotation and app-lock confirmation, validate biometric unlock requests, and retain public-key export filenames.
+- Start save dialogs in writable storage locations to improve backup and export compatibility on OEM devices.
+
 ## [0.8.0](https://github.com/sunging/MangoSSH/compare/v0.7.0...v0.8.0) (2026-10-25)
 
 ### Features and improvements
