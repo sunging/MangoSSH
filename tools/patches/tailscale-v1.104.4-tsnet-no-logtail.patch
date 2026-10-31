@@ -2,7 +2,7 @@ diff --git a/net/socks5/socks5.go b/net/socks5/socks5.go
 index 350aaa4..1515432 100644
 --- a/net/socks5/socks5.go
 +++ b/net/socks5/socks5.go
-@@ -225,7 +225,7 @@ func (c *Conn) handleRequest() error {
+@@ -225,7 +225,7 @@
  }
  
  func (c *Conn) handleTCP() error {
@@ -12,10 +12,10 @@ index 350aaa4..1515432 100644
  	srv, err := c.srv.dial(
  		ctx,
 diff --git a/tsnet/tsnet.go b/tsnet/tsnet.go
-index 8aaef64..6b71c98 100644
+index 66b6506..4a03efa 100644
 --- a/tsnet/tsnet.go
 +++ b/tsnet/tsnet.go
-@@ -520,7 +520,7 @@ func (s *Server) Loopback() (addr string, proxyCred, localAPICred string, err er
+@@ -529,7 +529,7 @@
  		s5l := logger.WithPrefix(s.logf, "socks5: ")
  		s5s := &socks5.Server{
  			Logf:     s5l,
@@ -24,22 +24,22 @@ index 8aaef64..6b71c98 100644
  			Username: "tsnet",
  			Password: s.proxyCred,
  		}
-@@ -559,6 +559,14 @@ func (s *Server) Start() error {
+@@ -566,6 +566,14 @@
+ 	hostinfo.SetPackage("tsnet")
+ 	s.initOnce.Do(s.doInit)
  	return s.initErr
- }
- 
++}
++
 +// NotifyNetworkChange asks the Android polling monitor to refresh its
 +// platform-provided interface snapshot. It is a no-op before startup.
 +func (s *Server) NotifyNetworkChange() {
 +	if s.netMon != nil {
 +		s.netMon.InjectEvent()
 +	}
-+}
-+
+ }
+ 
  // Up connects the server to the tailnet and waits until it is running.
- // On success it returns the current status, including a Tailscale IP address.
- func (s *Server) Up(ctx context.Context) (*ipnstate.Status, error) {
-@@ -1089,6 +1097,12 @@ func (s *Server) resolveAuthKey() (string, error) {
+@@ -1098,6 +1106,12 @@
  }
  
  func (s *Server) startLogger(closePool *closeOnErrorPool, health *health.Tracker, tsLogf logger.Logf) error {
