@@ -1739,6 +1739,9 @@ internal fun SessionPromptDialog(
 ) {
     val promptDensity = LocalDensity.current
     when (prompt) {
+        is SessionPrompt.LocalNetworkPermission -> androidx.compose.runtime.key(prompt.requestId) {
+            LocalNetworkPermissionPrompt(onRespond)
+        }
         is SessionPrompt.HostKeyVerification -> {
             AlertDialog(
                 onDismissRequest = { onRespond(null) },

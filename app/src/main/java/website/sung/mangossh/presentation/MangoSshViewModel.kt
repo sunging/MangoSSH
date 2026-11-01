@@ -128,6 +128,7 @@ internal fun SessionEndMessageKind.toUiText(): UiText = uiText(
         SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED -> R.string.embedded_tsnet_enrollment_required
         SessionEndMessageKind.INPUT_OVERFLOW -> R.string.session_input_overflow
         SessionEndMessageKind.FOREGROUND_SERVICE_UNAVAILABLE -> R.string.session_foreground_service_unavailable
+        SessionEndMessageKind.LOCAL_NETWORK_PERMISSION_DENIED -> R.string.local_network_permission_denied
     },
 )
 

@@ -2,6 +2,21 @@
 
 Details of behavior that the [README](../README.md) only summarizes.
 
+## Local network access on Android 17
+
+Before connecting to a LAN server on Android 17 or later, MangoSSH requests
+Android's **Nearby devices** permission for local network access. This also
+applies to a local jump host, Mosh bootstrap, file-only connections and phone-side
+forwarding listeners or destinations. DNS names are checked off the main thread;
+`.local` names request permission before mDNS resolution. Public and loopback
+connections do not require this grant, and embedded Tailscale destinations are
+handled by its own transport.
+
+If access is denied, the operation stops with an explanation instead of waiting
+for a socket timeout. Allow **Nearby devices** in Android Settings → Apps →
+MangoSSH → Permissions, then retry. Earlier Android versions keep their existing
+behavior. See the [Android local network permission guidance](https://developer.android.com/privacy-and-security/local-network-permission).
+
 ## Authentication
 
 The **Authentication** page manages named, reusable entries. Each entry can contain

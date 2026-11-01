@@ -93,6 +93,8 @@ enum class SessionEndMessageKind {
     MOSH_BOOTSTRAP_FAILED,
     MOSH_RUNTIME_MISSING,
     TSNET_ENROLLMENT_REQUIRED,
+    /** Android 17 denied access to the local network before opening a transport. */
+    LOCAL_NETWORK_PERMISSION_DENIED,
 
     /**
      * Android refused foreground-service ownership for the current process
@@ -303,6 +305,13 @@ enum class HostKeyPromptKind {
 sealed interface SessionPrompt {
     val requestId: String
     val sessionId: String
+
+    /** Requests an Android runtime grant without publishing the target address. */
+    @Immutable
+    data class LocalNetworkPermission(
+        override val requestId: String,
+        override val sessionId: String,
+    ) : SessionPrompt
 
     /**
      * Asks whether to trust a host key. [previousFingerprint] is set for
