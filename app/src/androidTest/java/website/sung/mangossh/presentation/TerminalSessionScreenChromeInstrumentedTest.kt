@@ -1,6 +1,5 @@
 package website.sung.mangossh.presentation
 
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -9,11 +8,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.v2.createComposeRule
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.DeviceConfigurationOverride
-import androidx.compose.ui.test.ForcedSize
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -46,49 +40,12 @@ class TerminalSessionScreenChromeInstrumentedTest {
     private var sessionFontSizeSp by mutableStateOf<Int?>(null)
     private var mounted by mutableStateOf(true)
     private var instanceKey by mutableIntStateOf(0)
-    private var phase by mutableStateOf(TerminalSessionPhase.CONNECTING)
-    private var reconnects = 0
-
-    @Test fun closedTerminalRecoveryFitsCompactLandscape() {
-        phase = TerminalSessionPhase.CLOSED
-        mount(DpSize(800.dp, 360.dp))
-        composeRule.onNodeWithTag("terminal_reconnect").assertIsDisplayed().performClick()
-        composeRule.runOnIdle { assertEquals(1, reconnects) }
-    }
-
-    @Test fun closedTerminalRecoveryFitsTablet() {
-        phase = TerminalSessionPhase.CLOSED
-        mount(DpSize(1280.dp, 800.dp))
-        composeRule.onNodeWithTag("terminal_reconnect").assertIsDisplayed().performClick()
-        composeRule.runOnIdle { assertEquals(1, reconnects) }
-    }
 
     @Test
-    fun recoveryOnlyAppearsForClosedTerminalsAndKeepsTheOutputSurface() {
-        mount()
-        TerminalSessionPhase.entries.filter { it != TerminalSessionPhase.CLOSED }.forEach { state ->
-            composeRule.runOnIdle { phase = state }
-            composeRule.onNodeWithTag("terminal_reconnect").assertDoesNotExist()
-        }
-        composeRule.runOnIdle { phase = TerminalSessionPhase.CLOSED }
-        composeRule.onNodeWithTag("terminal_reconnect").assertIsDisplayed().performClick()
-        composeRule.onNodeWithTag("terminal_surface").assertIsDisplayed()
-        composeRule.runOnIdle { assertEquals(1, reconnects) }
-    }
-
-    @Test
-    fun recoverySurvivesHiddenTitleBarAndImmersiveMode() {
-        mount()
-        openChromeMenu()
-        composeRule.onNodeWithTag("terminal_menu_toggle_title_bar").performClick()
-        composeRule.runOnIdle { phase = TerminalSessionPhase.CLOSED }
-        composeRule.onNodeWithTag("terminal_reconnect").assertIsDisplayed().performClick()
-        composeRule.runOnIdle { mounted = false }
-        composeRule.runOnIdle { instanceKey += 1; mounted = true }
-        composeRule.onNodeWithTag("terminal_immersive_toggle").performClick()
-        composeRule.onNodeWithTag("terminal_title_bar").assertDoesNotExist()
-        composeRule.onNodeWithTag("terminal_reconnect").assertIsDisplayed().performClick()
-        composeRule.runOnIdle { assertEquals(2, reconnects) }
+    fun closedTerminalDoesNotAddARecoveryBarAboveTheKeyboard() {
+        mount(TerminalSessionPhase.CLOSED)
+        composeRule.onNodeWithTag("terminal_reconnect").assertDoesNotExist()
+        composeRule.onNodeWithTag("terminal_surface").assertExists()
     }
 
     @Test
@@ -200,50 +157,44 @@ class TerminalSessionScreenChromeInstrumentedTest {
         composeRule.waitForIdle()
     }
 
-    private fun mount(size: DpSize? = null) {
+    private fun mount(phase: TerminalSessionPhase = TerminalSessionPhase.CONNECTING) {
         composeRule.setContent {
-            val content: @Composable () -> Unit = {
-                if (mounted) {
-                    key(instanceKey) {
-                        val emulator = remember(instanceKey) {
-                            TerminalEmulatorFactory.create(
-                                initialRows = 24,
-                                initialCols = 80,
-                                defaultForeground = Color.White,
-                                defaultBackground = Color.Black,
-                                onKeyboardInput = {},
-                            )
-                        }
-                        TerminalSessionScreen(
-                            session = TerminalSessionState(
-                                id = "session-$instanceKey",
-                                profileId = "profile-1",
-                                title = "test-host",
-                                endpoint = "test-host:22",
-                                protocol = ConnectionProtocol.SSH,
-                                // Most chrome tests stay CONNECTING to avoid opening the real IME.
-                                phase = phase,
-                            ),
-                            terminalEmulator = emulator,
-                            appearance = TerminalAppearance(),
-                            behavior = TerminalBehavior(),
-                            shortcutConfig = TerminalShortcutConfig.defaults(),
-                            clipboardCopies = remember(instanceKey) { MutableSharedFlow<TerminalClipboardCopy>() },
-                            onSend = {},
-                            resourceState = website.sung.mangossh.session.ServerResourceState(),
-                            onResourceMonitoringChange = {},
-                            onRequestResources = {},
-                            onOpenFileBrowser = {},
-                            onRequestLeave = {},
-                            onReconnect = { reconnects++ },
-                            sessionFontSizeSp = sessionFontSizeSp,
-                            onSessionFontSizeChange = { sessionFontSizeSp = it },
+            if (mounted) {
+                key(instanceKey) {
+                    val emulator = remember(instanceKey) {
+                        TerminalEmulatorFactory.create(
+                            initialRows = 24,
+                            initialCols = 80,
+                            defaultForeground = Color.White,
+                            defaultBackground = Color.Black,
+                            onKeyboardInput = {},
                         )
                     }
+                    TerminalSessionScreen(
+                        session = TerminalSessionState(
+                            id = "session-$instanceKey",
+                            profileId = "profile-1",
+                            title = "test-host",
+                            endpoint = "test-host:22",
+                            protocol = ConnectionProtocol.SSH,
+                            // Kept off OPEN so the terminal never requests the real soft keyboard.
+                            phase = phase,
+                        ),
+                        terminalEmulator = emulator,
+                        appearance = TerminalAppearance(),
+                        behavior = TerminalBehavior(),
+                        shortcutConfig = TerminalShortcutConfig.defaults(),
+                        clipboardCopies = remember(instanceKey) { MutableSharedFlow<TerminalClipboardCopy>() },
+                        onSend = {},
+                        resourceState = website.sung.mangossh.session.ServerResourceState(),
+                        onResourceMonitoringChange = {},
+                        onRequestResources = {},
+                        onOpenFileBrowser = {},
+                        onRequestLeave = {},
+                        sessionFontSizeSp = sessionFontSizeSp,
+                        onSessionFontSizeChange = { sessionFontSizeSp = it },
+                    )
                 }
-            }
-            if (size == null) content() else {
-                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(size), content)
             }
         }
         composeRule.waitForIdle()

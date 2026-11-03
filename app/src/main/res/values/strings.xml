@@ -687,9 +687,9 @@
     <string name="terminal_clear_records">Clear</string>
     <string name="terminal_reconnect">Reconnect</string>
     <string name="terminal_reconnect_profile_missing">This host profile no longer exists. Add a host to start a new connection.</string>
-    <string name="terminal_reconnect_fresh">A new session will be created. Unsent input is never replayed.</string>
-    <string name="terminal_reconnect_workspace">A new connection will reattach the same tmux workspace. Unsent input is never replayed.</string>
-    <string name="terminal_reconnect_snippet">Run the configured startup snippet again</string>
+    <string name="terminal_reconnect_fresh">Open a new session. Pending input will not be sent.</string>
+    <string name="terminal_reconnect_workspace">Reconnect to the same tmux workspace. Pending input will not be sent.</string>
+    <string name="terminal_reconnect_snippet">Run startup snippet again</string>
     <string name="connection_diagnostics">Connection diagnostics</string>
     <string name="diagnostics_unknown">Unknown</string>
     <string name="diagnostics_route_note">The route is configured, not a measurement of the actual system VPN path. Native Mosh packet timing is unavailable.</string>

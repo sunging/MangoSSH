@@ -456,10 +456,13 @@ fun MangoSshApp(
         if (showWorkspaces) WorkspaceDialog(load = { viewModel.listWorkspaces(activeSession.id) },
             onOpen = { workspace -> viewModel.openWorkspace(activeSession.id, workspace)?.let { activeSessionId = it }; showWorkspaces = false },
             onDismiss = { showWorkspaces = false })
-        var showReconnect by remember(activeSession.id) { mutableStateOf(false) }
-        if (showReconnect) {
+        var showReconnect by rememberTerminalReconnectRequest(activeSession.id, activeSession.phase)
+        if (showReconnect && userMessage == null) {
             TerminalReconnectDialog(
                 hasWorkspace = endedTerminals.firstOrNull { it.session.id == activeSession.id }?.workspace != null,
+                hasStartupSnippet = hosts.firstOrNull { it.id == activeSession.profileId }?.startupSnippetId
+                    ?.let { id -> snippets.any { it.id == id } } == true,
+                terminalColors = terminalAppearance.colorScheme,
                 onConfirm = { allowStartupSnippet ->
                     viewModel.reconnectEnded(activeSession.id, allowStartupSnippet)?.let { activeSessionId = it }
                     showReconnect = false

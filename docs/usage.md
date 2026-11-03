@@ -19,12 +19,14 @@ behavior. See the [Android local network permission guidance](https://developer.
 
 ## Reconnecting a closed terminal
 
-A closed terminal keeps its scrollback and shows a **Reconnect** button, including
-when the title bar is hidden or immersive mode is enabled. Reconnect opens a
-confirmation dialog and creates a new connection; it never replays unsent input.
-Startup snippets are off by default in this dialog. A tmux session reconnects to
-the same workspace instead of running a startup snippet. Cancelling the dialog
-does not connect. If the host profile has been deleted, add a host first.
+Whenever a retained terminal is displayed in the closed state, a **Reconnect**
+confirmation opens automatically. The dialog follows the
+terminal palette, including with hidden controls or immersive mode. Confirming
+creates a new connection and never replays unsent input. Only a configured startup
+snippet is offered, off by default. A tmux session reconnects to the same workspace
+instead of running a snippet. Cancelling leaves the scrollback available and does
+not connect or repeatedly reopen the dialog. Reopen the terminal or use its menu
+to ask again. If the host profile has been deleted, add a host first.
 
 Cancelling a server fingerprint prompt does not trust that key. Reconnecting asks
 for confirmation again unless the key is already trusted. Closing or failing a

@@ -41,7 +41,6 @@ import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -574,25 +573,6 @@ fun TerminalSessionScreen(
                                 contentDescription = stringResource(R.string.terminal_exit_immersive_mode),
                                 modifier = Modifier.size(18.dp),
                             )
-                        }
-                    }
-                }
-
-                // Recovery belongs to the content, not optional chrome: it must remain
-                // reachable after a failure even in immersive mode or with both bars hidden.
-                if (session.phase == TerminalSessionPhase.CLOSED) {
-                    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth()
-                                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text(stringResource(R.string.ui_closed), Modifier.weight(1f))
-                            Button(onClick = onReconnect, modifier = Modifier.testTag("terminal_reconnect")) {
-                                Text(stringResource(R.string.terminal_reconnect))
-                            }
                         }
                     }
                 }
