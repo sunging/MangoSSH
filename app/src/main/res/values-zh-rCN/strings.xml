@@ -1,4 +1,5 @@
 <resources>
+    <string name="local_network_permission_denied">未获得局域网访问权限。请在 Android 设置中为 MangoSSH 允许访问附近的设备，然后重试局域网连接。</string>
     <string name="ssh_key_encryption_unsupported">不再支持 DES/3DES 加密的 PEM 和加密 PKCS#8 密钥。已有记录仍可备份和导出。请使用可信的外部工具将导出的密钥转换为 AES 加密的 OpenSSH 密钥，然后重新导入。</string>
     <string name="host_legacy_ssh_algorithms">兼容旧版 SSH 算法</string>
     <string name="host_legacy_ssh_algorithms_description">为此主机在现代算法之后允许 RSA/SHA-1、DH group14/GEX SHA-1、AES-CBC 和 HMAC-SHA1。仅在连接旧服务器时启用；连接失败不会自动开启。</string>
@@ -660,9 +661,10 @@
     <string name="terminal_ended_records">已结束的终端（仅驻留内存）</string>
     <string name="terminal_clear_records">清除</string>
     <string name="terminal_reconnect">重新连接</string>
-    <string name="terminal_reconnect_fresh">将创建新会话，不重放未发送的输入。</string>
-    <string name="terminal_reconnect_workspace">将建立新连接并重新接入同一个 tmux 工作区，不重放未发送的输入。</string>
-    <string name="terminal_reconnect_snippet">再次执行配置的启动片段</string>
+    <string name="terminal_reconnect_profile_missing">此主机配置已不存在。请添加主机以建立新连接。</string>
+    <string name="terminal_reconnect_fresh">建立新会话，不重放未发送的输入。</string>
+    <string name="terminal_reconnect_workspace">重新接入同一个 tmux 工作区，不重放未发送的输入。</string>
+    <string name="terminal_reconnect_snippet">再次运行启动片段</string>
     <string name="connection_diagnostics">连接诊断</string>
     <string name="diagnostics_unknown">未知</string>
     <string name="diagnostics_route_note">路由为配置值，不表示已验证系统 VPN 实际路径；原生 Mosh 收发时刻暂不可测。</string>

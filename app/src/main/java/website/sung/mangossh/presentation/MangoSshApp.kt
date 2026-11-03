@@ -229,7 +229,11 @@ fun MangoSshApp(
             if (event.sessionId == currentActiveSessionId) {
                 leaveSessionId = null
                 if (event.leavesTerminal()) activeSessionId = null
-                viewModel.sessionEndMessage(event)?.let(viewModel::reportUserMessage)
+                // A retained terminal presents its failure together with Reconnect. Owners
+                // without retained output still need the standalone operation message.
+                if (viewModel.endedTerminals.value.none { it.session.id == event.sessionId }) {
+                    viewModel.sessionEndMessage(event)?.let(viewModel::reportUserMessage)
+                }
             }
         }
     }
@@ -456,23 +460,21 @@ fun MangoSshApp(
         if (showWorkspaces) WorkspaceDialog(load = { viewModel.listWorkspaces(activeSession.id) },
             onOpen = { workspace -> viewModel.openWorkspace(activeSession.id, workspace)?.let { activeSessionId = it }; showWorkspaces = false },
             onDismiss = { showWorkspaces = false })
-        var showReconnect by remember(activeSession.id) { mutableStateOf(false) }
-        var allowStartupSnippet by remember(activeSession.id) { mutableStateOf(false) }
-        if (showReconnect) {
-            AlertDialog(onDismissRequest = { showReconnect = false }, title = { Text(stringResource(R.string.terminal_reconnect)) },
-                text = { Column {
-                    if (endedTerminals.firstOrNull { it.session.id == activeSession.id }?.workspace != null) {
-                        Text(stringResource(R.string.terminal_reconnect_workspace))
-                    } else {
-                        Text(stringResource(R.string.terminal_reconnect_fresh))
-                        Row { Checkbox(allowStartupSnippet, { allowStartupSnippet = it }); Text(stringResource(R.string.terminal_reconnect_snippet)) }
-                    }
-                } },
-                confirmButton = { TextButton(onClick = {
+        var showReconnect by rememberTerminalReconnectRequest(activeSession.id, activeSession.phase)
+        val endedTerminal = endedTerminals.firstOrNull { it.session.id == activeSession.id }
+        if (showReconnect && userMessage == null) {
+            TerminalReconnectDialog(
+                hasWorkspace = endedTerminal?.workspace != null,
+                hasStartupSnippet = hosts.firstOrNull { it.id == activeSession.profileId }?.startupSnippetId
+                    ?.let { id -> snippets.any { it.id == id } } == true,
+                terminalColors = terminalAppearance.colorScheme,
+                failure = endedTerminal?.let { resolveSessionEndMessage(it) },
+                onConfirm = { allowStartupSnippet ->
                     viewModel.reconnectEnded(activeSession.id, allowStartupSnippet)?.let { activeSessionId = it }
                     showReconnect = false
-                }) { Text(stringResource(R.string.terminal_reconnect)) } },
-                dismissButton = { TextButton(onClick = { showReconnect = false }) { Text(stringResource(R.string.common_cancel)) } })
+                },
+                onDismiss = { showReconnect = false },
+            )
         }
         val activePrompt = sessionPrompts.firstOrNull { it.sessionId == activeSession.id }
         val visiblePrompt = activePrompt ?: sessionPrompts.firstOrNull { it.sessionId != activeSession.id }
@@ -1739,6 +1741,9 @@ internal fun SessionPromptDialog(
 ) {
     val promptDensity = LocalDensity.current
     when (prompt) {
+        is SessionPrompt.LocalNetworkPermission -> androidx.compose.runtime.key(prompt.requestId) {
+            LocalNetworkPermissionPrompt(onRespond)
+        }
         is SessionPrompt.HostKeyVerification -> {
             AlertDialog(
                 onDismissRequest = { onRespond(null) },

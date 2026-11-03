@@ -42,6 +42,13 @@ class TerminalSessionScreenChromeInstrumentedTest {
     private var instanceKey by mutableIntStateOf(0)
 
     @Test
+    fun closedTerminalDoesNotAddARecoveryBarAboveTheKeyboard() {
+        mount(TerminalSessionPhase.CLOSED)
+        composeRule.onNodeWithTag("terminal_reconnect").assertDoesNotExist()
+        composeRule.onNodeWithTag("terminal_surface").assertExists()
+    }
+
+    @Test
     fun titleBarAndShortcutBarShowByDefault() {
         mount()
         composeRule.onNodeWithTag("terminal_title_bar").assertExists()
@@ -150,7 +157,7 @@ class TerminalSessionScreenChromeInstrumentedTest {
         composeRule.waitForIdle()
     }
 
-    private fun mount() {
+    private fun mount(phase: TerminalSessionPhase = TerminalSessionPhase.CONNECTING) {
         composeRule.setContent {
             if (mounted) {
                 key(instanceKey) {
@@ -171,7 +178,7 @@ class TerminalSessionScreenChromeInstrumentedTest {
                             endpoint = "test-host:22",
                             protocol = ConnectionProtocol.SSH,
                             // Kept off OPEN so the terminal never requests the real soft keyboard.
-                            phase = TerminalSessionPhase.CONNECTING,
+                            phase = phase,
                         ),
                         terminalEmulator = emulator,
                         appearance = TerminalAppearance(),

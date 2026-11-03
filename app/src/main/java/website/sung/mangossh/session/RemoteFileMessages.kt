@@ -22,10 +22,13 @@ sealed interface RemoteFileMessage {
     /** Too little storage to download a file whole for another app; streaming needs none. */
     data class OpenSpaceShortage(val requiredBytes: Long) : RemoteFileMessage
     data object IoFailure : RemoteFileMessage
+    /** A companion reconnect was stopped by Android's local network permission. */
+    data object LocalNetworkPermissionDenied : RemoteFileMessage
 }
 
 /** Maps a throwable to a category without retaining library or server text. */
 internal fun Throwable.toRemoteFileMessage(): RemoteFileMessage = when (this) {
+    is LocalNetworkPermissionDeniedException -> RemoteFileMessage.LocalNetworkPermissionDenied
     is RemoteOperationException -> RemoteFileMessage.OperationFailure(reason)
     is MetadataPreservationException -> RemoteFileMessage.MetadataFailure
     is StagingSpaceException -> RemoteFileMessage.InsufficientSpace(requiredBytes)

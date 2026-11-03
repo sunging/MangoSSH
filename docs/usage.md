@@ -2,6 +2,48 @@
 
 Details of behavior that the [README](../README.md) only summarizes.
 
+## Local network access on Android 17
+
+Before connecting to a LAN server on Android 17 or later, MangoSSH requests
+Android's **Nearby devices** permission for local network access. This also
+applies to a local jump host, Mosh bootstrap, file-only connections and phone-side
+forwarding listeners or destinations. DNS names are checked off the main thread;
+`.local` names request permission before mDNS resolution. Public and loopback
+connections do not require this grant, and embedded Tailscale destinations are
+handled by its own transport.
+
+If access is denied, the operation stops with an explanation instead of waiting
+for a socket timeout. Allow **Nearby devices** in Android Settings → Apps →
+MangoSSH → Permissions, then retry. Earlier Android versions keep their existing
+behavior. See the [Android local network permission guidance](https://developer.android.com/privacy-and-security/local-network-permission).
+
+## Reconnecting a closed terminal
+
+Whenever a retained terminal is displayed in the closed state, a **Reconnect**
+confirmation opens automatically. The dialog follows the
+terminal palette, including with hidden controls or immersive mode. Connection
+failures are explained in this dialog instead of a separate alert. Confirming
+creates a new connection and never replays unsent input. Only a configured startup
+snippet is offered, off by default. A tmux session reconnects to the same workspace
+instead of running a snippet. Cancelling leaves the scrollback available and does
+not connect or repeatedly reopen the dialog. Reopen the terminal or use its menu
+to ask again. If the host profile has been deleted, add a host first.
+
+Cancelling a server fingerprint prompt does not trust that key. Reconnecting asks
+for confirmation again unless the key is already trusted. Closing or failing a
+connection never starts an automatic reconnect of the terminal.
+
+## Notifications and background sessions
+
+On Android 13 and later, notification permission is optional. Declining it still
+allows SSH/Mosh sessions and port forwards to start and continue in the background
+under the foreground service. Notification-drawer shortcuts are unavailable;
+Android still lists the foreground service in its active-apps Task Manager.
+Closing a terminal while keeping its forwards running does not require notification
+permission either. Process death, force-stop, network loss, and device power
+management can still interrupt connections; the permission is not a guarantee of
+unlimited background lifetime. See the [Android notification permission guidance](https://developer.android.com/develop/ui/compose/notifications/notification-permission).
+
 ## Authentication
 
 The **Authentication** page manages named, reusable entries. Each entry can contain

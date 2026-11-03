@@ -111,6 +111,10 @@ internal fun resolveSessionEndMessage(
     SessionEndReason.CONNECTION_FAILED -> uiText(R.string.session_ended_connection_failed)
 }
 
+/** Keeps the sanitized failure explanation available when an ended terminal is reopened. */
+internal fun resolveSessionEndMessage(record: website.sung.mangossh.session.EndedTerminalRecord): UiText? =
+    resolveSessionEndMessage(SessionEndedEvent(record.session.id, record.reason, record.messageKind))
+
 /** Orderly ends leave the terminal; failures stay so their output and Reconnect remain reachable. */
 internal fun SessionEndedEvent.leavesTerminal(): Boolean = resolveSessionEndMessage(this) == null
 
@@ -128,6 +132,7 @@ internal fun SessionEndMessageKind.toUiText(): UiText = uiText(
         SessionEndMessageKind.TSNET_ENROLLMENT_REQUIRED -> R.string.embedded_tsnet_enrollment_required
         SessionEndMessageKind.INPUT_OVERFLOW -> R.string.session_input_overflow
         SessionEndMessageKind.FOREGROUND_SERVICE_UNAVAILABLE -> R.string.session_foreground_service_unavailable
+        SessionEndMessageKind.LOCAL_NETWORK_PERMISSION_DENIED -> R.string.local_network_permission_denied
     },
 )
 
@@ -233,9 +238,14 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
     suspend fun listWorkspaces(sessionId: String) = sessionController.listWorkspaces(sessionId)
     fun clearEndedTerminals() = sessionController.clearEndedTerminals()
+    /** Reconnects only from a retained terminal and a current profile, after normal access checks. */
     fun reconnectEnded(sessionId: String, allowStartupSnippet: Boolean): String? {
         val ended = endedTerminals.value.firstOrNull { it.session.id == sessionId } ?: return null
-        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == ended.session.profileId } ?: return null
+        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == ended.session.profileId }
+        if (profile == null) {
+            reportUserMessage(R.string.terminal_reconnect_profile_missing)
+            return null
+        }
         // Return to the same tmux workspace, even one picked after connecting. Workspaces and
         // startup snippets are exclusive, so no snippet is replayed into a reattached session.
         return connect(when {

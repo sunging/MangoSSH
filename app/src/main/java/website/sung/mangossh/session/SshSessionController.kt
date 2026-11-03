@@ -128,6 +128,11 @@ class SshSessionController internal constructor(
 
     private val context = appContext.applicationContext
 
+    private val localNetworkPermission = LocalNetworkPermissionGate(android.os.Build.VERSION.SDK_INT, {
+        androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_LOCAL_NETWORK) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    })
+
     /**
      * Paces keepalives: the user-configured interval while the app is on screen,
      * a longer Doze-tolerant alarm once it is backgrounded and the session wake
@@ -740,7 +745,7 @@ class SshSessionController internal constructor(
         synchronized(managed.sshFeatureLock) { managed.openingForwards[runtimeId] = opening }
         var openingFailure: Throwable? = null
         try {
-            val forward = createPortForward(connection, intent.rule)
+            val forward = createPortForward(connection, intent.rule, managed)
             val installed = synchronized(managed.sshFeatureLock) {
                 forwardRecovery.whileCurrent(intent) {
                     if (sessionsById[sessionId] !== managed || !managed.lifecycle.isOpen ||
@@ -1557,6 +1562,7 @@ class SshSessionController internal constructor(
 
     /** Returns only fixed localized wording for failure categories that need clarification. */
     private fun connectionFailureMessage(error: Throwable): SessionEndMessageKind? = when (error) {
+        is LocalNetworkPermissionDeniedException -> SessionEndMessageKind.LOCAL_NETWORK_PERMISSION_DENIED
         is SshAuthenticationFailure -> when (error.category) {
             SshAuthenticationFailure.Category.REJECTED -> SessionEndMessageKind.AUTHENTICATION_FAILED
             SshAuthenticationFailure.Category.NO_MATCHING_METHOD -> SessionEndMessageKind.AUTHENTICATION_METHOD_UNAVAILABLE
@@ -1604,13 +1610,16 @@ class SshSessionController internal constructor(
         managed.connection.useJump(requireNotNull(previous))
     }
 
-    /** Attaches tsnet's authenticated loopback SOCKS5 transport before SSH connects. */
+    /** Checks platform access or attaches tsnet's authenticated loopback transport before SSH connects. */
     private suspend fun prepareDirectRoute(
         profile: ConnectionProfile,
         managed: ManagedSession,
         connection: SshConnection,
     ) {
-        if (profile.route != ConnectionRoute.TSNET) return
+        if (profile.route != ConnectionRoute.TSNET) {
+            requireLocalNetworkPermission(profile.hostname, managed)
+            return
+        }
         val lease = embeddedTsnetManager.acquire()
         if (sessionsById.values.none { it === managed }) {
             lease.close()
@@ -1623,6 +1632,15 @@ class SshSessionController internal constructor(
                 managed, SessionEndReason.CONNECTION_LOST)
         }
         connection.useSocketRoute(lease.proxyData)
+    }
+
+    /** Uses session-owned waiters so teardown also cancels a pending Android permission request. */
+    private suspend fun requireLocalNetworkPermission(hostname: String, managed: ManagedSession) {
+        localNetworkPermission.requireAccess(hostname) {
+            val sessionId = sessionIdOf(managed) ?: throw CancellationException()
+            awaitPrompt(SessionPrompt.LocalNetworkPermission(UUID.randomUUID().toString(), sessionId)) != null
+        }
+        if (!managed.lifecycle.isOpen) throw CancellationException()
     }
 
     private suspend fun authenticate(connection: SshConnection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean {
@@ -1856,8 +1874,13 @@ class SshSessionController internal constructor(
         sessionsById[sessionId]?.writer?.send(text.encodeToByteArray())
     }
 
-    private suspend fun createPortForward(connection: SshConnection, rule: PortForwardRule): ManagedPortForward {
+    private suspend fun createPortForward(connection: SshConnection, rule: PortForwardRule, managed: ManagedSession): ManagedPortForward {
         require(rule.bindPort in 1..65535) { "Invalid listen port" }
+        // Local listeners and remote-forward destinations run on the phone, whereas
+        // local-forward destination names are resolved by the SSH server.
+        val localHost = if (rule.type == PortForwardType.REMOTE) rule.requireDestination().first
+            else rule.bindHost.ifBlank { "127.0.0.1" }
+        requireLocalNetworkPermission(localHost, managed)
         val bindAddress = InetSocketAddress(rule.bindHost.ifBlank { "127.0.0.1" }, rule.bindPort)
         return when (rule.type) {
             PortForwardType.LOCAL -> {
@@ -2050,7 +2073,7 @@ class SshSessionController internal constructor(
         try {
             if (profile.route == ConnectionRoute.TSNET) {
                 connection.useSocketRoute(requireNotNull(managed.tsnetLease).proxyData)
-            }
+            } else requireLocalNetworkPermission(profile.hostname, managed)
             connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
             if (!authenticate(connection, sessionId, profile, snapshot)) {
                 throw SshAuthenticationException()
@@ -2160,19 +2183,22 @@ class SshSessionController internal constructor(
      * feed a transport nobody owns.
      */
     private fun requestPrompt(prompt: SessionPrompt): List<String>? {
+        return runBlocking { awaitPrompt(prompt) }
+    }
+
+    /** Suspending callers also release their waiter when an individual operation is cancelled. */
+    private suspend fun awaitPrompt(prompt: SessionPrompt): List<String>? {
         val managed = sessionsById[prompt.sessionId] ?: return null
         val waiter = managed.lifecycle.whileOpen {
             promptRegistry.register(prompt.requestId, prompt.sessionId).also { _prompts.update { it + prompt } }
         } ?: return null
         forwardRecovery.waitingForOperation(prompt.sessionId, true)
-        return runBlocking {
-            try {
-                withTimeoutOrNull(PROMPT_TIMEOUT_MILLIS) { waiter.await() }
-            } finally {
-                promptRegistry.release(prompt.requestId)
-                _prompts.update { prompts -> prompts.filterNot { it.requestId == prompt.requestId } }
-                forwardRecovery.waitingForOperation(prompt.sessionId, false)
-            }
+        return try {
+            withTimeoutOrNull(PROMPT_TIMEOUT_MILLIS) { waiter.await() }
+        } finally {
+            promptRegistry.release(prompt.requestId)
+            _prompts.update { prompts -> prompts.filterNot { it.requestId == prompt.requestId } }
+            forwardRecovery.waitingForOperation(prompt.sessionId, false)
         }
     }
 
@@ -2443,6 +2469,7 @@ class SshSessionController internal constructor(
         Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(hostKey))
 
     private fun Throwable.toSafeMessage(): String = when (this) {
+        is LocalNetworkPermissionDeniedException -> context.appString(R.string.local_network_permission_denied)
         is java.net.BindException -> context.appString(R.string.port_forward_bind_failed)
         is website.sung.mangossh.session.ssh.SshFailure -> context.appString(when (category) {
             website.sung.mangossh.session.ssh.SshFailure.Category.CHANNEL -> R.string.port_forward_bind_failed

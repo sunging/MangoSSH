@@ -46,4 +46,5 @@ internal fun RemoteFileMessage.toUiText(): UiText = when (this) {
     is RemoteFileMessage.InsufficientSpace -> uiText(R.string.transfer_space_failed, requiredBytes)
     is RemoteFileMessage.OpenSpaceShortage -> uiText(R.string.remote_open_space_failed, requiredBytes)
     RemoteFileMessage.IoFailure -> uiText(R.string.remote_file_io_failure)
+    RemoteFileMessage.LocalNetworkPermissionDenied -> uiText(R.string.local_network_permission_denied)
 }

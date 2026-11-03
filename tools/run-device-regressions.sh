@@ -117,12 +117,19 @@ for phase in "${suites[@]}"; do
   adb logcat -c
   suite_arguments=("${arguments[@]}")
   if [[ "$phase" != termlib ]]; then
+    # Denying this runtime permission while instrumentation is running kills its
+    # process. Install first and deny before the runner starts; Gradle's same-key
+    # replacement preserves the denial. This script is restricted to disposable CI.
+    adb install -r "app/build/outputs/apk/$phase/debug/app-$phase-debug.apk"
+    adb shell pm revoke website.sung.mangossh android.permission.POST_NOTIFICATIONS
+    adb shell pm set-permission-flags website.sung.mangossh android.permission.POST_NOTIFICATIONS user-set user-fixed
     # Sensor provisioning requires the separately enrolled, task-owned AVD.
     # Every regression selected for this ordinary CI test plan must execute.
     suite_arguments+=(
       -Pandroid.testInstrumentationRunnerArguments.notClass=website.sung.mangossh.BiometricEnrollmentInstrumentedTest,website.sung.mangossh.BiometricSensorInstrumentedTest
       -Pandroid.testInstrumentationRunnerArguments.listener=website.sung.mangossh.diagnostics.CiRegressionListener
       -Pandroid.testInstrumentationRunnerArguments.newRunListenerMode=true
+      -Pandroid.testInstrumentationRunnerArguments.ciSessionReviewFixture=true
     )
   fi
   if ./gradlew --no-daemon "$task" "${suite_arguments[@]}"; then
