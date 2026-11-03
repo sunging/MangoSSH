@@ -21,7 +21,8 @@ behavior. See the [Android local network permission guidance](https://developer.
 
 Whenever a retained terminal is displayed in the closed state, a **Reconnect**
 confirmation opens automatically. The dialog follows the
-terminal palette, including with hidden controls or immersive mode. Confirming
+terminal palette, including with hidden controls or immersive mode. Connection
+failures are explained in this dialog instead of a separate alert. Confirming
 creates a new connection and never replays unsent input. Only a configured startup
 snippet is offered, off by default. A tmux session reconnects to the same workspace
 instead of running a snippet. Cancelling leaves the scrollback available and does

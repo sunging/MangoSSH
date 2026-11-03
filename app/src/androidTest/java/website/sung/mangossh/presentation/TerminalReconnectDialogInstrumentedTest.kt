@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
@@ -95,7 +96,7 @@ class TerminalReconnectDialogInstrumentedTest {
 
     private fun mount(workspace: Boolean = false, snippet: Boolean = true,
         terminalTheme: TerminalThemeId = TerminalThemeId.MANGO_DARK,
-        size: DpSize = DpSize(393.dp, 800.dp), fontScale: Float = 1f, locale: String = "en") {
+        size: DpSize = DpSize(393.dp, 800.dp), fontScale: Float = 1f, locale: String = "en", failure: UiText? = null) {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val resources = base.createConfigurationContext(Configuration(base.resources.configuration).apply {
             setLocale(java.util.Locale.forLanguageTag(locale))
@@ -109,12 +110,23 @@ class TerminalReconnectDialogInstrumentedTest {
                     MaterialTheme(colorScheme = if (terminalTheme == TerminalThemeId.MANGO_DARK) lightColorScheme() else darkColorScheme()) {
                         if (visible) TerminalReconnectDialog(workspace, snippet,
                             TerminalAppearance(theme = terminalTheme).colorScheme,
+                            failure = failure,
                             onConfirm = { confirmations += it; visible = false },
                             onDismiss = { visible = false })
                     }
                 }
             }
         }
+    }
+
+    @Test fun failureAndReconnectShareOneDialog() {
+        mount(snippet = false, failure = uiText(R.string.session_ended_connection_failed))
+        compose.onAllNodes(isDialog()).assertCountEquals(1)
+        compose.onNodeWithTag("terminal_reconnect_failure").assertIsDisplayed()
+        compose.onNodeWithTag("terminal_reconnect_confirm").assertIsDisplayed()
+        assertPaletteAndCapture(TerminalThemeId.MANGO_DARK, "dark-failure")
+        compose.onNodeWithTag("terminal_reconnect_confirm").performClick()
+        compose.runOnIdle { assertEquals(listOf(false), confirmations) }
     }
 
     @Test fun unavailableSnippetIsHiddenAndCannotBeReplayed() {
@@ -144,7 +156,8 @@ class TerminalReconnectDialogInstrumentedTest {
     }
 
     @Test fun largeTextInCompactLandscapeKeepsActionsReachable() {
-        mount(size = DpSize(640.dp, 360.dp), fontScale = 1.5f)
+        mount(size = DpSize(640.dp, 360.dp), fontScale = 1.5f,
+            failure = uiText(R.string.session_ended_authentication_key_failed))
         compose.onNodeWithTag("terminal_reconnect_confirm").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(listOf(false), confirmations) }
     }

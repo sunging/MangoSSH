@@ -49,12 +49,14 @@ internal fun rememberTerminalReconnectRequest(sessionId: String, phase: Terminal
 /**
  * Recovery follows the terminal palette even when the app theme differs. Only an available
  * startup snippet can be replayed, with fresh consent on each opening; workspaces never replay it.
+ * The failure comes from the retained, localized exit category, never raw peer exception text.
  */
 @Composable
 internal fun TerminalReconnectDialog(
     hasWorkspace: Boolean,
     hasStartupSnippet: Boolean,
     terminalColors: TerminalColorScheme,
+    failure: UiText? = null,
     onConfirm: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -70,6 +72,10 @@ internal fun TerminalReconnectDialog(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
+                    failure?.let {
+                        Text(it.asString(), modifier = Modifier.testTag("terminal_reconnect_failure"),
+                            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                    }
                     Text(stringResource(if (hasWorkspace) R.string.terminal_reconnect_workspace else R.string.terminal_reconnect_fresh))
                     if (canRunSnippet) {
                         Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHighest) {

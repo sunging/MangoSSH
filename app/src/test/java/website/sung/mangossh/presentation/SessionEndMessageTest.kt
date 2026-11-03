@@ -11,6 +11,16 @@ import website.sung.mangossh.session.SessionEndMessageKind
 import website.sung.mangossh.session.SessionEndedEvent
 
 class SessionEndMessageTest {
+    @Test fun reopeningRetainedTerminalPreservesItsFailureCategory() {
+        val session = website.sung.mangossh.session.TerminalSessionState("ended", "fixture", "", "",
+            website.sung.mangossh.domain.ConnectionProtocol.SSH, website.sung.mangossh.session.TerminalSessionPhase.CLOSED)
+        val record = website.sung.mangossh.session.EndedTerminalRecord(session,
+            SessionEndReason.CONNECTION_FAILED, SessionEndMessageKind.AUTHENTICATION_FAILED)
+        assertEquals(uiText(R.string.session_ended_authentication_failed), resolveSessionEndMessage(record))
+        assertEquals(uiText(R.string.session_ended_connection_failed), resolveSessionEndMessage(record.copy(messageKind = null)))
+        assertNull(resolveSessionEndMessage(record.copy(reason = SessionEndReason.USER_REQUEST, messageKind = null)))
+    }
+
     @Test
     fun keepsOrderlySessionEndsSilent() {
         assertNull(

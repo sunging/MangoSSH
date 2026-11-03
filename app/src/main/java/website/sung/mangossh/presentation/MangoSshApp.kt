@@ -229,7 +229,11 @@ fun MangoSshApp(
             if (event.sessionId == currentActiveSessionId) {
                 leaveSessionId = null
                 if (event.leavesTerminal()) activeSessionId = null
-                viewModel.sessionEndMessage(event)?.let(viewModel::reportUserMessage)
+                // A retained terminal presents its failure together with Reconnect. Owners
+                // without retained output still need the standalone operation message.
+                if (viewModel.endedTerminals.value.none { it.session.id == event.sessionId }) {
+                    viewModel.sessionEndMessage(event)?.let(viewModel::reportUserMessage)
+                }
             }
         }
     }
@@ -457,12 +461,14 @@ fun MangoSshApp(
             onOpen = { workspace -> viewModel.openWorkspace(activeSession.id, workspace)?.let { activeSessionId = it }; showWorkspaces = false },
             onDismiss = { showWorkspaces = false })
         var showReconnect by rememberTerminalReconnectRequest(activeSession.id, activeSession.phase)
+        val endedTerminal = endedTerminals.firstOrNull { it.session.id == activeSession.id }
         if (showReconnect && userMessage == null) {
             TerminalReconnectDialog(
-                hasWorkspace = endedTerminals.firstOrNull { it.session.id == activeSession.id }?.workspace != null,
+                hasWorkspace = endedTerminal?.workspace != null,
                 hasStartupSnippet = hosts.firstOrNull { it.id == activeSession.profileId }?.startupSnippetId
                     ?.let { id -> snippets.any { it.id == id } } == true,
                 terminalColors = terminalAppearance.colorScheme,
+                failure = endedTerminal?.let { resolveSessionEndMessage(it) },
                 onConfirm = { allowStartupSnippet ->
                     viewModel.reconnectEnded(activeSession.id, allowStartupSnippet)?.let { activeSessionId = it }
                     showReconnect = false

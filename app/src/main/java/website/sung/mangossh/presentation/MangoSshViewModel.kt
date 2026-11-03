@@ -111,6 +111,10 @@ internal fun resolveSessionEndMessage(
     SessionEndReason.CONNECTION_FAILED -> uiText(R.string.session_ended_connection_failed)
 }
 
+/** Keeps the sanitized failure explanation available when an ended terminal is reopened. */
+internal fun resolveSessionEndMessage(record: website.sung.mangossh.session.EndedTerminalRecord): UiText? =
+    resolveSessionEndMessage(SessionEndedEvent(record.session.id, record.reason, record.messageKind))
+
 /** Orderly ends leave the terminal; failures stay so their output and Reconnect remain reachable. */
 internal fun SessionEndedEvent.leavesTerminal(): Boolean = resolveSessionEndMessage(this) == null
 
