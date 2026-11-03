@@ -17,6 +17,30 @@ for a socket timeout. Allow **Nearby devices** in Android Settings → Apps →
 MangoSSH → Permissions, then retry. Earlier Android versions keep their existing
 behavior. See the [Android local network permission guidance](https://developer.android.com/privacy-and-security/local-network-permission).
 
+## Reconnecting a closed terminal
+
+A closed terminal keeps its scrollback and shows a **Reconnect** button, including
+when the title bar is hidden or immersive mode is enabled. Reconnect opens a
+confirmation dialog and creates a new connection; it never replays unsent input.
+Startup snippets are off by default in this dialog. A tmux session reconnects to
+the same workspace instead of running a startup snippet. Cancelling the dialog
+does not connect. If the host profile has been deleted, add a host first.
+
+Cancelling a server fingerprint prompt does not trust that key. Reconnecting asks
+for confirmation again unless the key is already trusted. Closing or failing a
+connection never starts an automatic reconnect of the terminal.
+
+## Notifications and background sessions
+
+On Android 13 and later, notification permission is optional. Declining it still
+allows SSH/Mosh sessions and port forwards to start and continue in the background
+under the foreground service. Notification-drawer shortcuts are unavailable;
+Android still lists the foreground service in its active-apps Task Manager.
+Closing a terminal while keeping its forwards running does not require notification
+permission either. Process death, force-stop, network loss, and device power
+management can still interrupt connections; the permission is not a guarantee of
+unlimited background lifetime. See the [Android notification permission guidance](https://developer.android.com/develop/ui/compose/notifications/notification-permission).
+
 ## Authentication
 
 The **Authentication** page manages named, reusable entries. Each entry can contain

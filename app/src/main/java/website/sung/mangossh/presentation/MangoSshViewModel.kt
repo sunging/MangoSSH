@@ -234,9 +234,14 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
     suspend fun listWorkspaces(sessionId: String) = sessionController.listWorkspaces(sessionId)
     fun clearEndedTerminals() = sessionController.clearEndedTerminals()
+    /** Reconnects only from a retained terminal and a current profile, after normal access checks. */
     fun reconnectEnded(sessionId: String, allowStartupSnippet: Boolean): String? {
         val ended = endedTerminals.value.firstOrNull { it.session.id == sessionId } ?: return null
-        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == ended.session.profileId } ?: return null
+        val profile = vault.snapshot.value.profiles.firstOrNull { it.id == ended.session.profileId }
+        if (profile == null) {
+            reportUserMessage(R.string.terminal_reconnect_profile_missing)
+            return null
+        }
         // Return to the same tmux workspace, even one picked after connecting. Workspaces and
         // startup snippets are exclusive, so no snippet is replayed into a reattached session.
         return connect(when {

@@ -457,22 +457,15 @@ fun MangoSshApp(
             onOpen = { workspace -> viewModel.openWorkspace(activeSession.id, workspace)?.let { activeSessionId = it }; showWorkspaces = false },
             onDismiss = { showWorkspaces = false })
         var showReconnect by remember(activeSession.id) { mutableStateOf(false) }
-        var allowStartupSnippet by remember(activeSession.id) { mutableStateOf(false) }
         if (showReconnect) {
-            AlertDialog(onDismissRequest = { showReconnect = false }, title = { Text(stringResource(R.string.terminal_reconnect)) },
-                text = { Column {
-                    if (endedTerminals.firstOrNull { it.session.id == activeSession.id }?.workspace != null) {
-                        Text(stringResource(R.string.terminal_reconnect_workspace))
-                    } else {
-                        Text(stringResource(R.string.terminal_reconnect_fresh))
-                        Row { Checkbox(allowStartupSnippet, { allowStartupSnippet = it }); Text(stringResource(R.string.terminal_reconnect_snippet)) }
-                    }
-                } },
-                confirmButton = { TextButton(onClick = {
+            TerminalReconnectDialog(
+                hasWorkspace = endedTerminals.firstOrNull { it.session.id == activeSession.id }?.workspace != null,
+                onConfirm = { allowStartupSnippet ->
                     viewModel.reconnectEnded(activeSession.id, allowStartupSnippet)?.let { activeSessionId = it }
                     showReconnect = false
-                }) { Text(stringResource(R.string.terminal_reconnect)) } },
-                dismissButton = { TextButton(onClick = { showReconnect = false }) { Text(stringResource(R.string.common_cancel)) } })
+                },
+                onDismiss = { showReconnect = false },
+            )
         }
         val activePrompt = sessionPrompts.firstOrNull { it.sessionId == activeSession.id }
         val visiblePrompt = activePrompt ?: sessionPrompts.firstOrNull { it.sessionId != activeSession.id }

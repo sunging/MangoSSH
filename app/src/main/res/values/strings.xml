@@ -686,6 +686,7 @@
     <string name="terminal_ended_records">Ended terminals (memory only)</string>
     <string name="terminal_clear_records">Clear</string>
     <string name="terminal_reconnect">Reconnect</string>
+    <string name="terminal_reconnect_profile_missing">This host profile no longer exists. Add a host to start a new connection.</string>
     <string name="terminal_reconnect_fresh">A new session will be created. Unsent input is never replayed.</string>
     <string name="terminal_reconnect_workspace">A new connection will reattach the same tmux workspace. Unsent input is never replayed.</string>
     <string name="terminal_reconnect_snippet">Run the configured startup snippet again</string>
