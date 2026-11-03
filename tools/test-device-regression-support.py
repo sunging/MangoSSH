@@ -1,13 +1,17 @@
 """Exercise preflight against real ephemeral fixtures and verify diagnostic redaction."""
 import importlib.util
 import io
+import os
 import json
 from pathlib import Path
 import socket
+import select
+import shutil
 import subprocess
 import sys
 import time
 import unittest
+import uuid
 from unittest.mock import patch
 from contextlib import redirect_stdout
 
@@ -18,6 +22,50 @@ spec.loader.exec_module(support)
 
 
 class DiagnosticsTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux' and shutil.which('tmux'), 'POSIX tmux fixture required')
+    def test_pty_attach_keeps_private_tmux_session_for_reconnect(self):
+        socket_name = 'mangossh-fixture-' + uuid.uuid4().hex
+        tmux = ['tmux', '-L', socket_name, '-f', '/dev/null']
+        process = None
+        try:
+            created = subprocess.run(tmux + ['new-session', '-d', '-P', '-F', '#{session_id}', '-s', 'fixture', '/bin/cat'],
+                                     capture_output=True, timeout=5, check=True)
+            session_id = created.stdout.decode().strip()
+            self.assertRegex(session_id, r'^\$[0-9]+$')
+            for attempt in range(2):
+                process = subprocess.Popen([sys.executable, str(ROOT / 'tools/ssh-fixture-tmux.py'), socket_name, session_id],
+                                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+                deadline = time.monotonic() + 5
+                while True:
+                    attached = subprocess.run(tmux + ['display-message', '-p', '-t', session_id, '#{session_attached}'],
+                                              capture_output=True, timeout=5)
+                    if attached.stdout.strip() == b'1': break
+                    self.assertLess(time.monotonic(), deadline, 'tmux client did not attach')
+                    time.sleep(.05)
+                marker = f'fixture-attach-{attempt}'.encode()
+                process.stdin.write(marker + b'\n')
+                output = b''
+                deadline = time.monotonic() + 5
+                while marker not in output and time.monotonic() < deadline:
+                    if select.select([process.stdout], [], [], .1)[0]:
+                        data = os.read(process.stdout.fileno(), 65536)
+                        if not data: break
+                        output += data
+                self.assertTrue(marker in output, 'PTY attachment did not echo the fixture marker')
+                process.stdin.close()
+                self.assertEqual(0, process.wait(timeout=5))
+                process.stdout.close()
+                process = None
+                self.assertEqual(0, subprocess.run(tmux + ['has-session', '-t', session_id],
+                                                  capture_output=True, timeout=5).returncode)
+        finally:
+            if process is not None:
+                process.stdin.close()
+                process.stdout.close()
+                if process.poll() is None: process.kill()
+                process.wait(timeout=5)
+            subprocess.run(tmux + ['kill-server'], capture_output=True, timeout=5)
+
     def test_reverse_mapping_parser_ignores_unrelated_text(self):
         self.assertEqual({22349: 22349}, support.mappings('emulator tcp:22349 tcp:22349\nnot a mapping'))
 

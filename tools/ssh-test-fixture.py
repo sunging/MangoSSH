@@ -286,6 +286,43 @@ class Server(paramiko.ServerInterface):
         if not tools_enabled: return False
         try: words = shlex.split(command.decode("utf-8"))
         except (ValueError, UnicodeError): return False
+        attaching = len(words) == 4 and words[:3] == ["tmux", "attach-session", "-t"] and re.fullmatch(r"\$[0-9]{1,10}", words[3])
+        if attaching:
+            def attach():
+                process = None
+                try:
+                    process = subprocess.Popen(linux_command("python3", linux_path("ssh-fixture-tmux.py"), tmux_socket, words[3]),
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+                    def input_to_pty():
+                        try:
+                            while True:
+                                data = channel.recv(65536)
+                                if not data: break
+                                pending = memoryview(data)
+                                while pending:
+                                    count = process.stdin.write(pending)
+                                    if not count: raise OSError("Fixture input closed")
+                                    pending = pending[count:]
+                        except (OSError, EOFError, ValueError): pass
+                        finally: process.stdin.close()
+                    threading.Thread(target=input_to_pty, daemon=True).start()
+                    while True:
+                        data = process.stdout.read(65536)
+                        if not data: break
+                        channel.sendall(data)
+                    channel.send_exit_status(process.wait(timeout=5))
+                except (OSError, EOFError, subprocess.SubprocessError): pass
+                finally:
+                    channel.close()
+                    if process:
+                        process.stdin.close()
+                        process.stdout.close()
+                        try: process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait(timeout=5)
+            threading.Thread(target=attach, daemon=True).start()
+            return True
         version = words == ["tmux", "-V"]
         listing = words == ["tmux", "list-sessions", "-F", "#{session_id}\\t#{session_name}"]
         creating = len(words) == 8 and words[:7] == ["tmux", "new-session", "-d", "-P", "-F", "#{session_id}", "-s"] and re.fullmatch(r"[A-Za-z0-9_-]{1,80}", words[7])

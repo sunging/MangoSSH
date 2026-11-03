@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -66,31 +67,37 @@ class FdroidReviewInstrumentedTest {
         lateinit var model: MangoSshViewModel
         scenario.onActivity { model = ViewModelProvider(it)[MangoSshViewModel::class.java] }
 
-        suspend fun awaitCondition(condition: () -> Boolean) = withTimeout(15_000) {
-            while (!condition()) delay(25)
+        suspend fun awaitCondition(stage: String, condition: () -> Boolean) {
+            try {
+                withTimeout(15_000) { while (!condition()) delay(25) }
+            } catch (error: TimeoutCancellationException) {
+                throw AssertionError("Review stage: $stage; session phases=${controller.sessions.value.map { it.phase }}; " +
+                    "prompt kinds=${controller.prompts.value.map { it.javaClass.simpleName }}", error)
+            }
         }
         suspend fun connect(): String = withContext(Dispatchers.Main) { requireNotNull(model.connect(profile)) }
         suspend fun retry(id: String): String = withContext(Dispatchers.Main) { requireNotNull(model.reconnectEnded(id, false)) }
-        suspend fun ended(id: String) = awaitCondition { controller.endedTerminals.value.any { it.session.id == id } &&
+        suspend fun ended(id: String) = awaitCondition("ended") { controller.endedTerminals.value.any { it.session.id == id } &&
             controller.sessions.value.none { it.id == id } }
-        suspend fun opened(id: String) = awaitCondition {
+        suspend fun opened(id: String) = awaitCondition("opened") {
             controller.sessions.value.any { it.id == id && it.phase == TerminalSessionPhase.OPEN }
         }
-        suspend fun hostPrompt(id: String): SessionPrompt.HostKeyVerification = withTimeout(15_000) {
-            controller.prompts.first { prompts -> prompts.any { it.sessionId == id && it is SessionPrompt.HostKeyVerification } }
-                .filterIsInstance<SessionPrompt.HostKeyVerification>().single { it.sessionId == id }
+        suspend fun hostPrompt(id: String): SessionPrompt.HostKeyVerification {
+            awaitCondition("host-key prompt") { controller.prompts.value.any { it.sessionId == id && it is SessionPrompt.HostKeyVerification } }
+            return controller.prompts.value.filterIsInstance<SessionPrompt.HostKeyVerification>().single { it.sessionId == id }
         }
         @Suppress("DEPRECATION")
         fun foregroundServiceRunning(): Boolean = app.getSystemService(ActivityManager::class.java)
             .getRunningServices(Int.MAX_VALUE).any { it.service.className == SessionForegroundService::class.java.name && it.foreground }
         fun hasMarker(id: String, value: String) = controller.terminalEmulator(id)?.getUrls()?.any { it.url == value } == true
+        fun fixtureTrust() = vault.snapshot.value.knownHosts.filter { it.hostname == profile.hostname && it.port == profile.port }
 
         try {
             withTimeout(120_000) {
                 vault.status.first { it is VaultStatus.Ready }
                 assertTrue("CI review needs an unused application vault", vault.snapshot.value.profiles.isEmpty())
                 assertTrue(controller.sessions.value.isEmpty())
-                assertTrue(vault.snapshot.value.knownHosts.isEmpty())
+                assertTrue("The disposable endpoint must not already be trusted", fixtureTrust().isEmpty())
                 vault.upsertSnippet(CommandSnippet(prefix, "Disposable marker", marker))
                 vault.upsertProfile(profile)
 
@@ -100,24 +107,24 @@ class FdroidReviewInstrumentedTest {
                 assertEquals(HostKeyPromptKind.FIRST_USE, firstPrompt.kind)
                 controller.respondToPrompt(firstPrompt.requestId, null)
                 ended(cancelled)
-                assertTrue(vault.snapshot.value.knownHosts.isEmpty())
+                assertTrue(fixtureTrust().isEmpty())
                 val firstRetry = retry(cancelled)
                 val retryPrompt = hostPrompt(firstRetry)
                 assertEquals(HostKeyPromptKind.FIRST_USE, retryPrompt.kind)
                 controller.respondToPrompt(retryPrompt.requestId, listOf("trust"))
                 opened(firstRetry)
-                awaitCondition(::foregroundServiceRunning)
+                awaitCondition("foreground service", ::foregroundServiceRunning)
                 // The fixture echoes input. A new marker proves the input path is ready;
                 // the saved startup marker must not have been replayed on reconnect.
                 val inputMarker = "https://input.invalid/$prefix"
                 controller.send(firstRetry, "$inputMarker\r".encodeToByteArray())
-                awaitCondition { hasMarker(firstRetry, inputMarker) }
+                awaitCondition("reconnected terminal input") { hasMarker(firstRetry, inputMarker) }
                 assertFalse(hasMarker(firstRetry, marker))
                 controller.close(firstRetry)
                 ended(firstRetry)
 
                 // Replace only this disposable peer's saved key with fresh random material.
-                val trusted = vault.snapshot.value.knownHosts.single()
+                val trusted = fixtureTrust().single()
                 val changedBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
                 val changed = trusted.copy(keyBlobBase64 = Base64.getEncoder().encodeToString(changedBytes),
                     fingerprint = "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(
@@ -129,7 +136,7 @@ class FdroidReviewInstrumentedTest {
                 assertEquals(HostKeyPromptKind.CHANGED, changedPrompt.kind)
                 controller.respondToPrompt(changedPrompt.requestId, null)
                 ended(changedId)
-                assertTrue("Cancellation must not change saved trust", vault.snapshot.value.knownHosts.single() == changed)
+                assertTrue("Cancellation must not change saved trust", fixtureTrust().single() == changed)
                 val changedRetry = retry(changedId)
                 val changedAgain = hostPrompt(changedRetry)
                 assertEquals(HostKeyPromptKind.CHANGED, changedAgain.kind)
@@ -142,10 +149,8 @@ class FdroidReviewInstrumentedTest {
                 profile = profile.copy(username = "fixture-password")
                 vault.upsertProfile(profile)
                 val rejected = connect()
-                val auth = withTimeout(15_000) {
-                    controller.prompts.first { prompts -> prompts.any { it.sessionId == rejected && it is SessionPrompt.Authentication } }
-                        .filterIsInstance<SessionPrompt.Authentication>().single { it.sessionId == rejected }
-                }
+                awaitCondition("authentication prompt") { controller.prompts.value.any { it.sessionId == rejected && it is SessionPrompt.Authentication } }
+                val auth = controller.prompts.value.filterIsInstance<SessionPrompt.Authentication>().single { it.sessionId == rejected }
                 controller.respondToPrompt(auth.requestId, listOf(UUID.randomUUID().toString(), "false"))
                 ended(rejected)
                 assertEquals(SessionEndMessageKind.AUTHENTICATION_FAILED,
@@ -160,25 +165,25 @@ class FdroidReviewInstrumentedTest {
                     destinationHost = "127.0.0.1", destinationPort = echoPort)
                 vault.upsertPortForward(rule)
                 controller.startPortForward(live, rule)
-                awaitCondition { controller.portForwards.value.any { it.rule.id == prefix && it.phase == PortForwardRuntimePhase.ACTIVE } }
+                awaitCondition("forward active") { controller.portForwards.value.any { it.rule.id == prefix && it.phase == PortForwardRuntimePhase.ACTIVE } }
                 scenario.moveToState(Lifecycle.State.CREATED)
-                awaitCondition { !runtime.appForegroundState.foreground.value }
-                awaitCondition(::foregroundServiceRunning)
+                awaitCondition("background lifecycle") { !runtime.appForegroundState.foreground.value }
+                awaitCondition("background service", ::foregroundServiceRunning)
                 assertEquals(PackageManager.PERMISSION_DENIED, app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS))
                 Socket("127.0.0.1", listen).use { socket ->
                     socket.soTimeout = 5_000
                     socket.getOutputStream().write(41)
                     assertEquals(41, socket.getInputStream().read())
                     controller.send(live, "$inputMarker\r".encodeToByteArray())
-                    awaitCondition { hasMarker(live, inputMarker) }
+                    awaitCondition("background terminal input") { hasMarker(live, inputMarker) }
                     controller.close(live)
-                    awaitCondition { controller.sessions.value.any { it.kind == SessionKind.PORT_FORWARD } }
+                    awaitCondition("dedicated forward") { controller.sessions.value.any { it.kind == SessionKind.PORT_FORWARD } }
                     assertTrue(foregroundServiceRunning())
                     socket.getOutputStream().write(42)
                     assertEquals(42, socket.getInputStream().read())
                 }
                 controller.stopPortForwardsForProfile(profile.id)
-                awaitCondition { controller.sessions.value.isEmpty() && !foregroundServiceRunning() }
+                awaitCondition("forward cleanup") { controller.sessions.value.isEmpty() && !foregroundServiceRunning() }
 
                 // Reattach the resolved tmux identity instead of creating a second workspace.
                 scenario.moveToState(Lifecycle.State.RESUMED)
@@ -202,7 +207,7 @@ class FdroidReviewInstrumentedTest {
                     assertEquals(uiText(R.string.terminal_reconnect_profile_missing), model.userMessage.value)
                     model.dismissUserMessage()
                 }
-                awaitCondition { controller.sessions.value.isEmpty() && !foregroundServiceRunning() }
+                awaitCondition("final cleanup") { controller.sessions.value.isEmpty() && !foregroundServiceRunning() }
             }
         } finally {
             controller.stopPortForwardsForProfile(profile.id)
