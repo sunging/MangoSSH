@@ -279,16 +279,21 @@ class PortForwardLifecycleInstrumentedTest {
             client(rule, echoPort).use { echo(it, 71) }
             controller.stopPortForward("", rule.id)
             controller.sessions.first { it.isEmpty() }
+            // Restoring cellular and Wi-Fi can replace the default network and
+            // legitimately retry the first carrier. After stopping it, no phase
+            // of the next offline start/cancel cycle may create another carrier.
+            val connectionsAfterStop = connections.size
             shell("svc wifi disable"); shell("svc data disable")
             withTimeout(15_000) { controller.network.first { it.health == NetworkHealth.LOST } }
             controller.startPortForwardOnNewConnection(profile, rule)
             controller.portForwards.first { it.single().phase == PortForwardRuntimePhase.WAITING_FOR_NETWORK }
             controller.stopPortForward("", rule.id)
             controller.portForwards.first { it.single().phase == PortForwardRuntimePhase.STOPPED }
+            assertEquals(connectionsAfterStop, connections.size)
             shell("svc data enable"); shell("svc wifi enable")
             withTimeout(15_000) { controller.network.first { it.health == NetworkHealth.AVAILABLE } }
             delay(1_500)
-            assertEquals(1, connections.size)
+            assertEquals(connectionsAfterStop, connections.size)
             assertFalse(controller.hasForwardIntents)
         } finally { shell("svc data enable"); shell("svc wifi enable") }
     }
