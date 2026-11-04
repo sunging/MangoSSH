@@ -876,7 +876,7 @@ fun MangoSshApp(
  * of waiting behind the terminal or browser until the user leaves it.
  */
 @Composable
-private fun UserMessageDialog(message: UiText, onDismiss: () -> Unit) {
+internal fun UserMessageDialog(message: UiText, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("MangoSSH") },

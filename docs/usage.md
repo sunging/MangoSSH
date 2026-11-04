@@ -39,6 +39,9 @@ On Android 13 and later, notification permission is optional. Declining it still
 allows SSH/Mosh sessions and port forwards to start and continue in the background
 under the foreground service. Notification-drawer shortcuts are unavailable;
 Android still lists the foreground service in its active-apps Task Manager.
+MangoSSH explains this once when notification access is denied. Later connections,
+including after an app restart, do not repeat the request or explanation. You can
+enable notifications in Android settings at any time.
 Closing a terminal while keeping its forwards running does not require notification
 permission either. Process death, force-stop, network loss, and device power
 management can still interrupt connections; the permission is not a guarantee of

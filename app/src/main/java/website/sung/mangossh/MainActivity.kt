@@ -34,10 +34,13 @@ class MainActivity : AppCompatActivity() {
     private val mangoViewModel: MangoSshViewModel by viewModels()
     private lateinit var biometricUnlockPrompt: BiometricUnlockPrompt
     private var pendingNotificationPermissionAction: (() -> Unit)? = null
+    private val notificationPermissionGate by lazy {
+        NotificationPermissionGate(getSharedPreferences("notification_permission", MODE_PRIVATE))
+    }
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (!granted) {
+        if (notificationPermissionGate.onResult(granted)) {
             mangoViewModel.reportUserMessage(R.string.notification_permission_denied)
         }
         pendingNotificationPermissionAction
@@ -120,12 +123,16 @@ class MainActivity : AppCompatActivity() {
      * foreground deadline. The user-requested connection is therefore resumed
      * only after the permission result is delivered, including when access is
      * denied.
+     * Once denied, later connections proceed without requesting or explaining
+     * the same permission again, including after restarting the app.
      */
     private fun requestNotificationPermission(onReady: () -> Unit) {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
+            notificationPermissionGate.shouldRequest(
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED,
+            )
         ) {
             pendingNotificationPermissionAction = onReady
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
