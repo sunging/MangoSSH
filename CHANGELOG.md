@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.2](https://github.com/sunging/MangoSSH/compare/v0.8.1...v0.8.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* avoid repeated notification permission reminders ([d5e3f0f](https://github.com/sunging/MangoSSH/commit/d5e3f0fdc03611399d257d9d6f9224284d88bf69))
+* combine connection failures with reconnect confirmation ([c30b8d4](https://github.com/sunging/MangoSSH/commit/c30b8d408f15c5dc29741bb1ae2fff034022d953))
+* expose closed terminal reconnection controls ([0456225](https://github.com/sunging/MangoSSH/commit/04562254f55d0d26dc5a9a4c5cbfd0333755504d))
+* request local network permission on Android 17 ([d15a6f8](https://github.com/sunging/MangoSSH/commit/d15a6f8fed7870f1284553a4c5503dddd6f45cb0))
+* show terminal-themed reconnect confirmation on close ([0a17bb9](https://github.com/sunging/MangoSSH/commit/0a17bb975fb2ce3ab6ebb465ada3cdb3fb1e3ea5))
+
 ## [0.8.1](https://github.com/sunging/MangoSSH/compare/v0.8.0...v0.8.1) (2026-10-31)
 
 ### Features and improvements

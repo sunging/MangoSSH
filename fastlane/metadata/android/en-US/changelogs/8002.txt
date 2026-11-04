@@ -1,0 +1,5 @@
+Closed terminals now open a reconnect confirmation directly, even with hidden controls or immersive mode. Connection errors appear in the same dialog, which follows terminal colors and only offers startup snippets when configured. Cancelling keeps the scrollback without connecting. Reconnecting keeps tmux workspaces and does not replay unsent input or startup snippets by default. Deleted host profiles show a clear message.
+
+Android 17 now requests local-network permission when needed for LAN connections, jump hosts, files and forwarding, with a clear explanation when permission is denied.
+
+Notification permission is optional. Declining it shows an explanation once; later connections and app restarts do not repeat the prompt. Sessions and forwarding can continue without notification shortcuts.
