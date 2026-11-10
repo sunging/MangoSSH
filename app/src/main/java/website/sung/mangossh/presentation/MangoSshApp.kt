@@ -59,7 +59,6 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -69,7 +68,6 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -145,7 +143,6 @@ import website.sung.mangossh.session.SessionAttention
 import website.sung.mangossh.session.TerminalSessionPhase
 import website.sung.mangossh.session.tsnet.EmbeddedTsnetControlServer
 import org.connectbot.terminal.VTermKey
-import website.sung.mangossh.security.AppLockConfiguration
 import website.sung.mangossh.presentation.settings.AboutSettingsState
 import website.sung.mangossh.presentation.settings.AppearanceSettingsState
 import website.sung.mangossh.presentation.settings.BackupSettingsState
@@ -275,32 +272,28 @@ fun MangoSshApp(
         viewModel.consumeSessionNavigationRequest(request)
     }
     if (appLocked) {
-        val busy by viewModel.appLockBusy.collectAsStateWithLifecycle()
+        val verification by viewModel.pinVerification.collectAsStateWithLifecycle()
         AppLockScreen(
-            busy = busy,
+            state = verification,
             configuration = appLockConfiguration,
-            message = userMessage,
+            message = userMessage.takeIf { it == uiText(R.string.biometric_unavailable) },
             onUnlockWithPin = viewModel::unlockWithPin,
             onRequestBiometric = onRequestBiometricUnlock,
             onDismissMessage = viewModel::dismissUserMessage,
+            onEdit = viewModel::dismissPinError,
         )
         return
     }
 
     val reauthenticationPending by viewModel.reauthenticationPending.collectAsStateWithLifecycle()
     if (reauthenticationPending) {
-        val busy by viewModel.appLockBusy.collectAsStateWithLifecycle()
-        var pin by remember { mutableStateOf("") }
-        AlertDialog(onDismissRequest = viewModel::cancelReauthentication,
-            title = { Text(stringResource(R.string.reauthentication_title)) },
-            text = { Column {
-                OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(12) }, label = { Text(stringResource(R.string.ui_app_pin)) },
-                    visualTransformation = PasswordVisualTransformation(), singleLine = true)
-                userMessage?.let { Text(it.asString()) }
-            } },
-            confirmButton = { TextButton(enabled = !busy && pin.isNotEmpty(), onClick = { viewModel.verifySensitiveAction(pin); pin = "" }) {
-                Text(stringResource(if (busy) R.string.app_lock_verifying else R.string.common_ok))
-            } }, dismissButton = { TextButton(onClick = viewModel::cancelReauthentication) { Text(stringResource(R.string.common_cancel)) } })
+        val verification by viewModel.pinVerification.collectAsStateWithLifecycle()
+        SensitivePinDialog(
+            state = verification,
+            onSubmit = viewModel::verifySensitiveAction,
+            onDismiss = viewModel::cancelReauthentication,
+            onEdit = viewModel::dismissPinError,
+        )
     }
     val transferConflicts by viewModel.transferConflicts.collectAsStateWithLifecycle()
     val remoteOperations by viewModel.remoteOperations.collectAsStateWithLifecycle()
@@ -1069,73 +1062,6 @@ internal fun DestructiveConfirmationDialog(
             }
         },
     )
-}
-
-@Composable
-internal fun AppLockScreen(
-    busy: Boolean,
-    configuration: AppLockConfiguration,
-    message: UiText?,
-    onUnlockWithPin: (String) -> Unit,
-    onRequestBiometric: (() -> Unit)?,
-    onDismissMessage: () -> Unit,
-) {
-    var pin by remember { mutableStateOf("") }
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Key,
-                contentDescription = null,
-                modifier = Modifier.size(52.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.height(20.dp))
-            Text(stringResource(R.string.ui_mangossh_is_locked), style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(R.string.ui_unlock_with_your_app_pin),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(stringResource(R.string.app_lock_scope), style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(20.dp))
-            OutlinedTextField(
-                value = pin,
-                onValueChange = { pin = it.filter(Char::isDigit).take(12) },
-                label = { Text(stringResource(R.string.ui_app_pin)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = {
-                    onUnlockWithPin(pin)
-                    pin = ""
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = pin.isNotEmpty() && !busy,
-            ) {
-                Text(stringResource(if (busy) R.string.app_lock_verifying else R.string.ui_unlock_with_pin))
-            }
-            if (configuration.biometricEnabled && onRequestBiometric != null) {
-                Spacer(Modifier.height(8.dp))
-                FilledTonalButton(onClick = onRequestBiometric, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.ui_use_biometrics))
-                }
-            }
-            message?.let {
-                Spacer(Modifier.height(16.dp))
-                TextButton(onClick = onDismissMessage) { Text(it.asString()) }
-            }
-        }
-    }
 }
 
 @Composable

@@ -20,6 +20,8 @@ import website.sung.mangossh.presentation.LocalDocumentPickerRequests
 import website.sung.mangossh.presentation.AppLockActivityObserver
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import website.sung.mangossh.presentation.AppLanguage
@@ -33,6 +35,7 @@ import website.sung.mangossh.ui.theme.resolveAppDarkTheme
 class MainActivity : AppCompatActivity() {
     private val mangoViewModel: MangoSshViewModel by viewModels()
     private lateinit var biometricUnlockPrompt: BiometricUnlockPrompt
+    private var biometricUnlockAvailable by mutableStateOf(false)
     private var pendingNotificationPermissionAction: (() -> Unit)? = null
     private val notificationPermissionGate by lazy {
         NotificationPermissionGate(getSharedPreferences("notification_permission", MODE_PRIVATE))
@@ -50,8 +53,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        biometricUnlockPrompt = BiometricUnlockPrompt(this, mangoViewModel.appLockCoordinator,
-            unavailable = { mangoViewModel.reportUserMessage(R.string.biometric_unavailable) })
+        biometricUnlockPrompt = BiometricUnlockPrompt(
+            this,
+            mangoViewModel.appLockCoordinator,
+            unavailable = { mangoViewModel.reportUserMessage(R.string.biometric_unavailable) },
+            onAuthenticationFinished = ::refreshBiometricAvailability,
+        )
         lifecycle.addObserver(AppLockActivityObserver(this, mangoViewModel.appLockCoordinator, biometricUnlockPrompt::cancel))
         handleSessionIntent(intent)
         enableEdgeToEdge()
@@ -72,7 +79,7 @@ class MainActivity : AppCompatActivity() {
                 CompositionLocalProvider(LocalDocumentPickerRequests provides mangoViewModel.appLockCoordinator.documents) {
                     MangoSshApp(
                         viewModel = mangoViewModel,
-                        onRequestBiometricUnlock = ::requestBiometricUnlock,
+                        onRequestBiometricUnlock = if (biometricUnlockAvailable) ::requestBiometricUnlock else null,
                         onRequestNotificationPermission = ::requestNotificationPermission,
                         selectedAppLanguage = AppLanguage.current(),
                         onSetAppLanguage = ::setAppLanguage,
@@ -80,6 +87,15 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshBiometricAvailability()
+    }
+
+    private fun refreshBiometricAvailability() {
+        biometricUnlockAvailable = biometricUnlockPrompt.isAvailable()
     }
 
     /**

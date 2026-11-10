@@ -348,6 +348,10 @@ class MangoSshViewModel @JvmOverloads constructor(
     val appLockConfiguration = appLockCoordinator.configuration
     private val _appLocked = runtime.accessState.locked
     val reauthenticationPending = appLockCoordinator.reauthenticationPending
+    internal val pinVerification = appLockCoordinator.pinVerification
+
+    /** Clears inline PIN feedback as the user edits the entry. */
+    internal fun dismissPinError() = appLockCoordinator.dismissPinError()
 
     private fun authorizeSensitive(override: Boolean? = null, onCancelled: (() -> Unit)? = null, action: () -> Unit): Boolean =
         appLockCoordinator.authorizeSensitive(override, onCancelled, action)

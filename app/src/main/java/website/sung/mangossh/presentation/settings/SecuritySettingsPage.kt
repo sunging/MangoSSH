@@ -1,21 +1,17 @@
 package website.sung.mangossh.presentation.settings
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -23,11 +19,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.domain.AppLockDelay
+import website.sung.mangossh.presentation.ConfigurePinDialog
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.MangoSettingsCard
@@ -67,6 +62,18 @@ internal fun SecuritySettingsPage(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    stringResource(R.string.ui_the_pin_is_stored_only_on_this_device_as_a_salted_verifier_and_cannot_be),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (lock.pinConfigured) {
+                    Text(
+                        stringResource(R.string.app_lock_scope),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { showPinEditor = true }) {
                         Text(if (lock.pinConfigured) stringResource(R.string.ui_change_pin) else stringResource(R.string.ui_set_pin))
@@ -144,11 +151,11 @@ internal fun SecuritySettingsPage(
     }
 
     if (showPinEditor) {
-        AppPinDialog(
+        ConfigurePinDialog(
             onDismiss = { showPinEditor = false },
             onConfirm = { pin ->
-                callbacks.onConfigurePin(pin)
                 showPinEditor = false
+                callbacks.onConfigurePin(pin)
             },
         )
     }
@@ -163,43 +170,3 @@ private fun AppLockDelay.label(): String = stringResource(
         AppLockDelay.FIVE_MINUTES -> R.string.settings_security_auto_lock_5_minutes
     },
 )
-
-@Composable
-private fun AppPinDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var pin by remember { mutableStateOf("") }
-    var confirmation by remember { mutableStateOf("") }
-    val valid = pin.length in 4..12 && pin.all(Char::isDigit) && pin == confirmation
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.ui_set_app_pin)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(R.string.ui_the_pin_is_stored_only_on_this_device_as_a_salted_verifier_and_cannot_be), style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = { pin = it.filter(Char::isDigit).take(12) },
-                    label = { Text(stringResource(R.string.ui_4_12_digit_pin)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-                OutlinedTextField(
-                    value = confirmation,
-                    onValueChange = { confirmation = it.filter(Char::isDigit).take(12) },
-                    label = { Text(stringResource(R.string.ui_confirm_pin)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    visualTransformation = PasswordVisualTransformation(),
-                    isError = confirmation.isNotEmpty() && confirmation != pin,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(pin) }, enabled = valid) { Text(stringResource(R.string.common_save)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
-    )
-}

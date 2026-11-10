@@ -25,8 +25,13 @@ class AppLockPersistenceInstrumentedTest {
             val original = AppLockStore(context) { now }
             assertEquals(ReauthenticationMode.DISABLED, original.configuration().reauthentication)
             original.setPin(pin)
+            assertEquals(pin.size, original.configuration().pinLength)
+            // An older build knows the verifier but has no length metadata.
+            base.getSharedPreferences(name, Context.MODE_PRIVATE).edit().remove("pin_length").commit()
             repeat(5) { assertFalse(original.verifyPin(wrong)) }
             val recreated = AppLockStore(context) { now }
+            assertTrue(recreated.configuration().pinConfigured)
+            assertNull(recreated.configuration().pinLength)
             assertEquals(30_000L, recreated.cooldownRemainingMillis())
             assertFalse(recreated.verifyPin(pin))
             now += 30_000L
@@ -34,7 +39,9 @@ class AppLockPersistenceInstrumentedTest {
             assertEquals(60_000L, AppLockStore(context) { now }.cooldownRemainingMillis())
             now += 60_000L
             assertTrue(recreated.verifyPin(pin))
-            assertEquals(0L, AppLockStore(context) { now }.cooldownRemainingMillis())
+            val upgraded = AppLockStore(context) { now }
+            assertEquals(0L, upgraded.cooldownRemainingMillis())
+            assertEquals(pin.size, upgraded.configuration().pinLength)
         } finally {
             pin.fill('\u0000'); wrong.fill('\u0000')
             base.deleteSharedPreferences(name)

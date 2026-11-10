@@ -168,11 +168,18 @@ class LockRegressionActivity : AppCompatActivity() {
                     val ready by model.ready.collectAsState()
                     val locked by model.lock.locked.collectAsState()
                     val configuration by model.lock.configuration.collectAsState()
-                    val busy by model.lock.busy.collectAsState()
+                    val verification by model.lock.pinVerification.collectAsState()
                     val message by model.message.collectAsState()
                     if (!ready) Text("Preparing isolated fixture", Modifier.testTag("fixture_preparing"))
-                    else if (locked) AppLockScreen(busy, configuration, message, model.lock::unlockWithPin,
-                        biometric::authenticate, { model.message.value = null })
+                    else if (locked) AppLockScreen(
+                        verification,
+                        configuration,
+                        message.takeIf { it == uiText(website.sung.mangossh.R.string.biometric_unavailable) },
+                        model.lock::unlockWithPin,
+                        biometric::authenticate,
+                        { model.message.value = null },
+                        model.lock::dismissPinError,
+                    )
                     else Column {
                         Button(onClick = { model.page = "backup" }) { Text("Backup fixture") }
                         Button(onClick = { model.page = "security" }) { Text("Security fixture") }

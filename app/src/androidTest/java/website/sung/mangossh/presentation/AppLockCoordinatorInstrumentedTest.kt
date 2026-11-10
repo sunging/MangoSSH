@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import androidx.test.platform.app.InstrumentationRegistry
 import java.security.SecureRandom
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import kotlin.coroutines.CoroutineContext
@@ -26,8 +27,9 @@ class AppLockCoordinatorInstrumentedTest {
         val pending get() = tasks.isNotEmpty()
     }
 
-    private class Fixture(val store: AppLockStore, val access: AppAccessState, val lock: AppLockCoordinator,
-        val pin: String, val wrong: String, var cancellations: Int = 0) {
+    private class Fixture(val access: AppAccessState, val lock: AppLockCoordinator,
+        val pin: String, val wrong: String, val now: AtomicLong, val messages: MutableList<UiText>,
+        val recreateLocked: () -> AppLockCoordinator) {
         suspend fun idle() { withTimeout(15_000) { lock.busy.first { !it } } }
         suspend fun configure() { lock.configurePin(pin); idle() }
         fun cipher(): Cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
@@ -45,11 +47,15 @@ class AppLockCoordinatorInstrumentedTest {
         val pin = CharArray(6) { ('0'.code + SecureRandom().nextInt(10)).toChar() }.concatToString()
         val wrong = pin.map { if (it == '9') '0' else it + 1 }.joinToString("")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        val store = AppLockStore(context)
+        val now = AtomicLong(10_000)
+        val store = AppLockStore(context, now::get)
         val access = AppAccessState(false)
-        var cancelled = 0
-        val lock = AppLockCoordinator(store, access, scope, { cancelled++ }, {}, dispatcher)
-        try { withContext(Dispatchers.Main) { Fixture(store, access, lock, pin, wrong).block() } }
+        val messages = mutableListOf<UiText>()
+        val lock = AppLockCoordinator(store, access, scope, {}, { messages.add(it) }, dispatcher)
+        val fixture = Fixture(access, lock, pin, wrong, now, messages) {
+            AppLockCoordinator(AppLockStore(context, now::get), AppAccessState(true), scope, {}, {}, dispatcher)
+        }
+        try { withContext(Dispatchers.Main) { fixture.block() } }
         finally {
             scope.coroutineContext[Job]!!.cancelAndJoin()
             // commit waits for older apply writes, which otherwise can recreate a deleted file.
@@ -153,6 +159,63 @@ class AppLockCoordinatorInstrumentedTest {
         lock.cancelReauthentication(); assertFalse(lock.reauthenticationPending.value)
     }
 
+    @Test fun changingPinAfterReauthenticationUsesTheNewVerifier() = isolated {
+        configure()
+        lock.setReauthentication(ReauthenticationMode.EVERY_ACTION)
+        lock.configurePin(wrong)
+        assertTrue(lock.reauthenticationPending.value)
+        lock.verifySensitiveAction(pin); idle()
+        assertFalse(lock.reauthenticationPending.value)
+        lock.lock()
+        lock.unlockWithPin(pin); idle()
+        assertTrue(lock.locked.value)
+        lock.unlockWithPin(wrong); idle()
+        assertFalse(lock.locked.value)
+    }
+
+    @Test fun persistedCooldownFollowsTheVisiblePromptAndWallClock() = isolated {
+        configure()
+        messages.clear()
+        lock.setReauthentication(ReauthenticationMode.EVERY_ACTION)
+        lock.evaluateAutoLock()
+        assertFalse(lock.authorizeSensitive { error("Incorrect PIN approved the action") })
+        repeat(4) {
+            lock.verifySensitiveAction(wrong); idle()
+            assertEquals(PinVerificationState(incorrect = true), lock.pinVerification.value)
+            lock.dismissPinError()
+            assertEquals(PinVerificationState(), lock.pinVerification.value)
+        }
+        lock.verifySensitiveAction(wrong); idle()
+        assertEquals(PinVerificationState(cooldownSeconds = 30), lock.pinVerification.value)
+        lock.dismissPinError()
+        assertEquals(30, lock.pinVerification.value.cooldownSeconds)
+        lock.cancelReauthentication()
+        assertEquals(PinVerificationState(), lock.pinVerification.value)
+        assertFalse(lock.authorizeSensitive { error("Blocked PIN approved the action") })
+        assertEquals(30, lock.pinVerification.value.cooldownSeconds)
+        lock.lock()
+        lock.noteBackgrounded()
+
+        now.addAndGet(28_500)
+        delay(1_100)
+        assertEquals(30, lock.pinVerification.value.cooldownSeconds)
+        assertEquals(2, recreateLocked().pinVerification.value.cooldownSeconds)
+        lock.evaluateAutoLock()
+        assertEquals(2, lock.pinVerification.value.cooldownSeconds)
+        now.addAndGet(500)
+        withTimeout(5_000) { lock.pinVerification.first { it.cooldownSeconds == 1 } }
+        lock.unlockWithPin(pin)
+        assertTrue(lock.locked.value)
+        assertFalse(lock.pinVerification.value.busy)
+
+        now.addAndGet(1_000)
+        withTimeout(5_000) { lock.pinVerification.first { it.cooldownSeconds == 0 } }
+        assertEquals(PinVerificationState(), lock.pinVerification.value)
+        lock.unlockWithPin(pin); idle()
+        assertFalse(lock.locked.value)
+        assertTrue(messages.isEmpty())
+    }
+
     @Test fun cancellingSensitiveActionRejectsItsSlowPinResult() {
         val dispatcher = PausedDispatcher()
         isolated(dispatcher) {
@@ -160,10 +223,11 @@ class AppLockCoordinatorInstrumentedTest {
             assertTrue(dispatcher.pending); dispatcher.runNext(); idle()
             lock.setReauthentication(ReauthenticationMode.EVERY_ACTION)
             var performed = 0
-            lock.authorizeSensitive { performed++ }
+            val action: () -> Unit = { performed++ }
+            lock.authorizeSensitive(action = action)
             lock.verifySensitiveAction(pin)
             lock.cancelReauthentication()
-            lock.authorizeSensitive { performed += 10 }
+            lock.authorizeSensitive(action = action)
             dispatcher.runNext(); idle()
             assertEquals(0, performed)
             assertTrue(lock.reauthenticationPending.value)
@@ -181,6 +245,10 @@ class AppLockCoordinatorInstrumentedTest {
             dispatcher.runNext(); idle()
             assertTrue(lock.locked.value)
             assertFalse(dispatcher.pending)
+            lock.unlockWithPin(wrong)
+            lock.lock()
+            dispatcher.runNext(); idle()
+            assertEquals(PinVerificationState(), lock.pinVerification.value)
         }
     }
 

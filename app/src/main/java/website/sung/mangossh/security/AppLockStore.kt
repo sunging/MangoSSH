@@ -9,16 +9,21 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import website.sung.mangossh.domain.AppLockDelay
 
-/** Stores only a salted PBKDF2 verifier; the app PIN is never persisted. */
+/** Stores a salted PBKDF2 verifier and its input length; the app PIN is never persisted. */
 class AppLockStore(context: Context, private val clockMillis: () -> Long = System::currentTimeMillis) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    fun configuration(): AppLockConfiguration = AppLockConfiguration(
-        pinConfigured = preferences.contains(KEY_PIN_HASH) && preferences.contains(KEY_PIN_SALT),
-        biometricEnabled = preferences.getBoolean(KEY_BIOMETRIC_ENABLED, false),
-        autoLockDelay = AppLockDelay.fromPreference(readString(KEY_AUTO_LOCK_DELAY)) ?: AppLockDelay.DEFAULT,
-        reauthentication = runCatching { ReauthenticationMode.valueOf(readString("reauthentication") ?: "DISABLED") }.getOrDefault(ReauthenticationMode.DISABLED),
-    )
+    fun configuration(): AppLockConfiguration {
+        val salt = readString(KEY_PIN_SALT)
+        val pinConfigured = preferences.contains(KEY_PIN_HASH) && preferences.contains(KEY_PIN_SALT)
+        return AppLockConfiguration(
+            pinConfigured = pinConfigured,
+            biometricEnabled = preferences.getBoolean(KEY_BIOMETRIC_ENABLED, false),
+            autoLockDelay = AppLockDelay.fromPreference(readString(KEY_AUTO_LOCK_DELAY)) ?: AppLockDelay.DEFAULT,
+            reauthentication = runCatching { ReauthenticationMode.valueOf(readString("reauthentication") ?: "DISABLED") }.getOrDefault(ReauthenticationMode.DISABLED),
+            pinLength = if (pinConfigured) salt?.let(::readPinLength) else null,
+        )
+    }
 
     fun setPin(pin: CharArray) {
         require(pin.size in MIN_PIN_LENGTH..MAX_PIN_LENGTH && pin.all(Char::isDigit)) {
@@ -27,9 +32,11 @@ class AppLockStore(context: Context, private val clockMillis: () -> Long = Syste
         val salt = ByteArray(SALT_BYTES).also(SecureRandom()::nextBytes)
         val verifier = derive(pin, salt)
         try {
+            val encodedSalt = Base64.getEncoder().encodeToString(salt)
             preferences.edit {
-                putString(KEY_PIN_SALT, Base64.getEncoder().encodeToString(salt))
+                putString(KEY_PIN_SALT, encodedSalt)
                 putString(KEY_PIN_HASH, Base64.getEncoder().encodeToString(verifier))
+                putString(KEY_PIN_LENGTH, "$encodedSalt:${pin.size}")
                 remove("pin_failures")
                 remove("pin_blocked_until")
             }
@@ -42,7 +49,8 @@ class AppLockStore(context: Context, private val clockMillis: () -> Long = Syste
     @Synchronized
     fun verifyPin(pin: CharArray): Boolean {
         if (cooldownRemainingMillis() > 0) return false
-        val salt = preferences.getString(KEY_PIN_SALT, null)?.let(Base64.getDecoder()::decode) ?: return false
+        val encodedSalt = preferences.getString(KEY_PIN_SALT, null) ?: return false
+        val salt = Base64.getDecoder().decode(encodedSalt)
         val expected = preferences.getString(KEY_PIN_HASH, null)?.let(Base64.getDecoder()::decode) ?: return false
         val actual = derive(pin, salt)
         return try {
@@ -52,6 +60,9 @@ class AppLockStore(context: Context, private val clockMillis: () -> Long = Syste
             preferences.edit(commit = true) {
                 putInt("pin_failures", next.failures)
                 putLong("pin_blocked_until", next.blockedUntilMillis)
+                if (accepted && readPinLength(encodedSalt) != pin.size) {
+                    putString(KEY_PIN_LENGTH, "$encodedSalt:${pin.size}")
+                }
             }
             accepted
         } finally {
@@ -93,6 +104,11 @@ class AppLockStore(context: Context, private val clockMillis: () -> Long = Syste
         preferences.getString(key, null)
     }.getOrNull()
 
+    /** Older builds may replace the verifier without updating its length hint. */
+    private fun readPinLength(salt: String): Int? =
+        readString(KEY_PIN_LENGTH)?.takeIf { it.startsWith("$salt:") }?.substringAfter(':')?.toIntOrNull()
+            ?.takeIf { it in MIN_PIN_LENGTH..MAX_PIN_LENGTH }
+
     private fun derive(pin: CharArray, salt: ByteArray): ByteArray {
         val spec = PBEKeySpec(pin, salt, PBKDF2_ITERATIONS, KEY_BITS)
         return try {
@@ -112,6 +128,7 @@ class AppLockStore(context: Context, private val clockMillis: () -> Long = Syste
         private const val PREFERENCES_NAME = "mangossh-app-lock"
         private const val KEY_PIN_SALT = "pin_salt"
         private const val KEY_PIN_HASH = "pin_hash"
+        private const val KEY_PIN_LENGTH = "pin_length"
         private const val KEY_BIOMETRIC_ENABLED = "biometric_enabled"
         private const val KEY_AUTO_LOCK_DELAY = "auto_lock_delay"
         private const val SALT_BYTES = 16
@@ -125,4 +142,5 @@ data class AppLockConfiguration(
     val biometricEnabled: Boolean,
     val autoLockDelay: AppLockDelay = AppLockDelay.DEFAULT,
     val reauthentication: ReauthenticationMode = ReauthenticationMode.DISABLED,
+    val pinLength: Int? = null,
 )
