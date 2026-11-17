@@ -24,7 +24,12 @@ class BackupCoordinatorInstrumentedTest {
         var timeoutAfterWrite = false
         var writes = 0
         var archives = 0
-        override fun download(config: WebDavConfig) = head?.let { RemoteBackup(it.bytes.copyOf(), it.etag) }
+        var reads = 0
+        var probes = 0
+        override fun download(config: WebDavConfig): RemoteBackup? {
+            reads++
+            return head?.let { RemoteBackup(it.bytes.copyOf(), it.etag) }
+        }
         override fun history(config: WebDavConfig) = emptyList<BackupHistoryEntry>()
         override fun readHistory(config: WebDavConfig, id: String) = requireNotNull(old).let { RemoteBackup(it.bytes.copyOf(), it.etag) }
         override fun archive(config: WebDavConfig, backup: RemoteBackup) {
@@ -37,11 +42,31 @@ class BackupCoordinatorInstrumentedTest {
             head = RemoteBackup(bytes.copyOf(), "\"$writes\"")
             if (timeoutAfterWrite) throw java.net.SocketTimeoutException()
         }
-        override fun verifyConditionalWrites(config: WebDavConfig) = Unit
+        override fun verifyConditionalWrites(config: WebDavConfig) { probes++ }
         override fun prune(config: WebDavConfig) { if (cleanupFails) throw BackupException(BackupFailure.PARTIAL) }
     }
 
-    private class Fixture(val context: Context, val repository: VaultRepository, val local: BackupLocalStore, val remote: Remote, val coordinator: BackupCoordinator) {
+    private class Authorization : BackupReauthentication {
+        var hold = false
+        var epoch = 0L
+        var now = 0L
+        var approved: (() -> Unit)? = null
+
+        override fun request(onCancelled: () -> Unit, onApproved: () -> Unit): () -> Unit {
+            if (!hold) onApproved()
+            else approved = onApproved
+            return onCancelled
+        }
+    }
+
+    private class Fixture(
+        val context: Context,
+        val repository: VaultRepository,
+        val local: BackupLocalStore,
+        val remote: Remote,
+        val coordinator: BackupCoordinator,
+        val authorization: Authorization,
+    ) {
         suspend fun idle() { withTimeout(10_000) { coordinator.state.first { it.phase == BackupPhase.IDLE } }; delay(30) }
         val state get() = coordinator.state.value
         val password = UUID.randomUUID().toString()
@@ -61,9 +86,12 @@ class BackupCoordinatorInstrumentedTest {
         val remote = Remote()
         val repository = VaultRepository(context, AndroidKeystoreVault(context, "$namespace.vault.v1"))
         repository.open()
-        repository.saveWebDavConfig(WebDavConfig("https://${UUID.randomUUID()}.invalid", UUID.randomUUID().toString(), UUID.randomUUID().toString()))
-        val coordinator = BackupCoordinator(context, repository, scope, { true }, { "test" }, remote, { local })
-        try { Fixture(context, repository, local, remote, coordinator).block() } finally {
+        repository.changeWebDavConfig(repository.backupSnapshot().first,
+            WebDavConfig("https://${UUID.randomUUID()}.invalid", UUID.randomUUID().toString(), UUID.randomUUID().toString())) { true }
+        val authorization = Authorization()
+        val coordinator = BackupCoordinator(context, repository, scope, { true }, { authorization.epoch }, authorization,
+            { "test" }, remote, { local }, { authorization.now })
+        try { Fixture(context, repository, local, remote, coordinator, authorization).block() } finally {
             coordinator.cancel()
             scope.coroutineContext[Job]!!.cancelAndJoin()
             directory.deleteRecursively()
@@ -79,17 +107,18 @@ class BackupCoordinatorInstrumentedTest {
         assertTrue(state.remoteConflict)
         assertEquals(0, remote.writes)
         remote.archiveFails = true
-        coordinator.confirmUpload(); idle()
+        coordinator.confirmUpload(requireNotNull(state.remoteConflictId)); idle()
         assertEquals(0, remote.writes)
         assertArrayEquals(original, remote.head!!.bytes)
         assertEquals(BackupFailure.STORAGE, state.failure)
     }
 
-    @Test fun changedRemoteBetweenConfirmationAndPublishIsNotOverwritten() = isolated {
-        remote.head = RemoteBackup(PortableVaultCodec.encrypt(VaultSnapshot(), password.toCharArray()), "\"a\"")
+    @Test fun changedRemoteValidatorIsNotOverwrittenEvenWhenTheCiphertextMatches() = isolated {
+        val original = PortableVaultCodec.encrypt(VaultSnapshot(), password.toCharArray())
+        remote.head = RemoteBackup(original, "\"a\"")
         coordinator.upload(password, false); idle()
-        remote.head = RemoteBackup(PortableVaultCodec.encrypt(VaultSnapshot(), password.toCharArray()), "\"b\"")
-        coordinator.confirmUpload(); idle()
+        remote.head = RemoteBackup(original, "\"b\"")
+        coordinator.confirmUpload(requireNotNull(state.remoteConflictId)); idle()
         assertEquals(BackupFailure.CHANGED, state.failure)
         assertEquals(0, remote.writes)
         assertEquals(0, remote.archives)
@@ -152,7 +181,7 @@ class BackupCoordinatorInstrumentedTest {
     }
 
     @Test fun missingWebDavTargetCannotExposeOrForgetManualPassword() = isolated {
-        repository.saveWebDavConfig(null)
+        repository.changeWebDavConfig(repository.backupSnapshot().first, null) { true }
         local.remember("manual", password.toCharArray())
         coordinator.refreshPasswords(); idle()
         assertTrue(state.rememberedManual)
@@ -160,5 +189,74 @@ class BackupCoordinatorInstrumentedTest {
         coordinator.forget(true); idle()
         assertEquals(BackupFailure.INVALID, state.failure)
         assertTrue(local.hasPassword("manual"))
+    }
+
+    @Test fun uploadDoesNotReadRememberOrPublishUntilApprovedAndCannotReplay() = isolated {
+        val target = BackupLocalStore.target(repository.snapshot.value.webDavConfig)
+        authorization.hold = true
+        coordinator.upload(password, true)
+        val approve = requireNotNull(authorization.approved)
+        assertEquals(0, remote.reads)
+        assertFalse(local.hasPassword(target))
+        approve(); idle()
+        assertEquals(1, remote.writes)
+        assertTrue(local.hasPassword(target))
+        approve(); idle()
+        assertEquals(1, remote.writes)
+    }
+
+    @Test fun cancelledOrExpiredApprovalCannotChangeDestination() = isolated {
+        val original = repository.snapshot.value.webDavConfig
+        authorization.hold = true
+        coordinator.changeWebDavConfig(null)
+        val old = requireNotNull(authorization.approved)
+        coordinator.cancel()
+        old(); idle()
+        assertEquals(original, repository.snapshot.value.webDavConfig)
+
+        coordinator.changeWebDavConfig(null)
+        authorization.now += 5 * 60_000L
+        requireNotNull(authorization.approved)(); idle()
+        assertEquals(BackupFailure.LOCKED, state.failure)
+        assertEquals(original, repository.snapshot.value.webDavConfig)
+    }
+
+    @Test fun unlockEpochChangeRejectsUploadEvenWhenCurrentlyUnlocked() = isolated {
+        authorization.hold = true
+        coordinator.upload(password, false)
+        authorization.epoch++
+        requireNotNull(authorization.approved)(); idle()
+        assertEquals(BackupFailure.LOCKED, state.failure)
+        assertEquals(0, remote.reads)
+        assertEquals(0, remote.probes)
+    }
+
+    @Test fun changedVaultInvalidatesApprovedOverwriteAndDiscardsConflict() = isolated {
+        remote.head = RemoteBackup(PortableVaultCodec.encrypt(VaultSnapshot(), password.toCharArray()), "\"initial\"")
+        coordinator.upload(password, false); idle()
+        val conflict = requireNotNull(state.remoteConflictId)
+        authorization.hold = true
+        coordinator.confirmUpload(conflict)
+        repository.upsertSnippet(CommandSnippet("revision", "revision", ""))
+        requireNotNull(authorization.approved)(); idle()
+        assertEquals(BackupFailure.CHANGED, state.failure)
+        assertFalse(state.remoteConflict)
+        assertEquals(0, remote.probes)
+        assertEquals(0, remote.writes)
+    }
+
+    @Test fun restoringDestinationRequiresApprovalBeforeCheckpointOrVaultMutation() = isolated {
+        val original = requireNotNull(repository.snapshot.value.webDavConfig)
+        val incoming = original.copy(endpoint = "https://${UUID.randomUUID()}.invalid")
+        val file = File(context.filesDir, "backup-test.mssh").apply {
+            writeBytes(PortableVaultCodec.encrypt(VaultSnapshot(webDavConfig = incoming), password.toCharArray()))
+        }
+        coordinator.importFile(Uri.fromFile(file), password, false); idle()
+        authorization.hold = true
+        coordinator.commit(ImportDecision(restoreWebDav = true, operationId = requireNotNull(state.preview).operationId))
+        assertTrue(local.list().isEmpty())
+        assertEquals(original, repository.snapshot.value.webDavConfig)
+        requireNotNull(authorization.approved)(); idle()
+        assertEquals(incoming, repository.snapshot.value.webDavConfig)
     }
 }

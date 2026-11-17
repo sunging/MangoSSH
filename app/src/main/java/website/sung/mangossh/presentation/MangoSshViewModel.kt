@@ -159,7 +159,13 @@ class MangoSshViewModel @JvmOverloads constructor(
     private val terminalShortcutStore = runtime.terminalShortcuts
     private val appThemeStore = runtime.appTheme
     private val connectionPreferencesStore = runtime.connectionPreferences
-    internal val backupCoordinator = website.sung.mangossh.data.vault.BackupCoordinator(application, vault, viewModelScope, unlocked = { !_appLocked.value }, appVersion = { installedVersionName })
+    internal val backupCoordinator: website.sung.mangossh.data.vault.BackupCoordinator = website.sung.mangossh.data.vault.BackupCoordinator(
+        application, vault, viewModelScope,
+        unlocked = { !runtime.accessState.locked.value },
+        accessGeneration = { runtime.accessState.generation },
+        reauthentication = { cancelled, approved -> appLockCoordinator.requestSensitiveApproval(cancelled, approved) },
+        appVersion = { installedVersionName },
+    )
     val backupOperation = backupCoordinator.state
     private val appLockStore = AppLockStore(application)
     private val updatePreferencesStore = runtime.updatePreferences
@@ -363,11 +369,6 @@ class MangoSshViewModel @JvmOverloads constructor(
     fun verifySensitiveAction(pin: String) = appLockCoordinator.verifySensitiveAction(pin)
 
     fun setReauthentication(mode: website.sung.mangossh.security.ReauthenticationMode) = appLockCoordinator.setReauthentication(mode)
-
-    fun prepareBackupExport(password: String?, remember: Boolean, includeConfig: Boolean) {
-        if (!authorizeSensitive { prepareBackupExport(password, remember, includeConfig) }) return
-        backupCoordinator.prepareExport(password, remember, includeConfig)
-    }
 
     val appLockBusy = appLockCoordinator.busy
     val appLocked = appLockCoordinator.locked
@@ -1636,18 +1637,11 @@ class MangoSshViewModel @JvmOverloads constructor(
             _userMessage.value = uiText(R.string.message_webdav_invalid_configuration)
             return
         }
-        viewModelScope.launch {
-            val saved = vault.saveWebDavConfig(config)
-            _userMessage.value = uiText(if (saved.isSuccess) R.string.message_webdav_saved else R.string.backup_error_storage)
-            backupCoordinator.refreshPasswords()
-        }
+        backupCoordinator.changeWebDavConfig(config)
     }
 
-    fun clearWebDavConfig() {
-        viewModelScope.launch {
-            if (vault.saveWebDavConfig(null).isSuccess) backupCoordinator.refreshPasswords()
-        }
-    }
+    /** Removes the destination through the same approval path as a destination edit. */
+    fun clearWebDavConfig() = backupCoordinator.changeWebDavConfig(null)
 
     /** PIN derivation and grant ownership are shared with isolated security regression fixtures. */
     fun configureAppPin(pin: String) = appLockCoordinator.configurePin(pin)

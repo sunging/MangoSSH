@@ -4,6 +4,7 @@ import android.os.SystemClock
 import javax.crypto.Cipher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -93,6 +94,12 @@ internal class AppLockCoordinator(
         cancel?.invoke()
     }
 
+    /** Approves one continuation and returns a cancellation handle scoped to that continuation. */
+    internal fun requestSensitiveApproval(onCancelled: () -> Unit, onApproved: () -> Unit): () -> Unit {
+        if (authorizeSensitive(onCancelled = onCancelled, action = onApproved)) onApproved()
+        return { if (pendingAction?.run === onApproved) cancelReauthentication() }
+    }
+
     /** A cancelled or replaced action cannot inherit an in-flight PIN verification. */
     fun verifySensitiveAction(pin: String) {
         val action = pendingAction ?: return
@@ -111,11 +118,11 @@ internal class AppLockCoordinator(
 
     /** Derives the verifier off the main thread and preserves any intervening background lock. */
     fun configurePin(pin: String) {
-        if (!authorizeSensitive { configurePin(pin) } || busy.value) return
+        if (busy.value || !authorizeSensitive { configurePin(pin) }) return
         setBusy(true)
         val generation = access.generation
         val chars = pin.toCharArray()
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 withContext(cryptoDispatcher) { store.setPin(chars) }
                 refresh()
@@ -133,7 +140,7 @@ internal class AppLockCoordinator(
 
     /** Disables local protection only after the current sensitive-action policy permits it. */
     fun clear() {
-        if (!authorizeSensitive { clear() }) return
+        if (busy.value || !authorizeSensitive { clear() }) return
         // Invalidate even if a settings screen is removed while a picker or prompt is pending.
         documents.invalidate(); biometricRequest = null
         store.clear(); refresh(); access.setLocked(false)
@@ -143,6 +150,7 @@ internal class AppLockCoordinator(
 
     /** Requires an existing PIN; disabling biometrics also revokes an outstanding prompt. */
     fun setBiometricEnabled(enabled: Boolean) {
+        if (busy.value) return
         runCatching { store.setBiometricEnabled(enabled) }
             .onSuccess { if (!enabled) biometricRequest = null; refresh() }
             .onFailure { message(uiText(R.string.message_app_pin_required)) }
@@ -150,13 +158,14 @@ internal class AppLockCoordinator(
 
     /** Changes the grace period without changing the current lock state. */
     fun setAutoLockDelay(delay: AppLockDelay) {
+        if (busy.value) return
         runCatching { store.setAutoLockDelay(delay) }.onSuccess { refresh() }
             .onFailure { message(uiText(R.string.message_app_pin_required)) }
     }
 
     /** Changes to the approval policy must first satisfy the existing policy. */
     fun setReauthentication(mode: ReauthenticationMode) {
-        if (!authorizeSensitive { setReauthentication(mode) }) return
+        if (busy.value || !authorizeSensitive { setReauthentication(mode) }) return
         store.setReauthentication(mode); refresh()
     }
 
@@ -211,7 +220,7 @@ internal class AppLockCoordinator(
     fun completeBiometricUnlock(request: BiometricRequest, cipher: Cipher?): Boolean {
         if (biometricRequest !== request) return false
         biometricRequest = null
-        if (request.generation != access.generation || !locked.value || !configuration.value.biometricEnabled ||
+        if (busy.value || request.generation != access.generation || !locked.value || !configuration.value.biometricEnabled ||
             !configuration.value.pinConfigured || cipher !== request.cipher) return false
         if (runCatching { request.cipher.doFinal() }.isFailure) return false
         access.setLocked(false)
@@ -247,7 +256,7 @@ internal class AppLockCoordinator(
         setBusy(true)
         val generation = access.generation
         val chars = pin.toCharArray()
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             var accepted: Boolean? = null
             try {
                 accepted = withContext(cryptoDispatcher) { store.verifyPin(chars) }

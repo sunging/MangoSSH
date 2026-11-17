@@ -82,6 +82,7 @@ internal data class ConnectionSettingsState(
 @Immutable
 internal data class SecuritySettingsState(
     val lock: AppLockConfiguration,
+    val lockBusy: Boolean = false,
 )
 
 /** State shown on the Backup & sync detail page. */
@@ -191,7 +192,7 @@ internal data class BackupSettingsCallbacks(
     val onDownloadAndImport: (String?, Boolean) -> Unit,
     val onCommit: (website.sung.mangossh.data.vault.ImportDecision) -> Unit,
     val onCancel: () -> Unit,
-    val onConfirmUpload: () -> Unit,
+    val onConfirmUpload: (String) -> Unit,
     val onHistory: (Boolean) -> Unit,
     val onRestore: (website.sung.mangossh.data.vault.BackupHistoryEntry, String?) -> Unit,
     val onForget: (Boolean) -> Unit,

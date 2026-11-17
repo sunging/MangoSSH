@@ -25,6 +25,7 @@ class AppLockStore(context: Context, private val clockMillis: () -> Long = Syste
         )
     }
 
+    @Synchronized
     fun setPin(pin: CharArray) {
         require(pin.size in MIN_PIN_LENGTH..MAX_PIN_LENGTH && pin.all(Char::isDigit)) {
             "PIN is outside the supported length or contains a non-digit character."
@@ -78,23 +79,27 @@ class AppLockStore(context: Context, private val clockMillis: () -> Long = Syste
     private fun backoff() = PinBackoff(preferences.getInt("pin_failures", 0), preferences.getLong("pin_blocked_until", 0))
 
     /** Reauthentication is opt-in and requires an existing verifier. */
+    @Synchronized
     fun setReauthentication(mode: ReauthenticationMode) {
         require(mode == ReauthenticationMode.DISABLED || configuration().pinConfigured)
         preferences.edit { putString("reauthentication", mode.name) }
     }
 
+    @Synchronized
     fun setBiometricEnabled(enabled: Boolean) {
         require(configuration().pinConfigured) { "An app PIN must be configured first." }
         preferences.edit { putBoolean(KEY_BIOMETRIC_ENABLED, enabled) }
     }
 
     /** Requires a PIN first, matching [setBiometricEnabled]: there is nothing to delay-guard otherwise. */
+    @Synchronized
     fun setAutoLockDelay(delay: AppLockDelay) {
         require(configuration().pinConfigured) { "An app PIN must be configured first." }
         preferences.edit { putString(KEY_AUTO_LOCK_DELAY, delay.preferenceValue) }
     }
 
     /** Also resets the auto-lock delay to [AppLockDelay.DEFAULT], since it clears the whole preference file. */
+    @Synchronized
     fun clear() {
         preferences.edit { clear() }
     }

@@ -181,6 +181,7 @@ fun MangoSshApp(
     val endedTerminals by viewModel.endedTerminals.collectAsStateWithLifecycle()
     val appLocked by viewModel.appLocked.collectAsStateWithLifecycle()
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
+    val appLockBusy by viewModel.appLockBusy.collectAsStateWithLifecycle()
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
     val sessionAttention by viewModel.sessionAttention.collectAsStateWithLifecycle()
@@ -764,7 +765,7 @@ fun MangoSshApp(
                                         streamingCacheLimitMebibytes = streamingCacheLimitMebibytes,
                                         streamingCacheUsage = streamingCacheUsage,
                                     ),
-                                    security = SecuritySettingsState(lock = appLockConfiguration),
+                                    security = SecuritySettingsState(lock = appLockConfiguration, lockBusy = appLockBusy),
                                     backup = BackupSettingsState(vaultStatus = vaultStatus, webDavConfig = webDavConfig, operation = backupOperation),
                                     snippets = SnippetSettingsState(snippets = snippets),
                                     tsnet = TsnetSettingsState(

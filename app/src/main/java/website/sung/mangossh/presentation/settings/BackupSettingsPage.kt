@@ -39,7 +39,8 @@ import java.util.Date
 internal fun BackupSettingsPage(state: BackupSettingsState, callbacks: BackupSettingsCallbacks, modifier: Modifier = Modifier) {
     val operation = state.operation
     val busy = operation.phase != BackupPhase.IDLE
-    val enabled = state.vaultStatus is VaultStatus.Ready && !busy && operation.preview == null && !operation.remoteConflict && !operation.exportReady
+    val enabled = state.vaultStatus is VaultStatus.Ready && !busy && !operation.authorizing &&
+        operation.preview == null && !operation.remoteConflict && !operation.exportReady
     var action by remember { mutableStateOf<BackupAction?>(null) }
     var importUri by remember { mutableStateOf<Uri?>(null) }
     var historyEntry by remember { mutableStateOf<BackupHistoryEntry?>(null) }
@@ -153,13 +154,17 @@ internal fun BackupSettingsPage(state: BackupSettingsState, callbacks: BackupSet
             action = null; importUri = null; historyEntry = null
         }
     }
-    operation.preview?.let { preview -> ImportDialog(preview, busy, operation.failure, callbacks.onCancel, callbacks.onCommit) }
-    if (operation.remoteConflict) RemoteBackupConflictDialog(
-        busy = busy,
-        onDownload = { callbacks.onCancel(); action = BackupAction.DOWNLOAD },
-        onOverwrite = callbacks.onConfirmUpload,
-        onCancel = callbacks.onCancel,
-    )
+    if (!operation.authorizing) {
+        operation.preview?.let { preview -> ImportDialog(preview, busy, operation.failure, callbacks.onCancel, callbacks.onCommit) }
+        operation.remoteConflictId?.let { id ->
+            RemoteBackupConflictDialog(
+                busy = busy,
+                onDownload = { callbacks.onCancel(); action = BackupAction.DOWNLOAD },
+                onOverwrite = { callbacks.onConfirmUpload(id) },
+                onCancel = callbacks.onCancel,
+            )
+        }
+    }
     operation.history?.let { entries ->
         AlertDialog(onDismissRequest = callbacks.onCancel,
             title = { Text(stringResource(if (entries.firstOrNull()?.remote ?: remoteHistory) R.string.backup_remote_history else R.string.backup_local_history)) },

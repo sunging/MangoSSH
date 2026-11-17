@@ -73,7 +73,7 @@ internal fun rememberSettingsCallbacks(
             backup = BackupSettingsCallbacks(
                 onSaveWebDav = viewModel::saveWebDavConfig,
                 onClearWebDav = viewModel::clearWebDavConfig,
-                onPrepareExport = viewModel::prepareBackupExport,
+                onPrepareExport = viewModel.backupCoordinator::prepareExport,
                 onCommit = viewModel.backupCoordinator::commit,
                 onCancel = viewModel.backupCoordinator::cancel,
                 onConfirmUpload = viewModel.backupCoordinator::confirmUpload,
