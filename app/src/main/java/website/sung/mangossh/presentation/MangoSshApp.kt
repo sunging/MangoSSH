@@ -503,7 +503,11 @@ fun MangoSshApp(
                 behavior = terminalBehavior,
                 shortcutConfig = terminalShortcutConfig,
                 clipboardCopies = viewModel.terminalClipboardCopies,
-                onSend = { bytes -> viewModel.sendTerminalInput(activeSession.id, bytes) },
+                pasteGeneration = {
+                    if (activeSessionId == activeSession.id) {
+                        viewModel.terminalPasteGeneration(activeSession.id, terminalEmulator)
+                    } else null
+                },
                 resourceState = resourceStates[activeSession.id] ?: website.sung.mangossh.session.ServerResourceState(),
                 onRequestResources = { viewModel.requestServerResources(activeSession.id) },
                 onResourceMonitoringChange = { viewModel.setServerResourceMonitoring(activeSession.id, it) },

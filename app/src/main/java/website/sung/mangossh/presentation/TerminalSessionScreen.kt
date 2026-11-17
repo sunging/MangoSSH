@@ -12,6 +12,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +27,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.isImeVisible
@@ -40,6 +43,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -47,13 +51,16 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +71,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -78,6 +86,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -120,7 +129,7 @@ fun TerminalSessionScreen(
     behavior: TerminalBehavior,
     shortcutConfig: TerminalShortcutConfig,
     clipboardCopies: SharedFlow<TerminalClipboardCopy>,
-    onSend: (ByteArray) -> Unit,
+    pasteGeneration: () -> Long?,
     resourceState: ServerResourceState,
     onRequestResources: () -> Unit,
     onResourceMonitoringChange: (Boolean) -> Unit,
@@ -184,16 +193,53 @@ fun TerminalSessionScreen(
         }
     }
 
-    val pasteFromClipboard: () -> Unit = {
+    val currentPasteGeneration by rememberUpdatedState(pasteGeneration)
+    val pasteTarget = remember(session.id, terminalEmulator, isOpen) {
+        TerminalPasteTarget(isOpen) { currentPasteGeneration() }
+    }
+    DisposableEffect(pasteTarget) {
+        onDispose(pasteTarget::invalidate)
+    }
+    var pendingPaste by remember(pasteTarget) { mutableStateOf<PendingTerminalPaste?>(null) }
+    var blockedPasteGeneration by remember(pasteTarget) { mutableStateOf<Long?>(null) }
+    var readingClipboard by remember(pasteTarget) { mutableStateOf(false) }
+    val pasteFromClipboard: () -> Unit = paste@{
+        val generation = pasteTarget.currentGeneration() ?: return@paste
+        if (pendingPaste?.generation != generation) pendingPaste = null
+        if (blockedPasteGeneration != generation) blockedPasteGeneration = null
+        if (readingClipboard || pendingPaste != null || blockedPasteGeneration != null) return@paste
+        readingClipboard = true
         scope.launch {
-            val text = clipboard.getClipEntry()
-                ?.clipData
-                ?.getItemAt(0)
-                ?.coerceToText(context)
-                ?.toString()
-                ?.takeIf(String::isNotEmpty)
-            if (text != null) onSend(text.encodeToByteArray())
+            try {
+                // An explicit terminal paste accepts clipboard text. Reading a URI could
+                // fetch unrelated content from another app and block the UI.
+                val clip = clipboard.getClipEntry()?.clipData
+                val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+                if (text.isNullOrEmpty() || !pasteTarget.isCurrent(generation)) return@launch
+                val snapshot = TerminalPasteSnapshot.fromClipboard(text)
+                when {
+                    snapshot == null -> blockedPasteGeneration = generation
+                    snapshot.needsConfirmation -> pendingPaste = PendingTerminalPaste(generation, snapshot)
+                    else -> terminalEmulator.pasteText(snapshot.text) { pasteTarget.isCurrent(generation) }
+                }
+            } finally {
+                readingClipboard = false
+            }
         }
+    }
+    val handlePasteKey: (KeyEvent) -> Boolean = { event ->
+        val nativeEvent = event.nativeKeyEvent
+        val handled = isOpen && isTerminalPasteShortcut(
+            nativeKeyCode = nativeEvent.keyCode,
+            ctrl = event.isCtrlPressed,
+            shift = event.isShiftPressed,
+            alt = event.isAltPressed,
+        )
+        if (handled && event.type == KeyEventType.KeyDown && nativeEvent.repeatCount == 0) {
+            pasteFromClipboard()
+            terminalModifierState.clearTransients()
+        }
+        handled
     }
 
     LaunchedEffect(clipboardCopies, session.id) {
@@ -339,9 +385,7 @@ fun TerminalSessionScreen(
                                 )
                             }
                             true
-                        } else {
-                            false
-                        }
+                        } else handlePasteKey(event)
                     },
             ) {
                 if (showTopBar) {
@@ -504,23 +548,7 @@ fun TerminalSessionScreen(
                                 }
                             },
                             onPasteRequest = pasteFromClipboard,
-                            onInterceptKey = { event ->
-                                if (
-                                    event.type == KeyEventType.KeyDown &&
-                                    isTerminalPasteShortcut(
-                                        nativeKeyCode = event.nativeKeyEvent.keyCode,
-                                        ctrl = event.isCtrlPressed,
-                                        shift = event.isShiftPressed,
-                                        alt = event.isAltPressed,
-                                    )
-                                ) {
-                                    pasteFromClipboard()
-                                    terminalModifierState.clearTransients()
-                                    true
-                                } else {
-                                    false
-                                }
-                            },
+                            onInterceptKey = handlePasteKey,
                             rightAltMode = behavior.rightAltMode.toTermlib(),
                             delKeyMode = behavior.delKeyMode.toTermlib(),
                             ctrlEnterSendsLineFeed = behavior.ctrlEnterSendsLineFeed,
@@ -600,6 +628,40 @@ fun TerminalSessionScreen(
             }
         }
 
+        val pending = pendingPaste
+        val blocked = blockedPasteGeneration
+        val currentGeneration = if (pending != null || blocked != null) pasteTarget.currentGeneration() else null
+        SideEffect {
+            if (pendingPaste === pending && pending?.generation != currentGeneration) pendingPaste = null
+            if (blockedPasteGeneration == blocked && blocked != currentGeneration) blockedPasteGeneration = null
+        }
+        pending?.takeIf { it.generation == currentGeneration }?.let { request ->
+            TerminalPasteConfirmation(
+                session = session,
+                snapshot = request.snapshot,
+                onDismiss = { pendingPaste = null },
+                onConfirm = {
+                    if (pendingPaste === request) {
+                        pendingPaste = null
+                        if (pasteTarget.isCurrent(request.generation)) {
+                            terminalEmulator.pasteText(request.snapshot.text) { pasteTarget.isCurrent(request.generation) }
+                        }
+                    }
+                },
+            )
+        }
+        if (blocked != null && blocked == currentGeneration) {
+            AlertDialog(
+                onDismissRequest = { blockedPasteGeneration = null },
+                title = { Text(stringResource(R.string.terminal_paste_blocked_title)) },
+                text = { Text(stringResource(R.string.terminal_paste_blocked_message)) },
+                confirmButton = {
+                    TextButton(onClick = { blockedPasteGeneration = null }) {
+                        Text(stringResource(R.string.common_ok))
+                    }
+                },
+            )
+        }
         if (showResourceReport) {
             ServerResourceDialog(
                 state = resourceState,
@@ -611,6 +673,58 @@ fun TerminalSessionScreen(
             )
         }
     }
+}
+
+private class PendingTerminalPaste(val generation: Long, val snapshot: TerminalPasteSnapshot)
+
+@Composable
+private fun TerminalPasteConfirmation(
+    session: TerminalSessionState,
+    snapshot: TerminalPasteSnapshot,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val preview = remember(snapshot) { snapshot.preview() }
+    val endpoint = session.username?.let { "$it@${session.endpoint}" } ?: session.endpoint
+    AlertDialog(
+        modifier = Modifier.testTag("terminal_paste_confirmation"),
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.terminal_paste_confirm_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(
+                        R.string.terminal_paste_target,
+                        session.protocol.label,
+                        plainTerminalPreview(endpoint, singleLine = true),
+                        plainTerminalPreview(session.title, singleLine = true),
+                    ),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(stringResource(R.string.terminal_paste_size, snapshot.utf8Bytes))
+                Text(
+                    text = preview,
+                    modifier = Modifier.fillMaxWidth()
+                        .heightIn(max = 240.dp)
+                        .verticalScroll(rememberScrollState())
+                        .testTag("terminal_paste_preview"),
+                    fontFamily = FontFamily.Monospace,
+                )
+                if (snapshot.previewWasShortened) Text(stringResource(R.string.terminal_paste_preview_shortened))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, modifier = Modifier.testTag("terminal_paste_submit")) {
+                Text(stringResource(R.string.terminal_shortcut_paste))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.testTag("terminal_paste_cancel")) {
+                Text(stringResource(R.string.terminal_cancel))
+            }
+        },
+    )
 }
 
 /**

@@ -422,6 +422,7 @@ class SshSessionController internal constructor(
                 protocol = profile.protocol,
                 phase = TerminalSessionPhase.CONNECTING,
                 detail = context.appString(R.string.session_connecting),
+                username = profile.username,
             ),
         )
         if (!startForegroundOwnership(sessionId, managed)) return sessionId
@@ -610,6 +611,15 @@ class SshSessionController internal constructor(
     fun setVisibleTerminal(sessionId: String?) = terminalStore.setVisibleSession(sessionId)
 
     fun terminalEmulator(sessionId: String): TerminalEmulator? = terminalStore.terminalFor(sessionId)
+
+    /** Grants paste only to this live terminal, in the current app-lock generation. */
+    internal fun terminalPasteGeneration(sessionId: String, emulator: TerminalEmulator): Long? =
+        synchronized(accessState) {
+            accessState.generation.takeIf {
+                !accessState.locked.value && sessionsById[sessionId]?.inputReady == true &&
+                    terminalStore.terminalFor(sessionId) === emulator
+            }
+        }
 
     /** Applies a display-only scheme to retained sessions without reconnecting their transports. */
     fun applyTerminalAppearance(appearance: TerminalAppearance) {

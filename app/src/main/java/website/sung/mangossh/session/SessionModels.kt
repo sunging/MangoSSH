@@ -40,6 +40,7 @@ data class TerminalSessionState(
     val phase: TerminalSessionPhase,
     val detail: String? = null,
     val kind: SessionKind = SessionKind.TERMINAL,
+    val username: String? = null,
 )
 
 /** A transient terminal-originated clipboard request handled only by visible UI. */

@@ -143,6 +143,12 @@
     <string name="terminal_cancel">取消</string>
     <string name="terminal_theme_custom">自定义（%1$s）</string>
     <string name="terminal_shortcut_paste">粘贴</string>
+    <string name="terminal_paste_confirm_title">要粘贴到终端吗？</string>
+    <string name="terminal_paste_target">%1$s %2$s · %3$s</string>
+    <string name="terminal_paste_size">剪贴板文本共 %1$d 字节</string>
+    <string name="terminal_paste_preview_shortened">预览仅显示开头。确认粘贴后将发送完整文本。</string>
+    <string name="terminal_paste_blocked_title">无法粘贴剪贴板文本</string>
+    <string name="terminal_paste_blocked_message">剪贴板含有无法安全粘贴的控制字符或无效文本。</string>
     <string name="terminal_shortcuts_rows">工具栏行数</string>
     <string name="terminal_shortcuts_one_row">单行</string>
     <string name="terminal_shortcuts_two_rows">双行</string>

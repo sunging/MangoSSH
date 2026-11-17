@@ -726,9 +726,9 @@ class MangoSshViewModel @JvmOverloads constructor(
         sessionController.close(sessionId)
     }
 
-    fun sendTerminalInput(sessionId: String, bytes: ByteArray) {
-        sessionController.send(sessionId, bytes)
-    }
+    /** Links an explicit paste to the running terminal and app-lock generation. */
+    internal fun terminalPasteGeneration(sessionId: String, emulator: TerminalEmulator): Long? =
+        sessionController.terminalPasteGeneration(sessionId, emulator)
 
     fun resizeTerminal(sessionId: String, columns: Int, rows: Int) {
         sessionController.resize(sessionId, columns, rows)

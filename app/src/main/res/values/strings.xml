@@ -156,6 +156,12 @@
     <string name="terminal_theme_solarized_light" translatable="false">Solarized Light</string>
     <string name="terminal_theme_custom">Custom (%1$s)</string>
     <string name="terminal_shortcut_paste">Paste</string>
+    <string name="terminal_paste_confirm_title">Paste into terminal?</string>
+    <string name="terminal_paste_target">%1$s %2$s · %3$s</string>
+    <string name="terminal_paste_size">%1$d bytes of clipboard text</string>
+    <string name="terminal_paste_preview_shortened">The preview shows only the beginning. Pasting sends the full text.</string>
+    <string name="terminal_paste_blocked_title">Cannot paste clipboard text</string>
+    <string name="terminal_paste_blocked_message">The clipboard text contains control characters or invalid text that cannot be pasted safely.</string>
     <string name="terminal_shortcuts_rows">Toolbar rows</string>
     <string name="terminal_shortcuts_one_row">Single row</string>
     <string name="terminal_shortcuts_two_rows">Two rows</string>
