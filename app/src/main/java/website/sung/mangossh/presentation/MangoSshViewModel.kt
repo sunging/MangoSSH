@@ -1600,6 +1600,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                     _userMessage.value = uiText(R.string.embedded_tsnet_logout_complete)
                 }
                 .onFailure { error ->
+                    if (error is CancellationException) throw error
                     _userMessage.value = uiText(
                         if (error is TsnetSessionsActiveException) {
                             R.string.embedded_tsnet_logout_sessions_active

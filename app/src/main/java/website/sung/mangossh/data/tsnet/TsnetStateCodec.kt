@@ -1,9 +1,8 @@
 package website.sung.mangossh.data.tsnet
 
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
-import java.io.DataOutputStream
+import java.nio.ByteBuffer
 
 /**
  * Strict binary codec for the plaintext map stored behind Android Keystore.
@@ -21,28 +20,26 @@ internal object TsnetStateCodec {
 
     fun encode(values: Map<String, ByteArray>): ByteArray {
         require(values.size <= MAX_ENTRY_COUNT) { "Too many embedded tsnet state entries" }
-        val output = ByteArrayOutputStream()
-        DataOutputStream(output).use { data ->
-            data.write(MAGIC)
-            data.writeByte(FORMAT_VERSION)
-            data.writeInt(values.size)
-            values.toSortedMap().forEach { (key, value) ->
-                val keyBytes = key.encodeToByteArray()
-                require(keyBytes.isNotEmpty() && keyBytes.size <= MAX_KEY_BYTES) {
-                    "Invalid embedded tsnet state key"
-                }
-                require(value.isNotEmpty() && value.size <= MAX_VALUE_BYTES) {
-                    "Invalid embedded tsnet state value"
-                }
-                data.writeShort(keyBytes.size)
-                data.write(keyBytes)
-                data.writeInt(value.size)
-                data.write(value)
+        val entries = values.toSortedMap().map { (key, value) ->
+            val keyBytes = key.encodeToByteArray()
+            require(keyBytes.isNotEmpty() && keyBytes.size <= MAX_KEY_BYTES) {
+                "Invalid embedded tsnet state key"
             }
+            require(value.isNotEmpty() && value.size <= MAX_VALUE_BYTES) {
+                "Invalid embedded tsnet state value"
+            }
+            keyBytes to value
         }
-        return output.toByteArray().also {
-            require(it.size <= MAX_TOTAL_BYTES) { "Embedded tsnet state is too large" }
+        val headerBytes = MAGIC.size + Byte.SIZE_BYTES + Int.SIZE_BYTES
+        val entryLengthBytes = Short.SIZE_BYTES + Int.SIZE_BYTES
+        val size = headerBytes + entries.sumOf { (key, value) -> entryLengthBytes + key.size + value.size }
+        require(size <= MAX_TOTAL_BYTES) { "Embedded tsnet state is too large" }
+        val output = ByteBuffer.allocate(size)
+        output.put(MAGIC).put(FORMAT_VERSION.toByte()).putInt(values.size)
+        entries.forEach { (key, value) ->
+            output.putShort(key.size.toShort()).put(key).putInt(value.size).put(value)
         }
+        return output.array()
     }
 
     fun decode(encoded: ByteArray): Map<String, ByteArray> {
@@ -55,18 +52,25 @@ internal object TsnetStateCodec {
         val count = input.readInt()
         require(count in 0..MAX_ENTRY_COUNT) { "Invalid embedded tsnet state entry count" }
         val values = LinkedHashMap<String, ByteArray>(count)
-        repeat(count) {
-            val keyLength = input.readUnsignedShort()
-            require(keyLength in 1..MAX_KEY_BYTES) { "Invalid embedded tsnet state key length" }
-            val keyBytes = ByteArray(keyLength)
-            input.readFully(keyBytes)
-            val key = keyBytes.decodeToString(throwOnInvalidSequence = true)
-            require(key !in values) { "Duplicate embedded tsnet state key" }
-            val valueLength = input.readInt()
-            require(valueLength in 1..MAX_VALUE_BYTES) { "Invalid embedded tsnet state value length" }
-            values[key] = ByteArray(valueLength).also(input::readFully)
+        try {
+            repeat(count) {
+                val keyLength = input.readUnsignedShort()
+                require(keyLength in 1..MAX_KEY_BYTES) { "Invalid embedded tsnet state key length" }
+                val keyBytes = ByteArray(keyLength)
+                input.readFully(keyBytes)
+                val key = keyBytes.decodeToString(throwOnInvalidSequence = true)
+                require(key !in values) { "Duplicate embedded tsnet state key" }
+                val valueLength = input.readInt()
+                require(valueLength in 1..MAX_VALUE_BYTES) { "Invalid embedded tsnet state value length" }
+                val value = ByteArray(valueLength)
+                values[key] = value
+                input.readFully(value)
+            }
+            require(input.available() == 0) { "Embedded tsnet state has trailing data" }
+            return values
+        } catch (error: Exception) {
+            values.values.forEach { it.fill(0) }
+            throw error
         }
-        require(input.available() == 0) { "Embedded tsnet state has trailing data" }
-        return values
     }
 }

@@ -11,7 +11,6 @@ import (
 
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
-	"tailscale.com/types/key"
 )
 
 type memoryStateStore struct {
@@ -31,6 +30,10 @@ func (s *memoryStateStore) ReadState(key string) ([]byte, error) {
 }
 
 func (s *memoryStateStore) WriteState(key string, value []byte) error {
+	if len(value) == 0 {
+		delete(s.values, key)
+		return nil
+	}
 	s.values[key] = append([]byte(nil), value...)
 	return nil
 }
@@ -53,6 +56,12 @@ func TestEncryptedStateStoreRoundTrip(t *testing.T) {
 	got[0] = 7
 	if delegate.values["node"][0] != 0 {
 		t.Fatal("ReadState exposed the delegate's backing array")
+	}
+	if err := store.WriteState("node", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReadState("node"); !errors.Is(err, ipn.ErrStateNotExist) {
+		t.Fatalf("deleted state error = %v", err)
 	}
 }
 
@@ -103,22 +112,18 @@ func TestValidControlURL(t *testing.T) {
 	}
 }
 
-func TestRunningStatusWaitsForDialReadyPeerMap(t *testing.T) {
-	status := &ipnstate.Status{
-		BackendState: "Running",
-		TailscaleIPs: []netip.Addr{netip.MustParseAddr("100.64.0.1")},
+func TestRunningStatusRequiresLocalAddressButAllowsAnEmptyTailnet(t *testing.T) {
+	status := &ipnstate.Status{BackendState: "Running"}
+	if state, _ := mapBackendStatus(status); state != statusStarting {
+		t.Fatalf("status without a local address = %q", state)
 	}
-	if state, _ := mapBackendStatus(status, false); state != statusStarting {
-		t.Fatalf("status without peers = %q", state)
+	status.TailscaleIPs = []netip.Addr{netip.MustParseAddr("100.64.0.1")}
+	if state, _ := mapBackendStatus(status); state != statusRunning {
+		t.Fatalf("status with a local address and no peers = %q", state)
 	}
-	var peerKey key.NodePublic
-	status.Peer = map[key.NodePublic]*ipnstate.PeerStatus{peerKey: nil}
-	if state, _ := mapBackendStatus(status, false); state != statusRunning {
-		t.Fatalf("dial-ready status = %q", state)
-	}
-	status.Peer = nil
-	if state, _ := mapBackendStatus(status, true); state != statusRunning {
-		t.Fatalf("peer-less status after readiness = %q", state)
+	status.BackendState = "NeedsMachineAuth"
+	if state, _ := mapBackendStatus(status); state != statusNeedsApproval {
+		t.Fatalf("status awaiting approval = %q", state)
 	}
 }
 

@@ -23,6 +23,7 @@
     <string name="embedded_tsnet_browser_login">使用浏览器登录</string>
     <string name="embedded_tsnet_auth_key_login">使用 Auth Key</string>
     <string name="embedded_tsnet_logout">退出登录</string>
+    <string name="embedded_tsnet_status_logging_out">正在退出登录…</string>
     <string name="embedded_tsnet_auth_key_title">使用一次性 Auth Key</string>
     <string name="embedded_tsnet_auth_key_explanation">密钥将直接交给内嵌节点，不会保存到界面状态、保险库、备份或日志中。失败后必须重新输入。</string>
     <string name="embedded_tsnet_auth_key_label">Auth Key</string>

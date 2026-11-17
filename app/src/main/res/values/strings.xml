@@ -25,6 +25,7 @@
     <string name="embedded_tsnet_browser_login">Sign in with browser</string>
     <string name="embedded_tsnet_auth_key_login">Use Auth Key</string>
     <string name="embedded_tsnet_logout">Sign out</string>
+    <string name="embedded_tsnet_status_logging_out">Signing out…</string>
     <string name="embedded_tsnet_auth_key_title">Use a one-time Auth Key</string>
     <string name="embedded_tsnet_auth_key_explanation">The key is passed directly to the embedded node. It is not saved in app state, the vault, backups, or logs. A failed attempt requires entering it again.</string>
     <string name="embedded_tsnet_auth_key_label">Auth Key</string>
