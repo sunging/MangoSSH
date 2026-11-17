@@ -50,7 +50,7 @@ class PortForwardLifecycleInstrumentedTest {
         }
         val vault = VaultRepository(context, AndroidKeystoreVault(context, prefix))
         vault.open()
-        val profile = ConnectionProfile(id = "synthetic", label = "Loopback fixture", hostname = "127.0.0.1", port = port!!,
+        val profile = ConnectionProfile(id = "synthetic", label = "Loopback fixture", hostname = args.getString("fixtureHost") ?: "127.0.0.1", port = port!!,
             username = "fixture", authentication = AuthenticationMethod.AUTOMATIC, protocol = protocol)
         assertEquals(VaultMutationResult.Success, vault.upsertProfile(profile))
         val connections = java.util.Collections.synchronizedList(mutableListOf<SshConnection>())
@@ -362,4 +362,21 @@ class PortForwardLifecycleInstrumentedTest {
         controller.stopPortForward(sessionId, rule.id)
         controller.sessions.first { it.isEmpty() }
     }
+
+    @Test fun manualMoshCompanionReconnectKeepsTheBootstrapAccountAfterAProfileEdit() =
+        fixture(ConnectionProtocol.MOSH) { controller, profile, _, connections, vault ->
+            val sessionId = controller.connect(profile)
+            controller.sessionHealth.first { it[sessionId]?.companion == CompanionHealth.CONNECTED }
+            // A file query opens the companion even if the saved profile points at a
+            // different account. It must authenticate as the running Mosh session's user.
+            assertEquals(VaultMutationResult.Success, vault.upsertProfile(profile.copy(
+                username = "edited-account", legacySshAlgorithms = true,
+            )))
+            val bootstrapConnection = connections.single()
+            bootstrapConnection.close()
+            controller.resolveRemoteHome(sessionId)
+            assertEquals(2, connections.size)
+            assertEquals(profile.username, requireNotNull(connections.last().authenticatedIdentity).username)
+            assertTrue(bootstrapConnection.authenticatedIdentity?.hostKey == connections.last().authenticatedIdentity?.hostKey)
+        }
 }
