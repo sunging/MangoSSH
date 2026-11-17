@@ -115,8 +115,9 @@ class TransferSafetyInstrumentedTest {
     private lateinit var testScope: CoroutineScope
 
     private fun fixture(idleMillis: Long = 30_000L, block: suspend (SshConnection, Documents, FileTransferManager) -> Unit) = runBlocking {
-        val port = InstrumentationRegistry.getArguments().getString("fixturePort")?.toIntOrNull()
-        if (InstrumentationRegistry.getArguments().getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
+        val args = InstrumentationRegistry.getArguments()
+        val port = args.getString("fixturePort")?.toIntOrNull()
+        if (args.getString("requireFixtures") == "true") assertNotNull("Required SSH fixture port", port)
         assumeTrue(port != null)
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val root = File(base.cacheDir, "transfer-test-${UUID.randomUUID()}").apply { mkdirs() }
@@ -128,7 +129,7 @@ class TransferSafetyInstrumentedTest {
             override fun getContentResolver() = resolver
             override fun getCacheDir() = staging
         }
-        val connection = SshConnection("127.0.0.1", port!!)
+        val connection = SshConnection(args.getString("fixtureHost") ?: "127.0.0.1", port!!)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
             connection.connect(10_000) { _, _ -> true }
@@ -541,6 +542,43 @@ class TransferSafetyInstrumentedTest {
             assertEquals("new file", files.readEditable(connection, "$remoteRoot/new", control).text)
             for (name in listOf("b", "c")) assertEquals("original", files.readEditable(connection, "$remoteRoot/nested/$name", control).text)
         }
+    }
+
+    @Test fun invalidNestedWindowsNameFailsBeforeCreatingAnyDestination() = fixture { connection, provider, _ ->
+        File(provider.root, "nested").mkdir()
+        File(provider.root, "nested/NUL.txt").writeText("fixture")
+        val files = RemoteFileClient().apply { setPlatform(connection, RemotePlatform.WINDOWS) }
+        val manager = FileTransferManager(testContext, testScope, files, { connection }, {})
+        manager.uploadDirectory("fixture", provider.tree, "/", provider.root.name)
+        val failed = manager.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.FAILED, failed.phase)
+        assertEquals(RemoteFileMessage.OperationFailure(RemoteOperationFailure.INVALID_NAME), failed.detail)
+        assertTrue(manager.conflicts.value.isEmpty())
+        assertFalse(files.list(connection, "fixture", "/", 1000).entries.any { it.name == provider.root.name })
+    }
+
+    @Test fun posixUploadUsesAnUntrimmedNameAndWindowsSaveAsRejectsReservedNames() = fixture { connection, provider, manager ->
+        val name = " spaced fixture "
+        File(provider.root, name).writeText("sample")
+        val files = RemoteFileClient()
+        val directory = "/" + UUID.randomUUID()
+        files.mkdirIfMissing(connection, directory)
+        manager.uploadFile("fixture", provider.uri(name), name, directory)
+        val preview = manager.conflicts.first { it.isNotEmpty() }.single()
+        manager.resolveConflict(preview.id, TransferConflictDecision(TransferConflictAction.REPLACE))
+        assertEquals(ScpTransferPhase.COMPLETED, manager.transfers.first { it.single().isFinished }.single().phase)
+        assertEquals(listOf(name), files.list(connection, "fixture", directory, 20).entries.map { it.name })
+
+        files.setPlatform(connection, RemotePlatform.WINDOWS)
+        val windows = FileTransferManager(testContext, testScope, files, { connection }, {})
+        File(provider.root, "valid").writeText("sample")
+        windows.uploadFile("fixture", provider.uri("valid"), "valid", directory)
+        val conflict = windows.conflicts.first { it.isNotEmpty() }.single()
+        windows.resolveConflict(conflict.id, TransferConflictDecision(TransferConflictAction.SAVE_AS, alternateName = "NUL.txt"))
+        val failed = windows.transfers.first { it.single().isFinished }.single()
+        assertEquals(ScpTransferPhase.FAILED, failed.phase)
+        assertEquals(RemoteFileMessage.OperationFailure(RemoteOperationFailure.INVALID_NAME), failed.detail)
+        assertEquals(listOf(name), files.list(connection, "fixture", directory, 20).entries.map { it.name })
     }
 
     @Test fun uploadSaveAsPreservesTheOriginalAndCommitsTheAlternate() = fixture { connection, provider, manager ->

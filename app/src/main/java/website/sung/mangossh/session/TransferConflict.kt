@@ -16,6 +16,7 @@ data class TransferConflict(
     val verifySha256: Boolean = false,
     /** Number of descendant folders, excluding the selected transfer root. */
     val totalDirectories: Int? = null,
+    val remotePlatform: RemotePlatform = RemotePlatform.AUTO,
 )
 
 /** Whole-directory approval is distinct from an individual destination conflict. */

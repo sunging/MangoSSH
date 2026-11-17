@@ -76,6 +76,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -179,7 +180,7 @@ fun MangoSshApp(
     onSetAppLanguage: (AppLanguage) -> Unit,
 ) {
     val endedTerminals by viewModel.endedTerminals.collectAsStateWithLifecycle()
-    val appLocked by viewModel.appLocked.collectAsStateWithLifecycle()
+    val appLocked by viewModel.appLocked.collectAsState()
     val appLockConfiguration by viewModel.appLockConfiguration.collectAsStateWithLifecycle()
     val appLockBusy by viewModel.appLockBusy.collectAsStateWithLifecycle()
     val userMessage by viewModel.userMessage.collectAsStateWithLifecycle()
@@ -308,9 +309,13 @@ fun MangoSshApp(
     val sessionPrompts by viewModel.sessionPrompts.collectAsStateWithLifecycle()
     val remoteEditor by viewModel.remoteEditor.collectAsStateWithLifecycle()
     remoteEditor?.let {
-        RemoteTextEditorScreen(it, viewModel::changeRemoteDraft, viewModel::saveRemoteEditor, viewModel::reloadRemoteEditor, viewModel::closeRemoteEditor,
-            onReview = viewModel::reviewRemoteSave, onDismissReview = viewModel::dismissRemoteReview,
-            onRestoreDraft = viewModel::restoreRemoteDraft, onDiscardDraft = viewModel::discardRemoteDraft)
+        androidx.compose.runtime.key(it.identity) {
+            RemoteTextEditorScreen(it, viewModel::changeRemoteDraft, viewModel::saveRemoteEditor, viewModel::reloadRemoteEditor,
+                viewModel::closeRemoteEditor, onReview = viewModel::reviewRemoteSave, onDismissReview = viewModel::dismissRemoteReview,
+                onRestoreDraft = viewModel::restoreRemoteDraft, onDiscardDraft = viewModel::discardRemoteDraft,
+                onRetryDraft = viewModel::flushRemoteDraft, onKeepAndClose = viewModel::keepDraftAndCloseRemoteEditor,
+                onDiscardAndClose = viewModel::discardAndCloseRemoteEditor)
+        }
         sessionPrompts.firstOrNull()?.let { prompt ->
             SessionPromptDialog(prompt) { values -> viewModel.respondToSessionPrompt(prompt, values) }
         }
@@ -1636,9 +1641,7 @@ internal fun android.net.Uri.displayName(context: android.content.Context): Stri
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
         }
-    return fromProvider?.takeIf(String::isNotBlank)
-        ?: lastPathSegment?.substringAfterLast('/')?.takeIf(String::isNotBlank)
-        ?: "upload"
+    return fromProvider.orEmpty()
 }
 
 @Composable

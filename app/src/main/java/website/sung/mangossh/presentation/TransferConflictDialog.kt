@@ -109,10 +109,18 @@ internal fun TransferConflictDialog(
         text = { Text(stringResource(R.string.editor_direct_risk)) },
         confirmButton = { TextButton(onClick = { choose(TransferConflictAction.DIRECT_OVERWRITE) }) { Text(stringResource(R.string.editor_direct)) } },
         dismissButton = { TextButton(onClick = { direct = false }) { Text(stringResource(R.string.common_cancel)) } })
-    if (saveAs) AlertDialog(onDismissRequest = { saveAs = false }, title = { Text(stringResource(R.string.editor_save_as)) },
-        text = { OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.editor_new_name)) }, singleLine = true) },
-        confirmButton = { TextButton(enabled = name.isNotBlank() && '/' !in name && name != "." && name != "..", onClick = { choose(TransferConflictAction.SAVE_AS, name) }) { Text(stringResource(R.string.editor_save)) } },
-        dismissButton = { TextButton(onClick = { saveAs = false }) { Text(stringResource(R.string.common_cancel)) } })
+    if (saveAs) {
+        val valid = remember(name, conflict.remotePlatform) { RemoteWriteNames.isValid(name, conflict.remotePlatform) }
+        AlertDialog(onDismissRequest = { saveAs = false }, title = { Text(stringResource(R.string.editor_save_as)) },
+            text = {
+                OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.editor_new_name)) }, singleLine = true,
+                    isError = name.isNotEmpty() && !valid, supportingText = {
+                        if (name.isNotEmpty() && !valid) Text(stringResource(R.string.fm_invalid_name))
+                    })
+            },
+            confirmButton = { TextButton(enabled = valid, onClick = { choose(TransferConflictAction.SAVE_AS, name) }) { Text(stringResource(R.string.editor_save)) } },
+            dismissButton = { TextButton(onClick = { saveAs = false }) { Text(stringResource(R.string.common_cancel)) } })
+    }
 }
 
 /** One checkbox semantics node and touch target covers both the indicator and its wrapping label. */

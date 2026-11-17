@@ -261,10 +261,10 @@ internal object LocalDocumentTree {
             val (documentUri, prefix, depth) = pending.removeFirst()
             for (child in listChildren(resolver, treeUri, documentUri, maxEntries - visited + 1, control)) {
                 if (++visited > maxEntries) { truncated = true; break@traversal }
-                if (runCatching { RemoteFilePaths.requireSafeRemoteName(child.name) }.isFailure) {
-                    truncated = true
-                    continue
-                }
+                // Validate before joining, so a provider name containing a slash cannot
+                // masquerade as several individually valid manifest components.
+                if (runCatching { RemoteFilePaths.requireSafeRemoteName(child.name) }.isFailure)
+                    throw RemoteOperationException(RemoteOperationFailure.INVALID_NAME)
                 val relative = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
                 if (child.isDirectory) {
                     if (depth + 1 > maxDepth) {

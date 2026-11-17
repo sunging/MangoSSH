@@ -88,7 +88,8 @@ internal class FileTransferManager(
 
     private suspend fun decision(transferId: String, handle: TransferHandle, name: String, direction: ScpTransferDirection,
         exists: Boolean, atomic: Boolean, forcePrompt: Boolean = false,
-        directoryPreview: DirectoryPreview? = null, destinationDirectory: String? = null): TransferConflictDecision {
+        directoryPreview: DirectoryPreview? = null, destinationDirectory: String? = null,
+        remotePlatform: RemotePlatform = RemotePlatform.AUTO): TransferConflictDecision {
         if (exists && !forcePrompt) handle.taskDecision?.let { saved ->
             if (saved.action != TransferConflictAction.REPLACE || atomic) return saved
         }
@@ -107,7 +108,7 @@ internal class FileTransferManager(
                 else -> TransferPromptKind.FILE_PREVIEW
             }, destinationDirectory = destinationDirectory, totalFiles = directoryPreview?.totalFiles,
             totalBytes = directoryPreview?.totalBytes, verifySha256 = handle.verifySha256,
-            totalDirectories = directoryPreview?.totalDirectories) }
+            totalDirectories = directoryPreview?.totalDirectories, remotePlatform = remotePlatform) }
         return try {
             val result = pending.await()
             check(resolveRun(transferId) != null)
@@ -164,12 +165,11 @@ internal class FileTransferManager(
 
     /** Uploads one selected document into a remote directory. */
     fun uploadFile(sessionId: String, source: Uri, displayName: String, remoteDirectory: String) {
-        val fileName = sanitizeRemoteFileName(displayName)
         enqueue(
-            request = TransferRequest.FileUpload(sessionId, source, fileName, remoteDirectory),
+            request = TransferRequest.FileUpload(sessionId, source, displayName, remoteDirectory),
             direction = ScpTransferDirection.UPLOAD,
             kind = ScpTransferKind.FILE,
-            displayName = fileName,
+            displayName = displayName,
             remotePath = remoteDirectory,
             localUri = source.toString(),
         )
@@ -635,20 +635,22 @@ internal class FileTransferManager(
         source: Uri, identity: SourceIdentity, directory: String, name: String, offset: Long, promptName: String = name,
         progress: (Long, Long?) -> Unit): Long {
         markRunning(runId)
-        val original = RemoteFilePaths.join(directory, name)
+        val platform = remoteFiles.platform(connection, directory)
+        val original = RemoteFilePaths.join(directory, RemoteWriteNames.requireName(name, platform))
         val saved = handle.remoteApprovals[original]
         var destination = saved?.destination ?: original
+        RemoteWriteNames.requireName(RemoteFilePaths.nameOf(destination), platform)
         var target = remoteFiles.inspectTarget(connection, destination, handle.control())
         val unchanged = saved != null && saved.confirmed && saved.target.matches(target) &&
             (saved.choice.action != TransferConflictAction.REPLACE || target.identity == null || target.atomicReplace) &&
             (target.identity == null || target.identity.resumable) && (saved.digest == null ||
                 java.security.MessageDigest.isEqual(saved.digest, remoteFiles.sha256(connection, destination, handle.control())))
         val choice = if (unchanged) saved.choice else decision(runId, handle, promptName, ScpTransferDirection.UPLOAD,
-            target.identity != null, target.atomicReplace, forcePrompt = saved != null)
+            target.identity != null, target.atomicReplace, forcePrompt = saved != null, remotePlatform = platform)
         if (choice.action == TransferConflictAction.SKIP) { markSkipped(runId, handle, original); return 0 }
         if (!unchanged) {
             if (choice.action == TransferConflictAction.SAVE_AS)
-                destination = RemoteFilePaths.join(directory, sanitizeRemoteFileName(requireNotNull(choice.alternateName)))
+                destination = RemoteFilePaths.join(directory, RemoteWriteNames.requireName(choice.alternateName.orEmpty(), platform))
             handle.remoteApprovals[original] = RemoteApproval(destination, target, choice, null, confirmed = false)
             if (choice.action == TransferConflictAction.SAVE_AS) {
                 target = remoteFiles.inspectTarget(connection, destination, handle.control())
@@ -818,7 +820,12 @@ internal class FileTransferManager(
             SourceIdentity(entry.documentUri.toString() + "#" + entry.relativePath.substringAfterLast('/'), entry.sizeBytes, entry.modifiedEpochMillis)
                 .requireMatches(documentIdentity(entry.documentUri, handle.control()), true)
         }
-        val rootName = sanitizeRemoteFileName(walk.name.ifBlank { FALLBACK_DIRECTORY_NAME })
+        val rootName = walk.name
+        val platform = remoteFiles.platform(connection, request.remoteDirectory)
+        RemoteWriteNames.requireTree(rootName, walk.directories, walk.files.asSequence().map { it.relativePath }, platform)
+        handle.remoteApprovals.values.forEach { approval ->
+            RemoteWriteNames.requireName(RemoteFilePaths.nameOf(approval.destination), platform)
+        }
         val remoteRoot = RemoteFilePaths.join(request.remoteDirectory, rootName)
         if (!handle.directoryApproved) {
             decision(transferId, handle, rootName, ScpTransferDirection.UPLOAD, false, false,
@@ -1011,22 +1018,6 @@ internal class FileTransferManager(
     private fun parentRelativePath(relativePath: String): String =
         if (relativePath.contains('/')) relativePath.substringBeforeLast('/') else ""
 
-    /**
-     * Reduces a picked document name to a single safe remote path component.
-     *
-     * The name comes from a content provider, so it is treated as untrusted:
-     * a directory prefix, a separator, or a control character would otherwise
-     * let it address a path the user never chose.
-     */
-    private fun sanitizeRemoteFileName(value: String): String {
-        val normalized = value.substringAfterLast('/').trim()
-        require(normalized.isNotEmpty() && normalized.length <= MAX_REMOTE_FILENAME_CHARS) {
-            "Remote file name is invalid"
-        }
-        RemoteFilePaths.requireSafeRemoteName(normalized)
-        return normalized
-    }
-
     /** A complete manifest summary shared by local uploads and remote downloads. */
     private data class DirectoryPreview(val totalFiles: Int, val totalDirectories: Int, val totalBytes: Long?)
 
@@ -1135,7 +1126,6 @@ internal class FileTransferManager(
 
     private companion object {
         const val MAX_UPLOAD_BYTES = 1024L * 1024L * 1024L
-        const val MAX_REMOTE_FILENAME_CHARS = 255
         const val PROGRESS_MIN_BYTES = 256L * 1024L
         const val PROGRESS_MIN_INTERVAL_MILLIS = 200L
 

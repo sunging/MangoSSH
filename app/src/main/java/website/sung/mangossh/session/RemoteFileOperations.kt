@@ -164,8 +164,10 @@ internal class SftpRemoteOperationBackend(
                     val reserved = client.lstat(temporary)
                     val output = client.open(temporary, write = true)
                     try {
-                        RemoteStagingIdentity.requireMatches(temporary, reserved, client.fstat(output), client.lstat(temporary),
-                            platform == RemotePlatform.WINDOWS)
+                        val opened = client.fstat(output)
+                        val named = client.lstat(temporary)
+                        RemoteStagingIdentity.requireMatches(temporary, reserved, opened, named, platform == RemotePlatform.WINDOWS)
+                        if (platform != RemotePlatform.WINDOWS) RemoteStagingIdentity.requirePrivateMode(reserved, opened, named)
                         var offset = 0L
                         while (control.shouldContinue()) {
                             val bytes = client.read(input, offset, RemoteFileClient.SFTP_CHUNK_BYTES) ?: break

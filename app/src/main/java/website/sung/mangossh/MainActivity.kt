@@ -59,7 +59,8 @@ class MainActivity : AppCompatActivity() {
             unavailable = { mangoViewModel.reportUserMessage(R.string.biometric_unavailable) },
             onAuthenticationFinished = ::refreshBiometricAvailability,
         )
-        lifecycle.addObserver(AppLockActivityObserver(this, mangoViewModel.appLockCoordinator, biometricUnlockPrompt::cancel))
+        lifecycle.addObserver(AppLockActivityObserver(this, mangoViewModel.appLockCoordinator,
+            biometricUnlockPrompt::cancel, mangoViewModel::flushRemoteDraft))
         handleSessionIntent(intent)
         enableEdgeToEdge()
         setContent {
