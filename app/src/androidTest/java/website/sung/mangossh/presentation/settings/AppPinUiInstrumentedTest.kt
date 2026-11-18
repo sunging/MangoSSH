@@ -349,16 +349,36 @@ class AppPinUiInstrumentedTest {
         val size = DpSize(640.dp, 320.dp)
         val valid = pin(4)
         var supplied: String? = null
+        lateinit var hostView: View
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(size) then DeviceConfigurationOverride.FontScale(2f)) {
                 PinTestTheme {
+                    val view = LocalView.current
+                    SideEffect { hostView = view }
                     AppLockScreen(PinVerificationState(), configuration.copy(pinConfigured = true, biometricEnabled = true),
                         null, { supplied = it }, {}, {})
                 }
             }
         }
         val title = compose.onNodeWithText(text(R.string.pin_enter_title))
-        title.performScrollTo().assertIsDisplayed()
+        title.performScrollTo()
+        try {
+            title.assertIsDisplayed()
+        } catch (failure: AssertionError) {
+            fun geometry(element: SemanticsNodeInteraction): String = element.fetchSemanticsNode().run {
+                "size=${this.size} position=$positionInRoot clipped=$boundsInRoot window=$boundsInWindow"
+            }
+            val window = compose.runOnIdle {
+                val visible = android.graphics.Rect()
+                hostView.getGlobalVisibleRect(visible)
+                val insets = ViewCompat.getRootWindowInsets(hostView)
+                "visible=$visible bars=${insets?.getInsets(WindowInsetsCompat.Type.systemBars())} " +
+                    "ime=${insets?.getInsets(WindowInsetsCompat.Type.ime())}"
+            }
+            throw AssertionError("PIN layout $window title=${geometry(title)} " +
+                "scroll=${geometry(compose.onNode(hasScrollAction()))} " +
+                "secondary=${geometry(secondary())} submit=${geometry(submit())}", failure)
+        }
         secondary().assertIsDisplayed()
         submit().assertIsDisplayed()
         digit('0').performScrollTo().assertIsDisplayed()

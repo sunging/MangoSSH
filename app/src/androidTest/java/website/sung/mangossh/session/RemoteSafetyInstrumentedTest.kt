@@ -53,7 +53,7 @@ class RemoteSafetyInstrumentedTest {
         }
     }
 
-    @Test fun stagedUploadStaysPrivateUntilANewFileIsCommitted() = fixture { connection, _ ->
+    @Test fun stagedUploadStaysPrivateThroughCommit() = fixture { connection, _ ->
         val files = RemoteFileClient()
         BlockingOperation().use { control ->
             val path = "/" + UUID.randomUUID().toString()
@@ -87,7 +87,7 @@ class RemoteSafetyInstrumentedTest {
             assertEquals(40_000L, size(temporary))
             assertArrayEquals(java.security.MessageDigest.getInstance("SHA-256").digest(bytes), files.sha256(connection, temporary, control))
             files.commitTemporary(connection, temporary, path, files.inspectTarget(connection, path, control), false, control)
-            assertEquals(0x1a4, mode(path))
+            assertEquals(0x180, mode(path))
             val cleanup = connection.openFiles()
             try { cleanup.remove(path) } finally { cleanup.close() }
         }
