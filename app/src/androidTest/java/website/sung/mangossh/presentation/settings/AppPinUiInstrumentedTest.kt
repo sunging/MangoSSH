@@ -379,6 +379,7 @@ class AppPinUiInstrumentedTest {
                 "scroll=${geometry(compose.onNode(hasScrollAction()))} " +
                 "secondary=${geometry(secondary())} submit=${geometry(submit())}", failure)
         }
+        compose.onNode(hasScrollAction()).assertHeightIsAtLeast(48.dp)
         secondary().assertIsDisplayed()
         submit().assertIsDisplayed()
         digit('0').performScrollTo().assertIsDisplayed()
