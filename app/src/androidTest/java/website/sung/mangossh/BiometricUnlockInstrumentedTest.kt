@@ -31,8 +31,7 @@ class BiometricUnlockInstrumentedTest {
                     assertTrue(model.lock.locked.value)
                     model.lock.unlockWithPin(model.pin)
                 }
-                compose.waitUntil(15_000) { !model.lock.busy.value }
-                assertFalse(model.lock.locked.value)
+                compose.waitUntil(15_000) { !model.lock.busy.value && !model.lock.locked.value }
             }
         } finally { compose.runOnUiThread { model.dispose() } }
     }
