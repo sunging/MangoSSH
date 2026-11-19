@@ -25,6 +25,7 @@
     <string name="embedded_tsnet_browser_login">Sign in with browser</string>
     <string name="embedded_tsnet_auth_key_login">Use Auth Key</string>
     <string name="embedded_tsnet_logout">Sign out</string>
+    <string name="embedded_tsnet_status_logging_out">Signing out…</string>
     <string name="embedded_tsnet_auth_key_title">Use a one-time Auth Key</string>
     <string name="embedded_tsnet_auth_key_explanation">The key is passed directly to the embedded node. It is not saved in app state, the vault, backups, or logs. A failed attempt requires entering it again.</string>
     <string name="embedded_tsnet_auth_key_label">Auth Key</string>
@@ -156,6 +157,12 @@
     <string name="terminal_theme_solarized_light" translatable="false">Solarized Light</string>
     <string name="terminal_theme_custom">Custom (%1$s)</string>
     <string name="terminal_shortcut_paste">Paste</string>
+    <string name="terminal_paste_confirm_title">Paste into terminal?</string>
+    <string name="terminal_paste_target">%1$s %2$s · %3$s</string>
+    <string name="terminal_paste_size">%1$d bytes of clipboard text</string>
+    <string name="terminal_paste_preview_shortened">The preview shows only the beginning. Pasting sends the full text.</string>
+    <string name="terminal_paste_blocked_title">Cannot paste clipboard text</string>
+    <string name="terminal_paste_blocked_message">The clipboard text contains control characters or invalid text that cannot be pasted safely.</string>
     <string name="terminal_shortcuts_rows">Toolbar rows</string>
     <string name="terminal_shortcuts_one_row">Single row</string>
     <string name="terminal_shortcuts_two_rows">Two rows</string>
@@ -754,9 +761,20 @@
     <string name="transfer_local_no_atomic">The selected local file already exists. If direct overwrite is interrupted, the file may be left incomplete. Save as creates a new file and preserves the original.</string>
     <string name="editor_direct">Direct overwrite</string>
     <string name="editor_direct_risk">Direct overwrite can leave a partial file if interrupted. Replace the original anyway?</string>
-    <string name="editor_failure">Unable to edit or save this file. Only complete UTF-8 text up to 128 KiB is supported. Your draft is kept, encrypted on this device.</string>
+    <string name="editor_failure">Unable to open, reload, or save this file. The editor supports complete UTF-8 text files up to 128 KiB.</string>
     <string name="editor_unsaved">Unsaved changes</string>
-    <string name="editor_discard_detail">Unsaved changes stay encrypted on this device until you save or discard them. Discard them now?</string>
+    <string name="editor_discard_detail">Discard the unsaved edits and remove the draft from this device?</string>
+    <string name="editor_reload_detail">Discard the draft after the remote text has loaded successfully?</string>
+    <string name="editor_keep_and_close">Keep draft and close</string>
+    <string name="editor_disconnected">The session ended. You can keep or discard the draft here and reopen the remote file after reconnecting.</string>
+    <string name="editor_size_limit">The remote file limit is 128 KiB, including its UTF-8 byte order mark and line endings. Reduce the text before saving.</string>
+    <string name="editor_draft_pending">Draft changes waiting to be stored on this device</string>
+    <string name="editor_draft_writing">Storing encrypted draft on this device…</string>
+    <string name="editor_draft_stored">Current draft stored encrypted on this device</string>
+    <string name="editor_draft_failed">Unable to update the stored draft. The current text is still in this editor.</string>
+    <string name="editor_draft_delete_failed">Unable to remove the stored draft. You can retry discarding it.</string>
+    <string name="editor_draft_last_saved_at">Last successful draft save: %1$s</string>
+    <string name="editor_draft_retry">Retry storing draft</string>
     <string name="editor_discard">Discard draft</string>
     <string name="editor_new_name">New file name</string>
     <string name="editor_saved">Remote file saved</string>

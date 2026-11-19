@@ -11,12 +11,12 @@ import website.sung.mangossh.session.ssh.SshConnection
 import website.sung.mangossh.session.ssh.SshAgent
 import website.sung.mangossh.session.ssh.SshAgentIdentity
 import website.sung.mangossh.session.ssh.SshForward
+import website.sung.mangossh.session.ssh.SshHostKey
 import website.sung.mangossh.session.ssh.SshKeyCodec
 import website.sung.mangossh.session.ssh.SshChannel
 import java.io.InputStream
 import java.net.InetSocketAddress
 import java.security.KeyPair
-import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -422,6 +422,7 @@ class SshSessionController internal constructor(
                 protocol = profile.protocol,
                 phase = TerminalSessionPhase.CONNECTING,
                 detail = context.appString(R.string.session_connecting),
+                username = profile.username,
             ),
         )
         if (!startForegroundOwnership(sessionId, managed)) return sessionId
@@ -610,6 +611,15 @@ class SshSessionController internal constructor(
     fun setVisibleTerminal(sessionId: String?) = terminalStore.setVisibleSession(sessionId)
 
     fun terminalEmulator(sessionId: String): TerminalEmulator? = terminalStore.terminalFor(sessionId)
+
+    /** Grants paste only to this live terminal, in the current app-lock generation. */
+    internal fun terminalPasteGeneration(sessionId: String, emulator: TerminalEmulator): Long? =
+        synchronized(accessState) {
+            accessState.generation.takeIf {
+                !accessState.locked.value && sessionsById[sessionId]?.inputReady == true &&
+                    terminalStore.terminalFor(sessionId) === emulator
+            }
+        }
 
     /** Applies a display-only scheme to retained sessions without reconnecting their transports. */
     fun applyTerminalAppearance(appearance: TerminalAppearance) {
@@ -1304,7 +1314,7 @@ class SshSessionController internal constructor(
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connectAndVerifyHostKey(sessionId, connection, managed.preferences.connectTimeoutSeconds)
 
             updateSession(
                 sessionId,
@@ -1411,7 +1421,7 @@ class SshSessionController internal constructor(
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connectAndVerifyHostKey(sessionId, connection, managed.preferences.connectTimeoutSeconds)
 
             updateSession(
                 sessionId,
@@ -1467,7 +1477,7 @@ class SshSessionController internal constructor(
                 TerminalSessionPhase.VERIFYING_HOST_KEY,
                 context.appString(R.string.session_verifying_host_key),
             )
-            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connectAndVerifyHostKey(sessionId, connection, managed.preferences.connectTimeoutSeconds)
             updateSession(
                 sessionId,
                 TerminalSessionPhase.AUTHENTICATING,
@@ -1602,7 +1612,7 @@ class SshSessionController internal constructor(
                 prepareDirectRoute(hop, managed, connection)
             } else connection.useJump(previous)
             val preferences = hop.overrides.resolve(managed.defaultPreferences)
-            connection.connect(preferences.connectTimeoutSeconds * 1_000L + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
+            connectAndVerifyHostKey(sessionId, connection, preferences.connectTimeoutSeconds)
             if (!authenticate(connection, sessionId, hop, snapshot)) throw SshAuthenticationException()
             if (!managed.lifecycle.isOpen) throw CancellationException()
             previous = connection
@@ -1643,14 +1653,20 @@ class SshSessionController internal constructor(
         if (!managed.lifecycle.isOpen) throw CancellationException()
     }
 
-    private suspend fun authenticate(connection: SshConnection, sessionId: String, profile: ConnectionProfile, snapshot: VaultSnapshot): Boolean {
+    private suspend fun authenticate(
+        connection: SshConnection,
+        sessionId: String,
+        profile: ConnectionProfile,
+        snapshot: VaultSnapshot,
+        passwordRememberAllowed: Boolean = true,
+    ): Boolean {
         val authorizationGeneration = accessState.generation
         return SshAuthentication(keyManager, ::requestAuthentication, savePassword = { authenticatedProfile, password ->
             val original = snapshot.authentications.firstOrNull { it.id == authenticatedProfile.authenticationId }
             saveAcceptedPassword(authenticatedProfile, original, password, persist = { expected, stored ->
                 vault.rememberAuthentication(expected, snapshot.profiles.firstOrNull { it.id == profile.id }, original, stored,
                     expectedKey = snapshot.keys.firstOrNull { it.id == original?.keyId },
-                    allowed = { !accessState.locked.value && authorizationGeneration == accessState.generation &&
+                    allowed = { passwordRememberAllowed && !accessState.locked.value && authorizationGeneration == accessState.generation &&
                         sessionsById[sessionId]?.lifecycle?.isOpen == true })
             }, onFailure = {
                 MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED)
@@ -1692,10 +1708,11 @@ class SshSessionController internal constructor(
         }
     }
 
-    /** The verified server a transfer on this session belongs to; null until its host key is known. */
-    private fun ManagedSession.transferIdentity(): TransferHostIdentity? = verifiedHostKey?.let { hostKey ->
-        TransferHostIdentity(profile.id, profile.hostname, profile.port, profile.username,
-            profile.route, profile.jumpProfileIds, hostKey)
+    /** Uses the authenticated target only. Mosh replacements prove the same key and account. */
+    private fun ManagedSession.transferIdentity(): TransferHostIdentity? = connection.authenticatedIdentity?.let { identity ->
+        val key = identity.hostKey
+        TransferHostIdentity(profile.id, connection.hostname, connection.port, identity.username,
+            profile.route, profile.jumpProfileIds, "${key.algorithm} ${key.fingerprint}")
     }
 
     /**
@@ -2039,43 +2056,28 @@ class SshSessionController internal constructor(
         }
     }
 
-    /**
-     * Picks the profile a companion reconnect authenticates with.
-     *
-     * The vault entry is preferred so a credential edited while the terminal
-     * was open is the one used, but only when it still names the endpoint this
-     * session reached: the Mosh terminal is talking UDP to the original host,
-     * and a re-pointed profile must not send its companion somewhere else.
-     */
-    private fun companionProfile(managed: ManagedSession, snapshot: VaultSnapshot): ConnectionProfile {
-        val stored = snapshot.profiles.firstOrNull { it.id == managed.profile.id } ?: return managed.profile
-        val sameEndpoint = stored.hostname == managed.profile.hostname &&
-            stored.port == managed.profile.port &&
-            stored.route == managed.profile.route
-        return if (sameEndpoint) stored.copy(overrides = managed.profile.overrides,
-            agentPolicy = managed.profile.agentPolicy, requireReauthentication = managed.profile.requireReauthentication,
-            workspace = managed.profile.workspace, jumpProfileIds = managed.profile.jumpProfileIds,
-            agentForwarding = managed.profile.agentForwarding) else managed.profile
-    }
-
     /** Re-authenticates a lost Mosh companion through the route held by the terminal session. */
     private suspend fun reconnectMoshSshFeatureConnection(
         sessionId: String,
         managed: ManagedSession,
     ): SshConnection {
         check(sessionsById[sessionId] === managed) { "The Mosh session is not open" }
-        val snapshot = vault.snapshot.value
-        val profile = companionProfile(managed, snapshot)
-        val connection = connectionFactory(profile)
+        val original = managed.profile
+        val identity = checkNotNull(managed.connection.authenticatedIdentity)
+        val connection = connectionFactory(original)
         val pending = adoptPendingConnection(managed.lifecycle, connection, cleanupScope)
         MangoLog.info(MangoLogEvent.MOSH_COMPANION_SSH_RECONNECT_STARTED)
         setCompanionHealth(sessionId, CompanionHealth.RECONNECTING)
         try {
-            if (profile.route == ConnectionRoute.TSNET) {
+            if (original.route == ConnectionRoute.TSNET) {
                 connection.useSocketRoute(requireNotNull(managed.tsnetLease).proxyData)
-            } else requireLocalNetworkPermission(profile.hostname, managed)
-            connection.connect((managed.preferences.connectTimeoutSeconds * 1_000).toLong() + KEY_EXCHANGE_TIMEOUT_MILLIS, transportTimeoutMillis = managed.preferences.connectTimeoutSeconds * 1_000L, trustedHostKeyFamilies = trustedHostKeyFamiliesFor(connection)) { algorithm, blob -> HostKeyVerifier(sessionId).verifyServerHostKey(connection.hostname, connection.port, algorithm, blob) }
-            if (!authenticate(connection, sessionId, profile, snapshot)) {
+            } else requireLocalNetworkPermission(original.hostname, managed)
+            connectAndVerifyHostKey(sessionId, connection, managed.preferences.connectTimeoutSeconds, identity.hostKey)
+            // Host verification may wait for a user decision. Read credentials after it.
+            val snapshot = vault.snapshot.value
+            val profile = moshCompanionProfile(original, snapshot)
+            if (!authenticate(connection, sessionId, profile, snapshot,
+                    passwordRememberAllowed = snapshot.profiles.any(original::matchesMoshCompanionIdentity))) {
                 throw SshAuthenticationException()
             }
             check(sessionsById[sessionId] === managed) { "The Mosh session is not open" }
@@ -2171,7 +2173,7 @@ class SshSessionController internal constructor(
      * Publishes one prompt and blocks the calling protocol thread for the answer.
      *
      * Callers are blocking callbacks that cbssh invokes from inside its own
-     * coroutines (host-key verification, keyboard-interactive, agent signing) and
+     * coroutines (keyboard-interactive, agent signing) and
      * workspace preparation. `runBlocking` starts an event loop that is not a
      * child of the caller's job, so cancelling the session does not release it. The
      * registry is what releases it: [releasePromptWaiters] completes the waiter
@@ -2272,83 +2274,71 @@ class SshSessionController internal constructor(
         }
     }
 
-    /** Key families already trusted for [connection]'s endpoint, read from the live vault. */
-    private fun trustedHostKeyFamiliesFor(connection: SshConnection): Set<String> =
-        trustedHostKeyFamilies(vault.snapshot.value.knownHosts, connection.hostname, connection.port)
+    /** A companion must prove the bootstrap key before it can ask for trust or send credentials. */
+    private suspend fun connectAndVerifyHostKey(
+        sessionId: String,
+        connection: SshConnection,
+        connectTimeoutSeconds: Int,
+        expectedHostKey: SshHostKey? = null,
+    ) {
+        val hostname = connection.hostname
+        val port = connection.port
+        connection.connect(
+            transportTimeoutMillis = connectTimeoutSeconds * 1_000L,
+            trustedHostKeyFamilies = trustedHostKeyFamilies(vault.snapshot.value.knownHosts, hostname, port),
+            expectedHostKey = expectedHostKey,
+        ) { hostKey, blob ->
+            verifyServerHostKey(sessionId, hostname, port, hostKey, blob)
+        }
+    }
 
     /**
      * Checks every key exchange of one connection, including rekeys, against the live
      * vault. A key approved earlier in the same session is therefore not asked about
      * again when the connection rekeys.
      */
-    private inner class HostKeyVerifier(
-        private val sessionId: String,
-    ) {
-        fun verifyServerHostKey(
-            hostname: String,
-            port: Int,
-            algorithm: String,
-            hostKey: ByteArray,
-        ): Boolean = verify(hostname, port, algorithm, hostKey).also { accepted ->
-            // Remember which key the session's own target presented (not a jump hop's), so a
-            // transfer interrupted on this session is only ever resumed on the same server.
-            if (accepted) sessionsById[sessionId]
-                ?.takeIf { it.connection.hostname == hostname && it.connection.port == port }
-                ?.verifiedHostKey = "$algorithm ${hostKeyFingerprint(hostKey)}"
-        }
+    private suspend fun verifyServerHostKey(
+        sessionId: String,
+        hostname: String,
+        port: Int,
+        hostKey: SshHostKey,
+        blob: ByteArray,
+    ): Boolean {
+        val (algorithm, fingerprint) = hostKey
+        val encoded = Base64.getEncoder().encodeToString(blob)
+        val check = classifyHostKey(vault.snapshot.value.knownHosts, hostname, port, algorithm, encoded)
+        if (check == HostKeyCheck.Trusted) return true
 
-        private fun verify(
-            hostname: String,
-            port: Int,
-            algorithm: String,
-            hostKey: ByteArray,
-        ): Boolean {
-            val encoded = Base64.getEncoder().encodeToString(hostKey)
-            val fingerprint = hostKeyFingerprint(hostKey)
-            val check = classifyHostKey(vault.snapshot.value.knownHosts, hostname, port, algorithm, encoded)
-            if (check == HostKeyCheck.Trusted) return true
-
-            MangoLog.info(MangoLogEvent.SSH_HOST_KEY_PROMPTED)
-            val accepted = requestPrompt(
-                SessionPrompt.HostKeyVerification(
-                    requestId = UUID.randomUUID().toString(),
-                    sessionId = sessionId,
-                    hostname = hostname,
-                    port = port,
-                    algorithm = algorithm,
-                    fingerprint = fingerprint,
-                    kind = when (check) {
-                        is HostKeyCheck.Changed -> HostKeyPromptKind.CHANGED
-                        is HostKeyCheck.NewKeyType -> HostKeyPromptKind.NEW_KEY_TYPE
-                        else -> HostKeyPromptKind.FIRST_USE
-                    },
-                    previousFingerprint = (check as? HostKeyCheck.Changed)?.previousFingerprint,
-                    trustedKeys = (check as? HostKeyCheck.NewKeyType)?.trusted
-                        ?.map { "${it.algorithm} ${it.fingerprint}" }
-                        .orEmpty(),
-                ),
-            )?.firstOrNull() == TRUST_APPROVAL
-            if (accepted) {
-                // This runs inside the owned key-exchange operation. Persisting the
-                // trust decision is a convenience for the next connection, so a
-                // vault write failure must not become an exception thrown into
-                // the protocol stack; the user already approved this key.
-                runCatching {
-                    runBlocking {
-                        vault.trustHostKey(
-                            TrustedHostKey(
-                                hostname = hostname,
-                                port = port,
-                                algorithm = algorithm,
-                                keyBlobBase64 = encoded,
-                                fingerprint = fingerprint,
-                            ),
-                        )
-                    }
-                }.onFailure { error -> MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error) }
+        MangoLog.info(MangoLogEvent.SSH_HOST_KEY_PROMPTED)
+        val accepted = awaitPrompt(
+            SessionPrompt.HostKeyVerification(
+                requestId = UUID.randomUUID().toString(),
+                sessionId = sessionId,
+                hostname = hostname,
+                port = port,
+                algorithm = algorithm,
+                fingerprint = fingerprint,
+                kind = when (check) {
+                    is HostKeyCheck.Changed -> HostKeyPromptKind.CHANGED
+                    is HostKeyCheck.NewKeyType -> HostKeyPromptKind.NEW_KEY_TYPE
+                    else -> HostKeyPromptKind.FIRST_USE
+                },
+                previousFingerprint = (check as? HostKeyCheck.Changed)?.previousFingerprint,
+                trustedKeys = (check as? HostKeyCheck.NewKeyType)?.trusted
+                    ?.map { "${it.algorithm} ${it.fingerprint}" }
+                    .orEmpty(),
+            ),
+        )?.firstOrNull() == TRUST_APPROVAL
+        if (accepted) {
+            // A vault write failure does not invalidate the user's decision for this KEX.
+            runCatching {
+                vault.trustHostKey(TrustedHostKey(hostname, port, algorithm, encoded, fingerprint))
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                MangoLog.warn(MangoLogEvent.VAULT_WRITE_FAILED, error)
             }
-            return accepted
         }
+        return accepted
     }
 
     /** Holds one terminal transport and resources that must close together. */
@@ -2367,8 +2357,6 @@ class SshSessionController internal constructor(
         val lifecycle = SessionLifecycle()
         val jumpConnections = mutableListOf<SshConnection>()
         @Volatile var lastConfirmedNanos = 0L
-        /** Algorithm and fingerprint of the host key this session's target presented and the user trusts. */
-        @Volatile var verifiedHostKey: String? = null
 
         /** tmux session id the terminal attached to, once resolved; a reconnect reattaches it. */
         @Volatile var workspaceId: String? = null
@@ -2465,8 +2453,6 @@ class SshSessionController internal constructor(
         override fun keyForSignature(publicKey: ByteArray): KeyPair? = keys.firstOrNull { it.second.contentEquals(publicKey) }?.third
             ?.takeIf { authorized() && authorizeSignature() && authorized() }
     }
-    private fun hostKeyFingerprint(hostKey: ByteArray): String = "SHA256:" +
-        Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(hostKey))
 
     private fun Throwable.toSafeMessage(): String = when (this) {
         is LocalNetworkPermissionDeniedException -> context.appString(R.string.local_network_permission_denied)
@@ -2508,9 +2494,6 @@ class SshSessionController internal constructor(
     /** Hides native/asset exception details from terminal UI while preserving them for safe logging. */
     private class MoshRuntimeException(cause: Throwable) : Exception(cause)
 
-    /** Connect timeout in milliseconds, read fresh so a mid-session preference change reaches the next connection. */
-    private fun connectTimeoutMillis(): Int = connectionPreferencesStore.current().connectTimeoutSeconds * 1_000
-
     private companion object {
         /** Files opened in another app are kept this long before the next open deletes them. */
         const val REMOTE_OPEN_MAX_AGE_MILLIS = 60 * 60 * 1_000L
@@ -2518,8 +2501,6 @@ class SshSessionController internal constructor(
         /** Leftovers from an earlier process are removed on start once this old. */
         const val REMOTE_OPEN_STARTUP_MAX_AGE_MILLIS = 24 * 60 * 60 * 1_000L
 
-        // Host-key verification runs inside key exchange, so this must outlive the full user prompt.
-        const val KEY_EXCHANGE_TIMEOUT_MILLIS = 5 * 60 * 1_000 + 30_000
         const val PROMPT_TIMEOUT_MILLIS = 5 * 60 * 1_000L
         const val INITIAL_COLUMNS = 80
         const val INITIAL_ROWS = 24

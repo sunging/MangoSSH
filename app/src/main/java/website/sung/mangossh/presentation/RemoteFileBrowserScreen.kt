@@ -389,9 +389,7 @@ private fun OpenElsewhereMenuItems(
  */
 private fun Uri.treeDisplayName(context: Context): String = runCatching {
     LocalDocumentTree.displayName(context.contentResolver, LocalDocumentTree.rootOf(this))
-}.getOrNull()?.takeIf(String::isNotBlank)
-    ?: lastPathSegment?.substringAfterLast('/')?.takeIf(String::isNotBlank)
-    ?: "upload"
+}.getOrNull().orEmpty()
 
 /**
  * Keeps the current directory visible after navigation or a width change without

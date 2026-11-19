@@ -55,7 +55,7 @@ class TerminalImeRegressionActivity : ComponentActivity() {
                     behavior = TerminalBehavior(),
                     shortcutConfig = TerminalShortcutConfig.defaults(),
                     clipboardCopies = remember { MutableSharedFlow<TerminalClipboardCopy>() },
-                    onSend = {},
+                    pasteGeneration = { 0L },
                     resourceState = ServerResourceState(),
                     onRequestResources = {},
                     onResourceMonitoringChange = {},

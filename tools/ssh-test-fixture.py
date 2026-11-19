@@ -412,6 +412,8 @@ def relay(source, destination):
 
 def serve(client):
     transport = paramiko.Transport(client)
+    # Let the client exercise an interactive host-key decision past its old 30 s deadline.
+    transport.handshake_timeout = 60
     server = Server(transport)
     try:
         if args.legacy_algorithms:

@@ -75,9 +75,12 @@ internal class LockRegressionModel(private val base: Context) : ViewModel() {
     val access = AppAccessState(false)
     val vault = VaultRepository(context, AndroidKeystoreVault(context, "$prefix.vault.v1"))
     val backup = BackupCoordinator(context, vault, viewModelScope, { !access.locked.value },
+        accessGeneration = { access.generation },
+        reauthentication = { cancelled, approved -> lock.requestSensitiveApproval(cancelled, approved) },
         localStoreFactory = { BackupLocalStore(context, prefix) })
     val message = MutableStateFlow<UiText?>(null)
-    val lock = AppLockCoordinator(AppLockStore(context), access, viewModelScope, backup::cancel, { message.value = it })
+    val lock: AppLockCoordinator = AppLockCoordinator(AppLockStore(context), access, viewModelScope,
+        onLocked = { backup.cancel() }, message = { message.value = it })
     val ready = MutableStateFlow(false)
     val pin = CharArray(6) { ('0'.code + SecureRandom().nextInt(10)).toChar() }.concatToString()
     val password = UUID.randomUUID().toString()

@@ -2,13 +2,22 @@ package website.sung.mangossh.session.tsnet
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -19,6 +28,7 @@ import org.junit.runner.RunWith
 import tsnetbridge.StateStore
 import tsnetbridge.StatusListener
 import website.sung.mangossh.data.tsnet.EmbeddedTsnetStateStore
+import website.sung.mangossh.session.AppForegroundState
 
 @RunWith(AndroidJUnit4::class)
 class EmbeddedTsnetManagerInstrumentedTest {
@@ -61,7 +71,11 @@ class EmbeddedTsnetManagerInstrumentedTest {
         first.close()
         withTimeout(5_000) { manager.status.first { it.activeSessions == 1 } }
         second.close()
-        withTimeout(5_000) { manager.status.first { it.phase == EmbeddedTsnetPhase.READY_IDLE } }
+        withTimeout(5_000) {
+            manager.status.first { it.phase == EmbeddedTsnetPhase.READY_IDLE }
+            // The status reports detachment before the native close finishes on IO.
+            while (factory.closed.get() == 0) delay(10)
+        }
         assertEquals(1, factory.closed.get())
     }
 
@@ -395,8 +409,113 @@ class EmbeddedTsnetManagerInstrumentedTest {
         assertEquals(0, manager.status.value.activeSessions)
     }
 
+    @Test fun logoutRetainsOwnershipDuringNativeCallAndIgnoresLateCallbacks() = runBlocking {
+        val nativeEntered = CompletableDeferred<Unit>()
+        val releaseNative = CountDownLatch(1)
+        val state = FakeStateStore(true)
+        val factory = FakeBackendFactory(onLogout = {
+            nativeEntered.complete(Unit)
+            check(releaseNative.await(10, TimeUnit.SECONDS))
+        })
+        val manager = EmbeddedTsnetManager(context = isolatedContext(), scope = isolatedScope(),
+            stateStore = state, backendFactory = factory, foregroundStarter = {})
+        val logout = async { manager.logout() }
+        try {
+            withTimeout(5_000) { nativeEntered.await() }
+            assertTrue(manager.status.value.loggingOut)
+            assertTrue(runCatching { manager.acquire() }.exceptionOrNull() is TsnetEnrollmentRequiredException)
+            assertTrue(runCatching { manager.beginBrowserEnrollment() }.isFailure)
+            assertTrue(runCatching { manager.logout() }.isFailure)
+            factory.listeners.single().onStatus("running", "")
+        } finally {
+            releaseNative.countDown()
+        }
+        withTimeout(5_000) { logout.await() }
+        factory.listeners.single().onStatus("running", "")
+        assertEquals(1, factory.closed.get())
+        assertEquals(1, state.clearCalls.get())
+        assertEquals(EmbeddedTsnetPhase.UNENROLLED, manager.status.value.phase)
+        assertFalse(manager.status.value.loggingOut)
+        assertFalse(state.hasEnrolledIdentity())
+    }
+
+    @Test fun cancellingLogoutWhileWaitingClosesRuntimeAndKeepsRegistration() = runBlocking {
+        val state = FakeStateStore(true)
+        val wait = AtomicBoolean(true)
+        val factory = FakeBackendFactory(waitForStartupStatus = wait::get)
+        val manager = EmbeddedTsnetManager(context = isolatedContext(), scope = isolatedScope(),
+            stateStore = state, backendFactory = factory, foregroundStarter = {})
+        val logout = launch { manager.logout() }
+        withTimeout(5_000) { while (factory.started.get() == 0) delay(10) }
+        assertTrue(manager.status.value.loggingOut)
+        logout.cancelAndJoin()
+        assertEquals(1, factory.closed.get())
+        assertEquals(0, state.clearCalls.get())
+        assertEquals(EmbeddedTsnetPhase.READY_IDLE, manager.status.value.phase)
+        assertFalse(manager.status.value.loggingOut)
+        wait.set(false)
+        withTimeout(5_000) { manager.logout() }
+        assertFalse(state.hasEnrolledIdentity())
+    }
+
+    @Test fun logoutRetriesNativeFailureAndRetriesLocalCleanupWithoutRestartingNative() = runBlocking {
+        val nativeFails = AtomicBoolean(true)
+        val state = FakeStateStore(true).apply { setControlUrl("https://headscale.example") }
+        val factory = FakeBackendFactory(onLogout = { check(!nativeFails.get()) })
+        val manager = EmbeddedTsnetManager(context = isolatedContext(), scope = isolatedScope(),
+            stateStore = state, backendFactory = factory, foregroundStarter = {})
+
+        assertTrue(runCatching { manager.logout() }.isFailure)
+        assertEquals(0, state.clearCalls.get())
+        assertTrue(state.hasEnrolledIdentity())
+        assertEquals("https://headscale.example", manager.controlUrl.value)
+        assertEquals(EmbeddedTsnetPhase.READY_IDLE, manager.status.value.phase)
+
+        nativeFails.set(false)
+        state.failClear.set(true)
+        assertTrue(runCatching { manager.logout() }.isFailure)
+        assertTrue(manager.status.value.logoutCleanupPending)
+        assertTrue(runCatching { manager.acquire() }.isFailure)
+
+        state.failClear.set(false)
+        manager.logout()
+        assertEquals(2, factory.created.get())
+        assertEquals(2, state.clearCalls.get())
+        assertEquals("", manager.controlUrl.value)
+        assertFalse(manager.status.value.logoutCleanupPending)
+        assertFalse(state.hasEnrolledIdentity())
+    }
+
+    @Test fun runtimeUsesInitialForegroundPolicyBeforeStartAndFollowsProcessLifecycle() = runBlocking {
+        val owner = withContext(Dispatchers.Main) {
+            object : LifecycleOwner {
+                override val lifecycle = LifecycleRegistry(this)
+            }.also { it.lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_CREATE) }
+        }
+        val foreground = withContext(Dispatchers.Main) { AppForegroundState.create(owner.lifecycle) }
+        val factory = FakeBackendFactory()
+        val manager = EmbeddedTsnetManager(context = isolatedContext(), scope = isolatedScope(),
+            stateStore = FakeStateStore(true), backendFactory = factory, foregroundStarter = {},
+            appForegroundState = foreground)
+
+        val lease = manager.acquire()
+        try {
+            assertEquals(false, factory.activeAtStart.single())
+            withContext(Dispatchers.Main) { owner.lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_START) }
+            withTimeout(5_000) { while (factory.activeChanges.lastOrNull() != true) delay(10) }
+            withContext(Dispatchers.Main) { owner.lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_STOP) }
+            withTimeout(5_000) { while (factory.activeChanges.lastOrNull() != false) delay(10) }
+            assertEquals(1, factory.created.get())
+            assertFalse(lease.invalidated.isCompleted)
+        } finally {
+            lease.close()
+        }
+    }
+
     private class FakeStateStore(enrolled: Boolean) : EmbeddedTsnetStateStore {
         val values = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+        val clearCalls = AtomicInteger()
+        val failClear = AtomicBoolean()
 
         init {
             if (enrolled) values["__marker"] = byteArrayOf(1)
@@ -404,8 +523,8 @@ class EmbeddedTsnetManagerInstrumentedTest {
 
         override fun readState(key: String): ByteArray = values[key]?.copyOf() ?: ByteArray(0)
 
-        override fun writeState(key: String, value: ByteArray) {
-            values[key] = value.copyOf()
+        override fun writeState(key: String, value: ByteArray?) {
+            if (value == null || value.isEmpty()) values.remove(key) else values[key] = value.copyOf()
         }
 
         override fun nodeName(): String = "mangossh-android-00000000"
@@ -423,6 +542,8 @@ class EmbeddedTsnetManagerInstrumentedTest {
         }
 
         override fun clearIdentity() {
+            clearCalls.incrementAndGet()
+            check(!failClear.get())
             values.clear()
         }
     }
@@ -431,12 +552,17 @@ class EmbeddedTsnetManagerInstrumentedTest {
         private val transientLoginBeforeRunning: Boolean = false,
         private val remainWaitingForLogin: Boolean = false,
         private val loginUrl: String = "",
+        private val waitForStartupStatus: () -> Boolean = { false },
+        private val onLogout: () -> Unit = {},
     ) : EmbeddedTsnetBackendFactory {
         val listeners = java.util.concurrent.CopyOnWriteArrayList<StatusListener>()
         val created = AtomicInteger()
+        val started = AtomicInteger()
         val closed = AtomicInteger()
         val authKeyWasNonEmpty = AtomicBoolean()
         val controlUrls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val activeAtStart = java.util.concurrent.CopyOnWriteArrayList<Boolean>()
+        val activeChanges = java.util.concurrent.CopyOnWriteArrayList<Boolean>()
 
         override fun create(
             stateDirectory: String,
@@ -449,8 +575,18 @@ class EmbeddedTsnetManagerInstrumentedTest {
             controlUrls += controlUrl
             created.incrementAndGet()
             return object : EmbeddedTsnetBackend {
+                private val active = AtomicBoolean(true)
+
+                override fun setActive(active: Boolean) {
+                    this.active.set(active)
+                    activeChanges += active
+                }
+
                 override fun start(authKey: String) {
+                    activeAtStart += active.get()
+                    started.incrementAndGet()
                     authKeyWasNonEmpty.set(authKey.isNotEmpty())
+                    if (waitForStartupStatus()) return
                     if (remainWaitingForLogin) {
                         listener.onStatus("needs_login", loginUrl)
                         return
@@ -478,6 +614,7 @@ class EmbeddedTsnetManagerInstrumentedTest {
                         """"ips":["100.64.0.2"],"online":true,"lastSeenUnixMs":0,"sshEnabled":true}]}"""
 
                 override fun logout() {
+                    onLogout()
                     listener.onStatus("stopped", "")
                 }
 

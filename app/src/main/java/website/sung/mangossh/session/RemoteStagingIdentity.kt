@@ -9,6 +9,15 @@ import website.sung.mangossh.session.ssh.SshFileAttributes
  * exact; handle type, ownership, size and modification time still bind the open.
  */
 internal object RemoteStagingIdentity {
+    /** POSIX servers must report a regular file with owner-only read and write access. */
+    fun hasPrivateMode(attributes: SshFileAttributes) =
+        attributes.isRegularFile && attributes.permissions?.and(0xfff) == RemoteFileClient.STAGING_PERMISSIONS
+
+    /** Rejects absent, broader, or synthetic POSIX modes before any staged content is changed. */
+    fun requirePrivateMode(vararg attributes: SshFileAttributes) {
+        if (!attributes.all(::hasPrivateMode)) throw MetadataPreservationException()
+    }
+
     /** Drive paths are canonical Windows SFTP paths, not shell commands or OS banners. */
     fun isWindowsPath(path: String): Boolean = path.length >= 3 && path[0] == '/' &&
         (path[1] in 'A'..'Z' || path[1] in 'a'..'z') && path[2] == ':' &&

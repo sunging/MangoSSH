@@ -9,6 +9,8 @@ import tsnetbridge.Tsnetbridge
 
 /** Process-local bridge abstraction that keeps gomobile types out of lifecycle tests. */
 internal interface EmbeddedTsnetBackend : Closeable {
+    /** Applies the foreground polling policy before or during startup. */
+    fun setActive(active: Boolean)
     fun start(authKey: String)
     fun socksAddress(): String
     fun socksSecret(): String
@@ -61,6 +63,8 @@ internal class GomobileTsnetBackendFactory(context: Context) : EmbeddedTsnetBack
         val networkMonitor = AndroidTsnetNetworkMonitor(appContext, runtime::notifyNetworkChange)
         val closed = AtomicBoolean(false)
         return object : EmbeddedTsnetBackend {
+            override fun setActive(active: Boolean) = runtime.setActive(active)
+
             override fun start(authKey: String) {
                 check(!closed.get())
                 networkMonitor.start()

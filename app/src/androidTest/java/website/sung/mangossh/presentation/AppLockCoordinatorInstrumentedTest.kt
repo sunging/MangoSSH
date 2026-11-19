@@ -234,6 +234,38 @@ class AppLockCoordinatorInstrumentedTest {
         }
     }
 
+    @Test fun verificationAndPinWritesRejectOtherSettingsChangesWhileAutoLockStillRuns() {
+        val dispatcher = PausedDispatcher()
+        isolated(dispatcher) {
+            lock.configurePin(pin); dispatcher.runNext(); idle()
+            lock.setReauthentication(ReauthenticationMode.EVERY_ACTION)
+            lock.configurePin(wrong)
+            lock.verifySensitiveAction(pin)
+            assertTrue(lock.busy.value)
+            lock.clear()
+            lock.setBiometricEnabled(true)
+            lock.setAutoLockDelay(AppLockDelay.FIVE_MINUTES)
+            lock.setReauthentication(ReauthenticationMode.DISABLED)
+            dispatcher.runNext()
+            withTimeout(5_000) { while (!dispatcher.pending) yield() }
+
+            assertTrue(lock.busy.value)
+            lock.clear()
+            lock.setBiometricEnabled(true)
+            lock.setAutoLockDelay(AppLockDelay.FIVE_MINUTES)
+            lock.noteBackgrounded()
+            assertTrue(lock.locked.value)
+            dispatcher.runNext(); idle()
+            assertTrue(lock.locked.value)
+            assertFalse(lock.configuration.value.biometricEnabled)
+            assertEquals(AppLockDelay.IMMEDIATELY, lock.configuration.value.autoLockDelay)
+            assertEquals(ReauthenticationMode.EVERY_ACTION, lock.configuration.value.reauthentication)
+
+            lock.unlockWithPin(wrong); dispatcher.runNext(); idle()
+            assertFalse(lock.locked.value)
+        }
+    }
+
     @Test fun aSecondLockRejectsAnInFlightPinUnlockAndDuplicateSubmission() {
         val dispatcher = PausedDispatcher()
         isolated(dispatcher) {

@@ -52,6 +52,19 @@ class SshConnectionTest {
         } finally { connection.close() }
     }
 
+    @Test fun handshakeDeadlineReachesCbsshIndependentlyOfTransportTimeout() = runBlocking {
+        val transport = SilentTransport("SSH-2.0-fixture\r\n")
+        val connection = SshConnection("unused.invalid", 22, customTransport = TransportFactory { transport })
+        try {
+            val failure = withTimeout(3_000) {
+                runCatching { connection.connect(transportTimeoutMillis = 10_000, handshakeTimeoutMillis = 100) { _, _ -> true } }
+                    .exceptionOrNull()
+            }
+            assertEquals(SshFailure.Category.CONNECT, (failure as SshFailure).category)
+            withTimeout(3_000) { transport.closed.await() }
+        } finally { connection.close() }
+    }
+
     @Test fun closedGenerationNeverStartsAnotherTransport() = runBlocking {
         val creates = AtomicInteger()
         val connection = SshConnection("unused.invalid", 22, customTransport = TransportFactory {
@@ -64,11 +77,16 @@ class SshConnectionTest {
         assertEquals(0, creates.get())
     }
 
-    private class SilentTransport : Transport {
+    private class SilentTransport(banner: String = "") : Transport {
+        private val bannerBytes = banner.encodeToByteArray().iterator()
         val reading = CompletableDeferred<Unit>()
         val closed = CompletableDeferred<Unit>()
         override val isConnected get() = !closed.isCompleted
-        override suspend fun read(count: Int): ByteArray { reading.complete(Unit); awaitCancellation() }
+        override suspend fun read(count: Int): ByteArray {
+            if (bannerBytes.hasNext()) return ByteArray(count) { bannerBytes.nextByte() }
+            reading.complete(Unit)
+            awaitCancellation()
+        }
         override suspend fun write(data: ByteArray) = Unit
         override suspend fun close() { closed.complete(Unit) }
     }

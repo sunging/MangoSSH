@@ -187,11 +187,11 @@ internal fun PinEntry(
     val dialogTablet = LocalPinDialogTablet.current
     val tablet = dialogTablet ?: (LocalWindowInfo.current.containerDpSize.width >= pinTabletWidth)
     val colors = MaterialTheme.colorScheme
-    Box(
+    BoxWithConstraints(
         modifier.fillMaxSize()
             .then(if (dialogTablet == true) Modifier else Modifier.background(colors.surface))
             .safeDrawingPadding()
-            .padding(if (tablet) 16.dp else 0.dp)
+            .padding(horizontal = if (tablet) 16.dp else 0.dp)
             .onPreviewKeyEvent { event ->
                 if (event.isAltPressed || event.isCtrlPressed || event.isMetaPressed) return@onPreviewKeyEvent false
                 val pressed = event.type == KeyEventType.KeyDown
@@ -216,12 +216,16 @@ internal fun PinEntry(
             .focusable(),
         contentAlignment = Alignment.Center,
     ) {
+        // Measure after system insets so large footer labels leave room to scroll the keypad.
+        val compactHeight = maxHeight < 240.dp
+        val verticalPadding = if (compactHeight) 0.dp else 12.dp
         Surface(
-            modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(),
+            modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth()
+                .padding(vertical = if (tablet && !compactHeight) 16.dp else 0.dp),
             shape = if (tablet) MaterialTheme.shapes.extraLarge else RectangleShape,
             color = colors.surface,
         ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = verticalPadding)) {
                 Box(
                     Modifier.weight(1f, fill = !tablet).fillMaxWidth(),
                     contentAlignment = Alignment.Center,
@@ -267,9 +271,9 @@ internal fun PinEntry(
                 }
                 val hasSecondary = secondaryLabel != null && onSecondary != null
                 if (actionLabel != null || hasSecondary) {
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(verticalPadding))
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = verticalPadding / 2),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {

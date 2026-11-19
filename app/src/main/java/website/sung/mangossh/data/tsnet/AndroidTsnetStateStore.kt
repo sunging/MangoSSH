@@ -50,6 +50,8 @@ internal class AndroidTsnetStateStore(
 ) : EmbeddedTsnetStateStore {
     private val appContext = context.applicationContext
     private val stateFile = File(appContext.noBackupFilesDir, stateFileName)
+    private val stateBackupFile = File(appContext.noBackupFilesDir, "$stateFileName.bak")
+    private val stateWriteFile = File(appContext.noBackupFilesDir, "$stateFileName.new")
     private val atomicStateFile = AtomicFile(stateFile)
     private val atomicNodeNameFile = AtomicFile(File(appContext.noBackupFilesDir, nodeNameFileName))
 
@@ -64,14 +66,19 @@ internal class AndroidTsnetStateStore(
         }
     }
 
+    /** Tailscale represents deletion as a nil or empty slice across gomobile. */
     @Synchronized
-    override fun writeState(key: String, value: ByteArray) {
+    override fun writeState(key: String, value: ByteArray?) {
         validateKey(key)
-        require(value.isNotEmpty()) { "Embedded tsnet state value is empty" }
         val values = readValuesRecoveringCorruption().toMutableMap()
         try {
-            values[key]?.fill(0)
-            values[key] = value.copyOf()
+            val previous = values.remove(key)
+            previous?.fill(0)
+            if (value == null || value.isEmpty()) {
+                if (previous == null) return
+            } else {
+                values[key] = value.copyOf()
+            }
             writeValues(values)
         } finally {
             values.values.forEach { it.fill(0) }
@@ -114,7 +121,8 @@ internal class AndroidTsnetStateStore(
     override fun markEnrolled() {
         val values = readValuesRecoveringCorruption().toMutableMap()
         try {
-            values[ENROLLED_MARKER_KEY] = ENROLLED_MARKER_VALUE.copyOf()
+            if (values[ENROLLED_MARKER_KEY]?.contentEquals(ENROLLED_MARKER_VALUE) == true) return
+            values.put(ENROLLED_MARKER_KEY, ENROLLED_MARKER_VALUE.copyOf())?.fill(0)
             writeValues(values)
         } finally {
             values.values.forEach { it.fill(0) }
@@ -150,6 +158,9 @@ internal class AndroidTsnetStateStore(
     @Synchronized
     override fun clearIdentity() {
         atomicStateFile.delete()
+        check(!stateFile.exists() && !stateBackupFile.exists() && !stateWriteFile.exists()) {
+            "Embedded tsnet state could not be deleted"
+        }
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         if (keyStore.containsAlias(keyAlias)) {
             keyStore.deleteEntry(keyAlias)
@@ -157,7 +168,7 @@ internal class AndroidTsnetStateStore(
     }
 
     private fun readValuesRecoveringCorruption(): Map<String, ByteArray> {
-        if (!stateFile.isFile) return emptyMap()
+        if (!stateFile.isFile && !stateBackupFile.isFile) return emptyMap()
         return try {
             readValues()
         } catch (error: GeneralSecurityException) {

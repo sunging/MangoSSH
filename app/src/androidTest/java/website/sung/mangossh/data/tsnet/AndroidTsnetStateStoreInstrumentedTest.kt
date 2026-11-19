@@ -42,6 +42,17 @@ class AndroidTsnetStateStoreInstrumentedTest {
             assertTrue(store.hasEnrolledIdentity())
             assertEquals("https://headscale.example.com", store.controlUrl())
 
+            store.writeState("removed-with-null", byteArrayOf(9))
+            store.writeState("removed-with-empty", byteArrayOf(8))
+            store.writeState("removed-with-null", null)
+            store.writeState("removed-with-empty", ByteArray(0))
+            store.writeState("absent", null)
+            assertArrayEquals(ByteArray(0), store.readState("removed-with-null"))
+            assertArrayEquals(ByteArray(0), store.readState("removed-with-empty"))
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4), store.readState("profile"))
+            assertTrue(store.hasEnrolledIdentity())
+            assertEquals("https://headscale.example.com", store.controlUrl())
+
             val encrypted = File(directory, stateName)
             val plaintext = encrypted.readBytes().decodeToString()
             assertTrue(!plaintext.contains("profile"))

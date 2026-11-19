@@ -14,6 +14,7 @@ internal class AppLockActivityObserver(
     private val activity: ComponentActivity,
     private val lock: AppLockCoordinator,
     private val cancelPrompt: () -> Unit,
+    private val onBackground: () -> Unit = {},
 ) : DefaultLifecycleObserver {
     private val screenOff = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -31,6 +32,7 @@ internal class AppLockActivityObserver(
     override fun onStart(owner: LifecycleOwner) { lock.evaluateAutoLock() }
     override fun onStop(owner: LifecycleOwner) {
         if (!activity.isChangingConfigurations) {
+            onBackground()
             lock.noteBackgrounded()
             if (lock.locked.value) cancelPrompt()
         }

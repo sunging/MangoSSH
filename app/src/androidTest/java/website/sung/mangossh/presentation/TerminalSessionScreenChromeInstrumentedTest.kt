@@ -185,7 +185,7 @@ class TerminalSessionScreenChromeInstrumentedTest {
                         behavior = TerminalBehavior(),
                         shortcutConfig = TerminalShortcutConfig.defaults(),
                         clipboardCopies = remember(instanceKey) { MutableSharedFlow<TerminalClipboardCopy>() },
-                        onSend = {},
+                        pasteGeneration = { 0L },
                         resourceState = website.sung.mangossh.session.ServerResourceState(),
                         onResourceMonitoringChange = {},
                         onRequestResources = {},

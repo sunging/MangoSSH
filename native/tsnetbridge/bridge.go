@@ -328,7 +328,6 @@ func (r *Runtime) failStart(server *tsnet.Server) {
 }
 
 func (r *Runtime) pollStatus(ctx context.Context, server *tsnet.Server, client localStatusClient) {
-	peerMapReady := false
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -341,13 +340,13 @@ func (r *Runtime) pollStatus(ctx context.Context, server *tsnet.Server, client l
 			// refreshes status promptly instead of after the slow interval.
 		}
 
-		r.updateStatus(ctx, server, client, &peerMapReady)
+		state := r.updateStatus(ctx, server, client)
 
 		r.mu.Lock()
 		active := r.active
 		r.mu.Unlock()
 		next := statusPollInterval
-		if peerMapReady {
+		if state == statusRunning {
 			if active {
 				next = statusPollRunningInterval
 			} else {
@@ -371,8 +370,9 @@ func (r *Runtime) SetActive(active bool) {
 	changed := r.active != active
 	r.active = active
 	wake := r.pollWake
+	polling := r.pollCancel != nil && !r.closed
 	r.mu.Unlock()
-	if changed && wake != nil {
+	if changed && polling && wake != nil {
 		select {
 		case wake <- struct{}{}:
 		default:
@@ -384,56 +384,41 @@ func (r *Runtime) updateStatus(
 	ctx context.Context,
 	server *tsnet.Server,
 	client localStatusClient,
-	peerMapReady *bool,
-) {
+) string {
 	statusContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	var status *ipnstate.Status
-	var err error
-	if *peerMapReady {
-		status, err = client.StatusWithoutPeers(statusContext)
-	} else {
-		status, err = client.Status(statusContext)
-	}
+	status, err := client.StatusWithoutPeers(statusContext)
 	if err != nil {
 		if ctx.Err() == nil {
 			r.publish(statusError, "")
 		}
-		return
+		return statusError
 	}
 
 	r.mu.Lock()
 	current := r.server == server && !r.closed
 	r.mu.Unlock()
 	if !current {
-		return
+		return statusStopped
 	}
 
-	state, authURL := mapBackendStatus(status, *peerMapReady)
-	if state == statusRunning {
-		*peerMapReady = true
-	} else {
-		*peerMapReady = false
-	}
+	state, authURL := mapBackendStatus(status)
 	r.publish(state, authURL)
+	return state
 }
 
-// mapBackendStatus withholds the first "running" until the local netmap
-// contains this node's address and at least one peer. BackendState can become
-// Running slightly before the engine's PeerForIP map is populated; exposing
-// SOCKS5 during that window makes tailnet destinations fall through to the
-// physical network instead of netstack. After readiness, lightweight
-// peer-less status polls are sufficient for lifecycle changes.
-func mapBackendStatus(status *ipnstate.Status, peerMapReady bool) (state, authURL string) {
+// mapBackendStatus requires the node's address to be assigned before reporting
+// readiness. An enrolled node can legitimately have an empty peer list.
+func mapBackendStatus(status *ipnstate.Status) (state, authURL string) {
 	switch status.BackendState {
 	case "Running":
-		if len(status.TailscaleIPs) == 0 || (!peerMapReady && len(status.Peer) == 0) {
+		if len(status.TailscaleIPs) == 0 {
 			return statusStarting, ""
 		}
 		return statusRunning, ""
 	case "NeedsMachineAuth":
 		return statusNeedsApproval, ""
-	case "NeedsLogin", "NoState":
+	case "NeedsLogin":
 		return statusNeedsLogin, status.AuthURL
 	case "Stopped":
 		return statusStopped, ""
@@ -607,6 +592,7 @@ var _ ipn.StateStore = encryptedStateStore{}
 
 func (s encryptedStateStore) ReadState(id ipn.StateKey) ([]byte, error) {
 	encoded, err := s.delegate.ReadState(string(id))
+	defer clear(encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -617,5 +603,7 @@ func (s encryptedStateStore) ReadState(id ipn.StateKey) ([]byte, error) {
 }
 
 func (s encryptedStateStore) WriteState(id ipn.StateKey, value []byte) error {
-	return s.delegate.WriteState(string(id), append([]byte(nil), value...))
+	encoded := append([]byte(nil), value...)
+	defer clear(encoded)
+	return s.delegate.WriteState(string(id), encoded)
 }

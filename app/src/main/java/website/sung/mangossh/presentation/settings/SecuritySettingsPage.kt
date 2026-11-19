@@ -12,6 +12,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -39,6 +40,7 @@ internal fun SecuritySettingsPage(
     var showPinEditor by rememberSaveable { mutableStateOf(false) }
     var confirmClearDrafts by rememberSaveable { mutableStateOf(false) }
     val lock = state.lock
+    LaunchedEffect(state.lockBusy) { if (state.lockBusy) showPinEditor = false }
 
     LazyColumn(
         modifier = modifier,
@@ -75,12 +77,14 @@ internal fun SecuritySettingsPage(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { showPinEditor = true }) {
+                    OutlinedButton(onClick = { showPinEditor = true }, enabled = !state.lockBusy) {
                         Text(if (lock.pinConfigured) stringResource(R.string.ui_change_pin) else stringResource(R.string.ui_set_pin))
                     }
                     if (lock.pinConfigured) {
                         Button(onClick = callbacks.onLockNow) { Text(stringResource(R.string.ui_lock_now)) }
-                        TextButton(onClick = callbacks.onClearAppLock) { Text(stringResource(R.string.common_close)) }
+                        TextButton(onClick = callbacks.onClearAppLock, enabled = !state.lockBusy) {
+                            Text(stringResource(R.string.common_close))
+                        }
                     }
                 }
             }
@@ -96,11 +100,14 @@ internal fun SecuritySettingsPage(
                             website.sung.mangossh.security.ReauthenticationMode.EVERY_ACTION -> R.string.reauthentication_every_action
                             website.sung.mangossh.security.ReauthenticationMode.FIVE_MINUTES -> R.string.reauthentication_five_minutes
                         }) }, onSelect = callbacks.onSetReauthentication,
-                        supportingText = stringResource(R.string.reauthentication_scope))
+                        supportingText = stringResource(R.string.reauthentication_scope),
+                        enabled = !state.lockBusy,
+                    )
                     SettingsSwitchRow(
                         title = stringResource(R.string.ui_allow_biometric_unlock),
                         checked = lock.biometricEnabled,
                         onCheckedChange = callbacks.onSetBiometricEnabled,
+                        enabled = !state.lockBusy,
                     )
                     SettingsChoiceRow(
                         label = stringResource(R.string.settings_security_auto_lock_title),
@@ -108,6 +115,7 @@ internal fun SecuritySettingsPage(
                         selected = lock.autoLockDelay,
                         optionLabel = { it.label() },
                         onSelect = callbacks.onSetAutoLockDelay,
+                        enabled = !state.lockBusy,
                         supportingText = stringResource(R.string.settings_security_auto_lock_summary),
                         optionTestTag = { "settings_auto_lock_${it.preferenceValue}" },
                         modifier = Modifier.testTag("settings_auto_lock_control"),
@@ -150,7 +158,7 @@ internal fun SecuritySettingsPage(
         )
     }
 
-    if (showPinEditor) {
+    if (showPinEditor && !state.lockBusy) {
         ConfigurePinDialog(
             onDismiss = { showPinEditor = false },
             onConfirm = { pin ->
