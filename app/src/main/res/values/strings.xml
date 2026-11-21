@@ -403,7 +403,6 @@
     <string name="ui_local_listen_port">Local listen port</string>
     <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">Local, remote, and SOCKS5 forwards can start independently or reuse an existing SSH or Mosh session. Active forwards keep running after you close the terminal. Stop them on this page.</string>
     <string name="ui_lock_now">Lock now</string>
-    <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh uses a GPL-3.0-or-later native client; its source and license are included with the project. It requires mosh-server and reachable UDP (default ports 60000–61000). MangoSSH keeps an authenticated SSH companion for files, resource queries, and port forwarding; agent forwarding remains unavailable.</string>
     <string name="ui_name">Name</string>
     <string name="ui_name_optional">Name (optional)</string>
     <string name="ui_network_route">Network route</string>
@@ -816,6 +815,15 @@
     <string name="host_editor_back">Back</string>
     <string name="host_editor_basic">Basic information</string>
     <string name="host_editor_connection">Connection and authentication</string>
+    <string name="host_editor_mosh_server_arguments">Mosh server options</string>
+    <string name="host_editor_mosh_server_command_help">Options follow mosh-server new. Clear them to use the defaults.</string>
+    <string name="host_editor_mosh_server_command_error">Enter a single line without null characters.</string>
+    <string name="host_editor_mosh_edit_full_command">Edit full command</string>
+    <string name="host_editor_mosh_restore_defaults">Restore defaults</string>
+    <string name="host_editor_mosh_custom_command">Custom Mosh command</string>
+    <string name="host_editor_mosh_full_command_help">Enter the complete server command, including any wrapper such as authbind.</string>
+    <string name="host_editor_mosh_requirements">Mosh requires mosh-server on the remote host and reachable UDP ports (60000–61000 by default).</string>
+    <string name="host_editor_mosh_details">The authenticated SSH companion supports files, resource queries, and port forwarding. Agent forwarding is unavailable. The GPL-3.0-or-later client source and license come with the project.</string>
     <string name="host_editor_jumps">SSH jumps</string>
     <string name="host_editor_startup">Startup</string>
     <string name="host_editor_security">Security and authorization</string>

@@ -46,6 +46,7 @@ data class ConnectionProfile(
     val lastConnectedAtEpochMillis: Long = 0L,
     val connectionCount: Int = 0,
     val legacySshAlgorithms: Boolean = false,
+    val moshServerCommand: String? = null,
 ) {
     val endpoint: String
         get() = if (port == 22) hostname else "$hostname:$port"
@@ -75,9 +76,11 @@ data class ConnectionProfileDraft(
     val lastConnectedAtEpochMillis: Long = 0L,
     val connectionCount: Int = 0,
     val legacySshAlgorithms: Boolean = false,
+    val moshServerCommand: String? = null,
 ) {
     /** Verifies only local form constraints; network reachability is checked at connection time. */
-    fun isValid(): Boolean = hostname.isNotBlank() && username.isNotBlank() && port in 1..65535
+    fun isValid(): Boolean = hostname.isNotBlank() && username.isNotBlank() && port in 1..65535 &&
+        (protocol != ConnectionProtocol.MOSH || isValidMoshServerCommand(moshServerCommand))
 
     /**
      * Creates a persisted profile and keeps the legacy system Tailnet route
@@ -110,5 +113,15 @@ data class ConnectionProfileDraft(
         lastConnectedAtEpochMillis = lastConnectedAtEpochMillis,
         connectionCount = connectionCount,
         legacySshAlgorithms = legacySshAlgorithms,
+        moshServerCommand = moshServerCommand?.takeIf { protocol == ConnectionProtocol.MOSH && it.isNotBlank() },
     )
 }
+
+internal const val MOSH_SERVER_COMMAND_PREFIX = "mosh-server new"
+// Non-interactive SSH sessions can inherit an ASCII locale that mosh-server rejects.
+internal const val DEFAULT_MOSH_SERVER_ARGUMENTS = "-s -c 256 -l LANG=C.UTF-8"
+internal const val DEFAULT_MOSH_SERVER_COMMAND = "$MOSH_SERVER_COMMAND_PREFIX $DEFAULT_MOSH_SERVER_ARGUMENTS"
+
+/** A Mosh override is one remote invocation; an absent or blank value selects the built-in command. */
+internal fun isValidMoshServerCommand(command: String?): Boolean =
+    command?.none { it == '\n' || it == '\r' || it == '\u0000' } != false

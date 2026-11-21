@@ -33,6 +33,7 @@ import website.sung.mangossh.data.vault.SshKeySummary
 import website.sung.mangossh.data.vault.AuthenticationSummary
 import website.sung.mangossh.domain.*
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
+import website.sung.mangossh.ui.components.MangoSettingsCard
 
 /**
  * Phones use all available space; tablet panels bound line length and share the same navigation.
@@ -74,6 +75,7 @@ internal fun HostEditorScreen(controller: HostEditorController, hosts: List<Conn
     LaunchedEffect(Unit) { initialFocus.requestFocus() }
     val pages = rememberSaveableStateHolder()
     val main = controller.page == HostEditorPage.MAIN
+    val showMoshNotes = controller.page == HostEditorPage.CONNECTION && draft.protocol == ConnectionProtocol.MOSH
     fun back() { focus.clearFocus(); controller.back(onDismiss) }
     BackHandler { back() }
     Column(modifier.fillMaxSize().focusRequester(initialFocus).focusable().testTag("host_editor")) {
@@ -88,24 +90,40 @@ internal fun HostEditorScreen(controller: HostEditorController, hosts: List<Conn
         HorizontalDivider()
         Box(Modifier.weight(1f).fillMaxWidth()) {
             pages.SaveableStateProvider(controller.page) {
+                // Let short pages reach the viewport bottom while keeping the footnote in the scroll content.
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
-                    .testTag("host_editor_scroll_${controller.page.name}"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (main) {
-                        HostEditorBasics(draft) { controller.draft = it }
-                        MangoPreferenceGroup {
-                            HostEditorPage.entries.filter { it != HostEditorPage.MAIN }.forEach { page ->
-                                val problem = page in invalid
-                                val summary = if (problem) stringResource(R.string.host_editor_needs_attention) else
-                                    draft.summary(page, snippets)
-                                HostEditorRow(page.title(), summary, {
-                                    focus.clearFocus(); controller.page = page
-                                }, Modifier.testTag("host_editor_open_${page.name}"), problem)
+                    .testTag("host_editor_scroll_${controller.page.name}"), verticalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (main) {
+                            HostEditorBasics(draft) { controller.draft = it }
+                            MangoPreferenceGroup {
+                                HostEditorPage.entries.filter { it != HostEditorPage.MAIN }.forEach { page ->
+                                    val problem = page in invalid
+                                    val summary = if (problem) stringResource(R.string.host_editor_needs_attention) else
+                                        draft.summary(page, snippets)
+                                    HostEditorRow(page.title(), summary, {
+                                        focus.clearFocus(); controller.page = page
+                                    }, Modifier.testTag("host_editor_open_${page.name}"), problem)
+                                }
                             }
+                        } else {
+                            HostEditorDetails(controller, hosts, defaults, keys, snippets, authentications)
+                            if (controller.page in invalid) Text(stringResource(R.string.host_editor_needs_attention),
+                                color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("host_editor_detail_error"))
                         }
-                    } else {
-                        HostEditorDetails(controller, hosts, defaults, keys, snippets, authentications)
-                        if (controller.page in invalid) Text(stringResource(R.string.host_editor_needs_attention),
-                            color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("host_editor_detail_error"))
+                    }
+                    if (showMoshNotes) {
+                        MangoSettingsCard(Modifier.padding(top = 16.dp).testTag("host_editor_mosh_notes")) {
+                            Text(
+                                text = stringResource(R.string.host_editor_mosh_requirements),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                text = stringResource(R.string.host_editor_mosh_details),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }

@@ -586,7 +586,7 @@ class SessionChannel internal constructor(
     }
 
     override suspend fun requestExec(command: String): Boolean = performSendRequest {
-        logger.debug("Requesting exec on channel $localChannelNumber: $command")
+        logger.debug("Requesting exec on channel $localChannelNumber")
         connection.beginChannelRequest(
             _remoteChannelNumber,
             "exec",

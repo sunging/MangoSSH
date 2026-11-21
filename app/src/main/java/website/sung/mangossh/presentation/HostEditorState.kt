@@ -73,11 +73,13 @@ internal data class HostEditorDraft(
     val lastConnectedAtEpochMillis: Long = 0,
     val connectionCount: Int = 0,
     val legacySshAlgorithms: Boolean = false,
+    val moshServerCommand: String? = null,
 ) : Serializable {
     /** Summaries identify invalid hidden fields as well as errors on the basic form. */
     fun invalidPages(keyIds: Set<String>, snippetIds: Set<String>, hosts: List<ConnectionProfile>, authenticationIds: Set<String> = emptySet()): Set<HostEditorPage> = buildSet {
         if (hostname.isBlank() || username.isBlank() || portText.toIntOrNull() !in 1..65535) add(HostEditorPage.MAIN)
         if (route != ConnectionRoute.TAILNET && authentication == AuthenticationMethod.AUTOMATIC && authenticationId != null && authenticationId !in authenticationIds) add(HostEditorPage.CONNECTION)
+        if (protocol == ConnectionProtocol.MOSH && !isValidMoshServerCommand(moshServerCommand)) add(HostEditorPage.CONNECTION)
         if (!workspace.isValid() || startupSnippetId != null && (startupSnippetId !in snippetIds || workspace.mode != WorkspaceMode.DISABLED)) add(HostEditorPage.STARTUP)
         if (jumpIds.size > 4 || jumpIds.distinct().size != jumpIds.size || protocol == ConnectionProtocol.MOSH && jumpIds.isNotEmpty() ||
             jumpIds.any { hop -> hosts.none { it.id == hop && it.id != id && it.protocol == ConnectionProtocol.SSH && it.jumpProfileIds.isEmpty() } }) add(HostEditorPage.JUMPS)
@@ -94,6 +96,7 @@ internal data class HostEditorDraft(
         workspace = workspace, jumpProfileIds = jumpIds, favorite = favorite, position = position,
         lastConnectedAtEpochMillis = lastConnectedAtEpochMillis, connectionCount = connectionCount,
         legacySshAlgorithms = legacySshAlgorithms,
+        moshServerCommand = moshServerCommand,
     )
 
     companion object {
@@ -101,7 +104,8 @@ internal data class HostEditorDraft(
             HostEditorDraft(it.id, it.label, it.hostname, it.username, it.port.toString(), it.protocol, it.route,
                 it.authentication, it.authenticationId, it.startupSnippetId, it.agentForwarding, it.overrides, it.agentPolicy,
                 it.requireReauthentication, it.workspace, it.jumpProfileIds, it.favorite, it.position,
-                it.lastConnectedAtEpochMillis, it.connectionCount, it.legacySshAlgorithms)
+                it.lastConnectedAtEpochMillis, it.connectionCount, it.legacySshAlgorithms,
+                moshServerCommand = it.moshServerCommand?.takeIf(String::isNotBlank))
         } ?: HostEditorDraft()
     }
 }

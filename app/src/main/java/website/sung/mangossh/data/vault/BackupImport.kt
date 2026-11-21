@@ -1,6 +1,7 @@
 package website.sung.mangossh.data.vault
 
 import java.util.UUID
+import website.sung.mangossh.domain.isValidMoshServerCommand
 
 /** Shared pre-allocation bounds for file, HTTP and local encrypted backup reads. */
 internal object BackupLimits {
@@ -158,6 +159,7 @@ internal object BackupValidator {
         val profiles = snapshot.profiles.map { it.id }.toSet()
         snapshot.profiles.forEach {
             valid(it.hostname.isNotBlank() && it.username.isNotBlank() && it.port in 1..65535)
+            valid(isValidMoshServerCommand(it.moshServerCommand))
             valid(it.overrides.isValid())
             valid(it.agentPolicy.authorizationSeconds in 0..86_400)
             valid(it.agentPolicy.allowedKeyIds?.let { ids -> ids.size == ids.distinct().size && ids.all { id -> id in keys } } != false)

@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -65,7 +66,111 @@ private fun ConnectionDetail(controller: HostEditorController, authentications: 
         ConnectionRoute.TSNET -> HostEditorFootnote(stringResource(R.string.ui_embedded_tailscale_proxies_only_this_profile_s_ssh_and_mosh_traffic_tail))
         ConnectionRoute.DIRECT -> Unit
     }
-    if (draft.protocol == ConnectionProtocol.MOSH) HostEditorFootnote(stringResource(R.string.ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in))
+    if (draft.protocol == ConnectionProtocol.MOSH) {
+        MoshServerCommandEditor(draft.moshServerCommand) {
+            controller.draft = draft.copy(moshServerCommand = it)
+        }
+    }
+}
+
+/** The options field owns only the suffix. Other saved invocations stay intact in the full-command editor. */
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun MoshServerCommandEditor(command: String?, onCommandChange: (String?) -> Unit) {
+    val arguments = when {
+        command == null -> DEFAULT_MOSH_SERVER_ARGUMENTS
+        command.isBlank() -> command
+        command == MOSH_SERVER_COMMAND_PREFIX -> ""
+        command.startsWith("$MOSH_SERVER_COMMAND_PREFIX ") -> command.removePrefix("$MOSH_SERVER_COMMAND_PREFIX ")
+        else -> null
+    }
+    val valid = isValidMoshServerCommand(command)
+    val textColor = if (arguments == DEFAULT_MOSH_SERVER_ARGUMENTS) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    var fullCommandDraft by rememberSaveable { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = arguments ?: command.orEmpty(),
+            onValueChange = { value ->
+                onCommandChange(when {
+                    value == DEFAULT_MOSH_SERVER_ARGUMENTS -> null
+                    value.isBlank() -> value
+                    else -> "$MOSH_SERVER_COMMAND_PREFIX $value"
+                })
+            },
+            label = {
+                Text(stringResource(if (arguments == null) R.string.host_editor_mosh_custom_command else R.string.host_editor_mosh_server_arguments))
+            },
+            singleLine = true,
+            readOnly = arguments == null,
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+            isError = !valid,
+            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = textColor, unfocusedTextColor = textColor),
+            modifier = Modifier.fillMaxWidth().testTag("host_editor_mosh_server_command"),
+        )
+        if (!valid || arguments != null) {
+            Text(
+                text = stringResource(if (valid) R.string.host_editor_mosh_server_command_help else R.string.host_editor_mosh_server_command_error),
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (valid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+            )
+        }
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+        ) {
+            TextButton(
+                onClick = { fullCommandDraft = command?.takeIf(String::isNotBlank) ?: DEFAULT_MOSH_SERVER_COMMAND },
+                modifier = Modifier.testTag("host_editor_mosh_edit_full"),
+            ) {
+                Text(stringResource(R.string.host_editor_mosh_edit_full_command))
+            }
+            TextButton(
+                onClick = { onCommandChange(null) },
+                enabled = command != null,
+                modifier = Modifier.testTag("host_editor_mosh_reset"),
+            ) {
+                Text(stringResource(R.string.host_editor_mosh_restore_defaults))
+            }
+        }
+    }
+    fullCommandDraft?.let { value ->
+        val fullCommandValid = isValidMoshServerCommand(value)
+        AlertDialog(
+            onDismissRequest = { fullCommandDraft = null },
+            title = { Text(stringResource(R.string.host_editor_mosh_custom_command)) },
+            text = {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { fullCommandDraft = it },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+                    isError = !fullCommandValid,
+                    supportingText = {
+                        Text(stringResource(if (fullCommandValid) R.string.host_editor_mosh_full_command_help else R.string.host_editor_mosh_server_command_error))
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("host_editor_mosh_full_command"),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onCommandChange(value.takeUnless { it.isBlank() || it == DEFAULT_MOSH_SERVER_COMMAND })
+                        fullCommandDraft = null
+                    },
+                    enabled = fullCommandValid,
+                    modifier = Modifier.testTag("host_editor_mosh_save_full"),
+                ) { Text(stringResource(R.string.common_ok)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { fullCommandDraft = null }) { Text(stringResource(R.string.common_cancel)) }
+            },
+        )
+    }
 }
 
 /** Kept outside the card and indented to align with the row text above it. */
