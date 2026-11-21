@@ -1495,7 +1495,10 @@ class SshSessionController internal constructor(
                 context.appString(R.string.mosh_connecting),
             )
             MangoLog.info(MangoLogEvent.MOSH_BOOTSTRAP_STARTED)
-            val bootstrap = runCatching { bootstrapMosh(connection, prepareWorkspace(sessionId, managed, connection)) }.getOrElse { error ->
+            val bootstrap = runCatching {
+                val workspaceId = prepareWorkspace(sessionId, managed, connection)
+                bootstrapMosh(connection, profile.moshServerCommand, workspaceId)
+            }.getOrElse { error ->
                 MangoLog.warn(MangoLogEvent.MOSH_BOOTSTRAP_FAILED, error)
                 throw MoshBootstrapException(error)
             }
@@ -1956,14 +1959,7 @@ class SshSessionController internal constructor(
         forwards.forEach { forward -> runCatching { forward.close() } }
     }
 
-    /**
-     * Starts the remote Mosh server through a fixed command and extracts the
-     * generated UDP port/key pair. The command supplies an explicit UTF-8
-     * locale because non-interactive SSH sessions can otherwise inherit the
-     * ASCII `C` locale, which mosh-server rejects. It contains no user-provided
-     * text; raw server lines are never surfaced because a valid line contains
-     * the sensitive Mosh key.
-     */
+    /** Resolves a workspace before launch and lets the user continue if it is unavailable. */
     private suspend fun prepareWorkspace(sessionId: String, managed: ManagedSession, connection: SshConnection): String? = try {
         TmuxWorkspaces.prepare(connection, managed.profile.workspace).also { managed.workspaceId = it }
     } catch (_: WorkspaceUnavailableException) {
@@ -1996,11 +1992,17 @@ class SshSessionController internal constructor(
         TmuxWorkspaces.list(requireSshFeatureConnection(sessionId))
     }
 
-    private suspend fun bootstrapMosh(connection: SshConnection, workspaceId: String?): MoshBootstrap = BlockingOperation(30_000L).use { operation ->
+    /** Reads the generated UDP port and bearer key without surfacing raw server output. */
+    private suspend fun bootstrapMosh(
+        connection: SshConnection,
+        serverCommand: String?,
+        workspaceId: String?,
+    ): MoshBootstrap = BlockingOperation(30_000L).use { operation ->
+        val command = moshBootstrapCommand(serverCommand, workspaceId)
         val session = connection.openChannel()
         if (!operation.own(session)) throw MoshBootstrapException()
         try {
-            session.execute(MOSH_SERVER_COMMAND + (workspaceId?.let { " -- " + TmuxWorkspaces.attachCommand(it) } ?: ""))
+            session.execute(command)
             BoundedProtocolReader.lines(session.stdout, MAX_MOSH_BOOTSTRAP_LINES, 4096, 32 * 1024,
                 MoshBootstrapParser::parse) ?: throw MoshBootstrapException()
         } finally {
@@ -2512,7 +2514,6 @@ class SshSessionController internal constructor(
         const val MAX_MOSH_BOOTSTRAP_LINES = 32
         const val TSNET_LOOPBACK_HOST = "127.0.0.1"
         const val TSNET_MOSH_GRACEFUL_RELEASE_MILLIS = 2_000L
-        const val MOSH_SERVER_COMMAND = "mosh-server new -s -c 256 -l LANG=C.UTF-8"
 
         fun portForwardRuntimeId(sessionId: String, ruleId: String): String = "$sessionId:$ruleId"
     }

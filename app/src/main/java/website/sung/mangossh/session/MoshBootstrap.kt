@@ -1,6 +1,19 @@
 package website.sung.mangossh.session
 
 import java.util.Base64
+import website.sung.mangossh.domain.DEFAULT_MOSH_SERVER_COMMAND
+import website.sung.mangossh.domain.isValidMoshServerCommand
+
+/**
+ * Builds the SSH exec request for the authenticated remote host. A custom
+ * invocation is already in remote shell syntax. A workspace adds the quoted,
+ * validated tmux target as the server's terminal command.
+ */
+internal fun moshBootstrapCommand(serverCommand: String?, workspaceId: String?): String {
+    require(isValidMoshServerCommand(serverCommand))
+    val command = serverCommand?.takeIf(String::isNotBlank) ?: DEFAULT_MOSH_SERVER_COMMAND
+    return if (workspaceId == null) command else "$command -- ${TmuxWorkspaces.attachCommand(workspaceId)}"
+}
 
 /**
  * Validated data emitted by `mosh-server new` over the short-lived bootstrap

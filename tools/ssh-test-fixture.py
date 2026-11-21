@@ -217,7 +217,11 @@ class Server(paramiko.ServerInterface):
             listener.close()
         self.listeners.clear()
     def check_channel_exec_request(self, channel, command):
-        if tools_enabled and command == b"mosh-server new -s -c 256 -l LANG=C.UTF-8":
+        controller_bootstrap = b"mosh-server new -s -c 256 -l LANG=C.UTF-8"
+        if self.transport.get_username() == "fixture-custom-mosh":
+            # Match the configured command exactly and run the same loopback fixture below.
+            controller_bootstrap = b"authbind mosh-server new -p 123 -s -l LANG=en_US.UTF-8"
+        if tools_enabled and command == controller_bootstrap:
             def bootstrap_controller():
                 try:
                     server = subprocess.run(linux_command("env", "LANG=C.UTF-8", "MOSH_SERVER_NETWORK_TMOUT=30",

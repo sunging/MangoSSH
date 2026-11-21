@@ -383,7 +383,6 @@
     <string name="ui_local_listen_port">本地监听端口</string>
     <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">本地、远程和 SOCKS5 转发可独立启动，也可复用已有的 SSH 或 Mosh 会话。关闭终端后，已启动的转发仍会继续运行；请在此页面手动停止。</string>
     <string name="ui_lock_now">立即锁定</string>
-    <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh 使用 GPL-3.0-or-later 原生客户端；源代码和许可证见项目随附材料。它需要远端 mosh-server 和可达的 UDP 端口（默认 60000–61000）。MangoSSH 会保留经过认证的 SSH 伴随连接，用于文件、资源查询和端口转发；代理转发仍不可用。</string>
     <string name="ui_name">名称</string>
     <string name="ui_name_optional">名称（可选）</string>
     <string name="ui_network_route">网络路由</string>
@@ -790,6 +789,15 @@
     <string name="host_editor_back">返回</string>
     <string name="host_editor_basic">基本信息</string>
     <string name="host_editor_connection">连接与认证</string>
+    <string name="host_editor_mosh_server_arguments">Mosh 服务端参数</string>
+    <string name="host_editor_mosh_server_command_help">参数会加在 mosh-server new 之后。留空使用默认参数。</string>
+    <string name="host_editor_mosh_server_command_error">请输入不含空字符的单行命令。</string>
+    <string name="host_editor_mosh_edit_full_command">编辑完整命令</string>
+    <string name="host_editor_mosh_restore_defaults">恢复默认</string>
+    <string name="host_editor_mosh_custom_command">自定义 Mosh 启动命令</string>
+    <string name="host_editor_mosh_full_command_help">填写完整的服务端启动命令，包括所需的启动器，例如 authbind。</string>
+    <string name="host_editor_mosh_requirements">远端需要安装 mosh-server，并确保 UDP 端口可达（默认 60000–61000）。</string>
+    <string name="host_editor_mosh_details">经过认证的 SSH 伴随连接支持文件、资源查询和端口转发。代理转发不可用。GPL-3.0-or-later 客户端的源代码和许可证随项目提供。</string>
     <string name="host_editor_jumps">SSH 跳板</string>
     <string name="host_editor_startup">启动方式</string>
     <string name="host_editor_security">安全与授权</string>

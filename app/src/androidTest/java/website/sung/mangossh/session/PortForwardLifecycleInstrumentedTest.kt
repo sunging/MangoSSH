@@ -337,6 +337,23 @@ class PortForwardLifecycleInstrumentedTest {
         }
     }
 
+    @Test fun moshBootstrapExecutesTheConfiguredCommand() =
+        fixture(ConnectionProtocol.MOSH) { controller, profile, _, _, _ ->
+            val sessionId = controller.connect(profile.copy(
+                username = "fixture-custom-mosh",
+                moshServerCommand = "authbind mosh-server new -p 123 -s -l LANG=en_US.UTF-8",
+            ))
+            val sessions = controller.sessions.first { states ->
+                val session = states.firstOrNull { it.id == sessionId }
+                session == null || session.phase == TerminalSessionPhase.OPEN
+            }
+            assertEquals(
+                "The fixture accepts only the configured Mosh bootstrap command for this account",
+                TerminalSessionPhase.OPEN,
+                sessions.firstOrNull { it.id == sessionId }?.phase,
+            )
+        }
+
     @Test fun moshCompanionRecoveryAndTerminalDetachPreserveTheForwardOwner() = fixture(ConnectionProtocol.MOSH) { controller, profile, echoPort, connections, vault ->
         val listen = java.net.ServerSocket(0).use { it.localPort }
         val rule = PortForwardRule("mosh-local", profile.id, PortForwardType.LOCAL, bindPort = listen,

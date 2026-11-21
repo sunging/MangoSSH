@@ -46,6 +46,29 @@ class HostEditorStateTest {
         assertEquals(setOf(HostEditorPage.JUMPS, HostEditorPage.STARTUP), draft.invalidPages(emptySet(), setOf("snippet"), listOf(host().copy(id = "jump"))))
     }
 
+    @Test fun moshCommandKeepsExactTextAndIsSavedOnlyForMosh() {
+        val command = "  authbind mosh-server new -p 123 -s -l LANG=en_US.UTF-8  "
+        val source = host().copy(protocol = ConnectionProtocol.MOSH, moshServerCommand = command)
+        val draft = HostEditorDraft.from(source)
+
+        assertEquals(source, draft.toProfileDraft().toProfile())
+        val inherited = source.copy(moshServerCommand = null)
+        assertEquals(inherited, HostEditorDraft.from(inherited).toProfileDraft().toProfile())
+        assertNull(draft.copy(moshServerCommand = "  ").toProfileDraft().toProfile().moshServerCommand)
+        val sshDraft = draft.copy(protocol = ConnectionProtocol.SSH)
+        assertEquals(command, sshDraft.moshServerCommand)
+        assertNull(sshDraft.toProfileDraft().toProfile().moshServerCommand)
+    }
+
+    @Test fun invalidMoshCommandBlocksTheConnectionPage() {
+        val draft = HostEditorDraft.from(host()).copy(protocol = ConnectionProtocol.MOSH)
+        for (invalid in listOf("line\n", "line\r", "line\u0000")) {
+            val candidate = draft.copy(moshServerCommand = invalid)
+            assertEquals(setOf(HostEditorPage.CONNECTION), candidate.invalidPages(emptySet(), emptySet(), emptyList()))
+            assertFalse(candidate.toProfileDraft().isValid())
+        }
+    }
+
     @Test fun backFromDetailsRetainsDraftAndOnlyLeavingRequestsDiscard() {
         val controller = HostEditorController(HostEditorDraft.from(host()))
         controller.draft = controller.draft.copy(label = "changed")
