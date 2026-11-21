@@ -202,6 +202,7 @@
     <string name="terminal_shortcut_character">Character</string>
     <string name="terminal_shortcut_key_character">Single printable ASCII character</string>
     <string name="terminal_shortcut_key_special">Special key</string>
+    <string name="terminal_shortcut_select_key">Select key</string>
     <string name="terminal_shortcut_error_label">Use 1–16 characters for a custom label, or leave it empty to use the built-in label.</string>
     <string name="terminal_shortcut_error_text_label">Text shortcuts require a 1–16 character label.</string>
     <string name="terminal_shortcut_error_text">Enter 1–256 characters of non-secret text.</string>

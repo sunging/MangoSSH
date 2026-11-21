@@ -2,7 +2,6 @@ package website.sung.mangossh.presentation
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -24,8 +23,11 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -421,11 +423,15 @@ private fun ShortcutItemDialog(
                         Text(stringResource(R.string.terminal_shortcut_chord_modifiers), style = MaterialTheme.typography.labelLarge)
                         ModifierSelector(selected = chordModifiers, multiple = true) { chordModifiers = it }
                         Text(stringResource(R.string.terminal_shortcut_chord_key), style = MaterialTheme.typography.labelLarge)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
                             ChordKeyKind.entries.forEach { option ->
                                 FilterChip(
                                     selected = chordKeyKind == option,
                                     onClick = { chordKeyKind = option },
+                                    modifier = Modifier.testTag("terminal_shortcut_chord_key_${option.name.lowercase()}"),
                                     label = { Text(stringResource(option.labelResource())) },
                                 )
                             }
@@ -509,13 +515,26 @@ private fun ModifierSelector(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun SpecialKeySelector(selected: TerminalSpecialKey, onSelected: (TerminalSpecialKey) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.testTag("terminal_shortcut_special_key")) {
-            Text(selected.label)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        OutlinedTextField(
+            value = selected.label,
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            label = { Text(stringResource(R.string.terminal_shortcut_select_key)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("terminal_shortcut_special_key")
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             TerminalSpecialKey.entries.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option.label) },
@@ -523,6 +542,7 @@ private fun SpecialKeySelector(selected: TerminalSpecialKey, onSelected: (Termin
                         onSelected(option)
                         expanded = false
                     },
+                    modifier = Modifier.testTag("terminal_shortcut_special_key_${option.preferenceValue}"),
                 )
             }
         }

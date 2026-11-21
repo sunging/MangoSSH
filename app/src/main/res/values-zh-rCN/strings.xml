@@ -189,6 +189,7 @@
     <string name="terminal_shortcut_character">字符</string>
     <string name="terminal_shortcut_key_character">单个可打印 ASCII 字符</string>
     <string name="terminal_shortcut_key_special">特殊键</string>
+    <string name="terminal_shortcut_select_key">选择按键</string>
     <string name="terminal_shortcut_error_label">自定义标签须为 1–16 个字符，也可留空使用内置标签。</string>
     <string name="terminal_shortcut_error_text_label">文本快捷键需要 1–16 个字符的标签。</string>
     <string name="terminal_shortcut_error_text">请输入 1–256 个字符的非敏感文本。</string>
