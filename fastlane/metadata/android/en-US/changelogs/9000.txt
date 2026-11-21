@@ -1,0 +1,9 @@
+Redesigned PIN screens and automatic unlock when the correct PIN is entered.
+
+Set Mosh server options or a custom startup command per host.
+
+Confirm long or multi-line terminal pastes and select shortcut keys more clearly.
+
+Strengthened backup authorization, improved file transfer checks, and preserved remote editor drafts.
+
+Improved embedded Tailscale logout and Mosh companion SSH connections.
