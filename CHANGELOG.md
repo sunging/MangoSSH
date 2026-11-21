@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.0](https://github.com/sunging/MangoSSH/compare/v0.8.2...v0.9.0) (2026-11-21)
+
+
+### Features
+
+* **mosh:** configure per-host server commands ([48d779f](https://github.com/sunging/MangoSSH/commit/48d779f5fef4981ad6ca793fdf3eec81fa159c5d)), closes [#57](https://github.com/sunging/MangoSSH/issues/57)
+* streamline PIN screens and auto-unlock ([e9442f9](https://github.com/sunging/MangoSSH/commit/e9442f97edf2651488cf04088e39c95e11782b06))
+
+
+### Bug Fixes
+
+* **files:** validate transfers and preserve remote editor drafts ([d800787](https://github.com/sunging/MangoSSH/commit/d800787d5833723666386a4f669676f085ec1d34))
+* harden terminal, backup, and remote sessions ([de58d42](https://github.com/sunging/MangoSSH/commit/de58d42714e08602435ca85231b98d52546fc8f7))
+* keep the PIN keypad reachable in short windows ([3235c5a](https://github.com/sunging/MangoSSH/commit/3235c5ad39525cf50a6ff955051f3c088e66757b))
+* **security:** bind backup authorization and serialize PIN changes ([f591e5d](https://github.com/sunging/MangoSSH/commit/f591e5d7031e7d9c4be0a9c1030dcc8e221385cb))
+* **ssh:** preserve Mosh companion identity and handshake time ([9570b95](https://github.com/sunging/MangoSSH/commit/9570b95ff71abfc5e050aeb6b9b8cf9d0ebef1fb))
+* **terminal:** clarify shortcut key selection ([7013b6f](https://github.com/sunging/MangoSSH/commit/7013b6f36de1212a99a442a93869224ea4d72a4f)), closes [#57](https://github.com/sunging/MangoSSH/issues/57)
+* **terminal:** preview and guard terminal paste ([9d0b069](https://github.com/sunging/MangoSSH/commit/9d0b0698edcfab3b3f8f4efa42aace9a3edbc25f))
+* **tsnet:** settle logout and adapt status polling ([bcd7b6d](https://github.com/sunging/MangoSSH/commit/bcd7b6dda98993e51b27440163e6b98816cd6219))
+
 ## [0.8.2](https://github.com/sunging/MangoSSH/compare/v0.8.1...v0.8.2) (2026-11-04)
 
 
