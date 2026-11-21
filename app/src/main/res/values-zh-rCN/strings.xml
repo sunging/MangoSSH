@@ -23,6 +23,7 @@
     <string name="embedded_tsnet_browser_login">使用浏览器登录</string>
     <string name="embedded_tsnet_auth_key_login">使用 Auth Key</string>
     <string name="embedded_tsnet_logout">退出登录</string>
+    <string name="embedded_tsnet_status_logging_out">正在退出登录…</string>
     <string name="embedded_tsnet_auth_key_title">使用一次性 Auth Key</string>
     <string name="embedded_tsnet_auth_key_explanation">密钥将直接交给内嵌节点，不会保存到界面状态、保险库、备份或日志中。失败后必须重新输入。</string>
     <string name="embedded_tsnet_auth_key_label">Auth Key</string>
@@ -143,6 +144,12 @@
     <string name="terminal_cancel">取消</string>
     <string name="terminal_theme_custom">自定义（%1$s）</string>
     <string name="terminal_shortcut_paste">粘贴</string>
+    <string name="terminal_paste_confirm_title">要粘贴到终端吗？</string>
+    <string name="terminal_paste_target">%1$s %2$s · %3$s</string>
+    <string name="terminal_paste_size">剪贴板文本共 %1$d 字节</string>
+    <string name="terminal_paste_preview_shortened">预览仅显示开头。确认粘贴后将发送完整文本。</string>
+    <string name="terminal_paste_blocked_title">无法粘贴剪贴板文本</string>
+    <string name="terminal_paste_blocked_message">剪贴板含有无法安全粘贴的控制字符或无效文本。</string>
     <string name="terminal_shortcuts_rows">工具栏行数</string>
     <string name="terminal_shortcuts_one_row">单行</string>
     <string name="terminal_shortcuts_two_rows">双行</string>
@@ -182,6 +189,7 @@
     <string name="terminal_shortcut_character">字符</string>
     <string name="terminal_shortcut_key_character">单个可打印 ASCII 字符</string>
     <string name="terminal_shortcut_key_special">特殊键</string>
+    <string name="terminal_shortcut_select_key">选择按键</string>
     <string name="terminal_shortcut_error_label">自定义标签须为 1–16 个字符，也可留空使用内置标签。</string>
     <string name="terminal_shortcut_error_text_label">文本快捷键需要 1–16 个字符的标签。</string>
     <string name="terminal_shortcut_error_text">请输入 1–256 个字符的非敏感文本。</string>
@@ -272,7 +280,22 @@
     <string name="message_pin_invalid">PIN 必须为 %1$d 到 %2$d 位数字。</string>
     <string name="message_app_lock_disabled">已关闭应用锁。</string>
     <string name="message_app_pin_required">请先设置应用 PIN。</string>
-    <string name="message_pin_incorrect">PIN 不正确。</string>
+    <string name="message_pin_incorrect">PIN 不正确，请重试。</string>
+    <string name="pin_enter_title">输入 PIN</string>
+    <string name="pin_new_title">输入新 PIN</string>
+    <string name="pin_confirm_title">再次输入 PIN</string>
+    <string name="pin_verify_identity">验证身份</string>
+    <string name="pin_unlock">解锁</string>
+    <string name="pin_verify">验证</string>
+    <string name="pin_next">下一步</string>
+    <string name="pin_mismatch">两次输入的 PIN 不一致，请重试。</string>
+    <string name="pin_entry_length">%1$d–%2$d 位数字</string>
+    <string name="pin_entry_delete_digit">删除一位</string>
+    <string name="pin_entry_clear">清空 PIN</string>
+    <string name="pin_entry_paste">粘贴</string>
+    <plurals name="pin_entry_count">
+        <item quantity="other">已输入 %1$d 位</item>
+    </plurals>
 
     <!-- Main application UI migrated from fixed Compose literals. -->
     <string name="common_cancel">取消</string>
@@ -295,14 +318,12 @@
     <string name="common_start">启动</string>
     <string name="common_stop">停止</string>
     <string name="common_submit">提交</string>
-    <string name="ui_4_12_digit_pin">4–12 位 PIN</string>
     <string name="ui_a_snippet_selected_in_the_host_editor_is_sent_automatically_when_the_she">在主机编辑页选择片段后，会在 shell 打开时自动发送。</string>
     <string name="ui_a_socks5_proxy_does_not_need_a_destination_host_or_port">SOCKS5 代理不需要目标主机和端口。</string>
     <string name="ui_active_sessions">活动会话</string>
     <string name="ui_add_an_ssh_mosh_or_tailnet_host_profile_keys_are_managed_and_shared_sepa">添加 SSH、Mosh 或 Tailnet 主机配置。密钥会在安全保险库启用后独立管理和共享。</string>
     <string name="ui_allow_biometric_unlock">允许生物识别解锁</string>
     <string name="ui_app_lock_sync_and_tailnet">外观、终端、安全性等</string>
-    <string name="ui_app_pin">应用 PIN</string>
     <string name="ui_app_pin_is_enabled_unlocking_is_required_when_returning_to_the_foregroun">应用 PIN 已启用。返回前台时需要解锁；本地保险库仍由 Android Keystore 加密。</string>
     <string name="ui_app_protection">应用保护</string>
     <string name="ui_append_newline_automatically">自动附加换行</string>
@@ -319,7 +340,6 @@
     <string name="ui_closed">已关闭</string>
     <string name="ui_completed">已完成</string>
     <string name="ui_configure_webdav">配置 WebDAV</string>
-    <string name="ui_confirm_pin">再次输入 PIN</string>
     <string name="ui_connected">已连接</string>
     <string name="ui_connecting">正在连接…</string>
     <string name="ui_connecting_2">连接中</string>
@@ -363,8 +383,6 @@
     <string name="ui_local_listen_port">本地监听端口</string>
     <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">本地、远程和 SOCKS5 转发可独立启动，也可复用已有的 SSH 或 Mosh 会话。关闭终端后，已启动的转发仍会继续运行；请在此页面手动停止。</string>
     <string name="ui_lock_now">立即锁定</string>
-    <string name="ui_mangossh_is_locked">MangoSSH 已锁定</string>
-    <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh 使用 GPL-3.0-or-later 原生客户端；源代码和许可证见项目随附材料。它需要远端 mosh-server 和可达的 UDP 端口（默认 60000–61000）。MangoSSH 会保留经过认证的 SSH 伴随连接，用于文件、资源查询和端口转发；代理转发仍不可用。</string>
     <string name="ui_name">名称</string>
     <string name="ui_name_optional">名称（可选）</string>
     <string name="ui_network_route">网络路由</string>
@@ -423,7 +441,6 @@
     <string name="ui_already_trusted_keys">已信任：</string>
     <string name="ui_trust_additional_key">同时信任此密钥</string>
     <string name="ui_server_resources">服务器资源</string>
-    <string name="ui_set_app_pin">设置应用 PIN</string>
     <string name="ui_set_pin">设置 PIN</string>
     <string name="ui_shared_keys_and_agent">共享密钥与密码</string>
     <string name="ui_shared_private_key">共享私钥</string>
@@ -450,8 +467,6 @@
     <string name="ui_transferring">传输中</string>
     <string name="ui_trust_and_connect">信任并连接</string>
     <string name="ui_type">类型</string>
-    <string name="ui_unlock_with_pin">使用 PIN 解锁</string>
-    <string name="ui_unlock_with_your_app_pin">使用应用 PIN 解锁。</string>
     <string name="ui_upload_file">上传文件</string>
     <string name="ui_upload_folder">上传文件夹</string>
     <string name="ui_upload_to_this_directory">上传到当前目录</string>
@@ -720,9 +735,20 @@
     <string name="transfer_local_no_atomic">所选本地文件已存在。直接覆盖若中断，可能导致文件内容不完整。选择“另存为”可创建新文件并保留原文件。</string>
     <string name="editor_direct">直接覆盖</string>
     <string name="editor_direct_risk">直接覆盖若中断可能留下不完整文件。仍要替换原文件吗？</string>
-    <string name="editor_failure">无法编辑或保存此文件。仅支持完整读取且不超过 128 KiB 的 UTF-8 文本，草稿已加密保存在本机。</string>
+    <string name="editor_failure">无法打开、重新加载或保存此文件。编辑器仅支持不超过 128 KiB 的完整 UTF-8 文本文件。</string>
     <string name="editor_unsaved">未保存的修改</string>
-    <string name="editor_discard_detail">未保存的修改会加密保存在本机，直到保存或放弃。现在放弃吗？</string>
+    <string name="editor_discard_detail">放弃未保存的修改并从本机删除草稿吗？</string>
+    <string name="editor_reload_detail">远程文本加载成功后放弃草稿吗？</string>
+    <string name="editor_keep_and_close">保留草稿并关闭</string>
+    <string name="editor_disconnected">会话已结束。你可以在此保留或放弃草稿，并在重新连接后打开远程文件。</string>
+    <string name="editor_size_limit">远程文件限制为 128 KiB，包含 UTF-8 字节顺序标记和换行符。请删减文本后再保存。</string>
+    <string name="editor_draft_pending">草稿修改尚待保存到本机</string>
+    <string name="editor_draft_writing">正在将加密草稿保存到本机…</string>
+    <string name="editor_draft_stored">当前草稿已加密保存在本机</string>
+    <string name="editor_draft_failed">无法更新本机草稿。当前文本仍在编辑器中。</string>
+    <string name="editor_draft_delete_failed">无法删除本机草稿，可以重试放弃操作。</string>
+    <string name="editor_draft_last_saved_at">上次成功保存草稿的时间：%1$s</string>
+    <string name="editor_draft_retry">重试保存草稿</string>
     <string name="editor_discard">放弃草稿</string>
     <string name="editor_new_name">新文件名</string>
     <string name="editor_saved">远端文件已保存</string>
@@ -763,6 +789,15 @@
     <string name="host_editor_back">返回</string>
     <string name="host_editor_basic">基本信息</string>
     <string name="host_editor_connection">连接与认证</string>
+    <string name="host_editor_mosh_server_arguments">Mosh 服务端参数</string>
+    <string name="host_editor_mosh_server_command_help">参数会加在 mosh-server new 之后。留空使用默认参数。</string>
+    <string name="host_editor_mosh_server_command_error">请输入不含空字符的单行命令。</string>
+    <string name="host_editor_mosh_edit_full_command">编辑完整命令</string>
+    <string name="host_editor_mosh_restore_defaults">恢复默认</string>
+    <string name="host_editor_mosh_custom_command">自定义 Mosh 启动命令</string>
+    <string name="host_editor_mosh_full_command_help">填写完整的服务端启动命令，包括所需的启动器，例如 authbind。</string>
+    <string name="host_editor_mosh_requirements">远端需要安装 mosh-server，并确保 UDP 端口可达（默认 60000–61000）。</string>
+    <string name="host_editor_mosh_details">经过认证的 SSH 伴随连接支持文件、资源查询和端口转发。代理转发不可用。GPL-3.0-or-later 客户端的源代码和许可证随项目提供。</string>
     <string name="host_editor_jumps">SSH 跳板</string>
     <string name="host_editor_startup">启动方式</string>
     <string name="host_editor_security">安全与授权</string>

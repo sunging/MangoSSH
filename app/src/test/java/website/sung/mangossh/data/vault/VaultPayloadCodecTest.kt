@@ -2,12 +2,39 @@ package website.sung.mangossh.data.vault
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import website.sung.mangossh.domain.ConnectionProfile
+import website.sung.mangossh.domain.ConnectionProtocol
 import website.sung.mangossh.domain.ConnectionRoute
 
 class VaultPayloadCodecTest {
+    @Test
+    fun missingMoshServerCommandKeepsTheDefaultForOldPayloads() {
+        val old = payloadObject(ConnectionRoute.DIRECT).apply {
+            put("schemaVersion", 7)
+            val profile = getJSONArray("profiles").getJSONObject(0)
+            profile.put("protocol", ConnectionProtocol.MOSH.name)
+            assertFalse(profile.has("moshServerCommand"))
+        }
+        val restored = VaultPayloadCodec.decode(old.toString().encodeToByteArray()).profiles.single()
+        assertEquals(ConnectionProtocol.MOSH, restored.protocol)
+        assertNull(restored.moshServerCommand)
+    }
+
+    @Test
+    fun rejectsNonStringOrMultilineMoshServerCommand() {
+        val payload = payloadObject(ConnectionRoute.DIRECT)
+        val profile = payload.getJSONArray("profiles").getJSONObject(0)
+        profile.put("protocol", ConnectionProtocol.MOSH.name)
+        profile.put("moshServerCommand", 123)
+        assertThrows(IllegalArgumentException::class.java) { VaultPayloadCodec.decode(payload.toString().encodeToByteArray()) }
+        profile.put("moshServerCommand", "mosh-server new\nanother command")
+        assertThrows(BackupException::class.java) { VaultPayloadCodec.decode(payload.toString().encodeToByteArray()) }
+    }
+
     @Test
     fun schemaSevenPreservesExplicitLegacyChoiceAndDefaultsOldPayloadsToFalse() {
         val enabled = VaultSnapshot(profiles = listOf(profile(ConnectionRoute.DIRECT).copy(legacySshAlgorithms = true)))

@@ -21,4 +21,14 @@ class EditableRemoteTextTest {
     @Test(expected = SourceChangedException::class) fun equalMetadataCannotHideContentConflict() {
         source("one").requireUnchanged(source("two"))
     }
+
+    @Test fun theRemoteLimitIncludesBomAndConvertedLineEndings() {
+        val source = source("a\r\n", bom = true)
+        val exact = "a".repeat(MAX_REMOTE_PREVIEW_BYTES - 5) + "\n"
+        assertEquals(MAX_REMOTE_PREVIEW_BYTES, source.encodedSize(exact))
+        assertEquals(MAX_REMOTE_PREVIEW_BYTES, source.encode(exact).size)
+        assertEquals(MAX_REMOTE_PREVIEW_BYTES + 1, source.encodedSize(exact + "b"))
+        val rejected = assertThrows(RemoteFileException::class.java) { source.encode(exact + "b") }
+        assertEquals(RemoteFileFailure.TOO_LARGE, rejected.failure)
+    }
 }

@@ -1,7 +1,5 @@
 package website.sung.mangossh.session.tsnet
 
-import kotlinx.coroutines.async
-
 import android.content.Context
 import java.io.Closeable
 import java.io.File
@@ -11,13 +9,18 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -25,11 +28,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import tsnetbridge.StatusListener
 import website.sung.mangossh.core.MangoLog
 import website.sung.mangossh.core.MangoLogEvent
 import website.sung.mangossh.data.tsnet.AndroidTsnetStateStore
 import website.sung.mangossh.data.tsnet.EmbeddedTsnetStateStore
+import website.sung.mangossh.session.AppForegroundState
 import website.sung.mangossh.session.SessionForegroundService
 
 internal enum class EmbeddedTsnetPhase {
@@ -48,6 +53,8 @@ internal data class EmbeddedTsnetStatus(
     val authKeyAllowed: Boolean = true,
     /** False only until the stored identity has been read; [phase] is a placeholder until then. */
     val identityResolved: Boolean = true,
+    val loggingOut: Boolean = false,
+    val logoutCleanupPending: Boolean = false,
 )
 
 /** Fixed failure used when a TSNET profile is selected before enrollment. */
@@ -79,12 +86,14 @@ internal class EmbeddedTsnetManager(
             },
     ),
     private val foregroundStarter: (Context) -> Unit = SessionForegroundService::start,
+    private val appForegroundState: AppForegroundState = AppForegroundState.fixed(true),
 ) {
     private val appContext = context.applicationContext
     private val mutex = Mutex()
     private val stateDirectory = File(appContext.noBackupFilesDir, "embedded-tsnet-runtime")
     private var backend: EmbeddedTsnetBackend? = null
     private var backendToken: Any? = null
+    private var backendNeedsLogin = false
     private var runtimeStarting = false
     private val leases = linkedMapOf<Long, EmbeddedTsnetLease>()
     private var nextLeaseId = 0L
@@ -92,7 +101,9 @@ internal class EmbeddedTsnetManager(
     private val pendingRequests = mutableMapOf<Any, kotlinx.coroutines.CompletableDeferred<Unit>>()
     private val pendingAcquires: Int get() = pendingRequests.size
     private var enrollmentHold = false
-    private var foregroundFailureGeneration = 0L
+    private var loggingOut = false
+    private var logoutCleanupPending = false
+    private var runtimeGeneration = 0L
     private var enrolledIdentity = false
     private var registrationExists = false
 
@@ -133,12 +144,10 @@ internal class EmbeddedTsnetManager(
 
     init {
         scope.launch {
-            // An unreadable store resolves as not enrolled rather than
-            // leaving the status unresolved forever.
-            val enrolled = runCatching { stateStore.hasEnrolledIdentity() }.getOrDefault(false)
-            runCatching { stateStore.controlUrl() }.onSuccess { _controlUrl.value = it }
             mutex.withLock {
-                if (backend == null && _status.value.phase == EmbeddedTsnetPhase.UNENROLLED) {
+                if (!loggingOut && !_status.value.identityResolved) {
+                    val enrolled = runCatching { stateStore.hasEnrolledIdentity() }.getOrDefault(false)
+                    runCatching { stateStore.controlUrl() }.onSuccess { _controlUrl.value = it }
                     enrolledIdentity = enrolled
                     registrationExists = enrolled
                     updateStatusLocked(idlePhase())
@@ -158,6 +167,11 @@ internal class EmbeddedTsnetManager(
                 }
             }
         }
+        scope.launch {
+            appForegroundState.foreground.collect {
+                mutex.withLock { backend?.setActive(appForegroundState.foreground.value) }
+            }
+        }
     }
 
     /** Name this installation registers with; stable across restarts and sign-outs. */
@@ -175,45 +189,42 @@ internal class EmbeddedTsnetManager(
     }
 
     private suspend fun holdForBrowsing() {
-        val enrolled = hasIdentity()
-        val shouldStart = mutex.withLock {
+        val generation = mutex.withLock {
             browseHold = true
-            if (enrolled && backend == null && !runtimeStarting) {
-                runtimeStarting = true
-                true
+            if (!loggingOut && !logoutCleanupPending && backend == null && !runtimeStarting &&
+                stateStore.hasEnrolledIdentity()
+            ) {
+                reserveRuntimeLocked()
             } else {
-                false
+                null
             }
         }
         // Started outside the collector so a quick hide cannot cancel it
         // half-way; the release path detaches whatever it produced.
-        if (shouldStart) scope.launch { startRuntime(null) }
+        if (generation != null) scope.launch { startRuntime(generation, null) }
     }
 
     private suspend fun releaseBrowsing() {
-        val close = mutex.withLock {
+        mutex.withLock {
             if (!browseHold) return
             browseHold = false
             _network.value = null
             if (backend != null || runtimeStarting) {
-                detachIfIdleLocked() ?: run {
+                detachIfIdleLocked()?.let { closeBackend(it) } ?: run {
                     // Still owned by sessions or enrollment: only the
                     // foreground requirement may have changed.
                     updateStatusLocked(_status.value.phase)
-                    null
                 }
             } else {
                 updateStatusLocked(_status.value.phase)
-                null
             }
         }
-        close?.let(::closeBackend)
     }
 
     private suspend fun pollNetworkSnapshots() {
         while (true) {
             status.first { it.phase == EmbeddedTsnetPhase.ACTIVE }
-            val current = mutex.withLock { backend.takeIf { browseHold } }
+            val current = mutex.withLock { backend.takeIf { browseHold && !loggingOut } }
             if (current == null) {
                 delay(SNAPSHOT_INTERVAL_MILLIS)
                 continue
@@ -223,7 +234,7 @@ internal class EmbeddedTsnetManager(
                     TsnetNetworkSnapshotCodec.decode(current.networkSnapshotJson())
                 }
                 mutex.withLock {
-                    if (browseHold && backend === current) _network.value = snapshot
+                    if (browseHold && !loggingOut && backend === current) _network.value = snapshot
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -241,7 +252,6 @@ internal class EmbeddedTsnetManager(
      */
     suspend fun beginBrowserEnrollment(controlUrl: String = "") {
         val server = requireNotNull(EmbeddedTsnetControlServer.normalize(controlUrl))
-        checkNoActiveSessions()
         restartForEnrollment(null, server)
     }
 
@@ -254,7 +264,6 @@ internal class EmbeddedTsnetManager(
         try {
             val server = requireNotNull(EmbeddedTsnetControlServer.normalize(controlUrl))
             require(authKey.isNotEmpty() && !hasIdentity())
-            checkNoActiveSessions()
             restartForEnrollment(authKey, server)
         } finally {
             authKey.fill('\u0000')
@@ -262,18 +271,15 @@ internal class EmbeddedTsnetManager(
     }
 
     suspend fun acquire(): EmbeddedTsnetLease {
-        var shouldStart = false
         val requestId = Any()
         val retired = kotlinx.coroutines.CompletableDeferred<Unit>()
-        mutex.withLock {
+        val generation = mutex.withLock {
+            if (loggingOut || logoutCleanupPending) throw TsnetEnrollmentRequiredException()
             pendingRequests[requestId] = retired
-            if (backend == null && !runtimeStarting) {
-                runtimeStarting = true
-                shouldStart = true
-            }
+            if (backend == null && !runtimeStarting) reserveRuntimeLocked() else null
         }
         try {
-            if (shouldStart) startRuntime(null)
+            if (generation != null) startRuntime(generation, null)
             val ready = kotlinx.coroutines.coroutineScope {
                 val waiting = async {
                     withTimeout(START_TIMEOUT_MILLIS) {
@@ -313,69 +319,109 @@ internal class EmbeddedTsnetManager(
                 lease
             }
         } catch (error: Exception) {
-            val close = mutex.withLock {
-                pendingRequests.remove(requestId)
-                detachIfIdleLocked()
+            withContext(NonCancellable) {
+                mutex.withLock {
+                    pendingRequests.remove(requestId)
+                    detachIfIdleLocked()?.let { closeBackend(it) }
+                }
             }
-            close?.let(::closeBackend)
             throw error
         }
     }
 
+    /** Owns the identity exclusively until the native call and local cleanup have settled. */
     suspend fun logout() {
-        checkNoActiveSessions()
-        if (!hasIdentity()) {
-            withContext(Dispatchers.IO) { stateStore.clearIdentity() }
-            _controlUrl.value = ""
-            mutex.withLock {
-                enrolledIdentity = false
-                registrationExists = false
-                updateStatusLocked(EmbeddedTsnetPhase.UNENROLLED)
-            }
-            return
+        var nativeLogoutCompleted = mutex.withLock {
+            checkNoActiveSessionsLocked()
+            check(!loggingOut && !(runtimeStarting && enrollmentHold))
+            loggingOut = true
+            _network.value = null
+            updateStatusLocked(_status.value.phase)
+            logoutCleanupPending
         }
-        mutex.withLock { enrollmentHold = true }
-        val shouldStart = mutex.withLock {
-            if (backend == null && !runtimeStarting) {
-                runtimeStarting = true
-                true
-            } else {
-                false
-            }
-        }
-        if (shouldStart) startRuntime(null)
-        val phase = withTimeout(START_TIMEOUT_MILLIS) {
-            status.first {
-                it.phase == EmbeddedTsnetPhase.ACTIVE ||
-                    it.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN ||
-                    it.phase == EmbeddedTsnetPhase.FAILED
-            }.phase
-        }
-        val current = mutex.withLock { backend }
+        var cleared = false
         try {
-            if (phase == EmbeddedTsnetPhase.ACTIVE && current != null) {
-                withContext(Dispatchers.IO) { current.logout() }
+            val current = if (nativeLogoutCompleted) null else backendForLogout()
+            currentCoroutineContext().ensureActive()
+            // Gomobile's logout is a blocking call with a native deadline. If it
+            // succeeds, complete the local deletion even if the caller cancels.
+            withContext(NonCancellable + Dispatchers.IO) {
+                if (current != null) {
+                    current.logout()
+                    nativeLogoutCompleted = true
+                }
+                retireLogoutBackend()
+                stateStore.clearIdentity()
+                cleared = true
             }
-            withContext(Dispatchers.IO) { stateStore.clearIdentity() }
-            _controlUrl.value = ""
-            MangoLog.info(MangoLogEvent.TSNET_LOGOUT_SUCCEEDED)
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
             MangoLog.warn(MangoLogEvent.TSNET_LOGOUT_FAILED, error)
             throw IllegalStateException()
         } finally {
-            val close = mutex.withLock {
-                enrollmentHold = false
-                enrolledIdentity = false
-                registrationExists = false
-                _network.value = null
-                val detached = backend
-                backend = null
-                backendToken = null
-                updateStatusLocked(EmbeddedTsnetPhase.UNENROLLED)
-                detached
+            withContext(NonCancellable + Dispatchers.IO) {
+                retireLogoutBackend()
+                val registered = if (cleared) false else
+                    runCatching { stateStore.hasEnrolledIdentity() }.getOrDefault(registrationExists)
+                val controlUrl = if (cleared) "" else
+                    runCatching { stateStore.controlUrl() }.getOrDefault(_controlUrl.value)
+                mutex.withLock {
+                    enrollmentHold = false
+                    loggingOut = false
+                    logoutCleanupPending = nativeLogoutCompleted && !cleared
+                    enrolledIdentity = registered
+                    registrationExists = registered
+                    _controlUrl.value = controlUrl
+                    updateStatusLocked(if (logoutCleanupPending) EmbeddedTsnetPhase.FAILED else idlePhase())
+                }
             }
-            close?.let(::closeBackend)
         }
+        currentCoroutineContext().ensureActive()
+        MangoLog.info(MangoLogEvent.TSNET_LOGOUT_SUCCEEDED)
+    }
+
+    private suspend fun backendForLogout(): EmbeddedTsnetBackend {
+        val registered = hasIdentity()
+        val generation = mutex.withLock {
+            if (backend != null || runtimeStarting) {
+                // A NeedsLogin observed before logout can be hidden by the
+                // normal startup phase when it has no interactive login URL.
+                if (backend != null && backendNeedsLogin) updateStatusLocked(EmbeddedTsnetPhase.WAITING_FOR_LOGIN)
+                null
+            } else if (registered) {
+                reserveRuntimeLocked()
+            } else {
+                error("Embedded tsnet has no identity to log out")
+            }
+        }
+        if (generation != null) scope.launch { startRuntime(generation, null) }
+        checkNotNull(withTimeoutOrNull(START_TIMEOUT_MILLIS) {
+            status.first { it.phase != EmbeddedTsnetPhase.STARTING }
+        })
+        return mutex.withLock {
+            val current = checkNotNull(backend)
+            when (_status.value.phase) {
+                EmbeddedTsnetPhase.ACTIVE,
+                EmbeddedTsnetPhase.WAITING_FOR_LOGIN,
+                EmbeddedTsnetPhase.WAITING_FOR_APPROVAL -> Unit
+                else -> error("Embedded tsnet did not start for logout")
+            }
+            // Native logout may synchronously report Stopped. No status from
+            // this runtime may publish or rewrite the identity during cleanup.
+            backendToken = null
+            current
+        }
+    }
+
+    private suspend fun retireLogoutBackend() {
+        val detached = mutex.withLock {
+            runtimeStarting = false
+            backendToken = null
+            backend.also { backend = null }
+        }
+        detached?.let { closeBackend(it) }
     }
 
     /**
@@ -390,29 +436,28 @@ internal class EmbeddedTsnetManager(
         // withdrawn its foreground requirement. Backend close then hops back to
         // IO and never blocks the service's main-thread failure path.
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            val close = mutex.withLock {
-                foregroundFailureGeneration += 1
+            mutex.withLock {
+                if (!_foregroundRequired.value || loggingOut) return@withLock
                 runtimeStarting = false
                 enrollmentHold = false
                 invalidateLeasesLocked(backendToken)
                 backendToken = null
                 val detached = backend.also { backend = null }
                 updateStatusLocked(EmbeddedTsnetPhase.FAILED)
-                detached
+                detached?.let { closeBackend(it) }
             }
-            close?.let { withContext(Dispatchers.IO) { closeBackend(it) } }
         }
     }
 
     private suspend fun restartForEnrollment(authKey: CharArray?, controlUrl: String) {
-        val previous = mutex.withLock {
+        val generation = mutex.withLock {
+            checkNoActiveSessionsLocked()
+            check(!loggingOut && !logoutCleanupPending && !(runtimeStarting && enrollmentHold))
             enrollmentHold = true
-            backend.also {
-                backend = null
-                backendToken = null
-                runtimeStarting = true
-                updateStatusLocked(EmbeddedTsnetPhase.STARTING)
-            }
+            val previous = backend.also { backend = null }
+            backendToken = null
+            previous?.let { closeBackend(it) }
+            reserveRuntimeLocked()
         }
         // Publish the keepalive requirement before launching the service. Its
         // initial StateFlow collection must not observe false and stop itself
@@ -420,29 +465,37 @@ internal class EmbeddedTsnetManager(
         try {
             foregroundStarter(appContext)
         } catch (error: RuntimeException) {
-            mutex.withLock {
-                runtimeStarting = false
-                enrollmentHold = false
-                updateStatusLocked(EmbeddedTsnetPhase.FAILED)
-            }
-            previous?.let(::closeBackend)
+            failEnrollmentPreparation(generation)
             MangoLog.warn(MangoLogEvent.TSNET_FAILED, error)
             throw error
         }
-        previous?.let(::closeBackend)
         // The previous node is closed, so nothing else writes the state now.
         try {
-            withContext(Dispatchers.IO) { bindControlUrl(controlUrl) }
+            withContext(Dispatchers.IO) {
+                mutex.withLock {
+                    check(runtimeStarting && runtimeGeneration == generation)
+                    bindControlUrl(controlUrl, firstEnrollment = authKey != null)
+                }
+            }
+        } catch (error: CancellationException) {
+            failEnrollmentPreparation(generation)
+            throw error
         } catch (error: Exception) {
-            mutex.withLock {
+            failEnrollmentPreparation(generation)
+            MangoLog.warn(MangoLogEvent.TSNET_FAILED, error)
+            throw error
+        }
+        startRuntime(generation, authKey)
+    }
+
+    private suspend fun failEnrollmentPreparation(generation: Long): Unit = withContext(NonCancellable) {
+        mutex.withLock {
+            if (runtimeGeneration == generation) {
                 runtimeStarting = false
                 enrollmentHold = false
                 updateStatusLocked(EmbeddedTsnetPhase.FAILED)
             }
-            MangoLog.warn(MangoLogEvent.TSNET_FAILED, error)
-            throw error
         }
-        startRuntime(authKey)
     }
 
     /**
@@ -451,42 +504,68 @@ internal class EmbeddedTsnetManager(
      * completes discards the half-enrolled state, so the new server never
      * sees keys that were presented to the old one.
      */
-    private fun bindControlUrl(requested: String) {
-        if (!stateStore.hasEnrolledIdentity() && stateStore.controlUrl() != requested) {
+    private fun bindControlUrl(requested: String, firstEnrollment: Boolean) {
+        val registered = stateStore.hasEnrolledIdentity()
+        check(!firstEnrollment || !registered)
+        if (!registered && stateStore.controlUrl() != requested) {
             stateStore.clearIdentity()
             stateStore.setControlUrl(requested)
         }
         _controlUrl.value = stateStore.controlUrl()
     }
 
-    private suspend fun startRuntime(authKey: CharArray?) {
+    private fun reserveRuntimeLocked(): Long {
+        val generation = ++runtimeGeneration
+        runtimeStarting = true
+        updateStatusLocked(EmbeddedTsnetPhase.STARTING)
+        return generation
+    }
+
+    private suspend fun startRuntime(generation: Long, authKey: CharArray?): Unit = withContext(Dispatchers.IO + NonCancellable) {
+        if (!mutex.withLock { runtimeStarting && runtimeGeneration == generation }) return@withContext
         val token = Any()
-        val failureGeneration = mutex.withLock { foregroundFailureGeneration }
         val listener = object : StatusListener {
             override fun onStatus(state: String, authURL: String) {
                 scope.launch { handleBackendStatus(token, state, authURL) }
             }
         }
+        val controlUrl: String
+        val registered: Boolean
         val created = try {
-            withContext(Dispatchers.IO) {
-                check(stateDirectory.mkdirs() || stateDirectory.isDirectory)
-                val controlUrl = stateStore.controlUrl().also { _controlUrl.value = it }
-                backendFactory.create(
-                    stateDirectory = stateDirectory.absolutePath,
-                    hostname = stateStore.nodeName(),
-                    controlUrl = controlUrl,
-                    store = stateStore,
-                    listener = listener,
-                ).let { delegate ->
-                    object : EmbeddedTsnetBackend by delegate {
-                        private val closed = AtomicBoolean(false)
-                        override fun close() { if (closed.compareAndSet(false, true)) delegate.close() }
-                    }
+            check(stateDirectory.mkdirs() || stateDirectory.isDirectory)
+            controlUrl = stateStore.controlUrl()
+            registered = stateStore.hasEnrolledIdentity()
+            val delegate = backendFactory.create(
+                stateDirectory = stateDirectory.absolutePath,
+                hostname = stateStore.nodeName(),
+                controlUrl = controlUrl,
+                store = stateStore,
+                listener = listener,
+            )
+            object : EmbeddedTsnetBackend by delegate {
+                private var closed = false
+
+                @Synchronized
+                override fun start(authKey: String) {
+                    if (!closed) delegate.start(authKey)
+                }
+
+                @Synchronized
+                override fun logout() {
+                    check(!closed)
+                    delegate.logout()
+                }
+
+                @Synchronized
+                override fun close() {
+                    if (closed) return
+                    closed = true
+                    delegate.close()
                 }
             }
         } catch (error: Exception) {
             mutex.withLock {
-                if (foregroundFailureGeneration == failureGeneration) {
+                if (runtimeStarting && runtimeGeneration == generation) {
                     invalidateLeasesLocked(backendToken)
                     runtimeStarting = false
                     enrollmentHold = false
@@ -494,17 +573,22 @@ internal class EmbeddedTsnetManager(
                 }
             }
             MangoLog.warn(MangoLogEvent.TSNET_FAILED, error)
-            return
+            return@withContext
         }
         val accepted = mutex.withLock {
             if (
                 backend == null &&
                 runtimeStarting &&
-                foregroundFailureGeneration == failureGeneration
+                runtimeGeneration == generation
             ) {
                 runtimeStarting = false
                 backend = created
                 backendToken = token
+                backendNeedsLogin = false
+                if (!registrationExists || !registered) enrolledIdentity = registered
+                registrationExists = registered
+                _controlUrl.value = controlUrl
+                created.setActive(appForegroundState.foreground.value)
                 updateStatusLocked(EmbeddedTsnetPhase.STARTING)
                 true
             } else {
@@ -513,30 +597,23 @@ internal class EmbeddedTsnetManager(
         }
         if (!accepted) {
             closeBackend(created)
-            return
+            return@withContext
         }
         MangoLog.info(MangoLogEvent.TSNET_STARTING)
         try {
-            withContext(Dispatchers.IO) {
-                if (authKey == null) {
-                    created.start("")
-                } else {
-                    created.start(authKey.concatToString())
-                }
-            }
+            created.start(authKey?.concatToString().orEmpty())
         } catch (error: Exception) {
-            val close = mutex.withLock {
+            mutex.withLock {
                 if (backend === created) {
                     invalidateLeasesLocked(backendToken)
                     backend = null
                     backendToken = null
                     runtimeStarting = false
                     enrollmentHold = false
+                    closeBackend(created)
                     updateStatusLocked(EmbeddedTsnetPhase.FAILED)
                 }
-                created
             }
-            closeBackend(close)
             MangoLog.warn(tsnetStartFailureEvent(error))
         }
     }
@@ -550,32 +627,29 @@ internal class EmbeddedTsnetManager(
         }
 
     private suspend fun handleBackendStatus(token: Any, rawState: String, authorizationUrl: String) {
-        val registrationStillExists = if (rawState == "needs_login") {
-            stateStore.hasEnrolledIdentity()
-        } else {
-            null
-        }
-        var authorizationUrlToEmit: String? = null
-        var close: EmbeddedTsnetBackend? = null
         mutex.withLock {
             if (token !== backendToken) return
+            backendNeedsLogin = rawState == "needs_login"
             // Merely viewing the device list must never open a browser; login
             // stays an explicit enrollment action.
-            if (authorizationUrl.isNotEmpty() && !browseOnlyLocked()) {
-                authorizationUrlToEmit = authorizationUrl
+            if (authorizationUrl.isNotEmpty() && !browseOnlyLocked() && !loggingOut) {
+                _authorizationUrls.tryEmit(authorizationUrl)
             }
             when (rawState) {
                 "starting" -> updateStatusLocked(EmbeddedTsnetPhase.STARTING)
-                // A registered node reports NoState/NeedsLogin while it loads
+                // A registered node can report NeedsLogin while it loads
                 // its saved state. tsnet requests an authorization URL when a
                 // sign-in is really needed, so until one arrives the node is
                 // still starting and must not look signed out.
-                "needs_login" -> if (registrationStillExists == true && authorizationUrl.isEmpty()) {
-                    updateStatusLocked(EmbeddedTsnetPhase.STARTING)
-                } else {
-                    enrolledIdentity = false
-                    registrationExists = registrationStillExists == true
-                    updateStatusLocked(EmbeddedTsnetPhase.WAITING_FOR_LOGIN)
+                "needs_login" -> {
+                    val registrationStillExists = stateStore.hasEnrolledIdentity()
+                    if (registrationStillExists && authorizationUrl.isEmpty() && !loggingOut) {
+                        updateStatusLocked(EmbeddedTsnetPhase.STARTING)
+                    } else {
+                        enrolledIdentity = false
+                        registrationExists = registrationStillExists
+                        updateStatusLocked(EmbeddedTsnetPhase.WAITING_FOR_LOGIN)
+                    }
                 }
                 "needs_approval" -> updateStatusLocked(EmbeddedTsnetPhase.WAITING_FOR_APPROVAL)
                 "running" -> {
@@ -584,42 +658,42 @@ internal class EmbeddedTsnetManager(
                     registrationExists = true
                     enrollmentHold = false
                     updateStatusLocked(EmbeddedTsnetPhase.ACTIVE)
-                    close = detachIfIdleLocked()
+                    detachIfIdleLocked()?.let { closeBackend(it) }
                     MangoLog.info(MangoLogEvent.TSNET_RUNNING)
                 }
                 "stopped" -> {
-                    close = backend
+                    val close = backend
                     invalidateLeasesLocked(backendToken)
                     backend = null
                     backendToken = null
                     runtimeStarting = false
                     enrollmentHold = false
+                    close?.let { closeBackend(it) }
                     updateStatusLocked(idlePhase())
                 }
                 else -> {
-                    close = backend
+                    val close = backend
                     invalidateLeasesLocked(backendToken)
                     backend = null
                     backendToken = null
                     runtimeStarting = false
                     enrollmentHold = false
+                    close?.let { closeBackend(it) }
                     updateStatusLocked(EmbeddedTsnetPhase.FAILED)
                     MangoLog.warn(MangoLogEvent.TSNET_FAILED)
                 }
             }
         }
-        authorizationUrlToEmit?.let(_authorizationUrls::tryEmit)
-        close?.let(::closeBackend)
     }
 
-    private suspend fun checkNoActiveSessions() {
-        if (mutex.withLock { activeLeases > 0 || pendingAcquires > 0 }) {
+    private fun checkNoActiveSessionsLocked() {
+        if (activeLeases > 0 || pendingAcquires > 0) {
             throw TsnetSessionsActiveException()
         }
     }
 
     private fun detachIfIdleLocked(): EmbeddedTsnetBackend? {
-        if (activeLeases != 0 || pendingAcquires != 0 || enrollmentHold || browseHold) return null
+        if (activeLeases != 0 || pendingAcquires != 0 || enrollmentHold || browseHold || loggingOut) return null
         val current = backend
         backend = null
         backendToken = null
@@ -639,11 +713,13 @@ internal class EmbeddedTsnetManager(
             phase = phase,
             activeSessions = activeLeases,
             authKeyAllowed = !registrationExists,
+            loggingOut = loggingOut,
+            logoutCleanupPending = logoutCleanupPending,
         )
         val converging = phase == EmbeddedTsnetPhase.STARTING ||
             phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN ||
             phase == EmbeddedTsnetPhase.WAITING_FOR_APPROVAL
-        _foregroundRequired.value = (converging && !browseOnlyLocked()) ||
+        _foregroundRequired.value = (converging && !browseOnlyLocked() && !loggingOut) ||
             activeLeases > 0 ||
             pendingAcquires > 0
     }
@@ -652,13 +728,14 @@ internal class EmbeddedTsnetManager(
     private fun browseOnlyLocked(): Boolean =
         browseHold && !enrollmentHold && activeLeases == 0 && pendingAcquires == 0
 
-    private fun closeBackend(value: EmbeddedTsnetBackend) {
+    private suspend fun closeBackend(value: EmbeddedTsnetBackend) = withContext(NonCancellable + Dispatchers.IO) {
         runCatching { value.close() }
+        Unit
     }
 
     /** Settles leases only in the generation being retired; callbacks are not executed in this lock. */
     private fun invalidateLeasesLocked(generation: Any?) {
-        foregroundFailureGeneration++
+        runtimeGeneration++
         pendingRequests.values.forEach { it.complete(Unit) }
         pendingRequests.clear()
         val invalid = leases.values.filter { it.generation === generation }
@@ -666,14 +743,13 @@ internal class EmbeddedTsnetManager(
     }
 
     private suspend fun release(leaseId: Long, generation: Any) {
-        val close = mutex.withLock {
+        mutex.withLock {
             val lease = leases[leaseId] ?: return
             if (lease.generation !== generation) return
             leases.remove(leaseId)
             updateStatusLocked(if (backend != null) _status.value.phase else idlePhase())
-            detachIfIdleLocked()
+            detachIfIdleLocked()?.let { closeBackend(it) }
         }
-        close?.let(::closeBackend)
     }
 
     internal fun releaseAsync(leaseId: Long, generation: Any) {

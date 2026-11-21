@@ -18,7 +18,6 @@ class BiometricSensorInstrumentedTest {
     @get:Rule(order = 1) val compose = createAndroidComposeRule<LockRegressionActivity>()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val model get() = compose.activity.model
-    private fun text(id: Int) = instrumentation.targetContext.getString(id)
 
     @Before fun requireEnrolledDisposableEmulator() {
         compose.waitUntil(30_000) { model.ready.value }
@@ -30,7 +29,7 @@ class BiometricSensorInstrumentedTest {
     @After fun cleanup() { compose.runOnUiThread { model.dispose() } }
 
     private fun prompt() {
-        compose.onNodeWithText(text(R.string.ui_use_biometrics)).performClick()
+        compose.onNodeWithTag("pin_secondary").performClick()
         compose.waitUntil(15_000) { model.lock.biometricRequest != null }
     }
 

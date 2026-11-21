@@ -174,6 +174,76 @@ class HostEditorInstrumentedTest {
         compose.onNodeWithText(text(R.string.jump_add)).assertDoesNotExist()
     }
 
+    @Test fun moshCommandCanBeEditedClearedAndRetainedWhenSwitchingProtocols() {
+        val controller = HostEditorController(HostEditorDraft.from(host()))
+        val arguments = "-p 123 -s -l LANG=en_US.UTF-8"
+        var saved: ConnectionProfile? = null
+        show(controller, onSave = { saved = it.toProfile() })
+
+        open(HostEditorPage.CONNECTION)
+        val commandField = compose.onNodeWithTag("host_editor_mosh_server_command")
+        fun selectProtocol(protocol: ConnectionProtocol) =
+            compose.onNodeWithTag("host_editor_protocol_option_${protocol.ordinal}").performScrollTo().performClick()
+
+        commandField.assertDoesNotExist()
+        selectProtocol(ConnectionProtocol.MOSH)
+        commandField.assertTextContains(DEFAULT_MOSH_SERVER_ARGUMENTS)
+        val reset = compose.onNodeWithTag("host_editor_mosh_reset")
+        reset.assertIsNotEnabled()
+        val field = commandField.getUnclippedBoundsInRoot()
+        val help = compose.onNodeWithText(text(R.string.host_editor_mosh_server_command_help)).getUnclippedBoundsInRoot()
+        val moshNotes = compose.onNodeWithTag("host_editor_mosh_notes").getUnclippedBoundsInRoot()
+        compose.onNodeWithText(text(R.string.host_editor_mosh_requirements)).assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.host_editor_mosh_details)).assertIsDisplayed()
+        val editor = compose.onNodeWithTag("host_editor").getUnclippedBoundsInRoot()
+        assertEquals(field.left, help.left)
+        assertEquals(field.right, help.right)
+        assertTrue(help.top - field.bottom >= 8.dp)
+        assertEquals(field.left, moshNotes.left)
+        assertEquals(field.right, moshNotes.right)
+        assertEquals(editor.bottom - 16.dp, moshNotes.bottom)
+        capture("mosh-connection")
+
+        commandField.performScrollTo().performTextReplacement(arguments)
+        selectProtocol(ConnectionProtocol.SSH)
+        commandField.assertDoesNotExist()
+        selectProtocol(ConnectionProtocol.MOSH)
+        commandField.performScrollTo().assertTextContains(arguments)
+        back()
+        compose.onNodeWithTag("host_editor_save").performClick()
+        compose.runOnIdle { assertEquals("$MOSH_SERVER_COMMAND_PREFIX $arguments", saved?.moshServerCommand) }
+
+        open(HostEditorPage.CONNECTION)
+        commandField.performScrollTo().assertTextContains(arguments)
+        reset.performScrollTo().assertIsEnabled().performClick()
+        commandField.performScrollTo().assertTextContains(DEFAULT_MOSH_SERVER_ARGUMENTS)
+        reset.assertIsNotEnabled()
+        back()
+        compose.onNodeWithTag("host_editor_save").performClick()
+        compose.runOnIdle { assertNull(requireNotNull(saved).moshServerCommand) }
+    }
+
+    @Test fun moshFullCommandCanKeepAndEditAnExistingWrapper() {
+        val original = "authbind mosh-server new -p 123 -s -l LANG=en_US.UTF-8"
+        val edited = original.replace("-p 123", "-p 124")
+        val controller = HostEditorController(HostEditorDraft.from(
+            host().copy(protocol = ConnectionProtocol.MOSH, moshServerCommand = original),
+        ))
+        var saved: ConnectionProfile? = null
+        show(controller, onSave = { saved = it.toProfile() })
+
+        open(HostEditorPage.CONNECTION)
+        val command = compose.onNodeWithTag("host_editor_mosh_server_command")
+        command.performScrollTo().assertTextContains(original)
+        compose.onNodeWithTag("host_editor_mosh_edit_full").performScrollTo().performClick()
+        compose.onNodeWithTag("host_editor_mosh_full_command").assertTextContains(original).performTextReplacement(edited)
+        compose.onNodeWithTag("host_editor_mosh_save_full").performClick()
+        command.performScrollTo().assertTextContains(edited)
+        back()
+        compose.onNodeWithTag("host_editor_save").performClick()
+        compose.runOnIdle { assertEquals(edited, saved?.moshServerCommand) }
+    }
+
     @Test fun snippetAndCreateOrAttachRequireConfirmationInBothDirections() {
         val controller = HostEditorController(HostEditorDraft.from(host()).copy(startupSnippetId = "snippet", workspace = TmuxWorkspace(name = "work")))
         show(controller)

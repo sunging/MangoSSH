@@ -11,6 +11,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.KeyStore
 import java.security.MessageDigest
+import javax.crypto.AEADBadTagException
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import website.sung.mangossh.data.vault.AesGcmCipher
@@ -46,20 +47,28 @@ internal class RemoteDraftStore(
 ) {
     fun save(draft: RemoteDraft) {
         val plain = RemoteDraftCodec.encode(draft)
+        val file = fileFor(draft.profileId, draft.path)
         try {
             if (!directory.isDirectory && !directory.mkdirs()) throw java.io.IOException("Draft directory unavailable")
-            val file = fileFor(draft.profileId, draft.path)
             val sealed = AesGcmCipher.encrypt(key(), plain, associatedData(file))
             val staging = File(directory, file.name + ".tmp")
-            staging.outputStream().use { it.write(sealed.nonce); it.write(sealed.ciphertext) }
-            Files.move(staging.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            try {
+                staging.outputStream().use {
+                    it.write(sealed.nonce)
+                    it.write(sealed.ciphertext)
+                    it.fd.sync()
+                }
+                Files.move(staging.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } finally {
+                staging.delete()
+            }
         } finally {
             plain.fill(0)
         }
-        prune()
+        prune(file)
     }
 
-    /** Null when there is no draft, or when it cannot be read (it is then removed). */
+    /** Null when there is no draft or its data fails authentication or parsing. */
     fun load(profileId: String, path: String): RemoteDraft? {
         val file = fileFor(profileId, path)
         if (!file.isFile) return null
@@ -67,7 +76,7 @@ internal class RemoteDraftStore(
     }
 
     fun delete(profileId: String, path: String) {
-        fileFor(profileId, path).delete()
+        Files.deleteIfExists(fileFor(profileId, path).toPath())
     }
 
     /**
@@ -88,12 +97,16 @@ internal class RemoteDraftStore(
 
     /** Decrypts one draft file; a file that fails authentication or parsing is deleted. */
     private fun read(file: File): RemoteDraft? {
+        // Storage and Keystore failures can be transient. Only invalid data is discarded.
+        val bytes = file.readBytes()
+        if (bytes.size < NONCE_BYTES + 16 || bytes.size > MAX_FILE_BYTES) {
+            file.delete()
+            return null
+        }
         val plain = try {
-            val bytes = file.readBytes()
-            if (bytes.size < NONCE_BYTES + 16 || bytes.size > MAX_FILE_BYTES) throw java.io.IOException("Bad draft")
             AesGcmCipher.decrypt(key(), AesGcmPayload(bytes.copyOfRange(0, NONCE_BYTES), bytes.copyOfRange(NONCE_BYTES, bytes.size)),
                 associatedData(file))
-        } catch (_: Exception) {
+        } catch (_: AEADBadTagException) {
             file.delete()
             return null
         }
@@ -107,8 +120,8 @@ internal class RemoteDraftStore(
         }
     }
 
-    private fun prune() {
-        drafts().sortedByDescending { it.lastModified() }.drop(MAX_DRAFTS).forEach { it.delete() }
+    private fun prune(saved: File) {
+        drafts().filterNot { it == saved }.sortedByDescending { it.lastModified() }.drop(MAX_DRAFTS - 1).forEach { it.delete() }
     }
 
     private fun fileFor(profileId: String, path: String): File {
@@ -145,7 +158,7 @@ internal class RemoteDraftStore(
 /** Versioned binary layout of a draft before encryption. */
 internal object RemoteDraftCodec {
     private const val VERSION = 1
-    private const val MAX_TEXT_BYTES = 256 * 1024
+    const val MAX_TEXT_BYTES = 256 * 1024
 
     fun encode(draft: RemoteDraft): ByteArray {
         val text = draft.text.encodeToByteArray()

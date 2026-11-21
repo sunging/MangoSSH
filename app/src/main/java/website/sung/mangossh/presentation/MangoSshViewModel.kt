@@ -12,16 +12,8 @@ import java.util.UUID
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.updateAndGet
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import website.sung.mangossh.data.drafts.RemoteDraft
-import website.sung.mangossh.data.drafts.RemoteDraftStore
-import website.sung.mangossh.session.TextDiff
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -94,9 +86,6 @@ sealed interface SessionNavigationRequest {
     data class OpenSession(val sessionId: String) : SessionNavigationRequest
 }
 
-/** Unsaved editor text is stored this long after the last keystroke. */
-private const val DRAFT_SAVE_DELAY_MS = 1_500L
-
 /** Progress of a download for another app is published at most this often. */
 private const val OPEN_PROGRESS_INTERVAL_MILLIS = 200L
 
@@ -159,7 +148,13 @@ class MangoSshViewModel @JvmOverloads constructor(
     private val terminalShortcutStore = runtime.terminalShortcuts
     private val appThemeStore = runtime.appTheme
     private val connectionPreferencesStore = runtime.connectionPreferences
-    internal val backupCoordinator = website.sung.mangossh.data.vault.BackupCoordinator(application, vault, viewModelScope, unlocked = { !_appLocked.value }, appVersion = { installedVersionName })
+    internal val backupCoordinator: website.sung.mangossh.data.vault.BackupCoordinator = website.sung.mangossh.data.vault.BackupCoordinator(
+        application, vault, viewModelScope,
+        unlocked = { !runtime.accessState.locked.value },
+        accessGeneration = { runtime.accessState.generation },
+        reauthentication = { cancelled, approved -> appLockCoordinator.requestSensitiveApproval(cancelled, approved) },
+        appVersion = { installedVersionName },
+    )
     val backupOperation = backupCoordinator.state
     private val appLockStore = AppLockStore(application)
     private val updatePreferencesStore = runtime.updatePreferences
@@ -344,10 +339,14 @@ class MangoSshViewModel @JvmOverloads constructor(
 
 
     internal val appLockCoordinator = AppLockCoordinator(appLockStore, runtime.accessState, viewModelScope,
-        onLocked = { backupCoordinator.cancel() }, message = { _userMessage.value = it }, cryptoDispatcher = cryptoDispatcher)
+        onLocked = ::onAppLocked, message = { _userMessage.value = it }, cryptoDispatcher = cryptoDispatcher)
     val appLockConfiguration = appLockCoordinator.configuration
     private val _appLocked = runtime.accessState.locked
     val reauthenticationPending = appLockCoordinator.reauthenticationPending
+    internal val pinVerification = appLockCoordinator.pinVerification
+
+    /** Clears inline PIN feedback as the user edits the entry. */
+    internal fun dismissPinError() = appLockCoordinator.dismissPinError()
 
     private fun authorizeSensitive(override: Boolean? = null, onCancelled: (() -> Unit)? = null, action: () -> Unit): Boolean =
         appLockCoordinator.authorizeSensitive(override, onCancelled, action)
@@ -359,11 +358,6 @@ class MangoSshViewModel @JvmOverloads constructor(
     fun verifySensitiveAction(pin: String) = appLockCoordinator.verifySensitiveAction(pin)
 
     fun setReauthentication(mode: website.sung.mangossh.security.ReauthenticationMode) = appLockCoordinator.setReauthentication(mode)
-
-    fun prepareBackupExport(password: String?, remember: Boolean, includeConfig: Boolean) {
-        if (!authorizeSensitive { prepareBackupExport(password, remember, includeConfig) }) return
-        backupCoordinator.prepareExport(password, remember, includeConfig)
-    }
 
     val appLockBusy = appLockCoordinator.busy
     val appLocked = appLockCoordinator.locked
@@ -394,148 +388,46 @@ class MangoSshViewModel @JvmOverloads constructor(
         _settingsDestination.value = _settingsDestination.value?.parent
     }
 
-    private val _remoteEditor = MutableStateFlow<RemoteEditorUiState?>(null)
-    internal val remoteEditor = _remoteEditor.asStateFlow()
-    private var editorLoading = false
-    private val remoteDrafts = runtime.remoteDrafts
-    private val draftMutex = Mutex()
-    private var draftSaveJob: Job? = null
+    private val remoteEditorCoordinator = RemoteEditorCoordinator(
+        viewModelScope, runtime.remoteDrafts, sessionController::readEditableText, sessionController::saveEditableText,
+        canOpen = { sessionId -> !_appLocked.value && _remoteBrowser.value?.sessionId == sessionId },
+        onOpenFailed = { _userMessage.value = uiText(R.string.editor_failure) },
+        onSaved = ::remoteEditorSaved,
+    )
+    internal val remoteEditor = remoteEditorCoordinator.state
 
     fun editRemoteText(path: String) {
-        val sessionId = _remoteBrowser.value?.sessionId ?: return
-        if (editorLoading) return
-        editorLoading = true
-        viewModelScope.launch {
-            try {
-                val source = sessionController.readEditableText(sessionId, path)
-                val profileId = sessions.value.firstOrNull { it.id == sessionId }?.profileId
-                val stored = profileId?.let { id -> draftStore { load(id, path) } }
-                val recovered = if (stored == null || stored.text == source.text) null else RecoveredDraft(
-                    stored.text,
-                    stored.savedAtEpochMillis,
-                    remoteChanged = !stored.baseDigest.contentEquals(source.digest),
-                    changes = withContext(Dispatchers.Default) { TextDiff.lines(source.text, stored.text)?.let(TextDiff::condense) },
-                )
-                // A stored draft identical to the remote text was saved after all; drop it.
-                if (stored != null && recovered == null) draftWork { delete(stored.profileId, stored.path) }
-                _remoteEditor.value = RemoteEditorUiState(sessionId, source, profileId = profileId, recovered = recovered)
-            } catch (_: Exception) { _userMessage.value = uiText(R.string.editor_failure) }
-            finally { editorLoading = false }
-        }
+        val browser = _remoteBrowser.value ?: return
+        val profileId = browser.profileId ?: sessions.value.firstOrNull { it.id == browser.sessionId }?.profileId
+        remoteEditorCoordinator.open(browser.sessionId, path, profileId)
     }
-    fun changeRemoteDraft(text: String) {
-        val next = _remoteEditor.updateAndGet { if (it?.busy == false && it.recovered == null) it.copy(draft = text) else it } ?: return
-        draftSaveJob?.cancel()
-        draftSaveJob = viewModelScope.launch {
-            delay(DRAFT_SAVE_DELAY_MS)
-            persistDraft(next)
-        }
+
+    fun changeRemoteDraft(text: String) = remoteEditorCoordinator.change(text)
+    fun closeRemoteEditor() = remoteEditorCoordinator.close(discardConfirmed = false, keepSavedDraft = false)
+    internal fun discardAndCloseRemoteEditor() = remoteEditorCoordinator.close(discardConfirmed = true, keepSavedDraft = false)
+    internal fun keepDraftAndCloseRemoteEditor() = remoteEditorCoordinator.close(discardConfirmed = false, keepSavedDraft = true)
+    fun reloadRemoteEditor() = remoteEditorCoordinator.reload()
+    fun restoreRemoteDraft() = remoteEditorCoordinator.restore()
+    fun discardRemoteDraft() = remoteEditorCoordinator.discardRecovered()
+    fun reviewRemoteSave() = remoteEditorCoordinator.review()
+    fun dismissRemoteReview() = remoteEditorCoordinator.dismissReview()
+    fun saveRemoteEditor(alternateName: String?, allowDirect: Boolean) = remoteEditorCoordinator.save(alternateName, allowDirect)
+    internal fun flushRemoteDraft() = remoteEditorCoordinator.flushDraft()
+
+    private fun remoteEditorSaved() {
+        dismissRemotePreview()
+        if (!_appLocked.value) refreshRemoteBrowser()
+        _userMessage.value = uiText(R.string.editor_saved)
     }
-    fun closeRemoteEditor() {
-        val current = _remoteEditor.value ?: return
-        if (current.busy) return
-        draftSaveJob?.cancel()
-        // Leaving discards this edit, but an undecided recovered draft is kept for next time.
-        if (current.recovered == null) current.profileId?.let { id -> draftWork { delete(id, current.source.path) } }
-        _remoteEditor.value = null
-    }
-    fun reloadRemoteEditor() {
-        val current = _remoteEditor.value ?: return
-        draftSaveJob?.cancel()
-        current.profileId?.let { id -> draftWork { delete(id, current.source.path) } }
-        editRemoteText(current.source.path)
-    }
-    /** Puts the recovered draft into the editor; it is re-stored against the current remote text. */
-    fun restoreRemoteDraft() {
-        val restored = _remoteEditor.updateAndGet { state ->
-            state?.recovered?.let { state.copy(draft = it.text, recovered = null) } ?: state
-        } ?: return
-        persistDraft(restored)
-    }
-    fun discardRemoteDraft() {
-        val current = _remoteEditor.value ?: return
-        if (current.recovered == null) return
-        current.profileId?.let { id -> draftWork { delete(id, current.source.path) } }
-        _remoteEditor.value = current.copy(recovered = null)
-    }
-    /** Computes what Save would change; the actual save waits for the user's confirmation. */
-    fun reviewRemoteSave() {
-        val current = _remoteEditor.value ?: return
-        if (current.busy || current.review != null || current.recovered != null) return
-        viewModelScope.launch {
-            val changes = withContext(Dispatchers.Default) { TextDiff.lines(current.source.text, current.draft)?.let(TextDiff::condense) }
-            _remoteEditor.update { if (it != null && !it.busy && it.draft == current.draft) it.copy(review = EditorReview(changes)) else it }
-        }
-    }
-    fun dismissRemoteReview() { _remoteEditor.update { it?.copy(review = null) } }
-    fun saveRemoteEditor(alternateName: String?, allowDirect: Boolean) {
-        val current = _remoteEditor.value?.copy(review = null) ?: return
-        if (current.busy || current.recovered != null) return
-        _remoteEditor.value = current.copy(busy = true, conflict = false, needsDirectApproval = false, failed = false,
-            metadataFailure = false)
-        draftSaveJob?.cancel()
-        viewModelScope.launch {
-            try {
-                sessionController.saveEditableText(current.sessionId, current.source, current.draft, alternateName, allowDirect)
-                current.profileId?.let { id -> draftWork { delete(id, current.source.path) } }
-                _remoteEditor.value = null
-                dismissRemotePreview()
-                refreshRemoteBrowser()
-                _userMessage.value = uiText(R.string.editor_saved)
-                return@launch
-            } catch (_: website.sung.mangossh.session.SourceChangedException) {
-                _remoteEditor.value = current.copy(conflict = true)
-            } catch (_: website.sung.mangossh.session.AtomicReplaceUnavailableException) {
-                _remoteEditor.value = current.copy(needsDirectApproval = true)
-            } catch (_: website.sung.mangossh.session.MetadataPreservationException) {
-                _remoteEditor.value = current.copy(metadataFailure = true)
-            } catch (_: Exception) { _remoteEditor.value = current.copy(failed = true) }
-            // The remote file was not replaced; make sure the edit survives the app being closed.
-            persistDraft(current)
-        }
+
+    private fun onAppLocked() {
+        remoteEditorCoordinator.onLocked()
+        backupCoordinator.cancel()
     }
 
     /** Removes every stored editor draft on this device. */
-    fun clearEditorDrafts() {
-        draftWork {
-            clear()
-            _userMessage.value = uiText(R.string.editor_drafts_cleared)
-        }
-    }
-
-    /** Stores the editor's unsaved text, or removes the stored copy once nothing is unsaved. */
-    private fun persistDraft(state: RemoteEditorUiState) {
-        val profileId = state.profileId ?: return
-        // An undecided recovered draft is never overwritten by the text it would replace.
-        if (state.recovered != null) return
-        val path = state.source.path
-        if (state.draft == state.source.text) {
-            draftWork { delete(profileId, path) }
-            return
-        }
-        val draft = RemoteDraft(profileId, path, state.draft, state.source.digest, System.currentTimeMillis())
-        draftWork { save(draft) }
-    }
-
-    /**
-     * Runs draft store work off the main thread, in call order: the mutex is fair and
-     * [CoroutineStart.UNDISPATCHED] queues on it before this function returns.
-     */
-    private fun draftWork(block: RemoteDraftStore.() -> Unit) {
-        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) { draftStore(block) }
-    }
-
-    private suspend fun <T> draftStore(block: RemoteDraftStore.() -> T): T? = draftMutex.withLock {
-        withContext(Dispatchers.IO) {
-            try {
-                remoteDrafts.block()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                MangoLog.warn(MangoLogEvent.EDITOR_DRAFT_STORE_FAILED, error)
-                null
-            }
-        }
+    fun clearEditorDrafts() = remoteEditorCoordinator.clearDrafts {
+        _userMessage.value = uiText(R.string.editor_drafts_cleared)
     }
 
     private val _remoteBrowser = MutableStateFlow<RemoteBrowserUiState?>(null)
@@ -618,11 +510,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                         )
                     }
                 }
-                // The editor stays open with its text, but saving now needs a new session.
-                _remoteEditor.value?.takeIf { it.sessionId == event.sessionId }?.let { editor ->
-                    draftSaveJob?.cancel()
-                    persistDraft(editor)
-                }
+                remoteEditorCoordinator.onDisconnect(event.sessionId)
                 clearSessionTerminalFontSize(event.sessionId)
             }
         }
@@ -668,7 +556,7 @@ class MangoSshViewModel @JvmOverloads constructor(
         sessionController.stopPortForwardsForProfile(id)
         viewModelScope.launch {
             val removed = vault.removeProfile(id)
-            if (removed == website.sung.mangossh.data.vault.VaultMutationResult.Success) draftWork { deleteProfile(id) }
+            if (removed == website.sung.mangossh.data.vault.VaultMutationResult.Success) remoteEditorCoordinator.deleteProfile(id)
             _userMessage.value = mutationError(removed)
         }
     }
@@ -719,12 +607,13 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     fun disconnect(sessionId: String) {
+        remoteEditorCoordinator.onDisconnect(sessionId)
         sessionController.close(sessionId)
     }
 
-    fun sendTerminalInput(sessionId: String, bytes: ByteArray) {
-        sessionController.send(sessionId, bytes)
-    }
+    /** Links an explicit paste to the running terminal and app-lock generation. */
+    internal fun terminalPasteGeneration(sessionId: String, emulator: TerminalEmulator): Long? =
+        sessionController.terminalPasteGeneration(sessionId, emulator)
 
     fun resizeTerminal(sessionId: String, columns: Int, rows: Int) {
         sessionController.resize(sessionId, columns, rows)
@@ -1058,6 +947,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     /** Lists [path] in the already-open browser. */
     fun navigateRemoteBrowser(path: String) {
         val current = _remoteBrowser.value ?: return
+        if (path != current.path) remoteEditorCoordinator.cancelOpen()
         browserJob?.cancel()
         browserJob = viewModelScope.launch { loadRemoteDirectory(current.sessionId, path) }
     }
@@ -1077,6 +967,8 @@ class MangoSshViewModel @JvmOverloads constructor(
 
     fun closeRemoteBrowser() {
         val current = _remoteBrowser.value
+        remoteEditorCoordinator.cancelReads()
+        remoteEditorCoordinator.flushDraft()
         browserJob?.cancel()
         browserJob = null
         previewJob?.cancel()
@@ -1194,6 +1086,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     /** Loads a read-only text preview of a remote file. */
     fun previewRemoteFile(path: String) {
         val current = _remoteBrowser.value ?: return
+        if (current.preview?.path != path) remoteEditorCoordinator.cancelOpen()
         _remoteBrowser.value = current.copy(preview = RemotePreviewUiState(path = path))
         previewJob?.cancel()
         previewJob = viewModelScope.launch {
@@ -1223,6 +1116,7 @@ class MangoSshViewModel @JvmOverloads constructor(
     }
 
     fun dismissRemotePreview() {
+        remoteEditorCoordinator.cancelOpen()
         previewJob?.cancel()
         previewJob = null
         _remoteBrowser.update { state -> state?.copy(preview = null) }
@@ -1595,6 +1489,7 @@ class MangoSshViewModel @JvmOverloads constructor(
                     _userMessage.value = uiText(R.string.embedded_tsnet_logout_complete)
                 }
                 .onFailure { error ->
+                    if (error is CancellationException) throw error
                     _userMessage.value = uiText(
                         if (error is TsnetSessionsActiveException) {
                             R.string.embedded_tsnet_logout_sessions_active
@@ -1632,18 +1527,11 @@ class MangoSshViewModel @JvmOverloads constructor(
             _userMessage.value = uiText(R.string.message_webdav_invalid_configuration)
             return
         }
-        viewModelScope.launch {
-            val saved = vault.saveWebDavConfig(config)
-            _userMessage.value = uiText(if (saved.isSuccess) R.string.message_webdav_saved else R.string.backup_error_storage)
-            backupCoordinator.refreshPasswords()
-        }
+        backupCoordinator.changeWebDavConfig(config)
     }
 
-    fun clearWebDavConfig() {
-        viewModelScope.launch {
-            if (vault.saveWebDavConfig(null).isSuccess) backupCoordinator.refreshPasswords()
-        }
-    }
+    /** Removes the destination through the same approval path as a destination edit. */
+    fun clearWebDavConfig() = backupCoordinator.changeWebDavConfig(null)
 
     /** PIN derivation and grant ownership are shared with isolated security regression fixtures. */
     fun configureAppPin(pin: String) = appLockCoordinator.configurePin(pin)

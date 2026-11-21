@@ -115,7 +115,10 @@ class MangoSessionRuntime(context: Context, val appForegroundState: AppForegroun
     val installedAppInfo = context.applicationContext.installedAppInfo()
 
     /** Process-wide outbound-only Tailnet node, started only for explicit TSNET work. */
-    internal val embeddedTsnetManager = EmbeddedTsnetManager(context.applicationContext)
+    internal val embeddedTsnetManager = EmbeddedTsnetManager(
+        context.applicationContext,
+        appForegroundState = appForegroundState,
+    )
 
     /** Application lock state persists across activity recreation, like live sessions. */
     internal val accessState = website.sung.mangossh.security.AppAccessState(

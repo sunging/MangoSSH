@@ -71,11 +71,17 @@ terminal appearance and network routes.
 
 Requires Android 8.0 (API 26) or later.
 
+<p>
+  <a href="https://f-droid.org/packages/website.sung.mangossh/">
+    <img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80">
+  </a>
+</p>
+
+- **F-Droid**: install from
+  [F-Droid](https://f-droid.org/packages/website.sung.mangossh/).
 - **GitHub Releases**: download `MangoSSH-v<version>.apk` from the
   [latest release](https://github.com/sunging/MangoSSH/releases/latest). Each
   release publishes a `SHA256SUMS` file for verifying the download.
-- **F-Droid**: coming soon.
-  <!-- TODO: add F-Droid badge and link once listed -->
 
 ### Distributions
 
@@ -83,7 +89,7 @@ MangoSSH is built in two flavors from the same source:
 
 | | `github` | `fdroid` |
 | --- | --- | --- |
-| Where | GitHub Releases | F-Droid (coming soon) |
+| Where | [GitHub Releases](https://github.com/sunging/MangoSSH/releases/latest) | [F-Droid](https://f-droid.org/packages/website.sung.mangossh/) |
 | In-app updates | Checks GitHub Releases, verifies SHA-256, hands off to the system installer | Not included, and no install-packages permission |
 
 ## Privacy

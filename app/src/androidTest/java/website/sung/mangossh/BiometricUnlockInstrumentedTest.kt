@@ -4,7 +4,6 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import java.security.KeyStore
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -32,8 +31,7 @@ class BiometricUnlockInstrumentedTest {
                     assertTrue(model.lock.locked.value)
                     model.lock.unlockWithPin(model.pin)
                 }
-                compose.waitUntil(15_000) { !model.lock.busy.value }
-                assertFalse(model.lock.locked.value)
+                compose.waitUntil(15_000) { !model.lock.busy.value && !model.lock.locked.value }
             }
         } finally { compose.runOnUiThread { model.dispose() } }
     }
@@ -91,7 +89,7 @@ class BiometricUnlockInstrumentedTest {
         val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
         try {
             compose.runOnUiThread { model.lock.lock() }
-            compose.onNodeWithText(instrumentation.targetContext.getString(R.string.ui_use_biometrics)).performClick()
+            compose.onNodeWithTag("pin_secondary").performClick()
             if (BiometricManager.from(compose.activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS) {
                 compose.waitUntil(15_000) {
                     instrumentation.uiAutomation.rootInActiveWindow?.let { root ->
@@ -105,8 +103,7 @@ class BiometricUnlockInstrumentedTest {
                 compose.waitUntil(15_000) { model.lock.biometricRequest == null }
             }
             assertTrue(model.lock.locked.value)
-            compose.onNode(hasSetTextAction()).performTextInput(model.pin)
-            compose.onNodeWithText(instrumentation.targetContext.getString(R.string.ui_unlock_with_pin)).performClick()
+            model.pin.forEach { digit -> compose.onNodeWithTag("pin_digit_$digit").performScrollTo().performClick() }
             compose.waitUntil(15_000) { !model.lock.locked.value }
         } finally { compose.runOnUiThread { model.dispose() } }
     }

@@ -2,6 +2,8 @@ package website.sung.mangossh.session.ssh
 
 import java.io.Closeable
 import java.io.IOException
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -36,6 +38,21 @@ import website.sung.mangossh.core.MangoLogEvent
 
 /** Prompt fields contain remote text and must never be included in logs or diagnostics. */
 internal class SshPromptField(val text: String, val echo: Boolean)
+
+/** Identifies the verified public key without retaining its encoded bytes. */
+internal data class SshHostKey(val algorithm: String, val fingerprint: String) {
+    override fun toString(): String = "SshHostKey(<redacted>)"
+
+    companion object {
+        fun from(algorithm: String, key: ByteArray): SshHostKey {
+            val digest = MessageDigest.getInstance("SHA-256").digest(key)
+            return SshHostKey(algorithm, "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(digest))
+        }
+    }
+}
+
+/** The account and peer key of one successfully authenticated transport generation. */
+internal class AuthenticatedSshIdentity(val username: String, val hostKey: SshHostKey)
 
 /** Credential callbacks are suspended inside the owning connection's cancellable task. */
 internal interface SshCredentials {
@@ -85,6 +102,9 @@ internal class SshConnection(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val transport = AtomicReference<Transport?>()
     private val client = AtomicReference<SshClient?>()
+    @Volatile private var connectedHostKey: SshHostKey? = null
+    private val authenticated = AtomicReference<AuthenticatedSshIdentity?>()
+    val authenticatedIdentity: AuthenticatedSshIdentity? get() = authenticated.get()
     private val channels = ConcurrentHashMap.newKeySet<SshChannel>()
     private val files = ConcurrentHashMap.newKeySet<SshFiles>()
     private var socketRoute: SshSocketRoute? = null
@@ -161,12 +181,17 @@ internal class SshConnection(
      * Connects directly or over a previous hop without opening a local listener.
      * [trustedHostKeyFamilies] are the key types already trusted for this endpoint;
      * their algorithms are negotiated first.
+     * Transport setup has its own timeout. The handshake budget includes the
+     * interactive host-key reply.
+     * [expectedHostKey] pins a replacement transport to an already verified peer.
      */
-    suspend fun connect(timeoutMillis: Long, transportTimeoutMillis: Long = timeoutMillis,
+    suspend fun connect(transportTimeoutMillis: Long,
         trustedHostKeyFamilies: Set<String> = emptySet(),
-        verify: suspend (String, ByteArray) -> Boolean) {
+        handshakeTimeoutMillis: Long = APP_HANDSHAKE_TIMEOUT_MILLIS,
+        expectedHostKey: SshHostKey? = null,
+        verify: suspend (SshHostKey, ByteArray) -> Boolean) {
         try {
-            withTimeout(timeoutMillis) {
+            withTimeout(transportTimeoutMillis + handshakeTimeoutMillis) {
                 owned {
                     val factory = customTransport ?: socketRoute?.let { route -> TransportFactory {
                         withContext(Dispatchers.IO) {
@@ -178,6 +203,7 @@ internal class SshConnection(
                     } } ?: through?.clientOrThrow()?.openDirectTcpipTransport(hostname, port)
                         ?: if (through == null) KtorTcpTransportFactory(hostname, port)
                         else throw SshFailure(SshFailure.Category.CLOSED)
+                    val verifiedKey = AtomicReference<SshHostKey?>()
                     val config = SshClientConfig {
                         transportFactory = TransportFactory {
                             var candidate: Transport? = null
@@ -196,10 +222,17 @@ internal class SshConnection(
                                 override suspend fun read(count: Int): ByteArray = opened.read(count).also { lastPacketReceivedNanos = System.nanoTime() }
                             }
                         }
+                        handshakeTimeoutMs = handshakeTimeoutMillis
                         hostKeyVerifier = object : HostKeyVerifier {
-                            override suspend fun verify(key: PublicKey): Boolean = verify(key.type, key.encoded.copyOf())
+                            override suspend fun verify(key: PublicKey): Boolean {
+                                val presented = SshHostKey.from(key.type, key.encoded)
+                                if (expectedHostKey != null && presented != expectedHostKey) return false
+                                if (!verify(presented, key.encoded.copyOf())) return false
+                                verifiedKey.compareAndSet(null, presented)
+                                return true
+                            }
                         }
-                        applyMangoAlgorithmPolicy(legacyAlgorithms, trustedHostKeyFamilies)
+                        applyMangoAlgorithmPolicy(legacyAlgorithms, expectedHostKey?.let { setOf(it.algorithm) } ?: trustedHostKeyFamilies)
                         // Each channel may buffer one window of unread data. Shells keep the
                         // previous 64 KiB; SFTP gets enough for bulk transfers on slower links.
                         sessionWindowSize = 64 * 1024
@@ -209,11 +242,14 @@ internal class SshConnection(
                     check(client.compareAndSet(null, active)) { "Connection already started" }
                     currentCoroutineContext().ensureActive()
                     when (val result = active.connect()) {
-                        ConnectResult.Success -> scope.launch {
-                            active.disconnectedFlow.collect { cause ->
-                                monitors.forEach { it(if (cause == null) null else SshFailure(SshFailure.Category.CLOSED)) }
+                        ConnectResult.Success -> {
+                            connectedHostKey = checkNotNull(verifiedKey.get())
+                            scope.launch {
+                                active.disconnectedFlow.collect { cause ->
+                                    monitors.forEach { it(if (cause == null) null else SshFailure(SshFailure.Category.CLOSED)) }
+                                }
                             }
-                        }.let { Unit }
+                        }
                         is ConnectResult.HostKeyRejected -> throw SshFailure(SshFailure.Category.HOST_KEY)
                         is ConnectResult.AlgorithmMismatch -> throw SshFailure(SshFailure.Category.ALGORITHMS)
                         else -> throw SshFailure(SshFailure.Category.CONNECT, result.failureDetail())
@@ -233,8 +269,13 @@ internal class SshConnection(
         owned {
             val handler = SshAuthenticationHandler(credentials, legacyAlgorithms, banner)
             handler.resolve(clientOrThrow().authenticate(username, handler)).also { success ->
-                if (!success) MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED,
-                    SshAuthenticationFailure(SshAuthenticationFailure.Category.REJECTED, handler.stage))
+                if (success) {
+                    currentCoroutineContext().ensureActive()
+                    authenticated.compareAndSet(null, AuthenticatedSshIdentity(username, checkNotNull(connectedHostKey)))
+                } else {
+                    MangoLog.warn(MangoLogEvent.SSH_AUTH_FAILED,
+                        SshAuthenticationFailure(SshAuthenticationFailure.Category.REJECTED, handler.stage))
+                }
             }
         }
     } catch (cancelled: CancellationException) {
@@ -331,6 +372,8 @@ internal class SshConnection(
     }
 
     private companion object {
+        // The full user trust prompt can take five minutes. Leave time for key exchange.
+        const val APP_HANDSHAKE_TIMEOUT_MILLIS = 330_000L
         val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 

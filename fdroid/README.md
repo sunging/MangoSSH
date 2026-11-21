@@ -1,12 +1,13 @@
 # F-Droid distribution
 
-The F-Droid build recipe and srclib definitions are maintained in
+MangoSSH is published on
+[F-Droid](https://f-droid.org/packages/website.sung.mangossh/). The
+authoritative build recipe
+([`metadata/website.sung.mangossh.yml`](https://gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/website.sung.mangossh.yml))
+and srclib definitions are maintained in
 [fdroiddata](https://gitlab.com/fdroid/fdroiddata), not duplicated in this
-application repository. Follow the
-[MangoSSH inclusion merge request](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/47819)
-for the reviewed recipe, CI results, and inclusion status. After it is merged,
-use `metadata/website.sung.mangossh.yml` in fdroiddata as the authoritative
-recipe. The old submission bundle was removed to avoid stale copies.
+application repository. The old submission bundle was removed to avoid stale
+copies.
 
 This repository still owns the inputs used by that recipe:
 

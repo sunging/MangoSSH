@@ -16,7 +16,7 @@ object RemoteOperationRules {
         if (platform == RemotePlatform.WINDOWS) {
             require(name.none { it.code < 32 || it in "\\<>:\"|?*" })
             require(!name.endsWith('.') && !name.endsWith(' '))
-            val base = name.substringBefore('.').uppercase(java.util.Locale.ROOT)
+            val base = name.substringBefore('.').trimEnd(' ').uppercase(java.util.Locale.ROOT)
             require(base !in setOf("CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$") &&
                 !Regex("(COM|LPT)[1-9¹²³]").matches(base))
         }
@@ -39,6 +39,37 @@ object RemoteOperationRules {
 
     /** Parses only an explicit three/four-digit octal mode. */
     fun mode(text: String): Int? = text.takeIf { Regex("[0-7]{3,4}").matches(it) }?.toIntOrNull(8)
+}
+
+/** Validates names chosen for remote writes without changing any component. */
+internal object RemoteWriteNames {
+    fun isValid(name: String, platform: RemotePlatform): Boolean = try {
+        requireName(name, platform)
+        true
+    } catch (_: RemoteOperationException) { false }
+
+    fun requireName(name: String, platform: RemotePlatform): String {
+        try {
+            require(name.length <= 255)
+            RemoteOperationRules.requireName(name, platform)
+            require(Charsets.UTF_8.newEncoder().canEncode(name))
+            require(platform == RemotePlatform.WINDOWS || name.encodeToByteArray().size <= 255)
+        } catch (_: IllegalArgumentException) {
+            throw RemoteOperationException(RemoteOperationFailure.INVALID_NAME)
+        }
+        return name
+    }
+
+    /** Checks the complete upload manifest before any target directory is created. */
+    fun requireTree(rootName: String, directories: List<String>, files: Sequence<String>, platform: RemotePlatform) {
+        requireName(rootName, platform)
+        val names = if (platform == RemotePlatform.WINDOWS) mutableSetOf<String>() else null
+        (directories.asSequence() + files).forEach { relative ->
+            relative.split('/').forEach { requireName(it, platform) }
+            if (names != null && !names.add(buildString(relative.length) { relative.forEach { append(it.uppercaseChar()) } }))
+                throw RemoteOperationException(RemoteOperationFailure.INVALID_NAME)
+        }
+    }
 }
 
 /** Only these user-visible operations may change a remote tree. */

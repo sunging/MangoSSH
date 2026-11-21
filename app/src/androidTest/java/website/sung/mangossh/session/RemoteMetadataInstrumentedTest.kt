@@ -17,11 +17,43 @@ class RemoteMetadataInstrumentedTest {
         val port = args.getString(argument)?.toIntOrNull()
         if (args.getString("requireFixtures") == "true") assertNotNull(argument, port)
         assumeTrue(port != null)
-        val connection = SshConnection("127.0.0.1", port!!)
+        val connection = SshConnection(args.getString("fixtureHost") ?: "127.0.0.1", port!!)
         try {
             connection.connect(10_000) { _, _ -> true }
             assertTrue(connection.authenticate("fixture", object : SshCredentials {})); block(connection)
         } finally { connection.close() }
+    }
+    @Test fun uploadAndEditorSaveAsCommitWithVerifiedOwnerOnlyMode() = fixture("fixturePort") { connection ->
+        val files = RemoteFileClient()
+        val name = UUID.randomUUID().toString()
+        val path = "/$name"
+        val copyName = "$name-copy"
+        BlockingOperation().use { control ->
+            val token = UUID.randomUUID().toString()
+            val stage = files.reserveTemporary(connection, "/", token, control)
+            files.upload(connection, "sample".byteInputStream(), "/", RemoteFilePaths.nameOf(stage), 0, 6, 1024, control) { _, _ -> }
+            files.commitTemporary(connection, stage, path, files.inspectTarget(connection, path, control), false, control)
+            val source = files.readEditable(connection, path, control)
+            assertEquals(0x180, source.target.permissions?.and(0xfff))
+            files.saveEditable(connection, source, "changed", copyName, false, control)
+            val saved = files.readEditable(connection, "/$copyName", control)
+            assertEquals("changed", saved.text)
+            assertEquals(0x180, saved.target.permissions?.and(0xfff))
+            assertEquals("sample", files.readEditable(connection, path, control).text)
+        }
+    }
+
+    @Test fun broadStageModeBlocksUploadBeforeWriting() = fixture("fixturePort") { connection ->
+        val files = RemoteFileClient()
+        BlockingOperation().use { control ->
+            val stage = files.reserveTemporary(connection, "/", UUID.randomUUID().toString(), control)
+            val client = connection.openFiles()
+            try { client.setstat(stage, SshFileAttributes(permissions = 0x1a4)) } finally { client.close() }
+            assertSuspendingThrows(MetadataPreservationException::class.java) {
+                files.upload(connection, "sample".byteInputStream(), "/", RemoteFilePaths.nameOf(stage), 0, 6, 1024, control) { _, _ -> }
+            }
+            assertEquals(0L, files.identity(connection, stage, control).size)
+        }
     }
     @Test fun replacementPreservesRealOwnershipAndSpecialMode() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("fixtureOwnership") == "true")

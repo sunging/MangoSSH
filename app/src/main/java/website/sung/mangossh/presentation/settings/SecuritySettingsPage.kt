@@ -1,21 +1,18 @@
 package website.sung.mangossh.presentation.settings
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -23,11 +20,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import website.sung.mangossh.R
 import website.sung.mangossh.domain.AppLockDelay
+import website.sung.mangossh.presentation.ConfigurePinDialog
 import website.sung.mangossh.ui.components.MangoPreferenceGroup
 import website.sung.mangossh.ui.components.MangoSectionHeader
 import website.sung.mangossh.ui.components.MangoSettingsCard
@@ -44,6 +40,7 @@ internal fun SecuritySettingsPage(
     var showPinEditor by rememberSaveable { mutableStateOf(false) }
     var confirmClearDrafts by rememberSaveable { mutableStateOf(false) }
     val lock = state.lock
+    LaunchedEffect(state.lockBusy) { if (state.lockBusy) showPinEditor = false }
 
     LazyColumn(
         modifier = modifier,
@@ -67,13 +64,27 @@ internal fun SecuritySettingsPage(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    stringResource(R.string.ui_the_pin_is_stored_only_on_this_device_as_a_salted_verifier_and_cannot_be),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (lock.pinConfigured) {
+                    Text(
+                        stringResource(R.string.app_lock_scope),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { showPinEditor = true }) {
+                    OutlinedButton(onClick = { showPinEditor = true }, enabled = !state.lockBusy) {
                         Text(if (lock.pinConfigured) stringResource(R.string.ui_change_pin) else stringResource(R.string.ui_set_pin))
                     }
                     if (lock.pinConfigured) {
                         Button(onClick = callbacks.onLockNow) { Text(stringResource(R.string.ui_lock_now)) }
-                        TextButton(onClick = callbacks.onClearAppLock) { Text(stringResource(R.string.common_close)) }
+                        TextButton(onClick = callbacks.onClearAppLock, enabled = !state.lockBusy) {
+                            Text(stringResource(R.string.common_close))
+                        }
                     }
                 }
             }
@@ -89,11 +100,14 @@ internal fun SecuritySettingsPage(
                             website.sung.mangossh.security.ReauthenticationMode.EVERY_ACTION -> R.string.reauthentication_every_action
                             website.sung.mangossh.security.ReauthenticationMode.FIVE_MINUTES -> R.string.reauthentication_five_minutes
                         }) }, onSelect = callbacks.onSetReauthentication,
-                        supportingText = stringResource(R.string.reauthentication_scope))
+                        supportingText = stringResource(R.string.reauthentication_scope),
+                        enabled = !state.lockBusy,
+                    )
                     SettingsSwitchRow(
                         title = stringResource(R.string.ui_allow_biometric_unlock),
                         checked = lock.biometricEnabled,
                         onCheckedChange = callbacks.onSetBiometricEnabled,
+                        enabled = !state.lockBusy,
                     )
                     SettingsChoiceRow(
                         label = stringResource(R.string.settings_security_auto_lock_title),
@@ -101,6 +115,7 @@ internal fun SecuritySettingsPage(
                         selected = lock.autoLockDelay,
                         optionLabel = { it.label() },
                         onSelect = callbacks.onSetAutoLockDelay,
+                        enabled = !state.lockBusy,
                         supportingText = stringResource(R.string.settings_security_auto_lock_summary),
                         optionTestTag = { "settings_auto_lock_${it.preferenceValue}" },
                         modifier = Modifier.testTag("settings_auto_lock_control"),
@@ -143,12 +158,12 @@ internal fun SecuritySettingsPage(
         )
     }
 
-    if (showPinEditor) {
-        AppPinDialog(
+    if (showPinEditor && !state.lockBusy) {
+        ConfigurePinDialog(
             onDismiss = { showPinEditor = false },
             onConfirm = { pin ->
-                callbacks.onConfigurePin(pin)
                 showPinEditor = false
+                callbacks.onConfigurePin(pin)
             },
         )
     }
@@ -163,43 +178,3 @@ private fun AppLockDelay.label(): String = stringResource(
         AppLockDelay.FIVE_MINUTES -> R.string.settings_security_auto_lock_5_minutes
     },
 )
-
-@Composable
-private fun AppPinDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var pin by remember { mutableStateOf("") }
-    var confirmation by remember { mutableStateOf("") }
-    val valid = pin.length in 4..12 && pin.all(Char::isDigit) && pin == confirmation
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.ui_set_app_pin)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(R.string.ui_the_pin_is_stored_only_on_this_device_as_a_salted_verifier_and_cannot_be), style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = { pin = it.filter(Char::isDigit).take(12) },
-                    label = { Text(stringResource(R.string.ui_4_12_digit_pin)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-                OutlinedTextField(
-                    value = confirmation,
-                    onValueChange = { confirmation = it.filter(Char::isDigit).take(12) },
-                    label = { Text(stringResource(R.string.ui_confirm_pin)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    visualTransformation = PasswordVisualTransformation(),
-                    isError = confirmation.isNotEmpty() && confirmation != pin,
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(pin) }, enabled = valid) { Text(stringResource(R.string.common_save)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
-    )
-}

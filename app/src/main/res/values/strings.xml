@@ -25,6 +25,7 @@
     <string name="embedded_tsnet_browser_login">Sign in with browser</string>
     <string name="embedded_tsnet_auth_key_login">Use Auth Key</string>
     <string name="embedded_tsnet_logout">Sign out</string>
+    <string name="embedded_tsnet_status_logging_out">Signing out…</string>
     <string name="embedded_tsnet_auth_key_title">Use a one-time Auth Key</string>
     <string name="embedded_tsnet_auth_key_explanation">The key is passed directly to the embedded node. It is not saved in app state, the vault, backups, or logs. A failed attempt requires entering it again.</string>
     <string name="embedded_tsnet_auth_key_label">Auth Key</string>
@@ -156,6 +157,12 @@
     <string name="terminal_theme_solarized_light" translatable="false">Solarized Light</string>
     <string name="terminal_theme_custom">Custom (%1$s)</string>
     <string name="terminal_shortcut_paste">Paste</string>
+    <string name="terminal_paste_confirm_title">Paste into terminal?</string>
+    <string name="terminal_paste_target">%1$s %2$s · %3$s</string>
+    <string name="terminal_paste_size">%1$d bytes of clipboard text</string>
+    <string name="terminal_paste_preview_shortened">The preview shows only the beginning. Pasting sends the full text.</string>
+    <string name="terminal_paste_blocked_title">Cannot paste clipboard text</string>
+    <string name="terminal_paste_blocked_message">The clipboard text contains control characters or invalid text that cannot be pasted safely.</string>
     <string name="terminal_shortcuts_rows">Toolbar rows</string>
     <string name="terminal_shortcuts_one_row">Single row</string>
     <string name="terminal_shortcuts_two_rows">Two rows</string>
@@ -195,6 +202,7 @@
     <string name="terminal_shortcut_character">Character</string>
     <string name="terminal_shortcut_key_character">Single printable ASCII character</string>
     <string name="terminal_shortcut_key_special">Special key</string>
+    <string name="terminal_shortcut_select_key">Select key</string>
     <string name="terminal_shortcut_error_label">Use 1–16 characters for a custom label, or leave it empty to use the built-in label.</string>
     <string name="terminal_shortcut_error_text_label">Text shortcuts require a 1–16 character label.</string>
     <string name="terminal_shortcut_error_text">Enter 1–256 characters of non-secret text.</string>
@@ -290,7 +298,23 @@
     <string name="message_pin_invalid" tools:ignore="PluralsCandidate">PIN must contain %1$d to %2$d digits.</string>
     <string name="message_app_lock_disabled">App lock disabled.</string>
     <string name="message_app_pin_required">Set an app PIN first.</string>
-    <string name="message_pin_incorrect">Incorrect PIN.</string>
+    <string name="message_pin_incorrect">Incorrect PIN. Try again.</string>
+    <string name="pin_enter_title">Enter PIN</string>
+    <string name="pin_new_title">Enter new PIN</string>
+    <string name="pin_confirm_title">Re-enter PIN</string>
+    <string name="pin_verify_identity">Verify identity</string>
+    <string name="pin_unlock">Unlock</string>
+    <string name="pin_verify">Verify</string>
+    <string name="pin_next">Next</string>
+    <string name="pin_mismatch">PINs don’t match. Try again.</string>
+    <string name="pin_entry_length">%1$d–%2$d digits</string>
+    <string name="pin_entry_delete_digit">Delete digit</string>
+    <string name="pin_entry_clear">Clear PIN</string>
+    <string name="pin_entry_paste">Paste</string>
+    <plurals name="pin_entry_count">
+        <item quantity="one">%1$d digit entered</item>
+        <item quantity="other">%1$d digits entered</item>
+    </plurals>
 
     <!-- Main application UI migrated from fixed Compose literals. -->
     <string name="common_cancel">Cancel</string>
@@ -313,14 +337,12 @@
     <string name="common_start">Start</string>
     <string name="common_stop">Stop</string>
     <string name="common_submit">Submit</string>
-    <string name="ui_4_12_digit_pin">4–12 digit PIN</string>
     <string name="ui_a_snippet_selected_in_the_host_editor_is_sent_automatically_when_the_she">A snippet selected in the host editor is sent automatically when the shell opens.</string>
     <string name="ui_a_socks5_proxy_does_not_need_a_destination_host_or_port">A SOCKS5 proxy does not need a destination host or port.</string>
     <string name="ui_active_sessions">Active sessions</string>
     <string name="ui_add_an_ssh_mosh_or_tailnet_host_profile_keys_are_managed_and_shared_sepa">Add an SSH, Mosh, or Tailnet host profile. Keys are managed and shared separately once the secure vault is available.</string>
     <string name="ui_allow_biometric_unlock">Allow biometric unlock</string>
     <string name="ui_app_lock_sync_and_tailnet">Appearance, terminal, security, and more</string>
-    <string name="ui_app_pin">App PIN</string>
     <string name="ui_app_pin_is_enabled_unlocking_is_required_when_returning_to_the_foregroun">App PIN is enabled. Unlocking is required when returning to the foreground; the local vault remains encrypted by Android Keystore.</string>
     <string name="ui_app_protection">App protection</string>
     <string name="ui_append_newline_automatically">Append newline automatically</string>
@@ -337,7 +359,6 @@
     <string name="ui_closed">Closed</string>
     <string name="ui_completed">Completed</string>
     <string name="ui_configure_webdav">Configure WebDAV</string>
-    <string name="ui_confirm_pin">Confirm PIN</string>
     <string name="ui_connected">Connected</string>
     <string name="ui_connecting">Connecting…</string>
     <string name="ui_connecting_2">Connecting</string>
@@ -382,8 +403,6 @@
     <string name="ui_local_listen_port">Local listen port</string>
     <string name="ui_local_remote_and_socks5_forwards_attach_to_an_open_ssh_session_and_stop">Local, remote, and SOCKS5 forwards can start independently or reuse an existing SSH or Mosh session. Active forwards keep running after you close the terminal. Stop them on this page.</string>
     <string name="ui_lock_now">Lock now</string>
-    <string name="ui_mangossh_is_locked">MangoSSH is locked</string>
-    <string name="ui_mosh_uses_a_gpl_3_0_or_later_native_client_its_source_and_license_are_in">Mosh uses a GPL-3.0-or-later native client; its source and license are included with the project. It requires mosh-server and reachable UDP (default ports 60000–61000). MangoSSH keeps an authenticated SSH companion for files, resource queries, and port forwarding; agent forwarding remains unavailable.</string>
     <string name="ui_name">Name</string>
     <string name="ui_name_optional">Name (optional)</string>
     <string name="ui_network_route">Network route</string>
@@ -442,7 +461,6 @@
     <string name="ui_already_trusted_keys">Already trusted:</string>
     <string name="ui_trust_additional_key">Also trust this key</string>
     <string name="ui_server_resources">Server resources</string>
-    <string name="ui_set_app_pin">Set app PIN</string>
     <string name="ui_set_pin">Set PIN</string>
     <string name="ui_shared_keys_and_agent">Shared keys and passwords</string>
     <string name="ui_shared_private_key">Shared private key</string>
@@ -469,8 +487,6 @@
     <string name="ui_transferring">Transferring</string>
     <string name="ui_trust_and_connect">Trust and connect</string>
     <string name="ui_type">Type</string>
-    <string name="ui_unlock_with_pin">Unlock with PIN</string>
-    <string name="ui_unlock_with_your_app_pin">Unlock with your app PIN.</string>
     <string name="ui_upload_file">Upload file</string>
     <string name="ui_upload_folder">Upload folder</string>
     <string name="ui_upload_to_this_directory">Upload to this directory</string>
@@ -745,9 +761,20 @@
     <string name="transfer_local_no_atomic">The selected local file already exists. If direct overwrite is interrupted, the file may be left incomplete. Save as creates a new file and preserves the original.</string>
     <string name="editor_direct">Direct overwrite</string>
     <string name="editor_direct_risk">Direct overwrite can leave a partial file if interrupted. Replace the original anyway?</string>
-    <string name="editor_failure">Unable to edit or save this file. Only complete UTF-8 text up to 128 KiB is supported. Your draft is kept, encrypted on this device.</string>
+    <string name="editor_failure">Unable to open, reload, or save this file. The editor supports complete UTF-8 text files up to 128 KiB.</string>
     <string name="editor_unsaved">Unsaved changes</string>
-    <string name="editor_discard_detail">Unsaved changes stay encrypted on this device until you save or discard them. Discard them now?</string>
+    <string name="editor_discard_detail">Discard the unsaved edits and remove the draft from this device?</string>
+    <string name="editor_reload_detail">Discard the draft after the remote text has loaded successfully?</string>
+    <string name="editor_keep_and_close">Keep draft and close</string>
+    <string name="editor_disconnected">The session ended. You can keep or discard the draft here and reopen the remote file after reconnecting.</string>
+    <string name="editor_size_limit">The remote file limit is 128 KiB, including its UTF-8 byte order mark and line endings. Reduce the text before saving.</string>
+    <string name="editor_draft_pending">Draft changes waiting to be stored on this device</string>
+    <string name="editor_draft_writing">Storing encrypted draft on this device…</string>
+    <string name="editor_draft_stored">Current draft stored encrypted on this device</string>
+    <string name="editor_draft_failed">Unable to update the stored draft. The current text is still in this editor.</string>
+    <string name="editor_draft_delete_failed">Unable to remove the stored draft. You can retry discarding it.</string>
+    <string name="editor_draft_last_saved_at">Last successful draft save: %1$s</string>
+    <string name="editor_draft_retry">Retry storing draft</string>
     <string name="editor_discard">Discard draft</string>
     <string name="editor_new_name">New file name</string>
     <string name="editor_saved">Remote file saved</string>
@@ -788,6 +815,15 @@
     <string name="host_editor_back">Back</string>
     <string name="host_editor_basic">Basic information</string>
     <string name="host_editor_connection">Connection and authentication</string>
+    <string name="host_editor_mosh_server_arguments">Mosh server options</string>
+    <string name="host_editor_mosh_server_command_help">Options follow mosh-server new. Clear them to use the defaults.</string>
+    <string name="host_editor_mosh_server_command_error">Enter a single line without null characters.</string>
+    <string name="host_editor_mosh_edit_full_command">Edit full command</string>
+    <string name="host_editor_mosh_restore_defaults">Restore defaults</string>
+    <string name="host_editor_mosh_custom_command">Custom Mosh command</string>
+    <string name="host_editor_mosh_full_command_help">Enter the complete server command, including any wrapper such as authbind.</string>
+    <string name="host_editor_mosh_requirements">Mosh requires mosh-server on the remote host and reachable UDP ports (60000–61000 by default).</string>
+    <string name="host_editor_mosh_details">The authenticated SSH companion supports files, resource queries, and port forwarding. Agent forwarding is unavailable. The GPL-3.0-or-later client source and license come with the project.</string>
     <string name="host_editor_jumps">SSH jumps</string>
     <string name="host_editor_startup">Startup</string>
     <string name="host_editor_security">Security and authorization</string>

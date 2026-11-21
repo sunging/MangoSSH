@@ -37,6 +37,21 @@ class SshMigrationInstrumentedTest {
         JSONObject(data.toString(Charsets.UTF_8))
     }
 
+    @Test fun hostKeyDecisionCanTakeLongerThanCbsshDefaultHandshakeTimeout() = runBlocking<Unit> {
+        val connection = SshConnection(host(), port())
+        try {
+            withTimeout(50_000) {
+                connection.connect(transportTimeoutMillis = 8_000) { _, _ ->
+                    delay(31_000)
+                    true
+                }
+                assertTrue(connection.authenticate("fixture", object : SshCredentials {}))
+            }
+        } finally {
+            connection.close()
+        }
+    }
+
     @Test fun opensshAndPemKeysKeepPublicIdentityAndEncryptedBytes() = runBlocking<Unit> {
         val port = port()
         val source = connect(port)
@@ -284,11 +299,13 @@ class SshMigrationInstrumentedTest {
     }
 
     @Test fun changedHostKeyIsRejectedAndNormalExitDrainsBothStreams() = runBlocking<Unit> {
-        var trusted: ByteArray? = null
         val first = SshConnection(host(), port())
         try {
-            first.connect(10_000) { _, blob -> trusted = blob.copyOf(); true }
+            first.connect(10_000) { _, _ -> true }
+            assertNull(first.authenticatedIdentity)
             assertTrue(first.authenticate("fixture", object : SshCredentials {}))
+            val identity = requireNotNull(first.authenticatedIdentity)
+            assertEquals("fixture", identity.username)
             first.openChannel().use { channel ->
                 first.enableAgent(object : SshAgent {
                     override fun identities() = emptyList<SshAgentIdentity>()
@@ -310,10 +327,37 @@ class SshMigrationInstrumentedTest {
             val changed = SshConnection(host(), port("fixtureFallbackPort"))
             try {
                 val failure = assertSuspendingThrows(SshFailure::class.java) {
-                    changed.connect(10_000) { _, blob -> blob.contentEquals(requireNotNull(trusted)) }
+                    changed.connect(10_000, expectedHostKey = identity.hostKey) { _, _ ->
+                        fail("A replacement with a mismatched key must fail before requesting trust")
+                        true
+                    }
                 }
                 assertEquals(SshFailure.Category.HOST_KEY, failure.category)
+                assertNull(changed.authenticatedIdentity)
+                assertSame(identity, first.authenticatedIdentity)
             } finally { changed.close() }
         } finally { first.close() }
+    }
+
+    @Test fun cancellingConnectionWithdrawsItsSuspendedHostKeyDecision() = runBlocking<Unit> {
+        val connection = SshConnection(host(), port())
+        val deciding = CompletableDeferred<Unit>()
+        val withdrawn = CompletableDeferred<Unit>()
+        val attempt = launch {
+            connection.connect(10_000) { _, _ ->
+                deciding.complete(Unit)
+                try {
+                    awaitCancellation()
+                } finally {
+                    withdrawn.complete(Unit)
+                }
+            }
+        }
+        try {
+            withTimeout(5_000) { deciding.await() }
+            attempt.cancelAndJoin()
+            withTimeout(5_000) { withdrawn.await() }
+            assertNull(connection.authenticatedIdentity)
+        } finally { connection.close() }
     }
 }

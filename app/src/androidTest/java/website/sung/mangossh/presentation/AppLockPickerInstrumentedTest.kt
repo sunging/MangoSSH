@@ -155,7 +155,7 @@ class AppLockPickerInstrumentedTest {
         assertFalse(model.lock.locked.value)
         assertTrue(model.lastResultWasCancelled)
         compose.runOnUiThread { model.lock.noteBackgrounded() }
-        compose.onNodeWithText(text(R.string.ui_mangossh_is_locked)).assertIsDisplayed()
+        compose.onNodeWithTag("pin_progress").assertIsDisplayed()
     }
 
     @Test fun rotatingHostWhilePickerIsOpenDoesNotCancelOrDuplicateExport() {
@@ -181,7 +181,7 @@ class AppLockPickerInstrumentedTest {
         compose.runOnUiThread { model.lock.screenOff() }
         assertTrue(model.lock.locked.value)
         save()
-        compose.onNodeWithText(text(R.string.ui_mangossh_is_locked)).assertIsDisplayed()
+        compose.onNodeWithTag("pin_progress").assertIsDisplayed()
         assertNull(model.lastUri)
         assertFalse(model.backup.state.value.completed)
         assertEquals(BackupPhase.IDLE, model.backup.state.value.phase)

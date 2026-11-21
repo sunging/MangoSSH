@@ -8,6 +8,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class RemoteDraftStoreTest {
@@ -69,5 +70,20 @@ class RemoteDraftStoreTest {
         directory.listFiles()!!.single().writeBytes(ByteArray(64))
         assertNull(store.load("profile", "/etc/app.conf"))
         assertEquals(0, store.count())
+    }
+
+    @Test fun temporaryKeyFailureKeepsThePreviousCiphertextAndAllowsRetry() {
+        val original = draft()
+        store.save(original)
+        val disk = directory.listFiles()!!.single()
+        val oldBytes = disk.readBytes()
+        var failKey = true
+        val retryable = RemoteDraftStore(directory) { if (failKey) throw java.io.IOException() else key }
+        assertThrows(java.io.IOException::class.java) { retryable.save(draft(text = "updated")) }
+        assertThrows(java.io.IOException::class.java) { retryable.load(original.profileId, original.path) }
+        assertArrayEquals(oldBytes, disk.readBytes())
+        failKey = false
+        retryable.save(draft(text = "updated"))
+        assertEquals("updated", retryable.load(original.profileId, original.path)?.text)
     }
 }

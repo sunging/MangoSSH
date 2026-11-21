@@ -28,7 +28,7 @@ internal object VaultPayloadCodec {
                         require(item is JSONArray)
                         repeat(item.length()) { require(item.get(it) is String) }
                     }
-                    name in setOf("terminalType", "mode", "name", "sessionId") -> require(item is String)
+                    name in setOf("terminalType", "mode", "name", "sessionId", "moshServerCommand") -> require(item is String)
                     top && name in arrays -> {
                         require(item is JSONArray)
                         repeat(item.length()) { checkObject(item.getJSONObject(it), false) }
@@ -57,6 +57,7 @@ internal object VaultPayloadCodec {
                         put("port", profile.port)
                         put("username", profile.username)
                         put("protocol", profile.protocol.name)
+                        profile.moshServerCommand?.let { put("moshServerCommand", it) }
                         put("route", profile.route.name)
                         put("authentication", profile.authentication.name)
                         put("authenticationId", profile.authenticationId ?: JSONObject.NULL)
@@ -228,6 +229,7 @@ internal object VaultPayloadCodec {
                     port = value.getInt("port"),
                     username = value.getString("username"),
                     protocol = value.enumOrDefault("protocol", ConnectionProtocol.SSH),
+                    moshServerCommand = value.optionalString("moshServerCommand"),
                     route = value.connectionRoute(schemaVersion),
                     authentication = value.authenticationMethod(schemaVersion),
                     authenticationId = if (schemaVersion >= 8) value.optionalString("authenticationId") else null,

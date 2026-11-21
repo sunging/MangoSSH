@@ -106,8 +106,14 @@ sealed interface TerminalEmulator : AutoCloseable {
      */
     fun setDisplayActive(active: Boolean)
 
-    /** Queue pasted text in the same FIFO as keyboard/IME input, honoring bracketed paste. */
-    fun pasteText(text: String)
+    /** Queues pasted text in the same FIFO as keyboard/IME input, honoring bracketed paste. */
+    fun pasteText(text: String) = pasteText(text) { true }
+
+    /**
+     * Queues pasted text only while [canPaste] accepts the original target. The predicate
+     * is checked on the command thread and again on the keyboard-output callback thread.
+     */
+    fun pasteText(text: String, canPaste: () -> Boolean)
 
     /** Policy controlling whether incoming inline image commands are accepted. */
     val inlineImages: InlineImages
@@ -384,7 +390,7 @@ internal class TerminalEmulatorImpl(
     private val snapshots = TerminalDispatcher()
     private var outputBatch: ByteArrayOutputStream? = null
 
-    internal fun batchOutput(action: () -> Unit) = synchronized(damageLock) {
+    internal fun batchOutput(acceptOutput: () -> Boolean = { true }, action: () -> Unit) = synchronized(damageLock) {
         checkNotClosed()
         check(outputBatch == null)
         val batch = ByteArrayOutputStream(4096)
@@ -395,7 +401,7 @@ internal class TerminalEmulatorImpl(
             outputBatch = null
             if (batch.size() > 0) {
                 val data = batch.toByteArray()
-                postCallback { onKeyboardInput.invoke(data) }
+                postCallback { if (acceptOutput()) onKeyboardInput.invoke(data) }
             }
         }
     }
@@ -744,9 +750,10 @@ internal class TerminalEmulatorImpl(
         enqueueCommand { onKeyboardInput(bytes) }
     }
 
-    override fun pasteText(text: String) {
+    override fun pasteText(text: String, canPaste: () -> Boolean) {
         enqueueCommand {
-            batchOutput {
+            if (!canPaste()) return@enqueueCommand
+            batchOutput(acceptOutput = canPaste) {
                 terminalNative.pasteText(text.toByteArray(Charsets.UTF_8))
             }
         }

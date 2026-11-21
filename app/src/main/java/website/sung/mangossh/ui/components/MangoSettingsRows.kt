@@ -209,6 +209,7 @@ internal fun <T> SettingsChoiceRow(
                 showDialog = false
             },
             onDismiss = { showDialog = false },
+            enabled = enabled,
             optionTestTag = optionTestTag,
         )
     }
@@ -222,6 +223,7 @@ private fun <T> SettingsChoiceDialog(
     optionLabel: @Composable (T) -> String,
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
+    enabled: Boolean,
     optionTestTag: ((T) -> String)?,
 ) {
     AlertDialog(
@@ -239,13 +241,14 @@ private fun <T> SettingsChoiceDialog(
                             }
                             .selectable(
                                 selected = isSelected,
+                                enabled = enabled,
                                 role = Role.RadioButton,
                                 onClick = { onSelect(option) },
                             )
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(selected = isSelected, onClick = null)
+                        RadioButton(selected = isSelected, onClick = null, enabled = enabled)
                         Spacer(Modifier.width(12.dp))
                         Text(optionLabel(option), style = MaterialTheme.typography.bodyLarge)
                     }

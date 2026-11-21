@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
@@ -52,6 +53,19 @@ class NewWorkflowUiInstrumentedTest {
         compose.runOnIdle { assertNull(decision) }
         compose.onAllNodesWithText(text(R.string.editor_direct)).onLast().performClick()
         compose.runOnIdle { assertEquals(TransferConflictAction.DIRECT_OVERWRITE, decision?.action) }
+    }
+
+    @Test fun saveAsDialogClosesWhenTheEditingInstanceChanges() {
+        val identity = SourceIdentity("/draft", 3, 1)
+        val source = EditableRemoteText("/draft", "old", false, "\n", identity, RemoteTarget(identity, 384, true), ByteArray(32))
+        val state = mutableStateOf(RemoteEditorUiState("session", source, instance = 1))
+        compose.setContent {
+            MaterialTheme { RemoteTextEditorScreen(state.value, {}, { _, _ -> fail("Unexpected save") }, {}, {}) }
+        }
+        compose.onNodeWithText(text(R.string.editor_save_as)).performClick()
+        compose.onNodeWithText(text(R.string.editor_new_name)).assertIsDisplayed()
+        compose.runOnIdle { state.value = state.value.copy(instance = 2) }
+        compose.onNodeWithText(text(R.string.editor_new_name)).assertDoesNotExist()
     }
     @Test fun busyAuthenticationManagementBlocksRepeatedAdds() {
         compose.setContent { MaterialTheme {

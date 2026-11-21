@@ -58,9 +58,14 @@
 
 需要 Android 8.0（API 26）或更高版本。
 
+<p>
+  <a href="https://f-droid.org/packages/website.sung.mangossh/">
+    <img src="https://f-droid.org/badge/get-it-on.png" alt="在 F-Droid 上下载" height="80">
+  </a>
+</p>
+
+- **F-Droid**：从 [F-Droid](https://f-droid.org/packages/website.sung.mangossh/) 安装。
 - **GitHub Releases**：从[最新版本](https://github.com/sunging/MangoSSH/releases/latest)下载 `MangoSSH-v<版本号>.apk`。每个版本都附带 `SHA256SUMS` 文件，可用于校验下载内容。
-- **F-Droid**：即将上架。
-  <!-- TODO: F-Droid 上架后补充徽章和链接 -->
 
 ### 发行版本
 
@@ -68,7 +73,7 @@ MangoSSH 由同一份源码构建出两个版本：
 
 | | `github` | `fdroid` |
 | --- | --- | --- |
-| 获取渠道 | GitHub Releases | F-Droid（即将上架） |
+| 获取渠道 | [GitHub Releases](https://github.com/sunging/MangoSSH/releases/latest) | [F-Droid](https://f-droid.org/packages/website.sung.mangossh/) |
 | 应用内更新 | 检查 GitHub Releases，校验 SHA-256，交由系统安装程序安装 | 不包含，也不申请安装应用权限 |
 
 ## 隐私

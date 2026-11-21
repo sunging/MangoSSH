@@ -188,9 +188,21 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
         snapshot.copy(portForwards = snapshot.portForwards.filterNot { it.id == id })
     }
 
-    suspend fun saveWebDavConfig(config: WebDavConfig?) = mutate { snapshot ->
-        snapshot.copy(webDavConfig = config)
-    }
+    /** The approved destination change must still match the vault version at commit. */
+    internal suspend fun changeWebDavConfig(expectedRevision: Long, config: WebDavConfig?, allowed: () -> Boolean) =
+        withContext(Dispatchers.IO) {
+            mutationMutex.withLock {
+                if (!allowed()) throw BackupException(BackupFailure.LOCKED)
+                if (_status.value !is VaultStatus.Ready) throw BackupException(BackupFailure.STORAGE)
+                if (revision != expectedRevision) throw BackupException(BackupFailure.CHANGED)
+                val updated = _snapshot.value.copy(webDavConfig = config)
+                BackupValidator.validate(updated)
+                if (!allowed()) throw BackupException(BackupFailure.LOCKED)
+                storage.write(updated)
+                _snapshot.value = updated
+                revision++
+            }
+        }
 
     /** Reads a consistent revision and snapshot for an import preview. */
     internal suspend fun backupSnapshot(): Pair<Long, VaultSnapshot> = mutationMutex.withLock {
@@ -213,6 +225,7 @@ class VaultRepository(context: Context, private val storage: AndroidKeystoreVaul
             val merged = BackupMerger.merge(_snapshot.value, incoming, decision)
             val encoded = VaultPayloadCodec.encode(merged)
             try { if (encoded.size > 5 * 1024 * 1024) throw BackupException(BackupFailure.TOO_LARGE) } finally { encoded.fill(0) }
+            if (!allowed()) throw BackupException(BackupFailure.LOCKED)
             local.checkpoint(_snapshot.value)
             if (!allowed()) throw BackupException(BackupFailure.LOCKED)
             storage.write(merged)

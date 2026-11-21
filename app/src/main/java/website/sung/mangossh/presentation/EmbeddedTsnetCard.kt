@@ -50,7 +50,9 @@ internal fun EmbeddedTsnetCard(
     // A server URL is not a secret, so the draft may survive recreation.
     var controlUrlDraft by rememberSaveable(controlUrl) { mutableStateOf(controlUrl) }
     val normalizedControlUrl = EmbeddedTsnetControlServer.normalize(controlUrlDraft)
-    val statusText = if (!status.identityResolved) {
+    val statusText = if (status.loggingOut) {
+        stringResource(R.string.embedded_tsnet_status_logging_out)
+    } else if (!status.identityResolved) {
         stringResource(R.string.embedded_tsnet_status_checking)
     } else when (status.phase) {
         EmbeddedTsnetPhase.UNENROLLED -> stringResource(R.string.embedded_tsnet_status_unenrolled)
@@ -74,13 +76,14 @@ internal fun EmbeddedTsnetCard(
     }
     // Until the stored identity is read, UNENROLLED is only a placeholder:
     // offering sign-in then would flash for an already signed-in node.
-    val canStartEnrollment = status.identityResolved && (
+    val canStartEnrollment = status.identityResolved && !status.loggingOut && !status.logoutCleanupPending && (
         status.phase == EmbeddedTsnetPhase.UNENROLLED ||
             status.phase == EmbeddedTsnetPhase.FAILED ||
             status.phase == EmbeddedTsnetPhase.WAITING_FOR_LOGIN
         )
-    val canLogout = status.phase == EmbeddedTsnetPhase.READY_IDLE ||
-        status.phase == EmbeddedTsnetPhase.ACTIVE
+    val canLogout = status.loggingOut || status.logoutCleanupPending ||
+        status.phase == EmbeddedTsnetPhase.READY_IDLE || status.phase == EmbeddedTsnetPhase.ACTIVE ||
+        !status.authKeyAllowed
     // A registered identity stays with its server; changing it needs a logout.
     val canChooseServer = canStartEnrollment && status.authKeyAllowed
 
@@ -157,7 +160,7 @@ internal fun EmbeddedTsnetCard(
         if (canLogout) {
             OutlinedButton(
                 onClick = { showLogoutDialog = true },
-                enabled = status.activeSessions == 0,
+                enabled = status.activeSessions == 0 && !status.loggingOut,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("embedded_tsnet_logout"),
@@ -167,7 +170,7 @@ internal fun EmbeddedTsnetCard(
         }
     }
 
-    if (showAuthKeyDialog) {
+    if (showAuthKeyDialog && canStartEnrollment) {
         EmbeddedTsnetAuthKeyDialog(
             onDismiss = { showAuthKeyDialog = false },
             onConfirm = { key ->
@@ -184,6 +187,7 @@ internal fun EmbeddedTsnetCard(
             text = { Text(stringResource(R.string.embedded_tsnet_logout_message)) },
             confirmButton = {
                 Button(
+                    enabled = status.activeSessions == 0 && !status.loggingOut,
                     onClick = {
                         showLogoutDialog = false
                         onLogout()

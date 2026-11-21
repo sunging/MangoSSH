@@ -25,13 +25,21 @@ internal class BiometricUnlockPrompt(
     },
     private val createCipher: () -> Cipher = key::encryptCipher,
     private val resetKey: () -> Unit = key::reset,
+    private val onAuthenticationFinished: () -> Unit = {},
 ) {
     private var prompt: BiometricPrompt? = lock.biometricRequest?.let(::bind)
+
+    /** Reports whether Android can currently authenticate with the required strong biometric. */
+    fun isAvailable(): Boolean = availability() == BiometricManager.BIOMETRIC_SUCCESS
 
     /** Starts strong, crypto-bound authentication only after an explicit request from the lock UI. */
     fun authenticate() {
         if (!lock.locked.value || !lock.configuration.value.biometricEnabled || lock.biometricRequest != null) return
-        if (availability() != BiometricManager.BIOMETRIC_SUCCESS) { unavailable(); return }
+        if (!isAvailable()) {
+            unavailable()
+            onAuthenticationFinished()
+            return
+        }
         val cipher = try { createCipher() }
         catch (error: Exception) {
             if (error is KeyPermanentlyInvalidatedException) {
@@ -39,6 +47,7 @@ internal class BiometricUnlockPrompt(
                 MangoLog.warn(MangoLogEvent.BIOMETRIC_UNLOCK_KEY_INVALIDATED)
             } else MangoLog.warn(MangoLogEvent.BIOMETRIC_UNLOCK_FAILED)
             unavailable()
+            onAuthenticationFinished()
             return
         }
         val request = lock.beginBiometricUnlock(cipher) ?: return
@@ -54,6 +63,7 @@ internal class BiometricUnlockPrompt(
         } catch (_: RuntimeException) {
             lock.cancelBiometricUnlock(request)
             unavailable()
+            onAuthenticationFinished()
         }
     }
 
@@ -66,6 +76,7 @@ internal class BiometricUnlockPrompt(
         lock.cancelBiometricUnlock(request)
         if (errorCode !in listOf(BiometricPrompt.ERROR_CANCELED, BiometricPrompt.ERROR_USER_CANCELED,
                 BiometricPrompt.ERROR_NEGATIVE_BUTTON)) unavailable()
+        onAuthenticationFinished()
     }
 
     private fun bind(request: AppLockCoordinator.BiometricRequest): BiometricPrompt = BiometricPrompt(
@@ -76,6 +87,7 @@ internal class BiometricUnlockPrompt(
                     MangoLog.warn(MangoLogEvent.BIOMETRIC_UNLOCK_FAILED)
                     unavailable()
                 }
+                onAuthenticationFinished()
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
