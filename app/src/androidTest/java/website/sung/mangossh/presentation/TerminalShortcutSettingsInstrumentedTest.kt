@@ -5,14 +5,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
+import website.sung.mangossh.R
 import website.sung.mangossh.domain.TerminalModifier
 import website.sung.mangossh.domain.TerminalShortcutAction
 import website.sung.mangossh.domain.TerminalShortcutConfig
@@ -70,6 +75,76 @@ class TerminalShortcutSettingsInstrumentedTest {
                     setOf(TerminalModifier.CTRL, TerminalModifier.ALT),
                     TerminalShortcutKey.Character('T'),
                 ),
+                config.items.single().action,
+            )
+        }
+    }
+
+    @Test
+    fun addsAndEditsStandaloneInsertKey() {
+        var config by mutableStateOf(TerminalShortcutConfig(emptyList()))
+        composeRule.setContent {
+            MaterialTheme { TerminalShortcutSettingsCard(config = config, onSave = { config = it }) }
+        }
+        val selectKeyLabel = InstrumentationRegistry.getInstrumentation().targetContext
+            .getString(R.string.terminal_shortcut_select_key)
+        val keySelector = composeRule.onNodeWithTag("terminal_shortcut_special_key")
+
+        composeRule.onNodeWithTag("terminal_shortcuts_customize").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_add").performClick()
+        keySelector.performScrollTo().assertTextContains("ESC")
+        composeRule.onNodeWithText(selectKeyLabel).assertIsDisplayed()
+        keySelector.performClick()
+        composeRule.onNodeWithTag("terminal_shortcut_special_key_insert").performScrollTo().performClick()
+        keySelector.assertTextContains("INS")
+        composeRule.onNodeWithTag("terminal_shortcut_item_save").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_save").performClick()
+        val insert = TerminalShortcutAction.SpecialKey(TerminalSpecialKey.INSERT)
+        composeRule.runOnIdle { assertEquals(insert, config.items.single().action) }
+
+        composeRule.onNodeWithTag("terminal_shortcuts_customize").performClick()
+        composeRule.onNodeWithTag("terminal_shortcut_edit_0").performScrollTo().performClick()
+        keySelector.performScrollTo().assertTextContains("INS")
+        composeRule.onNodeWithTag("terminal_shortcut_label").performScrollTo().performTextReplacement("Insert")
+        composeRule.onNodeWithTag("terminal_shortcut_item_save").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_save").performClick()
+        composeRule.runOnIdle {
+            assertEquals(insert, config.items.single().action)
+            assertEquals("Insert", config.items.single().labelOverride)
+        }
+    }
+
+    @Test
+    fun addsAndEditsInsertKeyChord() {
+        var config by mutableStateOf(TerminalShortcutConfig(emptyList()))
+        composeRule.setContent {
+            MaterialTheme { TerminalShortcutSettingsCard(config = config, onSave = { config = it }) }
+        }
+        val keySelector = composeRule.onNodeWithTag("terminal_shortcut_special_key")
+        val insert = TerminalShortcutKey.Special(TerminalSpecialKey.INSERT)
+
+        composeRule.onNodeWithTag("terminal_shortcuts_customize").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_add").performClick()
+        composeRule.onNodeWithTag("terminal_shortcut_kind_chord").performScrollTo().performClick()
+        composeRule.onNodeWithTag("terminal_shortcut_chord_key_special").performScrollTo().performClick()
+        keySelector.performScrollTo().assertTextContains("TAB").performClick()
+        composeRule.onNodeWithTag("terminal_shortcut_special_key_insert").performScrollTo().performClick()
+        keySelector.assertTextContains("INS")
+        composeRule.onNodeWithTag("terminal_shortcut_item_save").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_save").performClick()
+        composeRule.runOnIdle {
+            assertEquals(TerminalShortcutAction.Chord(setOf(TerminalModifier.CTRL), insert), config.items.single().action)
+        }
+
+        composeRule.onNodeWithTag("terminal_shortcuts_customize").performClick()
+        composeRule.onNodeWithTag("terminal_shortcut_edit_0").performScrollTo().performClick()
+        keySelector.performScrollTo().assertTextContains("INS")
+        composeRule.onNodeWithTag("terminal_shortcut_modifier_alt").performScrollTo().performClick()
+        composeRule.onNodeWithTag("terminal_shortcut_item_save").performClick()
+        composeRule.onNodeWithTag("terminal_shortcuts_save").performClick()
+        composeRule.runOnIdle {
+            assertEquals(
+                TerminalShortcutAction.Chord(setOf(TerminalModifier.CTRL, TerminalModifier.ALT), insert),
                 config.items.single().action,
             )
         }
