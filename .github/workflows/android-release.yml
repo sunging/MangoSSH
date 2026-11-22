@@ -51,7 +51,7 @@ jobs:
         (github.event_name == 'workflow_dispatch' ||
          needs.release-please.outputs.release_created == 'true')
       }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 180
     permissions:
       contents: write
@@ -105,6 +105,20 @@ jobs:
         uses: ./.github/actions/prepare-native
         with:
           component-cache: "off"
+
+      # pkgconf determines the static library order in the shipped Mosh executable.
+      - name: Pin pkgconf for reproducible Mosh linking
+        env:
+          PKGCONF_DEB_VERSION: 2.5.1-4
+        run: |
+          sudo apt-get install --yes --allow-downgrades \
+            "pkg-config=$PKGCONF_DEB_VERSION" "pkgconf=$PKGCONF_DEB_VERSION" \
+            "pkgconf-bin=$PKGCONF_DEB_VERSION" "libpkgconf7=$PKGCONF_DEB_VERSION"
+          pkg_config=$(command -v pkg-config)
+          version=$("$pkg_config" --version)
+          echo "Using $pkg_config ($version)"
+          test "$(readlink -f "$pkg_config")" = /usr/bin/pkgconf
+          test "$version" = "${PKGCONF_DEB_VERSION%-*}"
 
       - name: Verify release version and localized notes
         env:
