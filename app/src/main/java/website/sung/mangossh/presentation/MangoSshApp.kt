@@ -76,6 +76,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -95,6 +96,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
@@ -103,6 +105,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.core.net.toUri
+import androidx.core.view.SoftwareKeyboardControllerCompat
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -371,9 +374,11 @@ fun MangoSshApp(
     var pendingRemoval by remember { mutableStateOf<PendingRemovalRequest?>(null) }
     var hostSearchActive by rememberSaveable { mutableStateOf(false) }
     val hostSearchFocusRequester = remember { FocusRequester() }
+    var hostSearchFocusRequested by remember { mutableStateOf(false) }
 
     fun closeHostSearch() {
         hostSearchActive = false
+        hostSearchFocusRequested = false
         viewModel.clearHostQuery()
     }
 
@@ -448,6 +453,10 @@ fun MangoSshApp(
     val terminalTarget = activeSessionId
         ?.let { id -> sessions.firstOrNull { it.id == id } ?: endedTerminals.firstOrNull { it.session.id == id }?.session }
         ?.let { session -> viewModel.terminalEmulator(session.id)?.let { session to it } }
+    HideTerminalImeOnHostListReturn(
+        terminalVisible = terminalTarget != null,
+        hostListVisible = terminalTarget == null && selectedSection == AppSection.HOSTS,
+    )
     if (terminalTarget == null && activeSessionId != null) {
         LaunchedEffect(activeSessionId) { activeSessionId = null }
     }
@@ -598,6 +607,8 @@ fun MangoSshApp(
                         onQueryChange = viewModel::setHostQuery,
                         onClose = ::closeHostSearch,
                         focusRequester = hostSearchFocusRequester,
+                        focusRequested = hostSearchFocusRequested,
+                        onFocusRequestConsumed = { hostSearchFocusRequested = false },
                     )
                 } else {
                     // Only Settings has a detail level below its tab: hosts, keys, and
@@ -652,7 +663,10 @@ fun MangoSshApp(
                             }
                             if (selectedSection == AppSection.HOSTS) {
                                 TextButton(onClick = { showSshConfigImport = true }) { Text(stringResource(R.string.ssh_config_import_short)) }
-                                IconButton(onClick = { hostSearchActive = true }) {
+                                IconButton(onClick = {
+                                    hostSearchFocusRequested = true
+                                    hostSearchActive = true
+                                }) {
                                     Icon(Icons.Outlined.Search, contentDescription = stringResource(R.string.common_search))
                                 }
                                 HostSortMenu(sortMode = hostSortMode, onSelect = viewModel::setHostSortMode)
@@ -874,6 +888,24 @@ fun MangoSshApp(
 }
 
 /**
+ * A remote exit can remove the terminal editor before its focus-scoped cleanup can hide the IME.
+ * Use the surviving Compose host view after navigating to the host list instead.
+ * Initial host-list composition and terminal-to-terminal switches are not exits to this
+ * destination and must not hide a newly requested keyboard.
+ */
+@Composable
+internal fun HideTerminalImeOnHostListReturn(terminalVisible: Boolean, hostListVisible: Boolean) {
+    val view = LocalView.current
+    val wasTerminalVisible = remember(view) { mutableStateOf(false) }
+    SideEffect {
+        if (wasTerminalVisible.value && hostListVisible) {
+            SoftwareKeyboardControllerCompat(view).hide()
+        }
+        wasTerminalVisible.value = terminalVisible
+    }
+}
+
+/**
  * The app-wide message dialog. Every full-screen branch of [MangoSshApp] that
  * returns early renders it too, so a failure is shown where it happens instead
  * of waiting behind the terminal or browser until the user leaves it.
@@ -925,13 +957,22 @@ private fun MangoNavigationBar(
 
 /** Replaces the host list's top bar while search is active; a back arrow restores it. */
 @Composable
-private fun HostSearchTopBar(
+internal fun HostSearchTopBar(
     query: String,
     onQueryChange: (String) -> Unit,
     onClose: () -> Unit,
     focusRequester: FocusRequester,
+    focusRequested: Boolean,
+    onFocusRequestConsumed: () -> Unit,
 ) {
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    // The filter can survive a terminal visit; only opening Search explicitly should
+    // ask for input, not remounting the search bar when the shell exits.
+    LaunchedEffect(focusRequested) {
+        if (focusRequested) {
+            focusRequester.requestFocus()
+            onFocusRequestConsumed()
+        }
+    }
     TopAppBar(
         title = {
             TextField(

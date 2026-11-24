@@ -7,12 +7,24 @@ import android.os.SystemClock
 import android.view.WindowManager
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.junit.Rule
 import org.junit.Test
+import website.sung.mangossh.R
 import kotlin.math.abs
 
 /** Exercises real IME/window geometry across activity recreation without user sessions or storage. */
@@ -41,6 +53,54 @@ class TerminalImeRotationInstrumentedTest {
         assertKeyboardDoesNotCoverShortcuts(52)
         rotate(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, Configuration.ORIENTATION_PORTRAIT)
         assertKeyboardDoesNotCoverShortcuts(102)
+    }
+
+    @Test
+    fun leavingTerminalForHostListHidesTheKeyboardButNextTerminalCanShowItAgain() {
+        awaitKeyboard()
+
+        // Model a shell exit, which navigates without the user pressing system Back.
+        composeRule.runOnIdle { composeRule.activity.terminalVisible = false }
+        composeRule.onNodeWithTag("ime_test_hosts").assertIsDisplayed()
+        composeRule.onNodeWithTag("terminal_surface").assertDoesNotExist()
+        awaitHiddenKeyboard()
+
+        composeRule.runOnIdle { composeRule.activity.terminalVisible = true }
+        composeRule.onNodeWithTag("terminal_surface").assertIsDisplayed()
+        awaitKeyboard()
+    }
+
+    @Test
+    fun retainedHostSearchDoesNotReopenTheKeyboardUntilTapped() {
+        composeRule.runOnIdle { composeRule.activity.terminalVisible = false }
+        val search = composeRule.activity.getString(R.string.common_search)
+        composeRule.onNodeWithContentDescription(search).performTouchInput { click() }
+        val searchField = composeRule.onNode(hasSetTextAction())
+        searchField.assertIsFocused()
+        awaitKeyboard()
+        searchField.performTextInput("Terminal")
+        val host = composeRule.onNodeWithText("Terminal fixture")
+        composeRule.onNodeWithText("Other host").assertDoesNotExist()
+        host.performTouchInput { click() }
+        composeRule.onNodeWithTag("terminal_surface").assertIsDisplayed()
+        awaitKeyboard()
+        composeRule.runOnIdle { composeRule.activity.terminalVisible = false }
+
+        awaitHiddenKeyboard()
+        searchField.assertIsDisplayed().assertTextEquals("Terminal").assertIsNotFocused()
+        host.assertIsDisplayed()
+        composeRule.onNodeWithText("Other host").assertDoesNotExist()
+        searchField.performTouchInput { click() }
+        awaitKeyboard()
+    }
+
+    private fun awaitHiddenKeyboard() {
+        composeRule.waitUntil(timeoutMillis = 15_000) {
+            composeRule.runOnUiThread {
+                ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) == false
+            }
+        }
     }
 
     private fun rotate(requestedOrientation: Int, configurationOrientation: Int) {
